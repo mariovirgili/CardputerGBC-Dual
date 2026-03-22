@@ -35,25 +35,35 @@ static volatile bool g_flag_flush = false;
 // Utils FS
 // ============================================================================
 static void make_save_path(const char* romPathOrName) {
+  // Get the base filename (without full path) from the ROM path or name
   const char* base = share::gameSaveBasename(romPathOrName);
-  char name[160] = {0};
+  char name[160] = {0};  // Temporary buffer for the save filename
 
   if (base && *base) {
+    // Copy base name safely into local buffer
     strncpy(name, base, sizeof(name) - 1);
-    size_t L = strlen(name);
-    if (L >= 4) {
-      // remplace extension par .sav
-      name[L - 3] = 's';
-      name[L - 2] = 'a';
-      name[L - 1] = 'v';
-    } else {
-      strncat(name, ".sav", sizeof(name) - strlen(name) - 1);
+
+    // Find the last dot in the filename (file extension separator)
+    char *dot = strrchr(name, '.');
+
+    if (dot) {
+      // If an extension exists, terminate the string at the dot
+      // This removes the original extension (e.g., .gb, .gbc)
+      *dot = '\0';
     }
+
+    // Append ".sav" safely, ensuring no buffer overflow
+    strncat(name, ".sav", sizeof(name) - strlen(name) - 1);
+
   } else {
+    // Fallback name if no valid base name is found
     strcpy(name, "gbc_autosave.sav");
   }
 
+  // Build the final save path: GBC_SAVE_DIR/<filename>.sav
   int n = snprintf(g_save_path, PATH_MAX, GBC_SAVE_DIR "/%s", name);
+
+  // Ensure null-termination if truncated
   if (n < 0 || (size_t)n >= PATH_MAX) {
     g_save_path[PATH_MAX - 1] = '\0';
   }

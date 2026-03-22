@@ -43,7 +43,7 @@ namespace share
     bool shouldPollInput(); 
     void checkCommonInput(const Keyboard_Class::KeysState& status);
 
-    // I2C PAD (M5Stack JoyV2)
+    // I2C PAD (M5Stack JoyV2 or Joystick v1.1)
     void detectI2cPad();
     bool hasI2cPad();
     uint32_t pollI2cPad();

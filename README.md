@@ -52,11 +52,11 @@ The built-in **Cardputer keyboard** is used for all controls:
 
 The `j` key is also bound as Button A to allow an alternative layout for player preference.
 
-## M5Stack Joy V2
+## M5Stack Joystick
 
-You can alternatively use the M5Stack JoyV2, **just plug it in before launching a game** and it will work automatically.
+You can alternatively use the M5Stack Joystick v1.1 (U024-C) or Joystick2 (U024-V2), **just plug it in before launching a game** and it will work automatically.
 
-![A photo of the M5Stack Joystick Version 2](images/m5stack_joyv2.jpg)
+<img src="images/m5stack_joysticks.jpg" alt="A photo of the M5Stack Joysticks" width="800" height="400">
 
 ## D-Pad 3D Model
 

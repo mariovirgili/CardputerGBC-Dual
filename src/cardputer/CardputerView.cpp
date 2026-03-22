@@ -159,8 +159,8 @@ void CardputerView::showKeymapping6ButtonsSnes() {
     keyBox(topRowX + keyW + btnGapX, topRowY,    keyW, keyH, "P");
 
     // Bottom row: B / A
-    keyBox(botRowX,                  bottomRowY, keyW, keyH, "L");
-    keyBox(botRowX + keyW + btnGapX, bottomRowY, keyW, keyH, "J");
+    keyBox(botRowX,                  bottomRowY, keyW, keyH, "K");
+    keyBox(botRowX + keyW + btnGapX, bottomRowY, keyW, keyH, "L");
 
     // START / SELECT 
     const int centerX = Display->width() / 2 - 5;
@@ -175,7 +175,7 @@ void CardputerView::welcome() {
     Display->pushImage(0, 0, BGGAMESTATION_S_WIDTH, BGGAMESTATION_S_HEIGHT, bggamestation_s);
    
     // Title
-    std::string title = "Game Station 0.9";
+    std::string title = "Game Station 1.0";
     Display->setTextColor(TEXT_COLOR);
     Display->setTextSize(TEXT_BIG);
     Display->setCursor(getCenterOffset(title), 65);

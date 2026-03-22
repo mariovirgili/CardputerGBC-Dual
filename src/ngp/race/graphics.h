@@ -71,7 +71,12 @@ void myGraphicsBlitLine(unsigned char render);
 
 extern uint16_t* totalpalette;
 extern uint16_t *palettes;
+#ifdef  NGP_USE_THREADED_COLORMAPPING
+// disables output color conversion from the emulator itself, providing bgr444 native output
+#define NGPC_TO_SDL16(col) (col & 0x0FFF)
+#else
 #define NGPC_TO_SDL16(col) totalpalette[col & 0x0FFF]
+#endif
 
 #define setColPaletteEntry(addr, data) palettes[(addr)] = NGPC_TO_SDL16(data)
 #define setBWPaletteEntry(addr, data) palettes[(addr)] = NGPC_TO_SDL16(data)

@@ -11,15 +11,26 @@ uint32_t lastPadState = 0xFFFFFFFF;
 static const uint32_t INPUT_POLL_PERIOD_MS = 32;
 constexpr int64_t INPUT_POLL_PERIOD_US = 1000 * INPUT_POLL_PERIOD_MS;
 
-// I2C joypad (M5Stack JoyV2)
-static bool s_i2cPadPresent = false;
+// I2C joypad type
+enum I2cPadType : uint8_t {
+    I2C_PAD_NONE = 0,
+    I2C_PAD_JOYV2,    // M5Stack JoyV2 at 0x63
+    I2C_PAD_JOYV1_1,  // M5Stack Joystick v1.1 at 0x52
+};
+static I2cPadType s_i2cPadType = I2C_PAD_NONE;
+
 static constexpr uint8_t JOYSTICK_CENTER   = 128;
 static constexpr uint8_t JOYSTICK_DEADZONE = 25;
 static constexpr int CARDPUTER_I2C_SCL = 1;
 static constexpr int CARDPUTER_I2C_SDA = 2;
+
+// JoyV2 (I2C 0x63) — register-based protocol
 static constexpr uint8_t JOYSTICK2_ADDR                = 0x63;
 static constexpr uint8_t JOYSTICK2_ADC_VALUE_8BITS_REG = 0x10;
 static constexpr uint8_t JOYSTICK2_BUTTON_REG          = 0x20;
+
+// Joystick v1.1 (I2C 0x52) — simple 3-byte read
+static constexpr uint8_t JOYSTICK1_ADDR = 0x52;
 
 namespace share
 {
@@ -84,30 +95,37 @@ namespace share
         Wire.begin(CARDPUTER_I2C_SDA, CARDPUTER_I2C_SCL);
         Wire.setClock(400000);
 
+        // Try JoyV2 first (0x63)
         Wire.beginTransmission(JOYSTICK2_ADDR);
-        uint8_t err = Wire.endTransmission();
-
-        s_i2cPadPresent = (err == 0);
-
-        if (s_i2cPadPresent) {
-            printf("[INPUT] M5 Unit Joystick2 detected at 0x%02X (SDA=%d, SCL=%d)\n",
+        if (Wire.endTransmission() == 0) {
+            s_i2cPadType = I2C_PAD_JOYV2;
+            printf("[INPUT] M5 Unit JoyV2 detected at 0x%02X (SDA=%d, SCL=%d)\n",
                    JOYSTICK2_ADDR, CARDPUTER_I2C_SDA, CARDPUTER_I2C_SCL);
-        } else {
-            printf("[INPUT] No M5 Unit Joystick2 at 0x%02X (SDA=%d, SCL=%d)\n",
-                   JOYSTICK2_ADDR, CARDPUTER_I2C_SDA, CARDPUTER_I2C_SCL);
+            return;
         }
+
+        // Then try Joystick v1.1 (0x52)
+        Wire.beginTransmission(JOYSTICK1_ADDR);
+        if (Wire.endTransmission() == 0) {
+            s_i2cPadType = I2C_PAD_JOYV1_1;
+            printf("[INPUT] M5 Unit Joystick v1.1 detected at 0x%02X (SDA=%d, SCL=%d)\n",
+                   JOYSTICK1_ADDR, CARDPUTER_I2C_SDA, CARDPUTER_I2C_SCL);
+            return;
+        }
+
+        s_i2cPadType = I2C_PAD_NONE;
+        printf("[INPUT] No I2C joystick found (SDA=%d, SCL=%d)\n",
+               CARDPUTER_I2C_SDA, CARDPUTER_I2C_SCL);
     }
 
     bool hasI2cPad()
     {
-        return s_i2cPadPresent;
+        return s_i2cPadType != I2C_PAD_NONE;
     }
 
-    // Lecture 2 bytes X/Y
+    // JoyV2: read 2 bytes X/Y from register 0x10
     static bool joystick2_read_xy(uint8_t& x, uint8_t& y)
     {
-        if (!s_i2cPadPresent) return false;
-
         // Select 8bit register
         Wire.beginTransmission(JOYSTICK2_ADDR);
         Wire.write(JOYSTICK2_ADC_VALUE_8BITS_REG);
@@ -124,11 +142,9 @@ namespace share
         return true;
     }
 
-    // Read button
+    // JoyV2: read button from register 0x20
     static bool joystick2_read_button(uint8_t& btn)
     {
-        if (!s_i2cPadPresent) return false;
-
         Wire.beginTransmission(JOYSTICK2_ADDR);
         Wire.write(JOYSTICK2_BUTTON_REG);
         if (Wire.endTransmission(false) != 0) {
@@ -143,25 +159,40 @@ namespace share
         return true;
     }
 
+    // Joystick v1.1: read 3 bytes (X, Y, BTN) in one shot
+    static bool joystick1_read_all(uint8_t& x, uint8_t& y, uint8_t& btn)
+    {
+        if (Wire.requestFrom(JOYSTICK1_ADDR, (uint8_t)3) != 3) {
+            return false;
+        }
+
+        x   = Wire.read();
+        y   = Wire.read();
+        btn = Wire.read();
+        return true;
+    }
+
     uint32_t pollI2cPad()
     {
-        if (!s_i2cPadPresent) {
+        if (s_i2cPadType == I2C_PAD_NONE) {
             return 0;
         }
 
         uint8_t x8 = 0;
         uint8_t y8 = 0;
-        uint8_t btnRaw = 0;
+        uint8_t btnRaw = 1;  // default to "not pressed"
 
-        if (!joystick2_read_xy(x8, y8)) {
-            return 0;
+        if (s_i2cPadType == I2C_PAD_JOYV2) {
+            if (!joystick2_read_xy(x8, y8)) return 0;
+            joystick2_read_button(btnRaw);
+        } else {  // I2C_PAD_JOYV1_1
+            if (!joystick1_read_all(x8, y8, btnRaw)) return 0;
+            x8 = 255 - x8;  // v1.1 X axis is inverted relative to JoyV2
         }
-
-        joystick2_read_button(btnRaw);
 
         uint32_t state = 0;
 
-        // Axes
+        // Axes (same range 0-255, center ~128 for both devices)
         if (x8 < (JOYSTICK_CENTER - JOYSTICK_DEADZONE)) {
             state |= PAD_RIGHT;
         } else if (x8 > (JOYSTICK_CENTER + JOYSTICK_DEADZONE)) {
@@ -174,7 +205,7 @@ namespace share
             state |= PAD_UP;
         }
 
-        // button A
+        // Button A (0x00 = pressed for both devices)
         if (btnRaw == 0x00) {
             state |= PAD_A;
         }

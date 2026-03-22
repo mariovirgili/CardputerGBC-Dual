@@ -18,6 +18,9 @@ static bool s_lut_ready = false;
 // Entrelacement odd/even
 bool s_interlace_parity = false;
 
+// Color conversion LUT
+extern uint16_t* totalpalette;
+
 static uint16_t* s_linebuf_panel = nullptr;
 static uint16_t* s_lut_x_full    = nullptr;
 static uint16_t* s_lut_y_full    = nullptr;
@@ -133,10 +136,21 @@ static inline void paint_fullscreen_stretch()
     const uint8_t*  base    = (const uint8_t*)srcLine;                 // base 8-bit
     const uint16_t* lutx    = s_lut_x_full;                            // offsets
     uint16_t*       dst     = s_linebuf_panel;
-
     // Unrolled loop for speed
     int x = 0;
     for (; x <= panelW - 8; x += 8) {
+  #ifdef  NGP_USE_THREADED_COLORMAPPING
+        // Use the totalpalette LUT for color conversion
+        dst[x+0] = totalpalette[*(const uint16_t*)(base + lutx[x+0])];
+        dst[x+1] = totalpalette[*(const uint16_t*)(base + lutx[x+1])];
+        dst[x+2] = totalpalette[*(const uint16_t*)(base + lutx[x+2])];
+        dst[x+3] = totalpalette[*(const uint16_t*)(base + lutx[x+3])];
+        dst[x+4] = totalpalette[*(const uint16_t*)(base + lutx[x+4])];
+        dst[x+5] = totalpalette[*(const uint16_t*)(base + lutx[x+5])];
+        dst[x+6] = totalpalette[*(const uint16_t*)(base + lutx[x+6])];
+        dst[x+7] = totalpalette[*(const uint16_t*)(base + lutx[x+7])];
+  #else
+      // Color conversion was already performed
       dst[x+0] = *(const uint16_t*)(base + lutx[x+0]);
       dst[x+1] = *(const uint16_t*)(base + lutx[x+1]);
       dst[x+2] = *(const uint16_t*)(base + lutx[x+2]);
@@ -145,9 +159,16 @@ static inline void paint_fullscreen_stretch()
       dst[x+5] = *(const uint16_t*)(base + lutx[x+5]);
       dst[x+6] = *(const uint16_t*)(base + lutx[x+6]);
       dst[x+7] = *(const uint16_t*)(base + lutx[x+7]);
+#endif
     }
     for (; x < panelW; ++x) {
+#ifdef NGP_USE_THREADED_COLORMAPPING
+      // Use the totalpalette LUT for color conversion
+      dst[x] = totalpalette[*(const uint16_t*)(base + lutx[x])];
+#else
+      // Color conversion was already performed
       dst[x] = *(const uint16_t*)(base + lutx[x]);
+#endif
     }
 
     M5.Display.setAddrWindow(0, y, panelW, 1);
@@ -161,26 +182,59 @@ static inline IRAM_ATTR void paint_fullheight_4x3()
 {
   const int panelW = 240;
   const int panelH = 135;
-  const int srcW   = NGPC_W;   // 160
-  const int srcH   = NGPC_H;   // 152
-
   const int outW    = 160;
   const int x_start = (panelW - outW) / 2; // 40
-  const uint32_t stepY  = ((uint32_t)srcH << 16) / (uint32_t)panelH;
-  const int      parity = (int)s_interlace_parity;
-  uint32_t       accY   = (uint32_t)parity * stepY;
-  const uint32_t stepY2 = stepY << 1; // we skip one line
+  const int srcW   = NGPC_W;
 
   M5.Display.startWrite();
-
+  
+  #ifdef NGP_INTERLACED
+  const int parity = (int)s_interlace_parity;
   for (int y = parity; y < panelH; y += 2) {
-    const int srcY = (int)(accY >> 16);
-    accY += stepY2;
-
-    const uint16_t* __restrict srcLine = drawBuffer + (size_t)srcY * srcW;
+  #else
+  for (int y = 0; y < panelH; y += 1) {
+  #endif
+    const uint16_t  srcY    = s_lut_y_full[y];                         // 0..(srcH-1)
+    const uint16_t* srcLine = drawBuffer + (size_t)srcY * srcW;        // source
+    const uint8_t*  base    = (const uint8_t*)srcLine;                 // base 8-bi
+    uint16_t*       dst     = s_linebuf_panel;
+    // Unrolled loop for speed
+    int x = 0;
+    for (; x <= 160 - 8; x += 8) {
+  #ifdef  NGP_USE_THREADED_COLORMAPPING
+        // Use the totalpalette LUT for color conversion
+      dst[x+0] = totalpalette[*(const uint16_t*)(base + ((x+0) << 1))];
+      dst[x+1] = totalpalette[*(const uint16_t*)(base + ((x+1) << 1))];
+      dst[x+2] = totalpalette[*(const uint16_t*)(base + ((x+2) << 1))];
+      dst[x+3] = totalpalette[*(const uint16_t*)(base + ((x+3) << 1))];
+      dst[x+4] = totalpalette[*(const uint16_t*)(base + ((x+4) << 1))];
+      dst[x+5] = totalpalette[*(const uint16_t*)(base + ((x+5) << 1))];
+      dst[x+6] = totalpalette[*(const uint16_t*)(base + ((x+6) << 1))];
+      dst[x+7] = totalpalette[*(const uint16_t*)(base + ((x+7) << 1))];
+  #else
+      // Color conversion was already performed, copy directly from source to line buffer(or use source buffer directly in next version)
+      dst[x+0] = *(const uint16_t*)(base + ((x+0) << 1));
+      dst[x+1] = *(const uint16_t*)(base + ((x+1) << 1));
+      dst[x+2] = *(const uint16_t*)(base + ((x+2) << 1));
+      dst[x+3] = *(const uint16_t*)(base + ((x+3) << 1));
+      dst[x+4] = *(const uint16_t*)(base + ((x+4) << 1));
+      dst[x+5] = *(const uint16_t*)(base + ((x+5) << 1));
+      dst[x+6] = *(const uint16_t*)(base + ((x+6) << 1));
+      dst[x+7] = *(const uint16_t*)(base + ((x+7) << 1));
+#endif
+    }
+    for (; x < 160; ++x) {
+#ifdef NGP_USE_THREADED_COLORMAPPING
+      // Use the totalpalette LUT for color conversion
+      dst[x] = totalpalette[*(const uint16_t*)(base + (x << 1))];
+#else
+      // Color conversion was already performed
+      dst[x] = *(const uint16_t*)(base + (x << 1));
+#endif
+    }
 
     M5.Display.setAddrWindow(x_start, y, outW, 1);
-    M5.Display.writePixels(srcLine, outW, /*swapBytesAlready=*/true);
+    M5.Display.writePixels(dst, outW, /*swapBytesAlready=*/true);
   }
 
   M5.Display.endWrite();
