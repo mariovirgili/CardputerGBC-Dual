@@ -2,6 +2,8 @@
 #include "Welcome.h"
 #include "CardputerInput.h"
 
+#include <algorithm>
+
 M5GFX* CardputerView::Display = nullptr;
 
 void CardputerView::initialize() {
@@ -168,6 +170,76 @@ void CardputerView::showKeymapping6ButtonsSnes() {
 
     keyBox(centerX - ssW - 6 + ssShiftRight, ssY, ssW, ssH, "1");
     keyBox(centerX + 6 + ssShiftRight,       ssY, ssW, ssH, "2");
+}
+
+void CardputerView::showControlBindings(
+    const std::vector<std::string>& actions,
+    const std::vector<std::string>& keys,
+    const std::string& footer
+) {
+    clearMainView(5);
+
+    const int frameX = 10;
+    const int frameY = 35;
+    const int frameW = Display->width() - 20;
+    const int frameH = 90;
+
+    Display->fillRoundRect(frameX, frameY, frameW, frameH, DEFAULT_ROUND_RECT, TFT_BLACK);
+    Display->drawRoundRect(frameX, frameY, frameW, frameH, DEFAULT_ROUND_RECT, PRIMARY_COLOR);
+
+    Display->setTextSize(TEXT_WIDE);
+    Display->setTextColor(PRIMARY_COLOR);
+    Display->drawCenterString("CONTROLS", Display->width() / 2, 45);
+
+    const size_t count = std::min(actions.size(), keys.size());
+    if (count == 0) {
+        return;
+    }
+
+    const int cols = (count > 4) ? 2 : 1;
+    const int rows = static_cast<int>((count + cols - 1) / cols);
+    const bool compact = rows > 4;
+    const bool showFooter = !footer.empty() && rows <= 3;
+    const int gapX = 10;
+    const int innerX = frameX + 12;
+    const int topY = frameY + 24;
+    const int footerH = showFooter ? 14 : 0;
+    const int usableH = frameH - 34 - footerH;
+    const int rowH = std::max(compact ? 8 : 12, usableH / std::max(1, rows));
+    const int colW = (frameW - 24 - ((cols - 1) * gapX)) / cols;
+
+    Display->setTextColor(TEXT_COLOR);
+    Display->setTextSize(compact ? TEXT_TINY : TEXT_SMALL);
+    Display->setTextDatum(top_left);
+
+    for (size_t i = 0; i < count; ++i) {
+        const int col = static_cast<int>(i) / rows;
+        const int row = static_cast<int>(i) % rows;
+        const int cellX = innerX + col * (colW + gapX);
+        const int cellY = topY + row * rowH;
+
+        auto action = truncateString(actions[i], compact ? 6 : ((cols == 2) ? 8 : 12));
+        const auto key = truncateString(keys[i], compact ? 4 : 6);
+        const int badgeW = std::max(compact ? 18 : 24, Display->textWidth(key.c_str()) + (compact ? 8 : 12));
+        const int badgeH = rowH - 2;
+        const int badgeX = cellX + colW - badgeW;
+        const int badgeY = cellY;
+        const int textY = cellY + std::max(0, (rowH - Display->fontHeight()) / 2);
+
+        Display->drawString(action.c_str(), cellX, textY);
+
+        Display->fillRoundRect(badgeX, badgeY, badgeW, badgeH, 4, RECT_COLOR_DARK);
+        Display->drawRoundRect(badgeX, badgeY, badgeW, badgeH, 4, PRIMARY_COLOR);
+        Display->drawCenterString(key.c_str(), badgeX + badgeW / 2, badgeY + badgeH / 2 - 1);
+    }
+
+    if (showFooter) {
+        Display->setTextColor(PRIMARY_COLOR);
+        Display->setTextSize(TEXT_TINY);
+        Display->drawCenterString(footer.c_str(), Display->width() / 2, frameY + frameH - 16);
+    }
+
+    Display->setTextDatum(middle_center);
 }
 
 void CardputerView::welcome() {

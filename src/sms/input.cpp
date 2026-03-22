@@ -1,6 +1,7 @@
 #include "input.h"
 #include <algorithm>
 #include <M5Cardputer.h>
+#include "share/emu_controls.h"
 #include "share/input.h"
 
 extern bool fullscreen;
@@ -74,17 +75,17 @@ void cardputer_read_input(bool isGG) {
     }
     
     // ---------- Mapping  ----------
-    if (key(CARDPUTER_LEFT_1) || key(CARDPUTER_LEFT_2)) smsButtons |= INPUT_LEFT;
-    if (key(CARDPUTER_RIGHT_1) || key(CARDPUTER_RIGHT_2)) smsButtons |= INPUT_RIGHT;
-    if (key(CARDPUTER_UP_1) || key(CARDPUTER_UP_2)) smsButtons |= INPUT_UP;
-    if (key(CARDPUTER_DOWN_1) || key(CARDPUTER_DOWN_2) || key(CARDPUTER_DOWN_3)) smsButtons |= INPUT_DOWN;
-    if (key(CARDPUTER_BTN_A_1) || key(CARDPUTER_BTN_A_2)) smsButtons |= INPUT_BUTTON1;
-    if (key(CARDPUTER_BTN_B))             smsButtons |= INPUT_BUTTON2;
+    if (share::emuControlPressed(share::EmuProfile::Sms, share::EmuAction::Left)) smsButtons |= INPUT_LEFT;
+    if (share::emuControlPressed(share::EmuProfile::Sms, share::EmuAction::Right)) smsButtons |= INPUT_RIGHT;
+    if (share::emuControlPressed(share::EmuProfile::Sms, share::EmuAction::Up)) smsButtons |= INPUT_UP;
+    if (share::emuControlPressed(share::EmuProfile::Sms, share::EmuAction::Down)) smsButtons |= INPUT_DOWN;
+    if (share::emuControlPressed(share::EmuProfile::Sms, share::EmuAction::A)) smsButtons |= INPUT_BUTTON1;
+    if (share::emuControlPressed(share::EmuProfile::Sms, share::EmuAction::B)) smsButtons |= INPUT_BUTTON2;
 
     if (isGG) {
-        if (key(CARDPUTER_BTN_START)) smsSystem |= INPUT_START;
+        if (share::emuControlPressed(share::EmuProfile::Sms, share::EmuAction::Start)) smsSystem |= INPUT_START;
     } else {
-        if (key(CARDPUTER_BTN_START)) smsSystem |= INPUT_PAUSE;
+        if (share::emuControlPressed(share::EmuProfile::Sms, share::EmuAction::Start)) smsSystem |= INPUT_PAUSE;
     }
 
     input.pad[0]  = smsButtons;

@@ -102,7 +102,7 @@ static void gbc_display_transform(int srcW, int srcH)
   float baseInvScaleX, baseInvScaleY;
 
   if (!full) {
-    // “original” mode, aspect ratio preserved
+    // "original" mode, aspect ratio preserved
     float scaleX = (float)lcdW / (float)srcW;
     float scaleY = (float)lcdH / (float)srcH;
     float scale  = (scaleX < scaleY) ? scaleX : scaleY;
@@ -214,7 +214,7 @@ static void gbc_display_task(void *arg)
       const uint16_t *srcLine = msg.fb + srcY * pitch;
 
       for (int x = 0; x < dstW; ++x) {
-        float srcXf = srcCX + ( (float)x - dstCX ) * invScaleX;
+        float srcXf = srcCX + ((float)x - dstCX) * invScaleX;
         int   srcX  = (int)srcXf;
         if (srcX < 0)      srcX = 0;
         if (srcX >= srcW)  srcX = srcW - 1;
@@ -243,7 +243,7 @@ extern "C" void gbc_display_init(void)
   tft.setSwapBytes(true);
 
   if (!s_frameQ) {
-    s_frameQ = xQueueCreate(2, sizeof(GbcFrameMsg));  // 2 frames max 
+    s_frameQ = xQueueCreate(2, sizeof(GbcFrameMsg));  // 2 frames max
     if (!s_frameQ) {
       printf("[GBC-DISP] queue create failed\n");
     }

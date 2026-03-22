@@ -1,4 +1,5 @@
 #include "genesis_input.h"
+#include "share/emu_controls.h"
 #include "share/input.h"
 
 #include <M5Cardputer.h>
@@ -101,27 +102,14 @@ extern "C" void genesis_controller_poll() {
     }
 
     // --------- CLAVIER : ZQSD / ,./ ----------
-    const bool leftKey  =
-        M5Cardputer.Keyboard.isKeyPressed(CARDPUTER_LEFT_1) ||
-        M5Cardputer.Keyboard.isKeyPressed(CARDPUTER_LEFT_2);
-
-    const bool rightKey =
-        M5Cardputer.Keyboard.isKeyPressed(CARDPUTER_RIGHT_1) ||
-        M5Cardputer.Keyboard.isKeyPressed(CARDPUTER_RIGHT_2);
-
-    const bool upKey =
-        M5Cardputer.Keyboard.isKeyPressed(CARDPUTER_UP_1) ||
-        M5Cardputer.Keyboard.isKeyPressed(CARDPUTER_UP_2);
-
-    const bool downKey =
-        M5Cardputer.Keyboard.isKeyPressed(CARDPUTER_DOWN_1) ||
-        M5Cardputer.Keyboard.isKeyPressed(CARDPUTER_DOWN_2) ||
-        M5Cardputer.Keyboard.isKeyPressed(CARDPUTER_DOWN_3);
-
-    const bool btnAKey     = M5Cardputer.Keyboard.isKeyPressed(CARDPUTER_BTN_A_1);
-    const bool btnBKey     = M5Cardputer.Keyboard.isKeyPressed(CARDPUTER_BTN_B);
-    const bool btnCKey     = M5Cardputer.Keyboard.isKeyPressed(CARDPUTER_BTN_A_2);
-    const bool btnStartKey = M5Cardputer.Keyboard.isKeyPressed(CARDPUTER_BTN_START);
+    const bool leftKey     = share::emuControlPressed(share::EmuProfile::Genesis, share::EmuAction::Left);
+    const bool rightKey    = share::emuControlPressed(share::EmuProfile::Genesis, share::EmuAction::Right);
+    const bool upKey       = share::emuControlPressed(share::EmuProfile::Genesis, share::EmuAction::Up);
+    const bool downKey     = share::emuControlPressed(share::EmuProfile::Genesis, share::EmuAction::Down);
+    const bool btnAKey     = share::emuControlPressed(share::EmuProfile::Genesis, share::EmuAction::A);
+    const bool btnBKey     = share::emuControlPressed(share::EmuProfile::Genesis, share::EmuAction::B);
+    const bool btnCKey     = share::emuControlPressed(share::EmuProfile::Genesis, share::EmuAction::C);
+    const bool btnStartKey = share::emuControlPressed(share::EmuProfile::Genesis, share::EmuAction::Start);
 
     // Fusion clavier + I2C
     left    = left    || leftKey;

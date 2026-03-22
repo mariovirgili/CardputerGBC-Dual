@@ -51,8 +51,8 @@ namespace share
 
     void checkCommonInput(const Keyboard_Class::KeysState& status)
     {
-        // Bouton GO → restart (hack for quit game and reset memory)
-        if (M5Cardputer.BtnA.pressedFor(1000)) {
+        // GO short click during emulation -> mark quit and restart to ROM browser.
+        if (M5Cardputer.BtnA.wasClicked()) {
             Preferences prefs; // Mark quit game flag in NVS
             prefs.begin("cardputer_emu", false);  // RW
             prefs.putBool("quit_game", true);

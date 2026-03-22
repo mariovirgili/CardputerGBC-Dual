@@ -24,6 +24,42 @@
 #include "ngp/race/retro_compat.h"
 #include "esp_task_wdt.h"
 #include "share/input.h"
+#include "share/emu_controls.h"
+
+static bool getProfileForRomType(RomType romType, share::EmuProfile& outProfile) {
+  switch (romType) {
+    case ROM_TYPE_NES:
+      outProfile = share::EmuProfile::Nes;
+      return true;
+    case ROM_TYPE_SMS:
+    case ROM_TYPE_GAMEGEAR:
+      outProfile = share::EmuProfile::Sms;
+      return true;
+    case ROM_TYPE_NGP:
+      outProfile = share::EmuProfile::Ngp;
+      return true;
+    case ROM_TYPE_GENESIS:
+      outProfile = share::EmuProfile::Genesis;
+      return true;
+    case ROM_TYPE_WS:
+      outProfile = share::EmuProfile::Ws;
+      return true;
+    case ROM_TYPE_PCE:
+      outProfile = share::EmuProfile::Pce;
+      return true;
+    case ROM_TYPE_GB:
+      outProfile = share::EmuProfile::Gbc;
+      return true;
+    case ROM_TYPE_LYNX:
+      outProfile = share::EmuProfile::Lynx;
+      return true;
+    case ROM_TYPE_SNES:
+      outProfile = share::EmuProfile::Snes;
+      return true;
+    default:
+      return false;
+  }
+}
 
 static std::string formatRomSizeLabel(size_t bytes) {
   char buffer[32];
@@ -200,31 +236,58 @@ void setup() {
 
   // Check the extension to choose the emulator
   auto ext = getRomType(romPath);
+  share::EmuProfile emuProfile = share::EmuProfile::Nes;
+  const bool hasProfile = getProfileForRomType(ext, emuProfile);
+  if (hasProfile) {
+    share::emuControlsLoad(sd, emuProfile);
+  }
 
   // Show keymapping
   display.topBar("- + SOUND [ ] BRIGHT", false, false);
-  int numButtons = (ext == ROM_TYPE_GENESIS) ? 3 : 2;
-  numButtons = (ext == ROM_TYPE_SNES) ? 6 : numButtons;
-  display.showKeymapping(numButtons);
+  if (hasProfile) {
+    display.showControlBindings(
+      share::emuControlActionLabels(emuProfile),
+      share::emuControlKeyLabels(emuProfile),
+      "OK = EDIT"
+    );
+  } else {
+    int numButtons = (ext == ROM_TYPE_GENESIS) ? 3 : 2;
+    numButtons = (ext == ROM_TYPE_SNES) ? 6 : numButtons;
+    display.showKeymapping(numButtons);
+  }
 
   // Wait for key press or show tips
   uint32_t lastUpdate = millis();
   int state = 0;
   for (;;) {
-    char key = input.readChar();
+    char key = input.handler();
+    if (key == KEY_OK && hasProfile) {
+      share::emuControlsEdit(sd, emuProfile, display, input);
+      input.flushInput(40);
+      display.topBar("- + SOUND [ ] BRIGHT", false, false);
+      display.showControlBindings(
+        share::emuControlActionLabels(emuProfile),
+        share::emuControlKeyLabels(emuProfile),
+        "OK = EDIT"
+      );
+      lastUpdate = millis();
+      continue;
+    }
     if (key != KEY_NONE) break;
 
     // Show tips
     uint32_t now = millis();
+    const int stateCount = hasProfile ? 6 : 5;
     if (now - lastUpdate >= 2000) {
       lastUpdate = now;
-      state = (state + 1) % 5;
+      state = (state + 1) % stateCount;
       switch (state) {
         case 0: display.topBar("PRESS ANY KEY TO START", false, false); break;
         case 1: display.topBar("KEY \\ SCREEN MODE",       false, false); break;
-        case 2: display.topBar("G0 1SEC TO QUIT GAME",     false, false); break;
+        case 2: display.topBar("GO TO QUIT GAME",          false, false); break;
         case 3: display.topBar("FN + ARROWS FOR ZOOM",     false, false); break;
         case 4: display.topBar("- + SOUND [ ] BRIGHT",     false, false); break;
+        case 5: display.topBar("ENTER EDIT CONTROLS",      false, false); break;
       }
     }
     delay(1);

@@ -2,6 +2,7 @@
 
 #include <M5Cardputer.h>
 #include <Arduino.h>
+#include "share/emu_controls.h"
 #include "share/input.h"
 #include "handy/handy.h"
 #include "handy/susie.h"
@@ -51,54 +52,41 @@ extern "C" int lynx_input_poll(void)
 
     // ================== DIRECTIONS ==================
     // Left : 'a' ou ','
-    if (M5Cardputer.Keyboard.isKeyPressed(CARDPUTER_LEFT_1) ||
-        M5Cardputer.Keyboard.isKeyPressed(CARDPUTER_LEFT_2)) {
+    if (share::emuControlPressed(share::EmuProfile::Lynx, share::EmuAction::Left)) {
         pad |= BUTTON_LEFT;
     }
 
-    // Right : 'd' ou '/'
-    if (M5Cardputer.Keyboard.isKeyPressed(CARDPUTER_RIGHT_1) ||
-        M5Cardputer.Keyboard.isKeyPressed(CARDPUTER_RIGHT_2)) {
+    if (share::emuControlPressed(share::EmuProfile::Lynx, share::EmuAction::Right)) {
         pad |= BUTTON_RIGHT;
     }
 
-    // Up : 'e' ou ';'
-    if (M5Cardputer.Keyboard.isKeyPressed(CARDPUTER_UP_1) ||
-        M5Cardputer.Keyboard.isKeyPressed(CARDPUTER_UP_2)) {
+    if (share::emuControlPressed(share::EmuProfile::Lynx, share::EmuAction::Up)) {
         pad |= BUTTON_UP;
     }
 
-    // Down : 's', '.' ou 'z'
-    if (M5Cardputer.Keyboard.isKeyPressed(CARDPUTER_DOWN_1) ||
-        M5Cardputer.Keyboard.isKeyPressed(CARDPUTER_DOWN_2) ||
-        M5Cardputer.Keyboard.isKeyPressed(CARDPUTER_DOWN_3)) {
+    if (share::emuControlPressed(share::EmuProfile::Lynx, share::EmuAction::Down)) {
         pad |= BUTTON_DOWN;
     }
 
     // ================== LYNX BUTTONS ==================
     // A  (main fire)
-    if (M5Cardputer.Keyboard.isKeyPressed(CARDPUTER_BTN_A_1) ||
-        M5Cardputer.Keyboard.isKeyPressed(CARDPUTER_BTN_A_2)) {
+    if (share::emuControlPressed(share::EmuProfile::Lynx, share::EmuAction::A)) {
         pad |= BUTTON_A;
     }
 
-    // B  (second bouton)
-    if (M5Cardputer.Keyboard.isKeyPressed(CARDPUTER_BTN_B)) {
+    if (share::emuControlPressed(share::EmuProfile::Lynx, share::EmuAction::B)) {
         pad |= BUTTON_B;
     }
 
-    // START -> Pause
-    if (M5Cardputer.Keyboard.isKeyPressed(CARDPUTER_BTN_START)) {
+    if (share::emuControlPressed(share::EmuProfile::Lynx, share::EmuAction::Pause)) {
         pad |= BUTTON_PAUSE;
     }
 
-    // SELECT -> OPT1
-    if (M5Cardputer.Keyboard.isKeyPressed(CARDPUTER_BTN_SELECT)) {
+    if (share::emuControlPressed(share::EmuProfile::Lynx, share::EmuAction::Option)) {
         pad |= BUTTON_OPT1;
     }
 
-    //  OPT2 (seems used as mute i)
-    if (M5Cardputer.Keyboard.isKeyPressed('3')) {
+    if (share::emuControlPressed(share::EmuProfile::Lynx, share::EmuAction::Option2)) {
         pad |= BUTTON_OPT2;
     }
 
