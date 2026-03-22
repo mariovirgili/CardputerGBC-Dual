@@ -24,6 +24,7 @@ public:
     void close();
     bool isFile(const std::string& filePath);
     bool isDirectory(const std::string& path);
+    bool getFileSize(const std::string& filePath, size_t& outSize);
     bool getSdState();
 
     std::vector<std::string> listElements(const std::string& dirPath, size_t limit = 0);

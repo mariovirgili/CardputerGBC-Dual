@@ -2,6 +2,7 @@
 
 #include <string>
 #include <algorithm>
+#include <cctype>
 #include <Preferences.h>
 #include "cardputer/SdService.h"
 #include "cardputer/CardputerView.h"
@@ -13,6 +14,91 @@ static inline std::string _basename(const std::string& path) {
     if (path.empty()) return "";
     size_t slash = path.find_last_of("/\\");
     return (slash == std::string::npos) ? path : path.substr(slash + 1);
+}
+
+static constexpr const char* ROM_BROWSER_STATE_DIR = "/.cardputer";
+static constexpr const char* ROM_BROWSER_FOLDER_FILE = "/.cardputer/last_rom_folder.txt";
+
+static inline std::string normalizeRomBrowserPath(const std::string& path) {
+    if (path == "/sd") {
+        return "/";
+    }
+    if (path.rfind("/sd/", 0) == 0) {
+        return path.substr(3);
+    }
+    return path;
+}
+
+static inline std::string normalizeRomFolderPath(const std::string& folderPath) {
+    std::string cleanPath = normalizeRomBrowserPath(folderPath);
+
+    if (cleanPath.empty()) {
+        return "/";
+    }
+    if (cleanPath.front() != '/') {
+        cleanPath = "/" + cleanPath;
+    }
+    while (cleanPath.size() > 1 && cleanPath.back() == '/') {
+        cleanPath.pop_back();
+    }
+    return cleanPath;
+}
+
+static inline std::string extractRomFolder(const std::string& filePath) {
+    std::string cleanPath = normalizeRomFolderPath(filePath);
+    size_t slash = cleanPath.find_last_of("/\\");
+    if (slash == std::string::npos || slash == 0) {
+        return "/";
+    }
+    return cleanPath.substr(0, slash);
+}
+
+static inline bool saveRomFolderToSd(
+    SdService& sdService,
+    const std::string& folderPath
+) {
+    if (!sdService.getSdState()) {
+        return false;
+    }
+    if (!sdService.ensureDirectory(ROM_BROWSER_STATE_DIR)) {
+        return false;
+    }
+
+    std::string cleanPath = normalizeRomFolderPath(folderPath);
+    return sdService.writeFile(ROM_BROWSER_FOLDER_FILE, cleanPath + "\n");
+}
+
+static inline std::string getRomFolderFromSd(SdService& sdService) {
+    if (!sdService.getSdState()) {
+        return "";
+    }
+
+    std::string rawPath = sdService.readFile(ROM_BROWSER_FOLDER_FILE);
+    if (rawPath.empty()) {
+        return "";
+    }
+
+    while (!rawPath.empty() &&
+           std::isspace(static_cast<unsigned char>(rawPath.back()))) {
+        rawPath.pop_back();
+    }
+
+    size_t firstNonSpace = 0;
+    while (firstNonSpace < rawPath.size() &&
+           std::isspace(static_cast<unsigned char>(rawPath[firstNonSpace]))) {
+        ++firstNonSpace;
+    }
+
+    if (firstNonSpace >= rawPath.size()) {
+        return "";
+    }
+
+    std::string cleanPath = normalizeRomFolderPath(rawPath.substr(firstNonSpace));
+    if (!sdService.isDirectory(cleanPath)) {
+        return "";
+    }
+
+    return cleanPath;
 }
 
 static inline std::string getLastGameFromNvs(
@@ -53,9 +139,7 @@ static inline void saveLastGameToNvs(const std::string& filePath) {
     Preferences prefs;
     prefs.begin("cardputer_emu", false);
 
-    std::string cleanPath = filePath;
-    if (cleanPath.rfind("/sd/", 0) == 0)
-        cleanPath = cleanPath.substr(3); // retire /sd
+    std::string cleanPath = normalizeRomBrowserPath(filePath);
 
     prefs.putString("last_game", cleanPath.c_str());
     prefs.end();
@@ -76,14 +160,7 @@ static inline std::string getRomFolderFromNvs(
     }
 
     std::string path = lastGame.c_str();
-
-    // Get the folder
-    size_t slash = path.find_last_of("/\\");
-    if (slash == std::string::npos) {
-        return "";
-    }
-
-    return path.substr(0, slash);
+    return extractRomFolder(path);
 }
 
 static inline bool isQuittingGame() {

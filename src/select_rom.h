@@ -8,6 +8,7 @@
 #include "cardputer/CardputerView.h"
 #include "cardputer/VerticalSelector.h" 
 #include "cardputer/CardputerInput.h"
+#include "last_game.h"
 
 // Returns the absolute path of a .nes selected file
 // - Navigates folders with verticalSelector
@@ -136,6 +137,7 @@ static inline std::string getRomPath(SdService& sdService, CardputerView& displa
             display.subMessage("Loading...", 0);
             elementNames = sdService.getCachedDirectoryElements(currentPath);
             previousPath = currentPath;
+            saveRomFolderToSd(sdService, currentPath);
 
             if (elementNames.empty()) {
                 display.subMessage("No elements found", 2000);
@@ -193,6 +195,7 @@ static inline std::string getRomPath(SdService& sdService, CardputerView& displa
                 input.waitPress();
                 continue; // non rom file
             }
+            saveRomFolderToSd(sdService, currentPath);
             return "/sd" + nextPath; // file selected
         }
     }

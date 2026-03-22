@@ -25,6 +25,49 @@
 #include "esp_task_wdt.h"
 #include "share/input.h"
 
+static std::string formatRomSizeLabel(size_t bytes) {
+  char buffer[32];
+  snprintf(buffer, sizeof(buffer), "%.2f MB", static_cast<double>(bytes) / (1024.0 * 1024.0));
+  return std::string(buffer);
+}
+
+static bool ensureSelectedRomFitsPartition(
+    SdService& sd,
+    CardputerView& display,
+    CardputerInput& input,
+    const esp_partition_t* romPart,
+    std::string& romPath
+) {
+  if (!romPart) {
+    return false;
+  }
+
+  while (!romPath.empty()) {
+    size_t romFileSize = 0;
+    std::string browserPath = normalizeRomBrowserPath(romPath);
+    std::string browserFolder = extractRomFolder(browserPath);
+
+    if (sd.getFileSize(browserPath, romFileSize)) {
+      if (romFileSize <= romPart->size) {
+        return true;
+      }
+
+      display.topBar("ROM IS TOO HEAVY", false, false);
+      display.subMessage(formatRomSizeLabel(romFileSize) + " > " + formatRomSizeLabel(romPart->size), 1500);
+      display.subMessage("Choose another ROM", 0);
+    } else {
+      display.topBar("ROM FILE ERROR", false, false);
+      display.subMessage("Select another ROM", 0);
+    }
+
+    saveRomFolderToSd(sd, browserFolder);
+    input.waitPress();
+    romPath = getRomPath(sd, display, input, browserFolder, true);
+  }
+
+  return false;
+}
+
 void setup() {
   // Set high priority for the current task (where the emulator will run)
   vTaskPrioritySet(NULL, 19);
@@ -55,7 +98,10 @@ void setup() {
   }
 
   std::string romPath;
-  auto romFolder = getRomFolderFromNvs(display, input, sd);
+  auto romFolder = getRomFolderFromSd(sd);
+  if (romFolder.empty()) {
+    romFolder = getRomFolderFromNvs(display, input, sd);
+  }
   romFolder = romFolder.empty() ? "/" : romFolder;
 
   if (isQuittingGame()) {
@@ -75,11 +121,6 @@ void setup() {
     }
   }
 
-  printf("Selected ROM: %s\n", romPath.c_str());
-
-  display.topBar("COPYING ROM TO FLASH", false, false);
-  display.subMessage("Loading...", 0);
-  
   // Find the rom partition (SPIFFS)
   const esp_partition_t* romPart = findRomPartition("spiffs");
   if (!romPart) {
@@ -90,10 +131,29 @@ void setup() {
     }
   }
 
+  if (!ensureSelectedRomFitsPartition(sd, display, input, romPart, romPath)) {
+    while (1) {
+      display.topBar("ERROR", false, false);
+      display.subMessage("No ROM selected", 0);
+      delay(1500);
+    }
+  }
+
+  printf("Selected ROM: %s\n", romPath.c_str());
+
+  display.topBar("COPYING ROM TO FLASH", false, false);
+  display.subMessage("Loading...", 0);
+
   // Copy the ROM file to the partition
   size_t romSize = 0;
   if (!copyFileToPartition(romPath.c_str(), romPart, &romSize, CardputerView::copyProgress, &display)) {
-    // User is using the launcher
+    
+    // --- MODIFICATION START: Disabled dynamic partition switching ---
+    // The original code checked isLauncherLayout() and asked to flash partitions.
+    // For Cardputer ADV / Double Screen, we disable this to avoid changing the partition table at runtime
+    // which could break the dual screen layout or cause bootloops.
+    
+    /* // User is using the launcher
     if (isLauncherLayout()) {
       // Ask to flash the launcher Game Station partition to unlock full size
       ConfirmationSelector confirm(display, input);
@@ -112,12 +172,14 @@ void setup() {
         }
       }
     }
+    */
+    // --- MODIFICATION END ---
     
-    // Rom limit is reached (either launcher default 1MB/4.5MB or normal 6MB)
+    // Generic flash copy failure
     while (1) {
-        display.topBar("ROM IS TOO HEAVY", false, false);
+        display.topBar("ROM COPY ERROR", false, false);
         display.subMessage("Copy ROM to flash failed", 1500);
-        display.subMessage("ROM limit is reached", 1500);
+        display.subMessage("Restart and retry", 1500);
         delay(1500);
     }
   }
@@ -156,6 +218,7 @@ void setup() {
     uint32_t now = millis();
     if (now - lastUpdate >= 2000) {
       lastUpdate = now;
+      state = (state + 1) % 5;
       switch (state) {
         case 0: display.topBar("PRESS ANY KEY TO START", false, false); break;
         case 1: display.topBar("KEY \\ SCREEN MODE",       false, false); break;
@@ -163,7 +226,6 @@ void setup() {
         case 3: display.topBar("FN + ARROWS FOR ZOOM",     false, false); break;
         case 4: display.topBar("- + SOUND [ ] BRIGHT",     false, false); break;
       }
-      state = (state + 1) % 5;
     }
     delay(1);
   }

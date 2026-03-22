@@ -47,6 +47,25 @@ bool SdService::isDirectory(const std::string& path) {
     return false;
 }
 
+bool SdService::getFileSize(const std::string& filePath, size_t& outSize) {
+    outSize = 0;
+    if (!sdCardMounted) {
+        return false;
+    }
+
+    File file = SD.open(filePath.c_str(), FILE_READ);
+    if (!file || file.isDirectory()) {
+        if (file) {
+            file.close();
+        }
+        return false;
+    }
+
+    outSize = static_cast<size_t>(file.size());
+    file.close();
+    return true;
+}
+
 bool SdService::getSdState() {
     return sdCardMounted;
 }
@@ -140,6 +159,10 @@ std::string SdService::readFile(const std::string& filePath) {
 
 bool SdService::writeFile(const std::string& filePath, const std::string& data) {
     if (!sdCardMounted) {
+        return false;
+    }
+
+    if (SD.exists(filePath.c_str()) && !SD.remove(filePath.c_str())) {
         return false;
     }
 
