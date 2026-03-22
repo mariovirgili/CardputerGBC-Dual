@@ -1,5 +1,5 @@
 #include "rom_flash_io.h"
-
+#include <esp_spiffs.h> // added to avoid crash when unmounting partitions
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>

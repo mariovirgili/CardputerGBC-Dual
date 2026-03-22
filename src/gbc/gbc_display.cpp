@@ -1,15 +1,22 @@
 #include "gbc_display.h"
 
 #include <Arduino.h>
-#include <M5Cardputer.h>
+#include <TFT_eSPI.h>
+// Include the dual screen setup
+#include "../tft_setup.h"
 #include "esp_heap_caps.h"
 #include <math.h>
+
 extern "C" {
   #include "gnuboy/gnuboy.h"
 }
 
-static constexpr int LCD_W = 240;
-static constexpr int LCD_H = 135;
+// Instance for external screen
+TFT_eSPI tft = TFT_eSPI();
+
+// Target resolution for ILI9341
+static constexpr int LCD_W = 320;
+static constexpr int LCD_H = 240;
 
 // Globals
 bool gbcFullScreen = true;
@@ -55,8 +62,9 @@ static int  s_lastLcdH        = 0;
 
 static void gbc_display_transform(int srcW, int srcH)
 {
-  int lcdW = M5Cardputer.Display.width();
-  int lcdH = M5Cardputer.Display.height();
+  // Use TFT dimensions
+  int lcdW = LCD_W;
+  int lcdH = LCD_H;
 
   if (lcdW <= 0 || lcdH <= 0 || srcW <= 0 || srcH <= 0) {
     return;
@@ -65,7 +73,7 @@ static void gbc_display_transform(int srcW, int srcH)
   bool full = gbcFullScreen;
   int  zoom = (gbcZoomPercent > 0) ? gbcZoomPercent : 100;
 
-  // nothing change
+  // nothing changed
   if (zoom          == s_lastZoomPercent &&
       full          == s_lastFullScreen  &&
       srcW          == s_lastSrcW        &&
@@ -76,7 +84,7 @@ static void gbc_display_transform(int srcW, int srcH)
   }
 
   if (!full) {
-    M5Cardputer.Display.fillScreen(TFT_BLACK);
+    tft.fillScreen(TFT_BLACK);
   }
 
   s_lastZoomPercent = zoom;
@@ -113,7 +121,7 @@ static void gbc_display_transform(int srcW, int srcH)
     baseInvScaleX = (float)srcW / (float)dstW;
     baseInvScaleY = (float)srcH / (float)dstH;
   } else {
-    // fullscreen
+    // fullscreen (stretched)
     dstW = lcdW;
     dstH = lcdH;
     xOffset = 0;
@@ -193,11 +201,12 @@ static void gbc_display_task(void *arg)
       continue;
     }
 
-    M5Cardputer.Display.startWrite();
+    // Use TFT_eSPI for rendering
+    tft.startWrite();
 
     for (int y = 0; y < dstH; ++y) {
-      float fy    = (float)y - dstCX;
-      float srcYf = srcCY + ( (float)y - dstCY ) * invScaleY;
+      float fy    = (float)y - dstCY;
+      float srcYf = srcCY + fy * invScaleY; // Optimized simplified math
       int   srcY  = (int)srcYf;
       if (srcY < 0)      srcY = 0;
       if (srcY >= srcH)  srcY = srcH - 1;
@@ -214,11 +223,11 @@ static void gbc_display_task(void *arg)
       }
 
       int dstY = yOffset + y;
-      M5Cardputer.Display.setAddrWindow(xOffset, dstY, dstW, 1);
-      M5Cardputer.Display.pushPixels(s_lineBuf, dstW);
+      tft.setAddrWindow(xOffset, dstY, dstW, 1);
+      tft.pushColors(s_lineBuf, dstW);
     }
 
-    M5Cardputer.Display.endWrite();
+    tft.endWrite();
     vTaskDelay(0);
   }
 }
@@ -227,8 +236,11 @@ static void gbc_display_task(void *arg)
 
 extern "C" void gbc_display_init(void)
 {
-  M5Cardputer.Display.setSwapBytes(true);
-  M5Cardputer.Display.fillScreen(TFT_BLACK);
+  // Initialize External TFT
+  tft.begin();
+  tft.setRotation(3); // Landscape
+  tft.fillScreen(TFT_BLACK);
+  tft.setSwapBytes(true);
 
   if (!s_frameQ) {
     s_frameQ = xQueueCreate(2, sizeof(GbcFrameMsg));  // 2 frames max 
@@ -251,7 +263,7 @@ extern "C" void gbc_display_start(void)
       nullptr,
       5,           // priority
       &s_task,
-      0            // core
+      1            // core 1 to avoid interference with emu on core 0 if possible
     );
     if (ok != pdPASS) {
       printf("[GBC-DISP] task create failed\n");

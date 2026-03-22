@@ -9,6 +9,10 @@
 #include "display.h"
 #include "srtc.h"
 
+// Fix implicit declaration warnings
+extern void S9xAPUWritePort(uint32_t Address, uint8_t Byte);
+extern uint8_t S9xAPUReadPort(uint32_t Address);
+
 extern const uint8_t mul_brightness [16][32];
 
 static uint32_t justifiers = 0xffff00aa;

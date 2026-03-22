@@ -13,7 +13,7 @@ static uint16_t* s_gbFramebuf = nullptr;
 static int16_t* s_audioBuf = nullptr;
 extern int gbc_sampleRate;
 
-// callback video GNUBOY
+// GNUBOY video callback
 static void gbc_video_callback(void *buffer)
 {
     // buffer == s_gbFramebuf
@@ -21,7 +21,7 @@ static void gbc_video_callback(void *buffer)
     gbc_display_submit_frame(s_gbFramebuf, GB_WIDTH, GB_WIDTH, GB_HEIGHT);
 }
 
-// callback audio GNUBOY
+// GNUBOY audio callback
 void gbc_audio_callback(void *buffer, size_t length)
 {
     if (!buffer || length == 0) return;
@@ -30,7 +30,7 @@ void gbc_audio_callback(void *buffer, size_t length)
 }
 
 void gbc_allocate_buffers() {
-    // framebuffer GNUBOY
+    // GNUBOY framebuffer
     size_t fbSize = GB_WIDTH * GB_HEIGHT * sizeof(uint16_t);
     s_gbFramebuf = (uint16_t*)heap_caps_malloc(
         fbSize,
@@ -42,7 +42,7 @@ void gbc_allocate_buffers() {
     }
     memset(s_gbFramebuf, 0, fbSize);
 
-    // buffer audio GNUBOY
+    // GNUBOY audio buffer
     s_audioBuf = (int16_t*)heap_caps_malloc(
         2048 * sizeof(int16_t),
         MALLOC_CAP_8BIT | MALLOC_CAP_INTERNAL
@@ -73,7 +73,7 @@ void run_gbc(const uint8_t* romData, size_t romLen, const char* romPathOrName) {
     gbc_sound_init(gbc_sampleRate);
     gbc_allocate_buffers();
     
-    // init core GNUBOY
+    // init GNUBOY core
     int ret = gnuboy_init(
         gbc_sampleRate,
         GB_AUDIO_MONO_S16,
@@ -111,7 +111,7 @@ void run_gbc(const uint8_t* romData, size_t romLen, const char* romPathOrName) {
     gbPalette                 = gbcGame ? -1 : gbPalette;
     int lastPalette           = -1;
 
-    printf("Palette initiale: %d\n", gbPalette);
+    printf("Initial palette: %d\n", gbPalette);
 
     printf("[GBC] starting main loop @ %d FPS\n", targetFps);
 
