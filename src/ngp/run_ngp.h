@@ -4,7 +4,7 @@
 #include <stdint.h>
 
 #ifdef __cplusplus
-void run_ngp(const uint8_t* rom_base, size_t rom_size, int machine);
+void run_ngp(const uint8_t* rom_base, size_t rom_size, int machine, const char* romName);
 #endif
 
 #ifdef __cplusplus

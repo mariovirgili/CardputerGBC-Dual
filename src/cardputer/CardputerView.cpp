@@ -189,7 +189,7 @@ void CardputerView::showControlBindings(
 
     Display->setTextSize(TEXT_WIDE);
     Display->setTextColor(PRIMARY_COLOR);
-    Display->drawCenterString("CONTROLS", Display->width() / 2, 45);
+    Display->drawCenterString("CONTROLS", Display->width() / 2, 44);
 
     const size_t count = std::min(actions.size(), keys.size());
     if (count == 0) {
@@ -224,19 +224,19 @@ void CardputerView::showControlBindings(
         const int badgeH = rowH - 2;
         const int badgeX = cellX + colW - badgeW;
         const int badgeY = cellY;
-        const int textY = cellY + std::max(0, (rowH - Display->fontHeight()) / 2);
+        const int textY = cellY + std::max(0, (rowH - Display->fontHeight()) / 2) - 1;
 
         Display->drawString(action.c_str(), cellX, textY);
 
         Display->fillRoundRect(badgeX, badgeY, badgeW, badgeH, 4, RECT_COLOR_DARK);
         Display->drawRoundRect(badgeX, badgeY, badgeW, badgeH, 4, PRIMARY_COLOR);
-        Display->drawCenterString(key.c_str(), badgeX + badgeW / 2, badgeY + badgeH / 2 - 1);
+        Display->drawCenterString(key.c_str(), badgeX + badgeW / 2, badgeY + badgeH / 2 - 2);
     }
 
     if (showFooter) {
         Display->setTextColor(PRIMARY_COLOR);
         Display->setTextSize(TEXT_TINY);
-        Display->drawCenterString(footer.c_str(), Display->width() / 2, frameY + frameH - 16);
+        Display->drawCenterString(footer.c_str(), Display->width() / 2, frameY + frameH - 17);
     }
 
     Display->setTextDatum(middle_center);
@@ -246,12 +246,9 @@ void CardputerView::welcome() {
     Display->setSwapBytes(true);
     Display->pushImage(0, 0, BGGAMESTATION_S_WIDTH, BGGAMESTATION_S_HEIGHT, bggamestation_s);
    
-    // Title
-    std::string title = "Game Station 1.0";
     Display->setTextColor(TEXT_COLOR);
     Display->setTextSize(TEXT_BIG);
-    Display->setCursor(getCenterOffset(title), 65);
-    Display->printf("%s", title.c_str());
+    Display->drawCenterString("GameStation 1.0", Display->width() / 2, (Display->height() / 2) - 15);
 
     Display->setSwapBytes(false);
 }
@@ -1151,6 +1148,7 @@ void CardputerView::showValidExt(const std::vector<std::string>& exts) {
     Display->setTextSize(TEXT_MEDIUM);
     Display->setTextColor(TEXT_COLOR);
 }
+
 
 void CardputerView::copyProgress(size_t total, size_t current, void* userCtx) {
     if (!Display) return;

@@ -23,4 +23,7 @@ void graphics_paint(unsigned char render);
 
 #ifdef __cplusplus
 }
+
+// Show ROM info + controls on external TFT (when game renders on internal)
+void ngc_display_show_external_info(const char* romTitle);
 #endif

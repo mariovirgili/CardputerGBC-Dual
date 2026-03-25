@@ -5,6 +5,8 @@
 
 #include "cardputer/CardputerView.h"
 #include "cardputer/CardputerInput.h"
+#include "share/display_target.h"
+#include "share/emu_controls.h"
 
 #include "sms/display.h"
 #include "sms/sound.h"
@@ -16,6 +18,20 @@ void run_sms(const uint8_t* romPtr, size_t romLen, bool isGG, const char* romNam
   CardputerView display;
   CardputerInput input;
   display.initialize();
+
+  // Dual-screen info: show info on whichever screen is NOT rendering the game
+  const bool useExternal = (g_emu_display_target == EMU_DISPLAY_EXTERNAL);
+  if (useExternal) {
+    const char* sysLabel = isGG ? "GAME GEAR ON EXTERNAL TFT" : "SMS ON EXTERNAL TFT";
+    display.topBar(sysLabel, false, false);
+    display.showControlBindings(
+      share::emuControlActionLabels(share::EmuProfile::Sms),
+      share::emuControlKeyLabels(share::EmuProfile::Sms),
+      "GO = QUIT"
+    );
+  } else {
+    sms_display_show_external_info(romName, isGG);
+  }
 
   // Buffers video & SRAM
   uint8_t* videoBuf = (uint8_t*)heap_caps_aligned_alloc(

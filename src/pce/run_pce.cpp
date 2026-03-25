@@ -9,6 +9,9 @@ extern "C" {
 #include "pce_display.h"
 #include "pce_sound.h"
 #include "pce_input.h"
+#include "../share/display_target.h"
+#include "../share/emu_controls.h"
+#include "../cardputer/CardputerView.h"
 
 // ================== SAVE STATE (NYI) ==================
 
@@ -35,14 +38,18 @@ void run_pce(const uint8_t* rom, size_t len, const char* rom_name)
   printf("[PCE] ROM size: %u bytes (%s)\n", (unsigned)len, rom_name);
   const int sampleRate = 22050;
 
-  M5Cardputer.Display.setRotation(1);
-  M5Cardputer.Display.setSwapBytes(true);
-  M5Cardputer.Display.fillScreen(TFT_BLACK);
+  const bool useExternal = (g_emu_display_target == EMU_DISPLAY_EXTERNAL);
+
+  if (!useExternal) {
+    M5Cardputer.Display.setRotation(1);
+    M5Cardputer.Display.setSwapBytes(true);
+    M5Cardputer.Display.fillScreen(TFT_BLACK);
+  }
 
   pce_display_init();
   pce_display_start();
-  pce_sound_init(sampleRate);
 
+  // Initialize PCE core BEFORE starting audio (psg_update needs PSG init)
   InitPCE(sampleRate, false);
   printf("[PCE] Core initialized\n");
 
@@ -52,6 +59,24 @@ void run_pce(const uint8_t* rom, size_t len, const char* rom_name)
   }
   printf("[PCE] ROM loaded successfully\n");
 
-  printf("[PCE] Entering RunPCE() loop\n");
+  // Start audio AFTER InitPCE so PSG is ready for psg_update()
+  pce_sound_init(sampleRate);
+
+  if (useExternal) {
+    // Game on external TFT → show control bindings on internal LCD
+    CardputerView intDisplay;
+    intDisplay.topBar("PCE ON EXTERNAL TFT", false, false);
+    intDisplay.showControlBindings(
+      share::emuControlActionLabels(share::EmuProfile::Pce),
+      share::emuControlKeyLabels(share::EmuProfile::Pce),
+      "GO = QUIT"
+    );
+  } else {
+    // Game on internal LCD → show ROM info + controls on external TFT
+    pce_display_show_external_info(rom_name);
+  }
+
+  printf("[PCE] Entering RunPCE() loop | display => %s\n",
+         useExternal ? "external" : "internal");
   RunPCE();
 }

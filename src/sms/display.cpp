@@ -1,19 +1,37 @@
 #include "display.h"
 #include <M5Cardputer.h>
 #include <M5Unified.h>
+#include <TFT_eSPI.h>
+#include "../tft_setup.h"
+#include "../share/display_target.h"
+#include "../share/emu_controls.h"
 #include <algorithm>
 #include <string.h>
+#include <string>
 
 extern "C" {
   #include "sms/smsplus/shared.h"
   #include "sms/smsplus/vdp.h"
 }
 
+// External TFT instance (file-scoped)
+static TFT_eSPI s_tft;
+static constexpr int EXT_W = 320;
+static constexpr int EXT_H = 240;
+static bool s_use_ext = false;
+static bool s_use_12bit = false;
+
+// Internal display constants
+static constexpr int INT_W = 240;
+static constexpr int INT_H = 135;
+
+// Dynamic target dimensions
+static int s_tgtW = INT_W;
+static int s_tgtH = INT_H;
+
 bool fullscreen = true;
 bool scanline   = true;
 int smsZoomPercent = 110;
-static constexpr int LCD_W = 240;
-static constexpr int LCD_H = 135;
 int srcW, srcH, srcX0, srcY0;
 static int dstW, dstH, offX, offY;
 
@@ -22,6 +40,12 @@ uint16_t* lineBuf = nullptr;
 uint16_t* xmap    = nullptr;
 uint16_t* ymap    = nullptr;
 uint16_t* sms_palette_565 = nullptr;
+
+// Bottom cache (tearing reduction — snapshot bottom of source framebuffer)
+static uint8_t* s_bottomCache       = nullptr;
+static int      s_bottomCacheLines  = 0;
+static int      s_bottomCachePitch  = 0;
+static int      s_bottomCacheStartY = 0;
 
 static inline uint16_t rgb888_to_565(uint32_t c){
   uint8_t r = (c >> 16) & 0xFF, g = (c >> 8) & 0xFF, b = c & 0xFF;
@@ -65,7 +89,26 @@ static const uint32_t sms_palette_rgb[256] __attribute__((aligned(4))) = {
 };
 
 void sms_display_init() {
-  M5.Display.setSwapBytes(true);
+  s_use_ext   = (g_emu_display_target == EMU_DISPLAY_EXTERNAL);
+  s_use_12bit = s_use_ext && (g_emu_color_depth == EMU_COLOR_12BIT);
+
+  if (s_use_ext) {
+    s_tft.begin();
+    s_tft.setRotation(3);
+    s_tft.fillScreen(TFT_BLACK);
+    if (s_use_12bit) {
+      s_tft.startWrite();
+      s_tft.writecommand(0x3A);  // COLMOD
+      s_tft.writedata(0x53);     // DPI=16bit, DBI=12bit (RGB444)
+      s_tft.endWrite();
+    }
+    s_tgtW = EXT_W;
+    s_tgtH = EXT_H;
+  } else {
+    M5.Display.setSwapBytes(true);
+    s_tgtW = INT_W;
+    s_tgtH = INT_H;
+  }
 
   free(lineBuf);
   free(xmap);
@@ -73,10 +116,10 @@ void sms_display_init() {
   free(sms_palette_565);
   vdp_init_vram();
 
-  // Alloc
-  lineBuf         = (uint16_t*)malloc(LCD_W * sizeof(uint16_t));
-  xmap            = (uint16_t*)malloc(LCD_W * sizeof(uint16_t));
-  ymap            = (uint16_t*)malloc(LCD_H * sizeof(uint16_t));
+  // Alloc with target dimensions
+  lineBuf         = (uint16_t*)malloc(s_tgtW * sizeof(uint16_t));
+  xmap            = (uint16_t*)malloc(s_tgtW * sizeof(uint16_t));
+  ymap            = (uint16_t*)malloc(s_tgtH * sizeof(uint16_t));
   sms_palette_565 = (uint16_t*)malloc(256   * sizeof(uint16_t));
 
   if (!lineBuf || !xmap || !ymap || !sms_palette_565) {
@@ -84,8 +127,12 @@ void sms_display_init() {
     while (true) delay(100);
   }
 
-  M5.Display.fillScreen(TFT_BLACK);
-  printf("Display init: %dx%d OK\n", LCD_W, LCD_H);
+  if (s_use_ext) {
+    s_tft.fillScreen(TFT_BLACK);
+  } else {
+    M5.Display.fillScreen(TFT_BLACK);
+  }
+  printf("Display init: %dx%d OK (ext=%d)\n", s_tgtW, s_tgtH, s_use_ext);
 }
 
 void sms_palette_init_fixed(){
@@ -100,20 +147,24 @@ static inline void compute_common(bool fullscreenMode){
   srcX0 = isGG ? 48  : 0;
   srcY0 = isGG ? 24  : 0;
 
-  M5.Display.setSwapBytes(true);
-  M5.Display.fillScreen(TFT_BLACK);
+  if (s_use_ext) {
+    s_tft.fillScreen(TFT_BLACK);
+  } else {
+    M5.Display.setSwapBytes(true);
+    M5.Display.fillScreen(TFT_BLACK);
+  }
 
   // --- base scaling ---
   if (fullscreenMode) {
-    dstW = LCD_W; dstH = LCD_H; offX = 0; offY = 0;
+    dstW = s_tgtW; dstH = s_tgtH; offX = 0; offY = 0;
   } else {
-    const float sx = (float)LCD_W / (float)srcW;
-    const float sy = (float)LCD_H / (float)srcH;
+    const float sx = (float)s_tgtW / (float)srcW;
+    const float sy = (float)s_tgtH / (float)srcH;
     const float s  = (sx < sy) ? sx : sy;
     dstW = std::max(1, (int)(srcW * s));
     dstH = std::max(1, (int)(srcH * s));
-    offX = (LCD_W - dstW) / 2;
-    offY = (LCD_H - dstH) / 2;
+    offX = (s_tgtW - dstW) / 2;
+    offY = (s_tgtH - dstH) / 2;
   }
 
   //ROI (zoom)
@@ -137,20 +188,64 @@ void video_compute_scaler_full()   { compute_common(true);  }
 void video_compute_scaler_square() { compute_common(false); }
 
 void sms_display_write_frame() {
-  M5.Display.startWrite();
-
-  M5.Display.setAddrWindow(offX, offY, dstW, dstH);
-
   const uint16_t* pal = sms_palette_565;
   const uint16_t* sx  = xmap;
+
+  // Bottom cache: snapshot ~60% of bottom source framebuffer (tearing reduction)
+  {
+    const int bmpH = srcH + srcY0;  // total used height in bitmap
+    int cacheLines = (bmpH * 60 + 99) / 100;
+    if (cacheLines < 1) cacheLines = 1;
+    int cacheStartY = bmpH - cacheLines;
+    if (cacheStartY < 0) cacheStartY = 0;
+    int neededBytes = cacheLines * bitmap.pitch;
+
+    if (!s_bottomCache || neededBytes > (s_bottomCacheLines * s_bottomCachePitch)) {
+      free(s_bottomCache);
+      s_bottomCache = (uint8_t*)heap_caps_malloc(neededBytes, MALLOC_CAP_8BIT);
+      if (s_bottomCache) {
+        s_bottomCacheLines = cacheLines;
+        s_bottomCachePitch = bitmap.pitch;
+      }
+    }
+    s_bottomCacheStartY = cacheStartY;
+
+    if (s_bottomCache) {
+      for (int i = 0; i < cacheLines; ++i) {
+        int ySrc = cacheStartY + i;
+        if (ySrc >= bmpH) break;
+        memcpy(s_bottomCache + i * bitmap.pitch,
+               bitmap.data + ySrc * bitmap.pitch,
+               bitmap.pitch);
+      }
+    }
+  }
+
+  if (s_use_ext) {
+    s_tft.startWrite();
+    s_tft.setAddrWindow(offX, offY, dstW, dstH);
+  } else {
+    M5.Display.startWrite();
+    M5.Display.setAddrWindow(offX, offY, dstW, dstH);
+  }
 
   int last_sy = -1;
 
   for (int y = 0; y < dstH; ++y) {
     const int sy = ymap[y];
 
-    if (sy != last_sy) {
-      const uint8_t* srcLine = bitmap.data + sy * bitmap.pitch;
+    // Always rebuild when 12-bit: in-place conversion destroys lineBuf
+    if (sy != last_sy || s_use_12bit) {
+      const uint8_t* srcLine = nullptr;
+      if (s_bottomCache && sy >= s_bottomCacheStartY) {
+        int idx = sy - s_bottomCacheStartY;
+        if (idx >= 0 && idx < s_bottomCacheLines) {
+          srcLine = s_bottomCache + idx * s_bottomCachePitch;
+        }
+      }
+      if (!srcLine) {
+        srcLine = bitmap.data + sy * bitmap.pitch;
+      }
       uint16_t* out = lineBuf;
 
       int x = 0;
@@ -168,12 +263,123 @@ void sms_display_write_frame() {
 
       last_sy = sy;
     }
+
+    if (s_use_ext && s_use_12bit) {
+      // RGB444 packed: 2 pixels → 3 bytes (in-place, write pointer behind read)
+      uint8_t *buf12 = (uint8_t*)lineBuf;
+      int pairs = dstW / 2;
+      for (int p = 0; p < pairs; p++) {
+        uint16_t c1 = lineBuf[p * 2];
+        uint16_t c2 = lineBuf[p * 2 + 1];
+        int j = p * 3;
+        buf12[j]   = ((c1 >> 8) & 0xF0) | ((c1 >> 7) & 0x0F);  // R1|G1
+        buf12[j+1] = ((c1 << 3) & 0xF0) | ((c2 >> 12) & 0x0F); // B1|R2
+        buf12[j+2] = ((c2 >> 3) & 0xF0) | ((c2 >> 1) & 0x0F);  // G2|B2
+      }
+      if (dstW & 1) {
+        uint16_t c = lineBuf[dstW - 1];
+        int j = pairs * 3;
+        buf12[j]   = ((c >> 8) & 0xF0) | ((c >> 7) & 0x0F);
+        buf12[j+1] = ((c << 3) & 0xF0);
+        buf12[j+2] = 0;
+      }
+      int byteCount = ((dstW + 1) / 2) * 3;
+      s_tft.pushColors((uint16_t*)buf12, (byteCount + 1) / 2, false);
+    } else if (s_use_ext) {
+      s_tft.pushColors(lineBuf, dstW, true);  // swap=true: LE → SPI byte order
+    } else {
       M5.Display.writePixels(lineBuf, dstW, true);
+    }
   }
 
-  M5.Display.endWrite();
+  if (s_use_ext) {
+    s_tft.endWrite();
+  } else {
+    M5.Display.endWrite();
+  }
 }
 
 void sms_display_clear() {
-  M5.Lcd.fillScreen(TFT_BLACK);
+  if (s_use_ext) {
+    s_tft.fillScreen(TFT_BLACK);
+  } else {
+    M5.Lcd.fillScreen(TFT_BLACK);
+  }
+}
+
+// ================== EXTERNAL INFO SCREEN ==================
+
+static std::string sms_truncate(const char* text, size_t maxChars)
+{
+  if (!text) return "";
+  std::string v(text);
+  if (v.size() <= maxChars) return v;
+  if (maxChars <= 3) return v.substr(0, maxChars);
+  return v.substr(0, maxChars - 3) + "...";
+}
+
+static void sms_draw_key_badge(int x, int y, const std::string& key)
+{
+  const int bw = 34, bh = 18;
+  s_tft.fillRoundRect(x, y, bw, bh, 4, TFT_DARKGREY);
+  s_tft.setTextColor(TFT_WHITE, TFT_DARKGREY);
+  s_tft.drawCentreString(key.c_str(), x + bw / 2, y + 4, 2);
+  s_tft.drawRoundRect(x, y, bw, bh, 4, TFT_YELLOW);
+}
+
+void sms_display_show_external_info(const char* romTitle, bool isGG)
+{
+  s_tft.begin();
+  s_tft.setRotation(3);
+  s_tft.fillScreen(TFT_BLACK);
+  s_tft.setTextWrap(false);
+
+  s_tft.drawRoundRect(8, 8, EXT_W - 16, EXT_H - 16, 8, TFT_DARKGREY);
+
+  std::string title = romTitle ? romTitle : "";
+  const char* drawTitle = title.empty() ? (isGG ? "GAME GEAR" : "MASTER SYSTEM") : title.c_str();
+  int titleFont = 4;
+  int maxTitleW = EXT_W - 32;
+  if (s_tft.textWidth(drawTitle, 4) > maxTitleW) {
+    titleFont = 2;
+    if (s_tft.textWidth(drawTitle, 2) > maxTitleW) {
+      title = sms_truncate(romTitle, 36);
+      drawTitle = title.c_str();
+    }
+  }
+  s_tft.setTextColor(TFT_CYAN, TFT_BLACK);
+  s_tft.drawCentreString(drawTitle, EXT_W / 2, 16, titleFont);
+
+  s_tft.setTextColor(TFT_YELLOW, TFT_BLACK);
+  const char* sysName = isGG ? "SEGA GAME GEAR" : "SEGA MASTER SYSTEM";
+  s_tft.drawCentreString(sysName, EXT_W / 2, 46, 2);
+
+  s_tft.setTextColor(TFT_GREEN, TFT_BLACK);
+  s_tft.drawCentreString("VIDEO ON INTERNAL LCD", EXT_W / 2, 64, 2);
+
+  s_tft.drawRoundRect(12, 86, EXT_W - 24, 98, 6, TFT_DARKGREY);
+  s_tft.setTextColor(TFT_WHITE, TFT_BLACK);
+  s_tft.drawCentreString("CONTROLS", EXT_W / 2, 92, 2);
+
+  const auto actions = share::emuControlActionLabels(share::EmuProfile::Sms);
+  const auto keys    = share::emuControlKeyLabels(share::EmuProfile::Sms);
+  const size_t count = (actions.size() < keys.size()) ? actions.size() : keys.size();
+  const size_t rowsPerCol = 4;
+
+  for (size_t i = 0; i < count; ++i) {
+    const int col = (int)(i / rowsPerCol);
+    const int row = (int)(i % rowsPerCol);
+    const int baseX = 24 + col * 146;
+    const int baseY = 112 + row * 16;
+
+    s_tft.setTextColor(TFT_WHITE, TFT_BLACK);
+    s_tft.drawString(actions[i].c_str(), baseX, baseY, 2);
+    sms_draw_key_badge(baseX + 88, baseY - 3, keys[i]);
+  }
+
+  s_tft.drawFastHLine(18, 190, EXT_W - 36, TFT_DARKGREY);
+  s_tft.setTextColor(TFT_ORANGE, TFT_BLACK);
+  s_tft.drawString("GO = QUIT", 18, 198, 1);
+  s_tft.drawString("HOLD GO = CONFIG", 100, 198, 1);
+  s_tft.drawString("\\ = SCREEN  FN+,/ = ZOOM", 18, 210, 1);
 }

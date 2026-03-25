@@ -3,6 +3,12 @@
 SdService::SdService() {}
 
 bool SdService::begin() {
+    SD.end();
+    sdCardSPI.end();
+    pinMode(SD_CS, OUTPUT);
+    digitalWrite(SD_CS, HIGH);
+    delay(5);
+
     sdCardSPI.begin(
         SD_SCK,
         SD_MISO,
@@ -11,17 +17,28 @@ bool SdService::begin() {
     );
     delay(10);
 
-    // find best speed
-    const uint32_t speeds[] = { 40000000u, 20000000u };
+    // Try fast first, then progressively slower for picky cards.
+    const uint32_t speeds[] = { 40000000u, 20000000u, 10000000u, 4000000u, 1000000u };
     for (uint32_t hz : speeds) {
+        SD.end();
+        delay(5);
         if (SD.begin(SD_CS, sdCardSPI, hz, "/sd")) {
-            sdCardMounted = true;
-            return true;
+            File root = SD.open("/");
+            if (root && root.isDirectory()) {
+                root.close();
+                sdCardMounted = true;
+                return true;
+            }
+
+            if (root) {
+                root.close();
+            }
         }
     }
 
     sdCardMounted = false;
-    return sdCardMounted;
+    SD.end();
+    return false;
 }
 
 void SdService::close() {

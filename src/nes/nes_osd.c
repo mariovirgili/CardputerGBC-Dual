@@ -208,7 +208,7 @@ int osd_init(void)
 
     display_init();
     vidQueue = xQueueCreate(2, sizeof(bitmap_t *));
-    xTaskCreatePinnedToCore(&displayTask, "displayTask", 4096, NULL, 3, NULL, 0);
+    xTaskCreatePinnedToCore(&displayTask, "displayTask", 4096, NULL, 3, NULL, 1);
     osd_initinput();
     return 0;
 }

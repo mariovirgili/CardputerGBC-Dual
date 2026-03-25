@@ -133,6 +133,19 @@ static inline std::string getLastGameFromNvs(
     return confirmed ? path : "";
 }
 
+static inline std::string getLastGamePathFromNvs() {
+    Preferences prefs;
+    prefs.begin("cardputer_emu", true);
+    String lastGame = prefs.getString("last_game", "");
+    prefs.end();
+
+    if (lastGame.isEmpty()) {
+        return "";
+    }
+
+    return normalizeRomBrowserPath(lastGame.c_str());
+}
+
 static inline void saveLastGameToNvs(const std::string& filePath) {
     if (filePath.empty()) return;
 
@@ -160,7 +173,12 @@ static inline std::string getRomFolderFromNvs(
     }
 
     std::string path = lastGame.c_str();
-    return extractRomFolder(path);
+    std::string folder = extractRomFolder(path);
+    if (!sdService.isDirectory(folder)) {
+        return "";
+    }
+
+    return folder;
 }
 
 static inline bool isQuittingGame() {

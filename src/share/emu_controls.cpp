@@ -233,6 +233,7 @@ bool isReservedKey(char key) {
         case KEY_OK:
         case KEY_DEL:
         case KEY_ESC_CUSTOM:
+        case KEY_ESC_LONG_CUSTOM:
         case CARDPUTER_SCREEN_TOGGLE:
         case CARDPUTER_VOL_UP_1:
         case CARDPUTER_VOL_DOWN_1:
@@ -469,7 +470,7 @@ bool emuControlsEdit(SdService& sd, EmuProfile profile, CardputerView& display, 
         labels.emplace_back("CANCEL");
         values.emplace_back("DISCARD");
 
-        const int index = selector.select(std::string(emuProfileName(profile)) + " KEYMAP",
+        const int index = selector.select(std::string(emuProfileName(profile)) + " CONFIG",
                                           values,
                                           false,
                                           false,
@@ -508,7 +509,7 @@ bool emuControlsEdit(SdService& sd, EmuProfile profile, CardputerView& display, 
                 continue;
             }
 
-            if (key == KEY_ESC_CUSTOM) {
+            if (key == KEY_ESC_CUSTOM || key == KEY_ESC_LONG_CUSTOM) {
                 break;
             }
 

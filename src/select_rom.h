@@ -107,6 +107,31 @@ RomType getRomType(const std::string& path) {
     return ROM_TYPE_UNKNOWN;
 }
 
+static inline int findPreferredRomIndex(
+    const std::vector<std::string>& elementNames,
+    const std::string& currentPath,
+    const std::string& lastRomPath
+) {
+    if (elementNames.empty() || lastRomPath.empty()) {
+        return 0;
+    }
+
+    const std::string normalizedCurrentPath = normalizeRomFolderPath(currentPath);
+    const std::string normalizedLastRomPath = normalizeRomBrowserPath(lastRomPath);
+    if (extractRomFolder(normalizedLastRomPath) != normalizedCurrentPath) {
+        return 0;
+    }
+
+    const std::string preferredName = _basename(normalizedLastRomPath);
+    for (size_t i = 0; i < elementNames.size(); ++i) {
+        if (elementNames[i] == preferredName) {
+            return static_cast<int>(i);
+        }
+    }
+
+    return 0;
+}
+
 static inline std::string getRomPath(SdService& sdService, CardputerView& display, CardputerInput& input, const std::string& initialFolder = "/", bool skipWelcome = false) {
     VerticalSelector verticalSelector(display, input);
     std::vector<std::string> supportedExts = {".nes", ".gb", ".gbc", ".sfc", ".sms", ".md", ".gg",".ngc", ".ws" , ".wsc", ".pce", ".lnx"};
@@ -129,6 +154,7 @@ static inline std::string getRomPath(SdService& sdService, CardputerView& displa
     input.flushInput(1);
     std::string currentPath = initialFolder.empty() ? "/" : initialFolder;
     std::string previousPath;
+    const std::string lastRomPath = getLastGamePathFromNvs();
     std::vector<std::string> elementNames;
 
     while (true) {
@@ -152,6 +178,7 @@ static inline std::string getRomPath(SdService& sdService, CardputerView& displa
         }
 
         // Select element
+        const int preferredIndex = findPreferredRomIndex(elementNames, currentPath, lastRomPath);
         uint16_t selectedIndex = verticalSelector.select(
             currentPath,
             elementNames,
@@ -160,7 +187,9 @@ static inline std::string getRomPath(SdService& sdService, CardputerView& displa
             {},
             {},
             false,
-            false
+            false,
+            true,
+            preferredIndex
         );
 
         // Retour

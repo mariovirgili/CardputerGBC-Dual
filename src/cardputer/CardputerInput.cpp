@@ -1,14 +1,41 @@
 #include "CardputerInput.h"
 
 char CardputerInput::handler() {
+    static bool goLongHandled = false;
+    static bool suppressGoClick = false;
+    static constexpr uint32_t kGoLongPressMs = 700;
+    static uint32_t suppressGoUntilMs = 0;
 
     // Update keyboard state
     M5Cardputer.update();
 
     // Bouton GO
     if (M5Cardputer.BtnA.isPressed()) {
-        delay(150); // debounce
-        return KEY_ESC_CUSTOM;
+        if (!goLongHandled && M5Cardputer.BtnA.pressedFor(kGoLongPressMs)) {
+            goLongHandled = true;
+            suppressGoClick = true;
+            suppressGoUntilMs = millis() + 250;
+            delay(20);
+            return KEY_ESC_LONG_CUSTOM;
+        }
+    } else {
+        if (goLongHandled) {
+            goLongHandled = false;
+            delay(10);
+            return KEY_NONE;
+        }
+        if (suppressGoClick) {
+            (void)M5Cardputer.BtnA.wasClicked();
+            if (millis() >= suppressGoUntilMs) {
+                suppressGoClick = false;
+            }
+            delay(10);
+            return KEY_NONE;
+        }
+        if (M5Cardputer.BtnA.wasClicked()) {
+            delay(20);
+            return KEY_ESC_CUSTOM;
+        }
     }
     
     if (M5Cardputer.Keyboard.isChange()) {
