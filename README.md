@@ -1,4 +1,19 @@
-# Cardputer Game Station
+# Cardputer Game Station Dual Screen
+
+![GameStation 1.0 Dual Screen](images/Externaltitle.png)
+
+Dual-screen firmware branch for the M5Stack Cardputer with an external SPI TFT.
+
+This branch keeps the original emulator pack and adds:
+
+- dual-screen startup and ROM browser screens
+- per-core display target selection (`External TFT` or `Internal LCD`)
+- per-core control profiles saved on the SD card
+- safer ROM loading with size checks before copying to flash
+- persistent ROM browser state (last folder and last launched game)
+- merged flashable firmware images in the `release/` folder
+
+The project is powered by [Nofrendo](https://github.com/moononournation/arduino-nofrendo), [Snes9x](https://github.com/snes9xgit/snes9x), [Smsplus](https://github.com/ducalex/retro-go/tree/master/retro-core/components/smsplus), [Race](https://github.com/libretro/RACE), [Gwenesis](https://github.com/bzhxx/gwenesis), [Oswan](https://github.com/alekmaul/oswan), [GnuBoy](https://github.com/rofl0r/gnuboy), [Handy](https://github.com/libretro/libretro-handy) and [PCE-GO](https://github.com/ducalex/retro-go/tree/master/retro-core/components/pce-go).
 
 ![NES emulator screen captures on the M5Stack Cardputer](images/nes_emulator_s.jpg)
 ![GBC emulator screen captures on the M5Stack Cardputer](images/gbc_emulator_s.jpg)
@@ -6,108 +21,197 @@
 ![NGP emulator screen captures on the M5Stack Cardputer](images/ngp_emulator_s.jpg)
 ![Megadrive emulator screen captures on the M5Stack Cardputer](images/megadrive_emulator_s.jpg)
 
-Powered by [Nofrendo](https://github.com/moononournation/arduino-nofrendo), [Snes9x](https://github.com/snes9xgit/snes9x), [Smsplus](https://github.com/ducalex/retro-go/tree/master/retro-core/components/smsplus), [Race](https://github.com/libretro/RACE), [Gwenesis](https://github.com/bzhxx/gwenesis), [Oswan](https://github.com/alekmaul/oswan), [GnuBoy](https://github.com/rofl0r/gnuboy), [Handy](https://github.com/libretro/libretro-handy) and [PCE-GO](https://github.com/ducalex/retro-go/tree/master/retro-core/components/pce-go). All cores were modified to run using **less than 256 KB of RAM**.
+## Supported Systems
 
- Console           | Sound | Video | Save | Speed | All Games  | Notes |
-|-------------------|--------|--------|---------------|-------------|-------------------|--------|
-| **NES**           | ✅ | ✅ | ✅ | ✅ | ✅ | Few mappers issues in some games |
-| **Game Boy**      | ✅ | ✅ | ✅ | ✅ | ✅ | Mono/Color support, Fully compatible |
-| **Master System** | ✅ | ✅ | ✅ | ✅ | ✅ | Fully compatible |
-| **Game Gear**     | ✅ | ✅ | ✅ | ✅ | ✅ | Fully compatible |
-| **PC Engine**     | ✅ | ✅ | ⚠️ | ✅ | ✅ | Fully compatible |
-| **Lynx**          | ✅ | ✅ | ⚠️ | ✅ | ✅ | Some slowdown in heavy titles, Sound issues in some games  |
-| **Mega Drive**    | ✅ | ✅ | ⚠️ | ✅ | ✅ | Some slowdown and not accurate sound in heavy titles |
-| **Neo Geo Pocket**| ✅ | ✅ | ⚠️ | ✅ | ✅ | Mono/color support. Some slowdown in heavy titles |
-| **WonderSwan**    | ✅ | ✅ | ✅ | ⚠️ | ⚠️ | Mono/color support, not fullspeed (75FPS) in most games  |
-| **Super NES**     | ⚠️ | ✅ | ⚠️ | ⚠️ | ⚠️ | Experimental, not enough RAM for a full featured SNES  |
+| Console | Sound | Video | Save | Speed | Notes |
+| --- | --- | --- | --- | --- | --- |
+| NES | Yes | Yes | Yes | Full | A few mapper issues remain |
+| Game Boy / Game Boy Color | Yes | Yes | Yes | Full | Real DMG/CGB detection on launch |
+| Master System | Yes | Yes | Yes | Full | Fully playable |
+| Game Gear | Yes | Yes | Yes | Full | Fully playable |
+| PC Engine | Yes | Yes | Partial | Full | Very good overall compatibility |
+| Lynx | Yes | Yes | Partial | Mostly full | Some heavy titles can slow down |
+| Mega Drive / Genesis | Yes | Yes | Partial | Mostly full | Some heavy titles can slow down |
+| Neo Geo Pocket / Color | Yes | Yes | Partial | Mostly full | Mono/color support |
+| WonderSwan / Color | Yes | Yes | Yes | Partial | Not full speed in all titles |
+| Super NES | Partial | Yes | Partial | Partial | Experimental due RAM limits |
 
+Supported ROM extensions from SD:
 
+`*.nes *.gb *.gbc *.sms *.gg *.ngc *.ngp *.md *.ws *.wsc *.pce *.lnx *.sfc *.smc`
 
-It runs **`.nes` `.gb` `.gbc` `.sms` `.gg` `.lnx` `.pce` `.md` `.ngc` `.ngp` `.ws` `.wsc` `.sfc` ROM files from the SD**.
+ROMs must be uncompressed. Do not use `.zip`, `.7z` or `.rar`.
 
-> **Make sure your ROMs are uncompressed** (not .zip, .7z, or .rar).
+## Branch Highlights
 
-## Controls
+### Dual-screen workflow
 
-The built-in **Cardputer keyboard** is used for all controls: 
+- Internal LCD shows the startup splash and the supported-systems screen.
+- External TFT shows a dedicated full-screen title image at boot.
+- While browsing ROMs, the external TFT shows a `Select Rom!` panel with supported systems.
+- For cores that support both screens, the firmware asks which display to use before launch.
+- When `External TFT` is selected, the firmware also asks for color depth:
+  - `16-bit 65K colors`
+  - `12-bit 4K colors`
+- Display target and color depth are saved per core in NVS.
 
-| Function | Cardputer Key | Description |
-|---------------|---------------|-------------|
-| 🕹️ Up | **E** | Move up |
-| 🕹️ Down | **S** | Move down |
-| 🕹️ Left | **A** | Move left |
-| 🕹️ Right | **D** | Move right |
-| 🅰️ Button A | **K** | Primary action / confirm |
-| 🅱️ Button B | **L** | Secondary action / cancel |
-| ▶️ Start | **1** | Start / pause |
-| ⏸️ Select | **2** | Select / menu |
-| 💡 Brightness + | **]** | Increase LCD brightness |
-| 💡 Brightness − | **[** | Decrease LCD brightness |
-| 🔊 Volume + | **+** | Increase audio volume |
-| 🔊 Volume − | **-** | Decrease audio volume |
-| 🖥️ Screen Mode | **\\** | Toggle screen display mode |
-| 🔍 Zoom − | **Fn + ←** | Zoom out |
-| 🔍 Zoom + | **Fn + →**| Zoom in |
-| 🔘 Quit Game | **G0 (hold 1 s)** | Go back to menu |
+### Game Boy / Game Boy Color routing
 
-The `j` key is also bound as Button A to allow an alternative layout for player preference.
+Game Boy handling is now based on the real ROM hardware type, not only the file extension:
+
+- DMG and SGB titles are rendered on the external TFT
+- CGB titles are rendered on the internal LCD
+- when a CGB game runs on the internal LCD, the external TFT shows the game name and control help
+
+### Per-core control profiles
+
+Controls are no longer fixed globally. Each core has its own `.opt` file on the SD root:
+
+- `NES.opt`
+- `SMS.opt`
+- `NGP.opt`
+- `WS.opt`
+- `PCE.opt`
+- `GBC.opt`
+- `LYNX.opt`
+- `GENESIS.opt`
+- `SNES.opt`
+
+You can edit the current core bindings from the pre-launch control screen with a long press on `GO`.
+
+### ROM browser quality-of-life changes
+
+- The browser remembers the last visited folder in `/.cardputer/last_rom_folder.txt`
+- The browser remembers the last launched ROM in NVS
+- The cursor repositions itself on the last ROM when you reopen the same folder
+- If the remembered ROM or folder no longer exists, the firmware falls back to browsing the SD card instead of getting stuck on `No ROM selected`
+- The browser reopens automatically when a selected ROM is too large or cannot be read
+
+### Safer ROM loading
+
+Before copying a ROM to flash, the firmware checks the real file size against the active ROM partition.
+
+If the ROM is too large:
+
+- the game is not started
+- an error is shown
+- the ROM browser is reopened so you can pick another file
+
+### SD reliability
+
+SD initialization is more robust in this branch:
+
+- the SPI bus is reset before mounting
+- CS is forced high before init
+- mount retries use several SPI speeds, from 40 MHz down to 1 MHz
+- root directory access is verified after mount
+
+## ROM Browser Controls
+
+Inside the ROM selector:
+
+- `E` = up
+- `Z` = down
+- `A` = jump backward by 4 entries
+- `D` = jump forward by 4 entries
+- hold `A` or `D` = fast repeat scrolling
+- `P` or `Enter` = open folder / select ROM
+- `K` = go back to parent folder
+- typing letters/numbers = filter the list
+- `Del` = remove characters from the filter
+
+On the `RESUME LAST GAME?` prompt:
+
+- `D`, `Right` or `Enter` = yes
+- `A`, `Left` or `GO` = no
+
+## In-game and Pre-launch Controls
+
+### Global runtime keys
+
+- `GO` short press during emulation = quit safely and return to the ROM browser
+- `+` / `-` = audio volume
+- `[` / `]` = LCD brightness
+- `\` = screen mode toggle
+- `Fn + Left / Right` = zoom out / zoom in
+
+### Pre-launch screen
+
+Before a game starts, the firmware shows the current bindings for the selected core.
+
+- any normal key starts the game
+- long press `GO` opens the control editor for the current core
+
+### Default bindings
+
+The defaults depend on the core, but the base layout is:
+
+- directions: `E`, `S`, `A`, `D`
+- 2-button cores: `K`, `L`
+- `Start`: `1`
+- `Select`: `2`
+
+Additional defaults:
+
+- Genesis adds `J` for button `C`
+- SNES uses `I`, `J`, `O`, `P`, `K`, `L`
+- WonderSwan exposes both directional groups (`X1..X4`, `Y1..Y4`)
+
+## ROMs and Saves
+
+ROMs can be placed anywhere on the SD card.
+
+Save files are created automatically in per-console folders on the SD card and are linked to the ROM filename.
+
+The quit path waits for pending save activity before rebooting back to the selector, so using `GO` is the safe way to leave a game.
+
+## Flash Layouts
+
+This branch includes multiple partition CSV files. The recommended release environment is:
+
+- `m5stack-stamps3-max-spiffs`
+
+It currently uses:
+
+- [`partitions_plus20app_8mb.csv`](partitions_plus20app_8mb.csv)
+
+Layout:
+
+- app partition: `0x280000` bytes
+- ROM partition (`spiffs`): `0x570000` bytes
+
+That gives roughly `5.44 MiB` of ROM storage in the current recommended build.
+
+The older launcher-driven runtime repartitioning flow is disabled in this branch. Partition layout is chosen at build/flash time instead.
+
+## Build and Flash
+
+Recommended build:
+
+```powershell
+C:\Users\user\.platformio\penv\Scripts\platformio.exe run --environment m5stack-stamps3-max-spiffs
+```
+
+The merged flashable image is stored at:
+
+- [`release/CardputerGBC-Dual-max-spiffs-flashable.bin`](release/CardputerGBC-Dual-max-spiffs-flashable.bin)
+
+Important: when regenerating the merged image manually, keep the bootloader flash mode (`DIO`). Do not force `QIO`.
+
+Example flash command:
+
+```powershell
+C:\Users\user\.platformio\penv\Scripts\python.exe -X utf8 C:\Users\user\.platformio\packages\tool-esptoolpy\esptool.py --chip esp32s3 --port COM4 --baud 921600 write_flash 0x0 release\CardputerGBC-Dual-max-spiffs-flashable.bin
+```
 
 ## M5Stack Joystick
 
-You can alternatively use the M5Stack Joystick v1.1 (U024-C) or Joystick2 (U024-V2), **just plug it in before launching a game** and it will work automatically.
+You can also use the M5Stack Joystick v1.1 (U024-C) or Joystick2 (U024-V2). Plug it in before launching a game and it will be detected automatically.
 
 <img src="images/m5stack_joysticks.jpg" alt="A photo of the M5Stack Joysticks" width="800" height="400">
 
 ## D-Pad 3D Model
 
-[Cardputer-Accessories repo](https://github.com/AndreiVladescu/Cardputer-Accessories) to get the 3D model for D-Pad that you can put on the Cardputer's keys. (Thanks to @AndreiVladescu)
+[Cardputer-Accessories repo](https://github.com/AndreiVladescu/Cardputer-Accessories) contains a printable D-Pad model that fits the Cardputer keyboard. Thanks to @AndreiVladescu.
 
 [![A render of the 3D DPAD model](images/cardputer_gamepad_render.jpg)](https://github.com/AndreiVladescu/Cardputer-Accessories)
-
-## Zoom Mode
-
-The Zoom Mode allows you to **dynamically adjust the display scale of games** on the Cardputer’s screen.
-
-By pressing `\` (above the `OK` key), you can toggle between **multiple zoom levels (100 to 150%), fullscreen or 4/3**. This flexibility ensures that each game looks its best on the Cardputer’s compact display.
-
-You can precisely adjust the display zoom level with `fn` + `arrows left/right`.
-
-✅ Why it matters:
-
-- Enhances readability and visual comfort.
-- Lets you adapt the screen to games.
-- Greatly improves gameplay experience.
-
-## About Games
-
-You can place the **ROM uncompressed files** anywhere on your SD card and select them. The firmware allows running ROMs up to 6 MB.
-
-> **⚠️ Avoid having more than 512 ROMs per folder** to prevent loading times.
-
-When browsing your game list, you can **type the first few letters of a game’s name** to jump directly to it. This makes it much faster to find a specific title, especially when your library contains dozens of entries.
-
-## About Saves
-
-Save files are created automatically and organized into separate folders per console on your SD card. **Each save is linked to the game’s filename**.
-
-> **⚠️ The autosave system writes to the SD card in the background at regular intervals.**
-
-The chance of corrupting a save by resetting the device exactly at the moment a write occurs is low. However, to completely eliminate this risk, it is recommended to exit games properly.
-
-Hold the **GO button for 1 second to quit safely** and ensure no save corruption.
-
-## Launcher
-
-For [Launcher](https://github.com/bmorcelli/Launcher)'s users, you can now use the **“Game Station” partition** scheme to load ROMs larger than 1MB.
-
-> In the Launcher main menu, Go to **CFG → Partition Change, and select Game Station.**
-
-The firmware can also automatically switch the device to the “Game Station” partition scheme in order to load ROMs larger than 1 MB.
-
-When you try to run a ROM that needs more space (up to 4.5 MB):
-
-- The firmware checks that it is running under the Launcher.
-- If needed, it asks to flash the Game Station partition table.
-- The device reboots once to apply the new layout.
-
-After the reboot, you can load larger ROMs normally, without any extra steps.
