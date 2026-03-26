@@ -16,7 +16,8 @@ int VerticalSelector::select(
         bool visibleMention,
         bool handleInactivity,
         bool romBrowserControls,
-        int initialIndex) 
+        int initialIndex,
+        int longEscResult) 
 {
     int currentIndex = 0, lastIndex = -1, lastQuerySize = 0;
     char key = KEY_NONE;
@@ -190,8 +191,9 @@ int VerticalSelector::select(
                         if (options[i] == filteredOptions[currentIndex]) return (int)i;
                 break;
             case KEY_ESC_CUSTOM:
-            case KEY_ESC_LONG_CUSTOM:
                 return -1;
+            case KEY_ESC_LONG_CUSTOM:
+                return longEscResult;
             case KEY_ARROW_LEFT:
                 if (!romBrowserControls) {
                     return -1;

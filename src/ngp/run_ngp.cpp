@@ -149,10 +149,12 @@ void run_ngp(const uint8_t* rom_base, size_t rom_size, int machine, const char* 
       display.showControlBindings(
         share::emuControlActionLabels(share::EmuProfile::Ngp),
         share::emuControlKeyLabels(share::EmuProfile::Ngp),
-        "GO = QUIT"
+        "GO / HOLD ESC = QUIT"
       );
     } else {
-      ngc_display_show_external_info(romName);
+      if (!emu_is_aux_screen_locked()) {
+        ngc_display_show_external_info(romName);
+      }
     }
   }
 

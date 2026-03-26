@@ -1015,7 +1015,6 @@ void WsSplash(void)
     unsigned char* name = (unsigned char*)(IEep + 0x30);
 	unsigned char* pdataFontArray = pdata + 169 * 16 + 13;
 	unsigned char* pdataFont = pdata + 175 * 16 + 5;
-
     // �w�i�����ŃN���A
     p = FrameBuffer;
     for (y = 0; y < LCD_MAIN_H; y++)

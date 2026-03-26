@@ -21,8 +21,8 @@ extern WORD *FrameBuffer;
 // extern WORD SegmentBuffer[(144 * 4) * (8 * 4)];
 extern int Layer[3];
 extern int Segment[11];
-
 void AllocateBuffers(void);
+void FreeBuffers(void);
 void SetPalette(int addr);
 void RefreshLine(int Line);
 void RenderSegment(void);

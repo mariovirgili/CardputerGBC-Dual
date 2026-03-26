@@ -18,6 +18,32 @@ static inline std::string _basename(const std::string& path) {
 
 static constexpr const char* ROM_BROWSER_STATE_DIR = "/.cardputer";
 static constexpr const char* ROM_BROWSER_FOLDER_FILE = "/.cardputer/last_rom_folder.txt";
+static constexpr const char* ROM_BROWSER_SELECTION_FILE = "/.cardputer/last_rom_selection.txt";
+
+struct RomBrowserSelectionState {
+    std::string folderPath;
+    std::string entryName;
+
+    bool valid() const {
+        return !folderPath.empty() && !entryName.empty();
+    }
+};
+
+static inline std::string trimRomBrowserStateValue(const std::string& value) {
+    size_t first = 0;
+    while (first < value.size() &&
+           std::isspace(static_cast<unsigned char>(value[first]))) {
+        ++first;
+    }
+
+    size_t last = value.size();
+    while (last > first &&
+           std::isspace(static_cast<unsigned char>(value[last - 1]))) {
+        --last;
+    }
+
+    return value.substr(first, last - first);
+}
 
 static inline std::string normalizeRomBrowserPath(const std::string& path) {
     if (path == "/sd") {
@@ -68,6 +94,25 @@ static inline bool saveRomFolderToSd(
     return sdService.writeFile(ROM_BROWSER_FOLDER_FILE, cleanPath + "\n");
 }
 
+static inline bool saveRomSelectionToSd(
+    SdService& sdService,
+    const std::string& folderPath,
+    const std::string& entryName
+) {
+    if (!sdService.getSdState() || entryName.empty()) {
+        return false;
+    }
+    if (!sdService.ensureDirectory(ROM_BROWSER_STATE_DIR)) {
+        return false;
+    }
+
+    std::string cleanPath = normalizeRomFolderPath(folderPath);
+    return sdService.writeFile(
+        ROM_BROWSER_SELECTION_FILE,
+        cleanPath + "\n" + entryName + "\n"
+    );
+}
+
 static inline std::string getRomFolderFromSd(SdService& sdService) {
     if (!sdService.getSdState()) {
         return "";
@@ -99,6 +144,39 @@ static inline std::string getRomFolderFromSd(SdService& sdService) {
     }
 
     return cleanPath;
+}
+
+static inline RomBrowserSelectionState getRomSelectionFromSd(SdService& sdService) {
+    RomBrowserSelectionState state;
+    if (!sdService.getSdState()) {
+        return state;
+    }
+
+    std::string raw = sdService.readFile(ROM_BROWSER_SELECTION_FILE);
+    if (raw.empty()) {
+        return state;
+    }
+
+    size_t newline = raw.find('\n');
+    if (newline == std::string::npos) {
+        return state;
+    }
+
+    std::string folder = trimRomBrowserStateValue(raw.substr(0, newline));
+    std::string entry  = trimRomBrowserStateValue(raw.substr(newline + 1));
+
+    if (folder.empty() || entry.empty()) {
+        return state;
+    }
+
+    folder = normalizeRomFolderPath(folder);
+    if (!sdService.isDirectory(folder)) {
+        return state;
+    }
+
+    state.folderPath = folder;
+    state.entryName = entry;
+    return state;
 }
 
 static inline std::string getLastGameFromNvs(

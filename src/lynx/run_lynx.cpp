@@ -108,13 +108,15 @@ void run_lynx(const uint8_t* romData, size_t romLen, const char* romName)
       display.initialize();
       if (useExternal) {
         display.topBar("LYNX ON EXTERNAL TFT", false, false);
-        display.showControlBindings(
+      display.showControlBindings(
           share::emuControlActionLabels(share::EmuProfile::Lynx),
           share::emuControlKeyLabels(share::EmuProfile::Lynx),
-          "GO = QUIT"
+          "GO / HOLD ESC = QUIT"
         );
       } else {
-        lynx_display_show_external_info(romName);
+        if (!emu_is_aux_screen_locked()) {
+          lynx_display_show_external_info(romName);
+        }
       }
     }
 

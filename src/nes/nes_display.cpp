@@ -347,7 +347,7 @@ static void nes_draw_key_badge(int x, int y, const std::string& key)
   const int bw = 34, bh = 18;
   s_tft.fillRoundRect(x, y, bw, bh, 4, TFT_DARKGREY);
   s_tft.setTextColor(TFT_WHITE, TFT_DARKGREY);
-  s_tft.drawCentreString(key.c_str(), x + bw / 2, y + 4, 2);
+  s_tft.drawCentreString(key.c_str(), x + bw / 2, y + 1, 2);
   s_tft.drawRoundRect(x, y, bw, bh, 4, TFT_YELLOW);
 }
 
@@ -402,7 +402,6 @@ void nes_display_show_external_info(const char* romTitle)
 
   s_tft.drawFastHLine(18, 190, EXT_W - 36, TFT_DARKGREY);
   s_tft.setTextColor(TFT_ORANGE, TFT_BLACK);
-  s_tft.drawString("GO = QUIT", 18, 198, 1);
-  s_tft.drawString("HOLD GO = CONFIG", 100, 198, 1);
-  s_tft.drawString("\\ = SCREEN  FN+,/ = ZOOM", 18, 210, 1);
+  s_tft.drawCentreString("GO / HOLD ESC = QUIT", EXT_W / 2, 198, 1);
+  s_tft.drawCentreString("\\ = SCREEN  FN+,/ = ZOOM", EXT_W / 2, 210, 1);
 }

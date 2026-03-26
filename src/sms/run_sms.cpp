@@ -27,10 +27,12 @@ void run_sms(const uint8_t* romPtr, size_t romLen, bool isGG, const char* romNam
     display.showControlBindings(
       share::emuControlActionLabels(share::EmuProfile::Sms),
       share::emuControlKeyLabels(share::EmuProfile::Sms),
-      "GO = QUIT"
+      "GO / HOLD ESC = QUIT"
     );
   } else {
-    sms_display_show_external_info(romName, isGG);
+    if (!emu_is_aux_screen_locked()) {
+      sms_display_show_external_info(romName, isGG);
+    }
   }
 
   // Buffers video & SRAM

@@ -103,7 +103,9 @@ void run_gbc(const uint8_t* romData, size_t romLen, const char* romPathOrName) {
     gbc_display_set_target(useExternal ? GBC_DISPLAY_EXTERNAL : GBC_DISPLAY_INTERNAL);
     if (!useExternal) {
         // Game on internal → show info on external TFT
-        gbc_display_show_external_info(romPathOrName, colorGame);
+        if (!emu_is_aux_screen_locked()) {
+            gbc_display_show_external_info(romPathOrName, colorGame);
+        }
     }
     gbc_display_start();
     printf("[GBC] hardware => %s | display => %s\n",
@@ -117,7 +119,7 @@ void run_gbc(const uint8_t* romData, size_t romLen, const char* romPathOrName) {
         intDisplay.showControlBindings(
             share::emuControlActionLabels(share::EmuProfile::Gbc),
             share::emuControlKeyLabels(share::EmuProfile::Gbc),
-            "GO = QUIT"
+            "GO / HOLD ESC = QUIT"
         );
     }
 

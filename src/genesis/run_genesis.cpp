@@ -203,11 +203,13 @@ extern "C" void run_genesis(const uint8_t* rom, size_t len, const char* romName)
       display.showControlBindings(
         share::emuControlActionLabels(share::EmuProfile::Genesis),
         share::emuControlKeyLabels(share::EmuProfile::Genesis),
-        "GO = QUIT"
+        "GO / HOLD ESC = QUIT"
       );
     } else {
       // Game on internal LCD → show ROM info + controls on external TFT
-      genesis_display_show_external_info(romName);
+      if (!emu_is_aux_screen_locked()) {
+        genesis_display_show_external_info(romName);
+      }
     }
   }
 

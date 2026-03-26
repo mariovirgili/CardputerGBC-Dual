@@ -25,7 +25,7 @@ void run_nes(const char* xipPath)
     display.showControlBindings(
       share::emuControlActionLabels(share::EmuProfile::Nes),
       share::emuControlKeyLabels(share::EmuProfile::Nes),
-      "GO = QUIT"
+      "GO / HOLD ESC = QUIT"
     );
   } else {
     // Game on internal LCD → show ROM info + controls on external TFT
@@ -33,7 +33,9 @@ void run_nes(const char* xipPath)
     std::string path(xipPath ? xipPath : "");
     auto pos = path.find_last_of("/\\");
     std::string romName = (pos == std::string::npos) ? path : path.substr(pos + 1);
-    nes_display_show_external_info(romName.c_str());
+    if (!emu_is_aux_screen_locked()) {
+      nes_display_show_external_info(romName.c_str());
+    }
   }
 
   // Call the NES core

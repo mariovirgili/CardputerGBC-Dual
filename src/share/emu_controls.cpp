@@ -454,6 +454,7 @@ bool emuControlsEdit(SdService& sd, EmuProfile profile, CardputerView& display, 
 
     const auto& def = getProfileDef(profile);
     const auto original = s_bindings[static_cast<size_t>(profile)];
+    int selectedIndex = 0;
 
     VerticalSelector selector(display, input);
 
@@ -474,12 +475,19 @@ bool emuControlsEdit(SdService& sd, EmuProfile profile, CardputerView& display, 
                                           values,
                                           false,
                                           false,
-                                          labels);
+                                          labels,
+                                          {},
+                                          false,
+                                          true,
+                                          false,
+                                          selectedIndex);
 
         if (index < 0 || index == static_cast<int>(def.entryCount + 2)) {
             s_bindings[static_cast<size_t>(profile)] = original;
             return false;
         }
+
+        selectedIndex = index;
 
         if (index == static_cast<int>(def.entryCount)) {
             if (emuControlsSave(sd, profile)) {

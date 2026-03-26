@@ -131,13 +131,35 @@ static void draw_key_badge(int x, int y, const std::string& key)
 
   tft.fillRoundRect(x, y, badgeW, badgeH, 4, TFT_DARKGREY);
   tft.setTextColor(TFT_WHITE, TFT_DARKGREY);
-  tft.drawCentreString(key.c_str(), x + badgeW / 2, y + 4, 2);
+  tft.drawCentreString(key.c_str(), x + badgeW / 2, y + 1, 2);
   tft.drawRoundRect(x, y, badgeW, badgeH, 4, TFT_YELLOW);
+}
+
+static void gbc_prepare_external_tft()
+{
+  tft.begin();
+  tft.setRotation(3);
+  tft.setSwapBytes(true);
+  tft.fillScreen(TFT_BLACK);
+}
+
+static std::string gbc_fit_title_for_width(const char* text, int font, int maxWidth)
+{
+  std::string fitted = text ? text : "";
+  if (fitted.empty()) {
+    return fitted;
+  }
+
+  while (fitted.size() > 3 && tft.textWidth(fitted.c_str(), font) > maxWidth) {
+    fitted = fitted.substr(0, fitted.size() - 4) + "...";
+  }
+
+  return fitted;
 }
 
 static void gbc_display_draw_external_info(const char* romTitle, bool colorGame)
 {
-  tft.fillScreen(TFT_BLACK);
+  gbc_prepare_external_tft();
   tft.setTextWrap(false);
   tft.setTextColor(TFT_WHITE, TFT_BLACK);
 
@@ -151,6 +173,7 @@ static void gbc_display_draw_external_info(const char* romTitle, bool colorGame)
     titleFont = 2;
     if (tft.textWidth(drawTitle, 2) > maxTitleW) {
       title = truncate_text(romTitle, 36);
+      title = gbc_fit_title_for_width(title.c_str(), titleFont, maxTitleW);
       drawTitle = title.c_str();
     }
   }
@@ -161,7 +184,11 @@ static void gbc_display_draw_external_info(const char* romTitle, bool colorGame)
   tft.drawCentreString(colorGame ? "GAME BOY COLOR" : "GAME BOY", EXT_LCD_W / 2, 46, 2);
 
   tft.setTextColor(TFT_GREEN, TFT_BLACK);
-  tft.drawCentreString(colorGame ? "VIDEO ON INTERNAL LCD" : "VIDEO ON EXTERNAL TFT", EXT_LCD_W / 2, 64, 2);
+  tft.drawCentreString(
+      (g_emu_display_target == EMU_DISPLAY_INTERNAL) ? "VIDEO ON INTERNAL LCD" : "VIDEO ON EXTERNAL TFT",
+      EXT_LCD_W / 2,
+      64,
+      2);
 
   tft.drawRoundRect(12, 86, EXT_LCD_W - 24, 98, 6, TFT_DARKGREY);
   tft.setTextColor(TFT_WHITE, TFT_BLACK);
@@ -185,9 +212,8 @@ static void gbc_display_draw_external_info(const char* romTitle, bool colorGame)
 
   tft.drawFastHLine(18, 190, EXT_LCD_W - 36, TFT_DARKGREY);
   tft.setTextColor(TFT_ORANGE, TFT_BLACK);
-  tft.drawString("GO = QUIT", 18, 198, 1);
-  tft.drawString("HOLD GO = CONFIG", 100, 198, 1);
-  tft.drawString(colorGame ? "\\ = SCREEN / FN+,/ = ZOOM" : "\\ = PALETTE", 18, 210, 1);
+  tft.drawCentreString("GO / HOLD ESC = QUIT", EXT_LCD_W / 2, 198, 1);
+  tft.drawCentreString(colorGame ? "\\ = SCREEN / FN+,/ = ZOOM" : "\\ = PALETTE", EXT_LCD_W / 2, 210, 1);
 }
 
 static void gbc_display_transform(int srcW, int srcH)
@@ -457,6 +483,9 @@ extern "C" void gbc_display_set_target(gbc_display_target_t target)
   M5Cardputer.Display.fillScreen(TFT_BLACK);
 
   if (target == GBC_DISPLAY_EXTERNAL) {
+    tft.begin();
+    tft.setRotation(3);
+    tft.setSwapBytes(true);
     tft.fillScreen(TFT_BLACK);
     if (g_emu_color_depth == EMU_COLOR_12BIT) {
       // Keep CS LOW throughout command+parameter to ensure COLMOD sticks
@@ -470,10 +499,16 @@ extern "C" void gbc_display_set_target(gbc_display_target_t target)
 
 extern "C" void gbc_display_init(void)
 {
-  tft.begin();
-  tft.setRotation(3); // Landscape
-  tft.setSwapBytes(true);
-  tft.fillScreen(TFT_BLACK);
+  s_target = (g_emu_display_target == EMU_DISPLAY_INTERNAL)
+      ? GBC_DISPLAY_INTERNAL
+      : GBC_DISPLAY_EXTERNAL;
+
+  if (!gbc_game_on_internal()) {
+    tft.begin();
+    tft.setRotation(3); // Landscape
+    tft.setSwapBytes(true);
+    tft.fillScreen(TFT_BLACK);
+  }
 
   M5Cardputer.Display.setRotation(1);
   M5Cardputer.Display.setSwapBytes(true);

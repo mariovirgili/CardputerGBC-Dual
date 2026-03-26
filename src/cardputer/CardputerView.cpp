@@ -1178,7 +1178,7 @@ void CardputerView::copyProgress(size_t total, size_t current, void* userCtx) {
     const int barY = boxY + (boxH - barH) / 2;
 
     // Texte taille
-    const int sizeY = boxY + boxH - 18;
+    const int sizeY = boxY + boxH - 24;
     char sizeStr[32];
     snprintf(sizeStr, sizeof(sizeStr), "%.0f KB", total / 1024.0f);
 
@@ -1208,7 +1208,7 @@ void CardputerView::copyProgress(size_t total, size_t current, void* userCtx) {
         Display->fillRoundRect(barX, barY, barW, barH, DEFAULT_ROUND_RECT, RECT_COLOR_DARK);
 
         // Taille
-        Display->setTextSize(TEXT_SMALL);
+        Display->setTextSize(TEXT_MEDIUM_LARGE);
         Display->setTextColor(TEXT_COLOR);
         Display->drawCenterString(sizeStr, Display->width() / 2, sizeY);
     }

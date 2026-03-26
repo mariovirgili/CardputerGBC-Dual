@@ -12,12 +12,19 @@
 #include <string.h>
 #include "nes/run_nes.h"
 #include "sms/run_sms.h"
+#include "sms/display.h"
 #include "ngp/run_ngp.h"
+#include "ngp/ngc_display.h"
 #include "ws/run_ws.h"
+#include "ws/ws_display.h"
 #include "pce/run_pce.h"
+#include "pce/pce_display.h"
 #include "lynx/run_lynx.h"
+#include "lynx/lynx_display.h"
 #include "genesis/run_genesis.h"
+#include "genesis/genesis_display.h"
 #include "gbc/run_gbc.h"
+#include "gbc/gbc_display.h"
 #include "snes/run_snes.h"
 #include "last_game.h"
 #define RETRO_COMPAT_IMPLEMENTATION
@@ -31,8 +38,56 @@
 #include "cardputer/Welcome.h"
 #include "cardputer/WelcomeExternalDs.h"
 
+void nes_display_show_external_info(const char* romTitle);
+
+static bool detectGameBoyColorFromRomData(const uint8_t* romData, size_t romLen)
+{
+  if (!romData || romLen <= 0x143) {
+    return false;
+  }
+
+  const uint8_t cgbFlag = romData[0x143];
+  return cgbFlag == 0x80 || cgbFlag == 0xC0;
+}
+
+static void showExternalControlsPreview(RomType romType, const std::string& romPath, const std::string& romName)
+{
+  switch (romType) {
+    case ROM_TYPE_NES:
+      nes_display_show_external_info(romName.c_str());
+      break;
+    case ROM_TYPE_SMS:
+    case ROM_TYPE_GAMEGEAR:
+      sms_display_show_external_info(romName.c_str(), romType == ROM_TYPE_GAMEGEAR);
+      break;
+    case ROM_TYPE_NGP:
+      ngc_display_show_external_info(romName.c_str());
+      break;
+    case ROM_TYPE_GENESIS:
+      genesis_display_show_external_info(romName.c_str());
+      break;
+    case ROM_TYPE_WS:
+      ws_display_show_external_info(romName.c_str(), detectWonderSwanFromRom(romPath));
+      break;
+    case ROM_TYPE_PCE:
+      pce_display_show_external_info(romName.c_str());
+      break;
+    case ROM_TYPE_GB:
+      gbc_display_show_external_info(romName.c_str(), detectGameBoyColorFromRomData(get_rom_ptr(), get_rom_size()));
+      break;
+    case ROM_TYPE_LYNX:
+      lynx_display_show_external_info(romName.c_str());
+      break;
+    default:
+      return;
+  }
+
+  emu_set_aux_screen_locked(true);
+}
+
 static void clearExternalTft(const char* message = "Select Rom!")
 {
+  emu_set_aux_screen_locked(false);
   TFT_eSPI extTft;
   extTft.begin();
   extTft.setRotation(3);
@@ -45,6 +100,7 @@ static void clearExternalTft(const char* message = "Select Rom!")
 
 static void showExternalRomSelectorTft()
 {
+  emu_set_aux_screen_locked(false);
   struct ExternalRomBadge {
     const char* label;
     uint16_t color;
@@ -98,6 +154,7 @@ static void showExternalRomSelectorTft()
 
 static void welcomeExternalTft()
 {
+  emu_set_aux_screen_locked(false);
   TFT_eSPI extTft;
   extTft.begin();
   extTft.setRotation(3);
@@ -350,18 +407,36 @@ void setup() {
     share::emuControlsLoad(sd, emuProfile);
   }
 
+  // Prepare ROM filename early so we can preview the secondary info screen
+  auto pos = romPath.find_last_of("/\\");
+  std::string romName = (pos == std::string::npos) ? romPath : romPath.substr(pos + 1);
+
   // Display target selection (for cores that support external TFT)
   if (emu_has_external_display_support((int)ext)) {
+    emu_set_aux_screen_locked(false);
     emu_display_target_t savedTarget = emu_load_display_target((int)ext);
 
     VerticalSelector displaySelector(display, input);
     std::vector<std::string> displayOptions = {"External TFT", "Internal LCD"};
-    display.topBar("SELECT DISPLAY", false, false);
-
-    // Show selector — index 0 = External, index 1 = Internal
     int initialIdx = (savedTarget == EMU_DISPLAY_EXTERNAL) ? 0 : 1;
-    int sel = displaySelector.select("Display target", displayOptions,
-                false, false, {}, {}, false, true, true, initialIdx);
+    int sel = initialIdx;
+
+    for (;;) {
+      display.topBar("SELECT DISPLAY", false, false);
+      sel = displaySelector.select("Display target", displayOptions,
+                  false, false, {}, {}, false, true, true, initialIdx,
+                  hasProfile ? -2 : -1);
+      if (sel == -2 && hasProfile) {
+        share::emuControlsEdit(sd, emuProfile, display, input);
+        input.flushInput(150);
+        continue;
+      }
+      if (sel < 0) {
+        sel = initialIdx;
+      }
+      break;
+    }
+
     emu_display_target_t chosen;
     if (sel == 0) {
       chosen = EMU_DISPLAY_EXTERNAL;
@@ -391,6 +466,9 @@ void setup() {
       int depthInitial = (savedDepth == EMU_COLOR_12BIT) ? 1 : 0;
       int dsel = depthSelector.select("Color depth", depthOptions,
                     false, false, {}, {}, false, true, true, depthInitial);
+      if (dsel < 0) {
+        dsel = depthInitial;
+      }
       emu_color_depth_t chosenDepth = (dsel == 1) ? EMU_COLOR_12BIT : EMU_COLOR_16BIT;
 
       g_emu_color_depth = chosenDepth;
@@ -402,6 +480,11 @@ void setup() {
     }
 
     display.initialize();  // re-init display after selectors
+    if (chosen == EMU_DISPLAY_INTERNAL) {
+      showExternalControlsPreview(ext, romPath, romName);
+    } else {
+      emu_set_aux_screen_locked(false);
+    }
   } else {
     g_emu_display_target = EMU_DISPLAY_INTERNAL;
     g_emu_color_depth = EMU_COLOR_16BIT;
@@ -430,6 +513,9 @@ void setup() {
       if (hasProfile) {
         share::emuControlsEdit(sd, emuProfile, display, input);
         input.flushInput(150);
+        if (g_emu_display_target == EMU_DISPLAY_INTERNAL) {
+          showExternalControlsPreview(ext, romPath, romName);
+        }
         display.topBar("- + SOUND [ ] BRIGHT", false, false);
         display.showControlBindings(
           share::emuControlActionLabels(emuProfile),
@@ -451,7 +537,7 @@ void setup() {
       switch (state) {
         case 0: display.topBar("PRESS ANY KEY TO START", false, false); break;
         case 1: display.topBar("KEY \\ SCREEN MODE",       false, false); break;
-        case 2: display.topBar("GO TO QUIT GAME",          false, false); break;
+        case 2: display.topBar("GO OR HOLD ESC TO QUIT",   false, false); break;
         case 3: display.topBar("FN + ARROWS FOR ZOOM",     false, false); break;
         case 4: display.topBar("- + SOUND [ ] BRIGHT",     false, false); break;
         case 5: display.topBar("HOLD GO FOR CONFIG",       false, false); break;
@@ -464,10 +550,6 @@ void setup() {
   if (ext != ROM_TYPE_UNKNOWN) {
       saveLastGameToNvs(romPath);
   }
-
-  // Prepare rom filename for emulators
-  auto pos = romPath.find_last_of("/\\");
-  std::string romName = (pos == std::string::npos) ? romPath : romPath.substr(pos + 1);
 
   printf("HEAP BEFORE EMU: %u bytes\n", esp_get_free_heap_size());
 

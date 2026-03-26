@@ -110,13 +110,27 @@ RomType getRomType(const std::string& path) {
 static inline int findPreferredRomIndex(
     const std::vector<std::string>& elementNames,
     const std::string& currentPath,
-    const std::string& lastRomPath
+    const std::string& lastRomPath,
+    const RomBrowserSelectionState& browserSelection
 ) {
-    if (elementNames.empty() || lastRomPath.empty()) {
+    if (elementNames.empty()) {
         return 0;
     }
 
     const std::string normalizedCurrentPath = normalizeRomFolderPath(currentPath);
+    if (browserSelection.valid() &&
+        browserSelection.folderPath == normalizedCurrentPath) {
+        for (size_t i = 0; i < elementNames.size(); ++i) {
+            if (elementNames[i] == browserSelection.entryName) {
+                return static_cast<int>(i);
+            }
+        }
+    }
+
+    if (lastRomPath.empty()) {
+        return 0;
+    }
+
     const std::string normalizedLastRomPath = normalizeRomBrowserPath(lastRomPath);
     if (extractRomFolder(normalizedLastRomPath) != normalizedCurrentPath) {
         return 0;
@@ -178,7 +192,13 @@ static inline std::string getRomPath(SdService& sdService, CardputerView& displa
         }
 
         // Select element
-        const int preferredIndex = findPreferredRomIndex(elementNames, currentPath, lastRomPath);
+        const RomBrowserSelectionState browserSelection = getRomSelectionFromSd(sdService);
+        const int preferredIndex = findPreferredRomIndex(
+            elementNames,
+            currentPath,
+            lastRomPath,
+            browserSelection
+        );
         uint16_t selectedIndex = verticalSelector.select(
             currentPath,
             elementNames,
@@ -211,6 +231,7 @@ static inline std::string getRomPath(SdService& sdService, CardputerView& displa
         } 
             
         nextPath += elementNames[selectedIndex];
+        saveRomSelectionToSd(sdService, currentPath, elementNames[selectedIndex]);
 
         // folder
         if (sdService.isDirectory(nextPath)) {

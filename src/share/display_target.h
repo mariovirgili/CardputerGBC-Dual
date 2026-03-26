@@ -24,6 +24,10 @@ extern emu_display_target_t g_emu_display_target;
 // Global color depth — set before launching each emulator
 extern emu_color_depth_t g_emu_color_depth;
 
+// True when the secondary screen has already been drawn and must not be
+// refreshed again during the current game session.
+extern bool g_emu_aux_screen_locked;
+
 // Check if a ROM type supports external display rendering
 // romType corresponds to the RomType enum values in select_rom.h
 bool emu_has_external_display_support(int romType);
@@ -38,6 +42,10 @@ void emu_save_display_target(int romType, emu_display_target_t target);
 // Load/save per-core color depth preference from NVS
 emu_color_depth_t emu_load_color_depth(int romType);
 void emu_save_color_depth(int romType, emu_color_depth_t depth);
+
+// Lock/unlock the secondary info/controls screen for the current session.
+void emu_set_aux_screen_locked(bool locked);
+bool emu_is_aux_screen_locked(void);
 
 #ifdef __cplusplus
 }

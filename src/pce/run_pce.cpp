@@ -69,11 +69,13 @@ void run_pce(const uint8_t* rom, size_t len, const char* rom_name)
     intDisplay.showControlBindings(
       share::emuControlActionLabels(share::EmuProfile::Pce),
       share::emuControlKeyLabels(share::EmuProfile::Pce),
-      "GO = QUIT"
+      "GO / HOLD ESC = QUIT"
     );
   } else {
     // Game on internal LCD → show ROM info + controls on external TFT
-    pce_display_show_external_info(rom_name);
+    if (!emu_is_aux_screen_locked()) {
+      pce_display_show_external_info(rom_name);
+    }
   }
 
   printf("[PCE] Entering RunPCE() loop | display => %s\n",

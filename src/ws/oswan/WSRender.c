@@ -78,7 +78,6 @@ void SetPalette(int addr)
 
     // RGB444 format
     color = *(WORD*)(IRAM + (addr & 0xFFFE));
-	// RGB565
 	r = (color & 0x0F00) << 4;
 	g = (color & 0x00F0) << 3;
 	b = (color & 0x000F) << 1;
@@ -922,6 +921,6 @@ void RenderSleep(void)
         {
             *p++ = 0x4208;
         }
-    }
 	p += SCREEN_WIDTH - LCD_MAIN_W;
+    }
 }

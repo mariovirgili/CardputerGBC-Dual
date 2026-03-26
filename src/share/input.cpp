@@ -10,6 +10,9 @@ static uint32_t s_lastInputUs = 0;
 uint32_t lastPadState = 0xFFFFFFFF;
 static const uint32_t INPUT_POLL_PERIOD_MS = 32;
 constexpr int64_t INPUT_POLL_PERIOD_US = 1000 * INPUT_POLL_PERIOD_MS;
+static constexpr uint32_t BACKTICK_LONG_PRESS_MS = 700;
+static uint32_t s_backtickPressedMs = 0;
+static bool s_backtickLongHandled = false;
 
 // I2C joypad type
 enum I2cPadType : uint8_t {
@@ -34,6 +37,20 @@ static constexpr uint8_t JOYSTICK1_ADDR = 0x52;
 
 namespace share
 {
+    static void requestQuitToRomBrowser()
+    {
+        Preferences prefs;
+        prefs.begin("cardputer_emu", false);  // RW
+        prefs.putBool("quit_game", true);
+        prefs.end();
+
+        while (gameIsSaving()) {
+            delay(1);
+        }
+
+        esp_restart();
+    }
+
    bool shouldPollInput()
     {
         uint32_t now = esp_timer_get_time();
@@ -53,16 +70,22 @@ namespace share
     {
         // GO short click during emulation -> mark quit and restart to ROM browser.
         if (M5Cardputer.BtnA.wasClicked()) {
-            Preferences prefs; // Mark quit game flag in NVS
-            prefs.begin("cardputer_emu", false);  // RW
-            prefs.putBool("quit_game", true);
-            prefs.end();
-            
-            while (gameIsSaving()) {
-                delay(1); // wait for save to finish
+            requestQuitToRomBrowser();
+        }
+
+        // Backtick long press during emulation -> same quit path as GO short press.
+        if (key('`')) {
+            if (s_backtickPressedMs == 0) {
+                s_backtickPressedMs = millis();
+                s_backtickLongHandled = false;
+            } else if (!s_backtickLongHandled &&
+                       (uint32_t)(millis() - s_backtickPressedMs) >= BACKTICK_LONG_PRESS_MS) {
+                s_backtickLongHandled = true;
+                requestQuitToRomBrowser();
             }
-            
-            esp_restart();
+        } else {
+            s_backtickPressedMs = 0;
+            s_backtickLongHandled = false;
         }
 
         // Volume +
