@@ -1,5 +1,6 @@
 #include "emu_controls.h"
 
+#include "../atari2600/a2600_display.h"
 #include "../cardputer/CardputerInput.h"
 #include "../cardputer/CardputerView.h"
 #include "../cardputer/SdService.h"
@@ -136,6 +137,16 @@ constexpr ControlEntry kSnesEntries[] = {
     {EmuAction::Select, "select", "SELECT", '2'},
 };
 
+constexpr ControlEntry kA2600Entries[] = {
+    {EmuAction::Up, "up", "UP", 'e'},
+    {EmuAction::Down, "down", "DOWN", 's'},
+    {EmuAction::Left, "left", "LEFT", 'a'},
+    {EmuAction::Right, "right", "RIGHT", 'd'},
+    {EmuAction::A, "fire", "FIRE", 'l'},
+    {EmuAction::Select, "select", "SELECT", '2'},
+    {EmuAction::Start, "reset", "RESET", '1'},
+};
+
 constexpr ProfileDef kProfiles[] = {
     {"NES", "NES.opt", kNesEntries, sizeof(kNesEntries) / sizeof(kNesEntries[0])},
     {"SMS", "SMS.opt", kSmsEntries, sizeof(kSmsEntries) / sizeof(kSmsEntries[0])},
@@ -146,6 +157,7 @@ constexpr ProfileDef kProfiles[] = {
     {"LYNX", "LYNX.opt", kLynxEntries, sizeof(kLynxEntries) / sizeof(kLynxEntries[0])},
     {"GENESIS", "GENESIS.opt", kGenesisEntries, sizeof(kGenesisEntries) / sizeof(kGenesisEntries[0])},
     {"SNES", "SNES.opt", kSnesEntries, sizeof(kSnesEntries) / sizeof(kSnesEntries[0])},
+    {"A2600", "A2600.opt", kA2600Entries, sizeof(kA2600Entries) / sizeof(kA2600Entries[0])},
 };
 
 constexpr size_t kProfileCount = static_cast<size_t>(EmuProfile::Count);
@@ -454,6 +466,11 @@ bool emuControlsEdit(SdService& sd, EmuProfile profile, CardputerView& display, 
 
     const auto& def = getProfileDef(profile);
     const auto original = s_bindings[static_cast<size_t>(profile)];
+    const bool hasInternalViewOption = profile == EmuProfile::A2600;
+    const A2600InternalViewMode originalInternalView = hasInternalViewOption
+        ? a2600_display_load_internal_view_mode()
+        : A2600InternalViewMode::Wide;
+    A2600InternalViewMode pendingInternalView = originalInternalView;
     int selectedIndex = 0;
 
     VerticalSelector selector(display, input);
@@ -461,6 +478,11 @@ bool emuControlsEdit(SdService& sd, EmuProfile profile, CardputerView& display, 
     while (true) {
         std::vector<std::string> values = emuControlKeyLabels(profile);
         std::vector<std::string> labels = emuControlActionLabels(profile);
+
+        if (hasInternalViewOption) {
+            labels.emplace_back("INT VIEW");
+            values.emplace_back(a2600_display_internal_view_mode_label(pendingInternalView));
+        }
 
         labels.emplace_back("SAVE");
         values.emplace_back("WRITE FILE");
@@ -482,15 +504,26 @@ bool emuControlsEdit(SdService& sd, EmuProfile profile, CardputerView& display, 
                                           false,
                                           selectedIndex);
 
-        if (index < 0 || index == static_cast<int>(def.entryCount + 2)) {
+        const int saveIndex = static_cast<int>(def.entryCount + (hasInternalViewOption ? 1 : 0));
+        const int defaultsIndex = saveIndex + 1;
+        const int cancelIndex = defaultsIndex + 1;
+        const int internalViewIndex = hasInternalViewOption ? static_cast<int>(def.entryCount) : -1;
+
+        if (index < 0 || index == cancelIndex) {
             s_bindings[static_cast<size_t>(profile)] = original;
+            if (hasInternalViewOption) {
+                a2600_display_set_internal_view_mode(originalInternalView, false);
+            }
             return false;
         }
 
         selectedIndex = index;
 
-        if (index == static_cast<int>(def.entryCount)) {
+        if (index == saveIndex) {
             if (emuControlsSave(sd, profile)) {
+                if (hasInternalViewOption) {
+                    a2600_display_set_internal_view_mode(pendingInternalView, true);
+                }
                 display.subMessage(std::string(emuProfileFileName(profile)) + " saved", 700);
                 return true;
             }
@@ -499,9 +532,44 @@ bool emuControlsEdit(SdService& sd, EmuProfile profile, CardputerView& display, 
             continue;
         }
 
-        if (index == static_cast<int>(def.entryCount + 1)) {
+        if (index == defaultsIndex) {
             emuControlsResetDefaults(profile);
+            if (hasInternalViewOption) {
+                pendingInternalView = A2600InternalViewMode::Wide;
+                a2600_display_set_internal_view_mode(pendingInternalView, false);
+            }
             display.subMessage("Defaults restored", 700);
+            continue;
+        }
+
+        if (index == internalViewIndex) {
+            VerticalSelector viewSelector(display, input);
+            const std::vector<std::string> viewOptions = {"Wide", "Pixel perfect"};
+            const int initialViewIndex = (pendingInternalView == A2600InternalViewMode::Wide) ? 0 : 1;
+
+            const int selectedView = viewSelector.select("Internal view",
+                                                         viewOptions,
+                                                         false,
+                                                         false,
+                                                         {},
+                                                         {},
+                                                         false,
+                                                         true,
+                                                         true,
+                                                         initialViewIndex);
+
+            if (selectedView < 0) {
+                pendingInternalView = (initialViewIndex == 1)
+                    ? A2600InternalViewMode::PixelPerfect
+                    : A2600InternalViewMode::Wide;
+            } else {
+                pendingInternalView = (selectedView == 1)
+                    ? A2600InternalViewMode::PixelPerfect
+                    : A2600InternalViewMode::Wide;
+            }
+            a2600_display_set_internal_view_mode(pendingInternalView, false);
+            display.subMessage(std::string("Internal view -> ") +
+                               a2600_display_internal_view_mode_label(pendingInternalView), 700);
             continue;
         }
 

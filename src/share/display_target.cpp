@@ -11,7 +11,7 @@ emu_color_depth_t g_emu_color_depth = EMU_COLOR_16BIT;
 bool g_emu_aux_screen_locked = false;
 
 // ROM type values from select_rom.h RomType enum
-// UNKNOWN=0, NES=1, SMS=2, GG=3, NGP=4, GENESIS=5, WS=6, PCE=7, GB=8, LYNX=9, SNES=10
+// UNKNOWN=0, NES=1, SMS=2, GG=3, NGP=4, GENESIS=5, WS=6, PCE=7, GB=8, LYNX=9, SNES=10, A2600=11
 static constexpr int kRomNes     = 1;
 static constexpr int kRomSms     = 2;
 static constexpr int kRomGg      = 3;
@@ -21,6 +21,7 @@ static constexpr int kRomWs      = 6;
 static constexpr int kRomPce     = 7;
 static constexpr int kRomGb      = 8;
 static constexpr int kRomLynx    = 9;
+static constexpr int kRomA2600   = 11;
 
 bool emu_has_external_display_support(int romType)
 {
@@ -34,6 +35,7 @@ bool emu_has_external_display_support(int romType)
         case kRomPce:
         case kRomGb:
         case kRomLynx:
+        case kRomA2600:
             return true;
         default:
             return false;
@@ -52,6 +54,7 @@ static const char* romTypeToKey(int romType)
         case kRomPce:     return "pce";
         case kRomGb:      return "gb";
         case kRomLynx:    return "lynx";
+        case kRomA2600:   return "a26";
         default:          return "unk";
     }
 }
@@ -89,6 +92,7 @@ emu_color_depth_t emu_recommended_color_depth(int romType)
         case kRomPce:     return EMU_COLOR_12BIT;   // 512 native colors → 4K plenty
         case kRomGb:      return EMU_COLOR_16BIT;   // up to 32K colors, 12-bit loses nuance
         case kRomLynx:    return EMU_COLOR_12BIT;   // 4096 native colors (12-bit RGB)
+        case kRomA2600:   return EMU_COLOR_12BIT;   // 256 palette entries are a good fit for RGB444
         default:          return EMU_COLOR_16BIT;
     }
 }

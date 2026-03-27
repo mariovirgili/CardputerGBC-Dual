@@ -20,6 +20,7 @@ enum class EmuProfile : uint8_t {
     Lynx,
     Genesis,
     Snes,
+    A2600,
     Count
 };
 
