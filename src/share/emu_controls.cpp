@@ -1,6 +1,7 @@
 #include "emu_controls.h"
 
 #include "../atari2600/a2600_display.h"
+#include "../atari7800/a7800_config.h"
 #include "../cardputer/CardputerInput.h"
 #include "../cardputer/CardputerView.h"
 #include "../cardputer/SdService.h"
@@ -147,6 +148,18 @@ constexpr ControlEntry kA2600Entries[] = {
     {EmuAction::Start, "reset", "RESET", '1'},
 };
 
+constexpr ControlEntry kA7800Entries[] = {
+    {EmuAction::Up, "up", "UP", 'e'},
+    {EmuAction::Down, "down", "DOWN", 's'},
+    {EmuAction::Left, "left", "LEFT", 'a'},
+    {EmuAction::Right, "right", "RIGHT", 'd'},
+    {EmuAction::A, "fire1", "FIRE 1", 'l'},
+    {EmuAction::B, "fire2", "FIRE 2", 'k'},
+    {EmuAction::Select, "select", "SELECT", '2'},
+    {EmuAction::Start, "reset", "RESET", '1'},
+    {EmuAction::Pause, "pause", "PAUSE", 'o'},
+};
+
 constexpr ProfileDef kProfiles[] = {
     {"NES", "NES.opt", kNesEntries, sizeof(kNesEntries) / sizeof(kNesEntries[0])},
     {"SMS", "SMS.opt", kSmsEntries, sizeof(kSmsEntries) / sizeof(kSmsEntries[0])},
@@ -158,6 +171,7 @@ constexpr ProfileDef kProfiles[] = {
     {"GENESIS", "GENESIS.opt", kGenesisEntries, sizeof(kGenesisEntries) / sizeof(kGenesisEntries[0])},
     {"SNES", "SNES.opt", kSnesEntries, sizeof(kSnesEntries) / sizeof(kSnesEntries[0])},
     {"A2600", "A2600.opt", kA2600Entries, sizeof(kA2600Entries) / sizeof(kA2600Entries[0])},
+    {"A7800", "A7800.opt", kA7800Entries, sizeof(kA7800Entries) / sizeof(kA7800Entries[0])},
 };
 
 constexpr size_t kProfileCount = static_cast<size_t>(EmuProfile::Count);
@@ -466,12 +480,52 @@ bool emuControlsEdit(SdService& sd, EmuProfile profile, CardputerView& display, 
 
     const auto& def = getProfileDef(profile);
     const auto original = s_bindings[static_cast<size_t>(profile)];
-    const bool hasInternalViewOption = profile == EmuProfile::A2600;
-    const A2600InternalViewMode originalInternalView = hasInternalViewOption
-        ? a2600_display_load_internal_view_mode()
-        : A2600InternalViewMode::Wide;
-    A2600InternalViewMode pendingInternalView = originalInternalView;
+    const bool hasInternalViewOption =
+        profile == EmuProfile::A2600 || profile == EmuProfile::A7800;
+    int originalInternalView = 1;
+    if (profile == EmuProfile::A2600) {
+        originalInternalView = static_cast<int>(a2600_display_load_internal_view_mode());
+    } else if (profile == EmuProfile::A7800) {
+        originalInternalView = static_cast<int>(a7800_config_load_internal_view_mode());
+    }
+    int pendingInternalView = originalInternalView;
     int selectedIndex = 0;
+
+    auto applyInternalView = [&](int value, bool persist) {
+        if (profile == EmuProfile::A2600) {
+            a2600_display_set_internal_view_mode(
+                value == static_cast<int>(A2600InternalViewMode::PixelPerfect)
+                    ? A2600InternalViewMode::PixelPerfect
+                    : A2600InternalViewMode::Wide,
+                persist
+            );
+        } else if (profile == EmuProfile::A7800) {
+            a7800_config_set_internal_view_mode(
+                value == static_cast<int>(A7800InternalViewMode::PixelPerfect)
+                    ? A7800InternalViewMode::PixelPerfect
+                    : A7800InternalViewMode::Wide,
+                persist
+            );
+        }
+    };
+
+    auto internalViewLabel = [&](int value) -> const char* {
+        if (profile == EmuProfile::A2600) {
+            return a2600_display_internal_view_mode_label(
+                value == static_cast<int>(A2600InternalViewMode::PixelPerfect)
+                    ? A2600InternalViewMode::PixelPerfect
+                    : A2600InternalViewMode::Wide
+            );
+        }
+        if (profile == EmuProfile::A7800) {
+            return a7800_config_internal_view_mode_label(
+                value == static_cast<int>(A7800InternalViewMode::PixelPerfect)
+                    ? A7800InternalViewMode::PixelPerfect
+                    : A7800InternalViewMode::Wide
+            );
+        }
+        return "WIDE";
+    };
 
     VerticalSelector selector(display, input);
 
@@ -481,7 +535,7 @@ bool emuControlsEdit(SdService& sd, EmuProfile profile, CardputerView& display, 
 
         if (hasInternalViewOption) {
             labels.emplace_back("INT VIEW");
-            values.emplace_back(a2600_display_internal_view_mode_label(pendingInternalView));
+            values.emplace_back(internalViewLabel(pendingInternalView));
         }
 
         labels.emplace_back("SAVE");
@@ -512,7 +566,7 @@ bool emuControlsEdit(SdService& sd, EmuProfile profile, CardputerView& display, 
         if (index < 0 || index == cancelIndex) {
             s_bindings[static_cast<size_t>(profile)] = original;
             if (hasInternalViewOption) {
-                a2600_display_set_internal_view_mode(originalInternalView, false);
+                applyInternalView(originalInternalView, false);
             }
             return false;
         }
@@ -522,7 +576,7 @@ bool emuControlsEdit(SdService& sd, EmuProfile profile, CardputerView& display, 
         if (index == saveIndex) {
             if (emuControlsSave(sd, profile)) {
                 if (hasInternalViewOption) {
-                    a2600_display_set_internal_view_mode(pendingInternalView, true);
+                    applyInternalView(pendingInternalView, true);
                 }
                 display.subMessage(std::string(emuProfileFileName(profile)) + " saved", 700);
                 return true;
@@ -535,8 +589,8 @@ bool emuControlsEdit(SdService& sd, EmuProfile profile, CardputerView& display, 
         if (index == defaultsIndex) {
             emuControlsResetDefaults(profile);
             if (hasInternalViewOption) {
-                pendingInternalView = A2600InternalViewMode::Wide;
-                a2600_display_set_internal_view_mode(pendingInternalView, false);
+                pendingInternalView = static_cast<int>(A2600InternalViewMode::Wide);
+                applyInternalView(pendingInternalView, false);
             }
             display.subMessage("Defaults restored", 700);
             continue;
@@ -545,7 +599,8 @@ bool emuControlsEdit(SdService& sd, EmuProfile profile, CardputerView& display, 
         if (index == internalViewIndex) {
             VerticalSelector viewSelector(display, input);
             const std::vector<std::string> viewOptions = {"Wide", "Pixel perfect"};
-            const int initialViewIndex = (pendingInternalView == A2600InternalViewMode::Wide) ? 0 : 1;
+            const int initialViewIndex =
+                (pendingInternalView == static_cast<int>(A2600InternalViewMode::Wide)) ? 0 : 1;
 
             const int selectedView = viewSelector.select("Internal view",
                                                          viewOptions,
@@ -558,18 +613,15 @@ bool emuControlsEdit(SdService& sd, EmuProfile profile, CardputerView& display, 
                                                          true,
                                                          initialViewIndex);
 
-            if (selectedView < 0) {
-                pendingInternalView = (initialViewIndex == 1)
-                    ? A2600InternalViewMode::PixelPerfect
-                    : A2600InternalViewMode::Wide;
-            } else {
-                pendingInternalView = (selectedView == 1)
-                    ? A2600InternalViewMode::PixelPerfect
-                    : A2600InternalViewMode::Wide;
+            if (selectedView >= 0) {
+                pendingInternalView =
+                    (selectedView == 1)
+                        ? static_cast<int>(A2600InternalViewMode::PixelPerfect)
+                        : static_cast<int>(A2600InternalViewMode::Wide);
+                applyInternalView(pendingInternalView, false);
+                display.subMessage(std::string("Internal view -> ") +
+                                   internalViewLabel(pendingInternalView), 700);
             }
-            a2600_display_set_internal_view_mode(pendingInternalView, false);
-            display.subMessage(std::string("Internal view -> ") +
-                               a2600_display_internal_view_mode_label(pendingInternalView), 700);
             continue;
         }
 

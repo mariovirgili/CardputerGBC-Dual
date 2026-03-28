@@ -23,6 +23,8 @@
 #include "lynx/lynx_display.h"
 #include "atari2600/run_a2600.h"
 #include "atari2600/a2600_display.h"
+#include "atari7800/run_a7800.h"
+#include "atari7800/a7800_video.h"
 #include "genesis/run_genesis.h"
 #include "genesis/genesis_display.h"
 #include "gbc/run_gbc.h"
@@ -83,6 +85,9 @@ static void showExternalControlsPreview(RomType romType, const std::string& romP
     case ROM_TYPE_A2600:
       a2600_display_show_external_info(romName.c_str());
       break;
+    case ROM_TYPE_A7800:
+      a7800_video_show_external_info(romName.c_str());
+      break;
     default:
       return;
   }
@@ -125,6 +130,7 @@ static void showExternalRomSelectorTft()
     {"PCE",  PCE_COLOR},
     {"LYNX", LYNX_COLOR},
     {"A26",  LYNX_COLOR},
+    {"A78",  LYNX_COLOR},
   };
 
   TFT_eSPI extTft;
@@ -201,6 +207,9 @@ static bool getProfileForRomType(RomType romType, share::EmuProfile& outProfile)
       return true;
     case ROM_TYPE_A2600:
       outProfile = share::EmuProfile::A2600;
+      return true;
+    case ROM_TYPE_A7800:
+      outProfile = share::EmuProfile::A7800;
       return true;
     default:
       return false;
@@ -610,6 +619,10 @@ void setup() {
   else if (ext == ROM_TYPE_A2600) {
       // --- Atari 2600 ---
       run_a2600(get_rom_ptr(), get_rom_size(), romName.c_str());
+  }
+  else if (ext == ROM_TYPE_A7800) {
+      // --- Atari 7800 ---
+      run_a7800(get_rom_ptr(), get_rom_size(), romName.c_str());
   }
   else {
       display.topBar("ERROR", false, false);

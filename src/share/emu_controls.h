@@ -21,6 +21,7 @@ enum class EmuProfile : uint8_t {
     Genesis,
     Snes,
     A2600,
+    A7800,
     Count
 };
 

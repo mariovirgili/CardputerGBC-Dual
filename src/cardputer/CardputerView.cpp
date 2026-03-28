@@ -1021,6 +1021,7 @@ uint16_t CardputerView::colorForExt(const std::string& extRaw) const {
     if (ext == ".gb" || ext == ".gbc") return GAMEBOY_COLOR;
     if (ext == ".lnx") return LYNX_COLOR;
     if (ext == ".a26") return LYNX_COLOR;
+    if (ext == ".a78") return LYNX_COLOR;
     if (ext == ".sfc" || ext == ".smc") return SNES_COLOR;
 
     return TEXT_COLOR;

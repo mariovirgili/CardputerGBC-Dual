@@ -21,7 +21,8 @@
       "Bash(~/.platformio/penv/Scripts/platformio.exe run:*)",
       "Bash(~/.platformio/penv/Scripts/pio run:*)",
       "Bash(find d:/CardputerADV/Compile/CardputerGBC-Dual/src -type d -name *ws* -o -type d -name *wonder*)",
-      "Bash(find D:CardputerADVCompileCardputerGBC-Dual -name *.h -path *pch*)"
+      "Bash(find D:CardputerADVCompileCardputerGBC-Dual -name *.h -path *pch*)",
+      "Bash(~/.platformio/packages/toolchain-xtensa-esp32s3/bin/xtensa-esp32s3-elf-addr2line -pfiaC -e .pio/build/m5stack-stamps3-max-spiffs/firmware.elf 0x42161977 0x421619be 0x421622e5 0x4216211c 0x4216d355 0x4203be19 0x4203c02e 0x4209b55b 0x4209d04e 0x4209e836 0x42147042)"
     ]
   }
 }
