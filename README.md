@@ -9,11 +9,12 @@ This branch keeps the original emulator pack and adds:
 - dual-screen startup and ROM browser screens
 - per-core display target selection (`External TFT` or `Internal LCD`)
 - per-core control profiles saved on the SD card
+- Atari 2600 (`.a26`) and Atari 7800 (`.a78`) launcher integration
 - safer ROM loading with size checks before copying to flash
 - persistent ROM browser state (last folder and last launched game)
 - merged flashable firmware images in the `release/` folder
 
-The project is powered by [Nofrendo](https://github.com/moononournation/arduino-nofrendo), [Snes9x](https://github.com/snes9xgit/snes9x), [Smsplus](https://github.com/ducalex/retro-go/tree/master/retro-core/components/smsplus), [Race](https://github.com/libretro/RACE), [Gwenesis](https://github.com/bzhxx/gwenesis), [Oswan](https://github.com/alekmaul/oswan), [GnuBoy](https://github.com/rofl0r/gnuboy), [Handy](https://github.com/libretro/libretro-handy) and [PCE-GO](https://github.com/ducalex/retro-go/tree/master/retro-core/components/pce-go).
+The project is powered by [Nofrendo](https://github.com/moononournation/arduino-nofrendo), [Snes9x](https://github.com/snes9xgit/snes9x), [Smsplus](https://github.com/ducalex/retro-go/tree/master/retro-core/components/smsplus), [Race](https://github.com/libretro/RACE), [Gwenesis](https://github.com/bzhxx/gwenesis), [Oswan](https://github.com/alekmaul/oswan), [GnuBoy](https://github.com/rofl0r/gnuboy), [Handy](https://github.com/libretro/libretro-handy), [PCE-GO](https://github.com/ducalex/retro-go/tree/master/retro-core/components/pce-go), [Stella](https://stella-emu.github.io/) and [prosystem-libretro](https://github.com/libretro/prosystem-libretro).
 
 ![NES emulator screen captures on the M5Stack Cardputer](images/nes_emulator_s.jpg)
 ![GBC emulator screen captures on the M5Stack Cardputer](images/gbc_emulator_s.jpg)
@@ -35,12 +36,15 @@ The project is powered by [Nofrendo](https://github.com/moononournation/arduino-
 | Neo Geo Pocket / Color | Yes | Yes | Partial | Mostly full | Mono/color support |
 | WonderSwan / Color | Yes | Yes | Yes | Partial | Not full speed in all titles |
 | Super NES | Partial | Yes | Partial | Partial | Experimental due RAM limits |
+| Atari 2600 | Yes | Yes | No | Mostly full | `.a26` only in current branch |
+| Atari 7800 | Yes | Yes | No | Partial | `.a78` only, NTSC/PAL supported, some titles are slow |
 
 Supported ROM extensions from SD:
 
-`*.nes *.gb *.gbc *.sms *.gg *.ngc *.ngp *.md *.ws *.wsc *.pce *.lnx *.sfc *.smc`
+`*.nes *.gb *.gbc *.sms *.gg *.ngc *.ngp *.md *.ws *.wsc *.pce *.lnx *.sfc *.smc *.a26 *.a78`
 
 ROMs must be uncompressed. Do not use `.zip`, `.7z` or `.rar`.
+Atari support currently exposes `.a26` and `.a78` only. Generic `.bin` loading is not enabled in this branch.
 
 ## Branch Highlights
 
@@ -54,6 +58,9 @@ ROMs must be uncompressed. Do not use `.zip`, `.7z` or `.rar`.
   - `16-bit 65K colors`
   - `12-bit 4K colors`
 - Display target and color depth are saved per core in NVS.
+- Atari 2600 and Atari 7800 also expose an internal LCD view mode in the shared config menu:
+  - `Pixel Perfect`
+  - `Wide`
 
 ### Game Boy / Game Boy Color routing
 
@@ -62,6 +69,18 @@ Game Boy handling is now based on the real ROM hardware type, not only the file 
 - DMG and SGB titles are rendered on the external TFT
 - CGB titles are rendered on the internal LCD
 - when a CGB game runs on the internal LCD, the external TFT shows the game name and control help
+
+### Atari 2600 and Atari 7800
+
+- Atari 2600 is integrated as a dedicated module under `src/atari2600/` using vendored Stella sources.
+- Atari 7800 is integrated as a separate module under `src/atari7800/` using a small local libretro host for `prosystem-libretro`.
+- Both Atari modules keep the existing launcher flow:
+  - browse ROM on SD
+  - copy ROM to flash/XIP
+  - dispatch to a dedicated `run_*()` wrapper
+- Both support the shared control editor and per-core display target selection.
+- Both support internal LCD `Pixel Perfect` and `Wide` modes through the shared config menu.
+- Atari 7800 supports both NTSC and PAL timing from the core AV info.
 
 ### Per-core control profiles
 
@@ -76,6 +95,8 @@ Controls are no longer fixed globally. Each core has its own `.opt` file on the 
 - `LYNX.opt`
 - `GENESIS.opt`
 - `SNES.opt`
+- `A2600.opt`
+- `A7800.opt`
 
 You can edit the current core bindings from the pre-launch control screen with a long press on `GO`.
 
@@ -130,6 +151,7 @@ On the `RESUME LAST GAME?` prompt:
 ### Global runtime keys
 
 - `GO` short press during emulation = quit safely and return to the ROM browser
+- backtick long press during emulation = quit safely and return to the ROM browser
 - `+` / `-` = audio volume
 - `[` / `]` = LCD brightness
 - `\` = screen mode toggle
@@ -173,14 +195,14 @@ This branch includes multiple partition CSV files. The recommended release envir
 
 It currently uses:
 
-- [`partitions_plus20app_8mb.csv`](partitions_plus20app_8mb.csv)
+- [`partitions_a2600_8mb.csv`](partitions_a2600_8mb.csv)
 
 Layout:
 
-- app partition: `0x280000` bytes
-- ROM partition (`spiffs`): `0x570000` bytes
+- app partition: `0x340000` bytes
+- ROM partition (`spiffs`): `0x4B0000` bytes
 
-That gives roughly `5.44 MiB` of ROM storage in the current recommended build.
+That gives roughly `4.69 MiB` of ROM storage in the current recommended build, with a larger app partition for the integrated Atari cores.
 
 The older launcher-driven runtime repartitioning flow is disabled in this branch. Partition layout is chosen at build/flash time instead.
 
