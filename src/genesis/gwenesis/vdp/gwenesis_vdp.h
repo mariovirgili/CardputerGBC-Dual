@@ -21,8 +21,17 @@ __license__ = "GPLv3"
 
 #pragma once
 
+// Resolve conflict with ESP32 SDK macro
+#ifdef BIT
+    #undef BIT
+#endif
+
+// Define BIT on its own line
 #define BIT(v, idx) (((v) >> (idx)) & 1)
+
+// Define BITS on a new line
 #define BITS(v, idx, n) (((v) >> (idx)) & ((1 << (n)) - 1))
+
 
 // VDP registers
 #define REG0_DISABLE_DISPLAY (gwenesis_vdp_regs[0] & 1)

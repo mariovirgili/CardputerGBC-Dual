@@ -14,12 +14,25 @@ int VerticalSelector::select(
         const std::vector<std::string>& options2,
         const std::vector<std::string>& shortcuts, 
         bool visibleMention,
-        bool handleInactivity) 
+        bool handleInactivity,
+        bool romBrowserControls,
+        int initialIndex,
+        int longEscResult) 
 {
     int currentIndex = 0, lastIndex = -1, lastQuerySize = 0;
     char key = KEY_NONE;
     std::string searchQuery;
     std::vector<std::string> filteredOptions = options;
+    if (!filteredOptions.empty()) {
+        currentIndex = initialIndex;
+        if (currentIndex < 0) {
+            currentIndex = 0;
+        }
+        const int maxIndex = (int)filteredOptions.size() - 1;
+        if (currentIndex > maxIndex) {
+            currentIndex = maxIndex;
+        }
+    }
 
     // Marquee state
     std::string mBase;
@@ -30,6 +43,44 @@ int VerticalSelector::select(
     const uint32_t STEP_MS = 200;
     const size_t VISIBLE_CHARS = 20;
     const int VISIBLE_ROWS = 4;
+    const int PAGE_STEP = 4;
+    const uint32_t PAGE_REPEAT_INITIAL_MS = 260;
+    const uint32_t PAGE_REPEAT_STEP_MS = 80;
+    char heldPageKey = KEY_NONE;
+    uint32_t nextPageRepeatMs = 0;
+
+    auto pageUp = [&]() {
+        if (filteredOptions.empty()) return;
+        currentIndex -= PAGE_STEP;
+        if (currentIndex < 0) currentIndex = 0;
+    };
+
+    auto pageDown = [&]() {
+        if (filteredOptions.empty()) return;
+        currentIndex += PAGE_STEP;
+        const int last = (int)filteredOptions.size() - 1;
+        if (currentIndex > last) currentIndex = last;
+    };
+
+    auto getHeldPageKey = [&]() -> char {
+        if (!romBrowserControls) {
+            return KEY_NONE;
+        }
+
+        if (M5Cardputer.Keyboard.isKeyPressed(KEY_ARROW_LEFT) ||
+            M5Cardputer.Keyboard.isKeyPressed('a') ||
+            M5Cardputer.Keyboard.isKeyPressed('A')) {
+            return '\x11';
+        }
+
+        if (M5Cardputer.Keyboard.isKeyPressed(KEY_ARROW_RIGHT) ||
+            M5Cardputer.Keyboard.isKeyPressed('d') ||
+            M5Cardputer.Keyboard.isKeyPressed('D')) {
+            return '\x12';
+        }
+
+        return KEY_NONE;
+    };
 
     while (true) {
         const bool selectionChanged = (lastIndex != currentIndex) || (lastQuerySize != (int)searchQuery.size());
@@ -68,9 +119,55 @@ int VerticalSelector::select(
         // INPUT
         key = input.handler();
 
+        if (romBrowserControls) {
+            const uint32_t now = millis();
+            const char currentHeldPageKey = getHeldPageKey();
+
+            if (currentHeldPageKey != heldPageKey) {
+                heldPageKey = currentHeldPageKey;
+                nextPageRepeatMs = (heldPageKey == KEY_NONE) ? 0 : (now + PAGE_REPEAT_INITIAL_MS);
+            } else if (key == KEY_NONE &&
+                       heldPageKey != KEY_NONE &&
+                       now >= nextPageRepeatMs) {
+                key = heldPageKey;
+                nextPageRepeatMs = now + PAGE_REPEAT_STEP_MS;
+            }
+        }
+
         if (!shortcuts.empty()) {
             int si = checkShortcut(shortcuts, key);
             if (si != -1) return si;
+        }
+
+        if (romBrowserControls) {
+            if (key == KEY_ARROW_LEFT) {
+                key = '\x11';
+            } else if (key == KEY_ARROW_RIGHT) {
+                key = '\x12';
+            } else {
+                switch (std::tolower((unsigned char)key)) {
+                    case 'e':
+                        key = KEY_ARROW_UP;
+                        break;
+                    case 'z':
+                        key = KEY_ARROW_DOWN;
+                        break;
+                    case 'p':
+                        key = KEY_OK;
+                        break;
+                    case 'k':
+                        key = KEY_ESC_CUSTOM;
+                        break;
+                    case 'a':
+                        key = '\x11'; // page up sentinel
+                        break;
+                    case 'd':
+                        key = '\x12'; // page down sentinel
+                        break;
+                    default:
+                        break;
+                }
+            }
         }
 
         switch (key) {
@@ -82,14 +179,26 @@ int VerticalSelector::select(
                 if (!filteredOptions.empty())
                     currentIndex = (currentIndex < (int)filteredOptions.size() - 1) ? currentIndex + 1 : 0;
                 break;
+            case '\x11':
+                pageUp();
+                break;
+            case '\x12':
+                pageDown();
+                break;
             case KEY_OK:
                 if (!filteredOptions.empty())
                     for (size_t i = 0; i < options.size(); ++i)
                         if (options[i] == filteredOptions[currentIndex]) return (int)i;
                 break;
             case KEY_ESC_CUSTOM:
-            case KEY_ARROW_LEFT:
                 return -1;
+            case KEY_ESC_LONG_CUSTOM:
+                return longEscResult;
+            case KEY_ARROW_LEFT:
+                if (!romBrowserControls) {
+                    return -1;
+                }
+                break;
             case KEY_DEL:
                 if (searchBar && !searchQuery.empty()) {
                     searchQuery.pop_back();
@@ -99,6 +208,20 @@ int VerticalSelector::select(
                 break;
             default:
                 auto valid = std::isalnum((unsigned char)key) || key == ' ' || key == '-' || key == '_';
+                if (romBrowserControls) {
+                    switch (std::tolower((unsigned char)key)) {
+                        case 'a':
+                        case 'd':
+                        case 'e':
+                        case 'k':
+                        case 'p':
+                        case 'z':
+                            valid = false;
+                            break;
+                        default:
+                            break;
+                    }
+                }
                 if (searchBar && valid) {
                     searchQuery += key;
                     filteredOptions = filterOptions(options, searchQuery);

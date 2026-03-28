@@ -2,6 +2,7 @@
 
 #include <string>
 #include <algorithm>
+#include <cctype>
 #include <Preferences.h>
 #include "cardputer/SdService.h"
 #include "cardputer/CardputerView.h"
@@ -13,6 +14,169 @@ static inline std::string _basename(const std::string& path) {
     if (path.empty()) return "";
     size_t slash = path.find_last_of("/\\");
     return (slash == std::string::npos) ? path : path.substr(slash + 1);
+}
+
+static constexpr const char* ROM_BROWSER_STATE_DIR = "/.cardputer";
+static constexpr const char* ROM_BROWSER_FOLDER_FILE = "/.cardputer/last_rom_folder.txt";
+static constexpr const char* ROM_BROWSER_SELECTION_FILE = "/.cardputer/last_rom_selection.txt";
+
+struct RomBrowserSelectionState {
+    std::string folderPath;
+    std::string entryName;
+
+    bool valid() const {
+        return !folderPath.empty() && !entryName.empty();
+    }
+};
+
+static inline std::string trimRomBrowserStateValue(const std::string& value) {
+    size_t first = 0;
+    while (first < value.size() &&
+           std::isspace(static_cast<unsigned char>(value[first]))) {
+        ++first;
+    }
+
+    size_t last = value.size();
+    while (last > first &&
+           std::isspace(static_cast<unsigned char>(value[last - 1]))) {
+        --last;
+    }
+
+    return value.substr(first, last - first);
+}
+
+static inline std::string normalizeRomBrowserPath(const std::string& path) {
+    if (path == "/sd") {
+        return "/";
+    }
+    if (path.rfind("/sd/", 0) == 0) {
+        return path.substr(3);
+    }
+    return path;
+}
+
+static inline std::string normalizeRomFolderPath(const std::string& folderPath) {
+    std::string cleanPath = normalizeRomBrowserPath(folderPath);
+
+    if (cleanPath.empty()) {
+        return "/";
+    }
+    if (cleanPath.front() != '/') {
+        cleanPath = "/" + cleanPath;
+    }
+    while (cleanPath.size() > 1 && cleanPath.back() == '/') {
+        cleanPath.pop_back();
+    }
+    return cleanPath;
+}
+
+static inline std::string extractRomFolder(const std::string& filePath) {
+    std::string cleanPath = normalizeRomFolderPath(filePath);
+    size_t slash = cleanPath.find_last_of("/\\");
+    if (slash == std::string::npos || slash == 0) {
+        return "/";
+    }
+    return cleanPath.substr(0, slash);
+}
+
+static inline bool saveRomFolderToSd(
+    SdService& sdService,
+    const std::string& folderPath
+) {
+    if (!sdService.getSdState()) {
+        return false;
+    }
+    if (!sdService.ensureDirectory(ROM_BROWSER_STATE_DIR)) {
+        return false;
+    }
+
+    std::string cleanPath = normalizeRomFolderPath(folderPath);
+    return sdService.writeFile(ROM_BROWSER_FOLDER_FILE, cleanPath + "\n");
+}
+
+static inline bool saveRomSelectionToSd(
+    SdService& sdService,
+    const std::string& folderPath,
+    const std::string& entryName
+) {
+    if (!sdService.getSdState() || entryName.empty()) {
+        return false;
+    }
+    if (!sdService.ensureDirectory(ROM_BROWSER_STATE_DIR)) {
+        return false;
+    }
+
+    std::string cleanPath = normalizeRomFolderPath(folderPath);
+    return sdService.writeFile(
+        ROM_BROWSER_SELECTION_FILE,
+        cleanPath + "\n" + entryName + "\n"
+    );
+}
+
+static inline std::string getRomFolderFromSd(SdService& sdService) {
+    if (!sdService.getSdState()) {
+        return "";
+    }
+
+    std::string rawPath = sdService.readFile(ROM_BROWSER_FOLDER_FILE);
+    if (rawPath.empty()) {
+        return "";
+    }
+
+    while (!rawPath.empty() &&
+           std::isspace(static_cast<unsigned char>(rawPath.back()))) {
+        rawPath.pop_back();
+    }
+
+    size_t firstNonSpace = 0;
+    while (firstNonSpace < rawPath.size() &&
+           std::isspace(static_cast<unsigned char>(rawPath[firstNonSpace]))) {
+        ++firstNonSpace;
+    }
+
+    if (firstNonSpace >= rawPath.size()) {
+        return "";
+    }
+
+    std::string cleanPath = normalizeRomFolderPath(rawPath.substr(firstNonSpace));
+    if (!sdService.isDirectory(cleanPath)) {
+        return "";
+    }
+
+    return cleanPath;
+}
+
+static inline RomBrowserSelectionState getRomSelectionFromSd(SdService& sdService) {
+    RomBrowserSelectionState state;
+    if (!sdService.getSdState()) {
+        return state;
+    }
+
+    std::string raw = sdService.readFile(ROM_BROWSER_SELECTION_FILE);
+    if (raw.empty()) {
+        return state;
+    }
+
+    size_t newline = raw.find('\n');
+    if (newline == std::string::npos) {
+        return state;
+    }
+
+    std::string folder = trimRomBrowserStateValue(raw.substr(0, newline));
+    std::string entry  = trimRomBrowserStateValue(raw.substr(newline + 1));
+
+    if (folder.empty() || entry.empty()) {
+        return state;
+    }
+
+    folder = normalizeRomFolderPath(folder);
+    if (!sdService.isDirectory(folder)) {
+        return state;
+    }
+
+    state.folderPath = folder;
+    state.entryName = entry;
+    return state;
 }
 
 static inline std::string getLastGameFromNvs(
@@ -47,15 +211,26 @@ static inline std::string getLastGameFromNvs(
     return confirmed ? path : "";
 }
 
+static inline std::string getLastGamePathFromNvs() {
+    Preferences prefs;
+    prefs.begin("cardputer_emu", true);
+    String lastGame = prefs.getString("last_game", "");
+    prefs.end();
+
+    if (lastGame.isEmpty()) {
+        return "";
+    }
+
+    return normalizeRomBrowserPath(lastGame.c_str());
+}
+
 static inline void saveLastGameToNvs(const std::string& filePath) {
     if (filePath.empty()) return;
 
     Preferences prefs;
     prefs.begin("cardputer_emu", false);
 
-    std::string cleanPath = filePath;
-    if (cleanPath.rfind("/sd/", 0) == 0)
-        cleanPath = cleanPath.substr(3); // retire /sd
+    std::string cleanPath = normalizeRomBrowserPath(filePath);
 
     prefs.putString("last_game", cleanPath.c_str());
     prefs.end();
@@ -76,14 +251,12 @@ static inline std::string getRomFolderFromNvs(
     }
 
     std::string path = lastGame.c_str();
-
-    // Get the folder
-    size_t slash = path.find_last_of("/\\");
-    if (slash == std::string::npos) {
+    std::string folder = extractRomFolder(path);
+    if (!sdService.isDirectory(folder)) {
         return "";
     }
 
-    return path.substr(0, slash);
+    return folder;
 }
 
 static inline bool isQuittingGame() {

@@ -20,6 +20,8 @@ void pce_display_submit_frame(const uint8_t *index_fb_base,
                               int height,
                               const uint16_t *palette);
 
+void pce_display_show_external_info(const char* romTitle);
+
 #ifdef __cplusplus
 }
 #endif

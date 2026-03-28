@@ -7,6 +7,9 @@
 #include "genesis_sound.h"
 #include "genesis_display.h"
 #include "share/utils.h"
+#include "share/display_target.h"
+#include "share/emu_controls.h"
+#include "cardputer/CardputerView.h"
 #include <Arduino.h>
 #include <M5Cardputer.h>
 
@@ -186,8 +189,29 @@ static void run_one_frame() {
 }
 
 /* Run genesis emulation with XIP mapped rom */
-extern "C" void run_genesis(const uint8_t* rom, size_t len) {
+extern "C" void run_genesis(const uint8_t* rom, size_t len, const char* romName) {
   M5Cardputer.Display.setSwapBytes(true);
+
+  // Dual-screen info: show info on whichever screen is NOT rendering the game
+  const bool useExternal = (g_emu_display_target == EMU_DISPLAY_EXTERNAL);
+  {
+    CardputerView display;
+    display.initialize();
+    if (useExternal) {
+      // Game on external TFT → show control bindings on internal LCD
+      display.topBar("GENESIS ON EXTERNAL TFT", false, false);
+      display.showControlBindings(
+        share::emuControlActionLabels(share::EmuProfile::Genesis),
+        share::emuControlKeyLabels(share::EmuProfile::Genesis),
+        "GO / HOLD ESC = QUIT"
+      );
+    } else {
+      // Game on internal LCD → show ROM info + controls on external TFT
+      if (!emu_is_aux_screen_locked()) {
+        genesis_display_show_external_info(romName);
+      }
+    }
+  }
 
   // Allocate buffers
   genesis_alloc_core_buffers();

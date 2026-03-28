@@ -3,6 +3,12 @@
 SdService::SdService() {}
 
 bool SdService::begin() {
+    SD.end();
+    sdCardSPI.end();
+    pinMode(SD_CS, OUTPUT);
+    digitalWrite(SD_CS, HIGH);
+    delay(5);
+
     sdCardSPI.begin(
         SD_SCK,
         SD_MISO,
@@ -11,17 +17,28 @@ bool SdService::begin() {
     );
     delay(10);
 
-    // find best speed
-    const uint32_t speeds[] = { 40000000u, 20000000u };
+    // Try fast first, then progressively slower for picky cards.
+    const uint32_t speeds[] = { 40000000u, 20000000u, 10000000u, 4000000u, 1000000u };
     for (uint32_t hz : speeds) {
+        SD.end();
+        delay(5);
         if (SD.begin(SD_CS, sdCardSPI, hz, "/sd")) {
-            sdCardMounted = true;
-            return true;
+            File root = SD.open("/");
+            if (root && root.isDirectory()) {
+                root.close();
+                sdCardMounted = true;
+                return true;
+            }
+
+            if (root) {
+                root.close();
+            }
         }
     }
 
     sdCardMounted = false;
-    return sdCardMounted;
+    SD.end();
+    return false;
 }
 
 void SdService::close() {
@@ -45,6 +62,25 @@ bool SdService::isDirectory(const std::string& path) {
         return true;
     }
     return false;
+}
+
+bool SdService::getFileSize(const std::string& filePath, size_t& outSize) {
+    outSize = 0;
+    if (!sdCardMounted) {
+        return false;
+    }
+
+    File file = SD.open(filePath.c_str(), FILE_READ);
+    if (!file || file.isDirectory()) {
+        if (file) {
+            file.close();
+        }
+        return false;
+    }
+
+    outSize = static_cast<size_t>(file.size());
+    file.close();
+    return true;
 }
 
 bool SdService::getSdState() {
@@ -140,6 +176,10 @@ std::string SdService::readFile(const std::string& filePath) {
 
 bool SdService::writeFile(const std::string& filePath, const std::string& data) {
     if (!sdCardMounted) {
+        return false;
+    }
+
+    if (SD.exists(filePath.c_str()) && !SD.remove(filePath.c_str())) {
         return false;
     }
 

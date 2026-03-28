@@ -2,6 +2,7 @@
 
 #include <M5Cardputer.h>
 #include <Arduino.h>
+#include "share/emu_controls.h"
 #include "share/input.h"
 #include "esp_heap_caps.h"
 
@@ -54,69 +55,54 @@ uint32_t snes_input_compute_mask()
 
     // ================== DIRECTIONS (keyboard Cardputer) ==================
     // Left : 'a' ou ','
-    if (M5Cardputer.Keyboard.isKeyPressed(CARDPUTER_LEFT_1) ||
-        M5Cardputer.Keyboard.isKeyPressed(CARDPUTER_LEFT_2)) {
+    if (share::emuControlPressed(share::EmuProfile::Snes, share::EmuAction::Left)) {
         mask |= SNES_LEFT_MASK;
     }
 
-    // Right : 'd' ou '/'
-    if (M5Cardputer.Keyboard.isKeyPressed(CARDPUTER_RIGHT_1) ||
-        M5Cardputer.Keyboard.isKeyPressed(CARDPUTER_RIGHT_2)) {
+    if (share::emuControlPressed(share::EmuProfile::Snes, share::EmuAction::Right)) {
         mask |= SNES_RIGHT_MASK;
     }
 
-    // Up : 'e' ou ';'
-    if (M5Cardputer.Keyboard.isKeyPressed(CARDPUTER_UP_1) ||
-        M5Cardputer.Keyboard.isKeyPressed(CARDPUTER_UP_2)) {
+    if (share::emuControlPressed(share::EmuProfile::Snes, share::EmuAction::Up)) {
         mask |= SNES_UP_MASK;
     }
 
-    // Down : 's', '.' ou 'z'
-    if (M5Cardputer.Keyboard.isKeyPressed(CARDPUTER_DOWN_1) ||
-        M5Cardputer.Keyboard.isKeyPressed(CARDPUTER_DOWN_2) ||
-        M5Cardputer.Keyboard.isKeyPressed(CARDPUTER_DOWN_3)) {
+    if (share::emuControlPressed(share::EmuProfile::Snes, share::EmuAction::Down)) {
         mask |= SNES_DOWN_MASK;
     }
 
     // ================== BOUTONS SNES ==================
 
     // B SNES
-    if (M5Cardputer.Keyboard.isKeyPressed(CARDPUTER_BTN_B)) {
+    if (share::emuControlPressed(share::EmuProfile::Snes, share::EmuAction::B)) {
         mask |= SNES_B_MASK;
     }
 
-    // Y SNES
-    if (M5Cardputer.Keyboard.isKeyPressed('o')) {
+    if (share::emuControlPressed(share::EmuProfile::Snes, share::EmuAction::Y)) {
         mask |= SNES_Y_MASK;
     }
 
-    // X SNES : touche 'i'
-    if (M5Cardputer.Keyboard.isKeyPressed('p')) {
+    if (share::emuControlPressed(share::EmuProfile::Snes, share::EmuAction::X)) {
         mask |= SNES_X_MASK;
     }
 
-    // A SNES : touche 'o'
-    if (M5Cardputer.Keyboard.isKeyPressed(CARDPUTER_BTN_A_1)) {
+    if (share::emuControlPressed(share::EmuProfile::Snes, share::EmuAction::A)) {
         mask |= SNES_A_MASK;
     }
 
-    // L SNES : touche 'u'
-    if (M5Cardputer.Keyboard.isKeyPressed('i')) {
+    if (share::emuControlPressed(share::EmuProfile::Snes, share::EmuAction::L)) {
         mask |= SNES_TL_MASK;
     }
 
-    // R SNES : touche 'p'
-    if (M5Cardputer.Keyboard.isKeyPressed('j')) {
+    if (share::emuControlPressed(share::EmuProfile::Snes, share::EmuAction::R)) {
         mask |= SNES_TR_MASK;
     }
 
-    // START
-    if (M5Cardputer.Keyboard.isKeyPressed(CARDPUTER_BTN_START)) {
+    if (share::emuControlPressed(share::EmuProfile::Snes, share::EmuAction::Start)) {
         mask |= SNES_START_MASK;
     }
 
-    // SELECT
-    if (M5Cardputer.Keyboard.isKeyPressed(CARDPUTER_BTN_SELECT)) {
+    if (share::emuControlPressed(share::EmuProfile::Snes, share::EmuAction::Select)) {
         mask |= SNES_SELECT_MASK;
     }
 
@@ -214,69 +200,64 @@ uint32_t snes_input_poll()
 
     // ================== DIRECTIONS (keyboard Cardputer) ==================
     // Left : 'a' ou ','
-    if (M5Cardputer.Keyboard.isKeyPressed(CARDPUTER_LEFT_1) ||
-        M5Cardputer.Keyboard.isKeyPressed(CARDPUTER_LEFT_2)) {
+    if (share::emuControlPressed(share::EmuProfile::Snes, share::EmuAction::Left)) {
         mask |= SNES_LEFT_MASK;
     }
 
     // Right : 'd' ou '/'
-    if (M5Cardputer.Keyboard.isKeyPressed(CARDPUTER_RIGHT_1) ||
-        M5Cardputer.Keyboard.isKeyPressed(CARDPUTER_RIGHT_2)) {
+    if (share::emuControlPressed(share::EmuProfile::Snes, share::EmuAction::Right)) {
         mask |= SNES_RIGHT_MASK;
     }
 
     // Up : 'e' ou ';'
-    if (M5Cardputer.Keyboard.isKeyPressed(CARDPUTER_UP_1) ||
-        M5Cardputer.Keyboard.isKeyPressed(CARDPUTER_UP_2)) {
+    if (share::emuControlPressed(share::EmuProfile::Snes, share::EmuAction::Up)) {
         mask |= SNES_UP_MASK;
     }
 
     // Down : 's', '.' ou 'z'
-    if (M5Cardputer.Keyboard.isKeyPressed(CARDPUTER_DOWN_1) ||
-        M5Cardputer.Keyboard.isKeyPressed(CARDPUTER_DOWN_2) ||
-        M5Cardputer.Keyboard.isKeyPressed(CARDPUTER_DOWN_3)) {
+    if (share::emuControlPressed(share::EmuProfile::Snes, share::EmuAction::Down)) {
         mask |= SNES_DOWN_MASK;
     }
 
     // ================== BOUTONS SNES ==================
 
     // B SNES
-    if (M5Cardputer.Keyboard.isKeyPressed(CARDPUTER_BTN_B)) {
+    if (share::emuControlPressed(share::EmuProfile::Snes, share::EmuAction::B)) {
         mask |= SNES_B_MASK;
     }
 
     // Y SNES
-    if (M5Cardputer.Keyboard.isKeyPressed('o')) {
+    if (share::emuControlPressed(share::EmuProfile::Snes, share::EmuAction::Y)) {
         mask |= SNES_Y_MASK;
     }
 
     // X SNES : touche 'i'
-    if (M5Cardputer.Keyboard.isKeyPressed('p')) {
+    if (share::emuControlPressed(share::EmuProfile::Snes, share::EmuAction::X)) {
         mask |= SNES_X_MASK;
     }
 
     // A SNES : touche 'o'
-    if (M5Cardputer.Keyboard.isKeyPressed(CARDPUTER_BTN_A_1)) {
+    if (share::emuControlPressed(share::EmuProfile::Snes, share::EmuAction::A)) {
         mask |= SNES_A_MASK;
     }
 
     // L SNES : touche 'u'
-    if (M5Cardputer.Keyboard.isKeyPressed('i')) {
+    if (share::emuControlPressed(share::EmuProfile::Snes, share::EmuAction::L)) {
         mask |= SNES_TL_MASK;
     }
 
     // R SNES : touche 'p'
-    if (M5Cardputer.Keyboard.isKeyPressed('j')) {
+    if (share::emuControlPressed(share::EmuProfile::Snes, share::EmuAction::R)) {
         mask |= SNES_TR_MASK;
     }
 
     // START
-    if (M5Cardputer.Keyboard.isKeyPressed(CARDPUTER_BTN_START)) {
+    if (share::emuControlPressed(share::EmuProfile::Snes, share::EmuAction::Start)) {
         mask |= SNES_START_MASK;
     }
 
     // SELECT
-    if (M5Cardputer.Keyboard.isKeyPressed(CARDPUTER_BTN_SELECT)) {
+    if (share::emuControlPressed(share::EmuProfile::Snes, share::EmuAction::Select)) {
         mask |= SNES_SELECT_MASK;
     }
 

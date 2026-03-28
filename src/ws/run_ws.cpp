@@ -9,6 +9,7 @@ extern "C" {
 #include "ws_display.h"
 #include "ws_sound.h"
 #include "ws_save.h"
+#include "../share/display_target.h"
 
 extern "C" void run_ws(const uint8_t* rom, size_t len, const char* rom_name, bool is_color)
 {
@@ -16,10 +17,14 @@ extern "C" void run_ws(const uint8_t* rom, size_t len, const char* rom_name, boo
   printf("[WS] ROM size: %u bytes, color mode: %s\n",
          (unsigned)len, is_color ? "COLOR" : "MONO");
 
-  // LCD
-  M5Cardputer.Display.setRotation(1);
-  M5Cardputer.Display.setSwapBytes(true);
-  M5Cardputer.Display.fillScreen(TFT_BLACK);
+  const bool useExternal = (g_emu_display_target == EMU_DISPLAY_EXTERNAL);
+
+  if (!useExternal) {
+    // Game on internal LCD
+    M5Cardputer.Display.setRotation(1);
+    M5Cardputer.Display.setSwapBytes(true);
+    M5Cardputer.Display.fillScreen(TFT_BLACK);
+  }
 
   // Core/Display/Sound init
   ws_display_init();
@@ -28,13 +33,21 @@ extern "C" void run_ws(const uint8_t* rom, size_t len, const char* rom_name, boo
   ws_sound_start_task(16, 0);
   WsInit(); // splash screen
   printf("[WS] Init done\n");
-  
+
   // Load ROM
   if (WsCreateFromMemory(rom, len) != 0) {
     printf("[WS][ERR] Cart load failed! len=%u\n, SRAM could be too big", (unsigned)len);
     for(;;) delay(1000);
   }
   printf("[WS] Cart loaded successfully\n");
+
+  // Dual-screen: show info on the screen not used for game
+  if (!useExternal) {
+    // Game on internal LCD -> show ROM info + controls on external TFT
+    if (!emu_is_aux_screen_locked()) {
+      ws_display_show_external_info(rom_name, is_color);
+    }
+  }
 
   // SRAM save/load
   ws_save_init(rom_name);
@@ -53,17 +66,6 @@ extern "C" void run_ws(const uint8_t* rom, size_t len, const char* rom_name, boo
     ws_save_tick();
     frameCount++;
 
-    // Log framerate every 2 seconds
-    // uint32_t now = millis();
-    // if (now - lastLog >= 2000) {
-    //   printf("[WS] %lu frames rendered (%.2f FPS)\n",
-    //          (unsigned long)frameCount,
-    //          (float)frameCount / ((now - lastLog) / 1000.0f));
-    //   frameCount = 0;
-    //   printf("[WS] HEAP: %u bytes\n", esp_get_free_heap_size());
-    //   lastLog = now;
-    // }
-
     // Frame pacing (75Hz)
     next += frame_us;
     int64_t remain = (int64_t)next - (int64_t)esp_timer_get_time();
@@ -72,4 +74,3 @@ extern "C" void run_ws(const uint8_t* rom, size_t len, const char* rom_name, boo
     else next = esp_timer_get_time();
   }
 }
-

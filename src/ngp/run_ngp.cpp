@@ -14,6 +14,9 @@
 #include "esp_timer.h" // used for get_time()
 #include "../../share/utils.h"
 #include "esp_rom_sys.h" // used for esp_rom_delay_us(us)
+#include "../share/display_target.h"
+#include "../share/emu_controls.h"
+#include "../cardputer/CardputerView.h"
 // #include "ngc_bios.h"
 
 #define NGP_LANG_EN 1
@@ -126,7 +129,7 @@ static void map_vdp_tables_full()
   rasterY = scanlineY;
 }
 
-void run_ngp(const uint8_t* rom_base, size_t rom_size, int machine)
+void run_ngp(const uint8_t* rom_base, size_t rom_size, int machine, const char* romName)
 {
   // Load ROM
   ngp_mem_set_rom(rom_base, rom_size);
@@ -135,6 +138,25 @@ void run_ngp(const uint8_t* rom_base, size_t rom_size, int machine)
   m_emuInfo.machine = machine;
   m_emuInfo.romSize = (int)rom_size;
   tipo_consola      = 0;      // 0 = NGPC, 1 = NGP (mono)
+
+  // Dual-screen info: show info on whichever screen is NOT rendering the game
+  const bool useExternal = (g_emu_display_target == EMU_DISPLAY_EXTERNAL);
+  {
+    CardputerView display;
+    display.initialize();
+    if (useExternal) {
+      display.topBar("NGP ON EXTERNAL TFT", false, false);
+      display.showControlBindings(
+        share::emuControlActionLabels(share::EmuProfile::Ngp),
+        share::emuControlKeyLabels(share::EmuProfile::Ngp),
+        "GO / HOLD ESC = QUIT"
+      );
+    } else {
+      if (!emu_is_aux_screen_locked()) {
+        ngc_display_show_external_info(romName);
+      }
+    }
+  }
 
   // Core init
   Cz80_allocate_flag_tables();
@@ -150,7 +172,7 @@ void run_ngp(const uint8_t* rom_base, size_t rom_size, int machine)
   // CPU
   tlcs_init();
   tlcs_reset();
-  Z80_Init(); 
+  Z80_Init();
   Z80_Reset();
 
   // Flags post boot
@@ -228,6 +250,8 @@ void run_ngp(const uint8_t* rom_base, size_t rom_size, int machine)
       // Execute one frame
       tlcs_execute((CPU_CLOCK_HZ) / 60);
 
+      // Feed audio each frame
+      ngc_sound_frame();
 
       // Log framerate
       uint32_t emuUs = micros() - t0ms;

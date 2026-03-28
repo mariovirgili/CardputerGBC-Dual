@@ -2,6 +2,7 @@
 #include <M5Cardputer.h>
 #include <Arduino.h>
 #include "race/input.h"
+#include "share/emu_controls.h"
 #include "share/input.h"
 
 #ifndef NGP_INPUT_ACTIVE_LOW
@@ -55,30 +56,28 @@ extern "C" uint32_t ngc_input_poll(void) {
   }
 
   // -------- DIRECTIONS --------
-  if (M5Cardputer.Keyboard.isKeyPressed(CARDPUTER_LEFT_1) || M5Cardputer.Keyboard.isKeyPressed(CARDPUTER_LEFT_2)) {
+  if (share::emuControlPressed(share::EmuProfile::Ngp, share::EmuAction::Left)) {
 #if NGP_INPUT_ACTIVE_LOW
     ngpInputState &= ~NGP_BTN_LEFT;
 #else
     ngpInputState |=  NGP_BTN_LEFT;
 #endif
   }
-  if (M5Cardputer.Keyboard.isKeyPressed(CARDPUTER_RIGHT_1) || M5Cardputer.Keyboard.isKeyPressed(CARDPUTER_RIGHT_2)) {
+  if (share::emuControlPressed(share::EmuProfile::Ngp, share::EmuAction::Right)) {
 #if NGP_INPUT_ACTIVE_LOW
     ngpInputState &= ~NGP_BTN_RIGHT;
 #else
     ngpInputState |=  NGP_BTN_RIGHT;
 #endif
   }
-  if (M5Cardputer.Keyboard.isKeyPressed(CARDPUTER_UP_1) || M5Cardputer.Keyboard.isKeyPressed(CARDPUTER_UP_2)) {
+  if (share::emuControlPressed(share::EmuProfile::Ngp, share::EmuAction::Up)) {
 #if NGP_INPUT_ACTIVE_LOW
     ngpInputState &= ~NGP_BTN_UP;
 #else
     ngpInputState |=  NGP_BTN_UP;
 #endif
   }
-  if (M5Cardputer.Keyboard.isKeyPressed(CARDPUTER_DOWN_1) ||
-      M5Cardputer.Keyboard.isKeyPressed(CARDPUTER_DOWN_2) ||
-      M5Cardputer.Keyboard.isKeyPressed(CARDPUTER_DOWN_3)) {
+  if (share::emuControlPressed(share::EmuProfile::Ngp, share::EmuAction::Down)) {
 #if NGP_INPUT_ACTIVE_LOW
     ngpInputState &= ~NGP_BTN_DOWN;
 #else
@@ -87,21 +86,21 @@ extern "C" uint32_t ngc_input_poll(void) {
   }
 
   // -------- BOUTONS --------
-  if (M5Cardputer.Keyboard.isKeyPressed(CARDPUTER_BTN_A_1) || M5Cardputer.Keyboard.isKeyPressed(CARDPUTER_BTN_A_2)) {
+  if (share::emuControlPressed(share::EmuProfile::Ngp, share::EmuAction::A)) {
 #if NGP_INPUT_ACTIVE_LOW
     ngpInputState &= ~NGP_BTN_A;
 #else
     ngpInputState |=  NGP_BTN_A;
 #endif
   }
-  if (M5Cardputer.Keyboard.isKeyPressed(CARDPUTER_BTN_B)) {
+  if (share::emuControlPressed(share::EmuProfile::Ngp, share::EmuAction::B)) {
 #if NGP_INPUT_ACTIVE_LOW
     ngpInputState &= ~NGP_BTN_B;
 #else
     ngpInputState |=  NGP_BTN_B;
 #endif
   }
-  if (M5Cardputer.Keyboard.isKeyPressed(CARDPUTER_BTN_START) || (ks.fn && M5Cardputer.Keyboard.isKeyPressed(' '))) {
+  if (share::emuControlPressed(share::EmuProfile::Ngp, share::EmuAction::Option)) {
 #if NGP_INPUT_ACTIVE_LOW
     ngpInputState &= ~NGP_BTN_OPTION;
 #else

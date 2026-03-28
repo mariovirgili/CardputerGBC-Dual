@@ -1,4 +1,5 @@
 #include <M5Cardputer.h>
+#include "share/emu_controls.h"
 #include "share/input.h"
 
 extern bool fullscreenMode;
@@ -59,32 +60,32 @@ uint32_t controller_read_input() {
     }
  
     // Arrows and buttons
-    if (M5Cardputer.Keyboard.isKeyPressed(CARDPUTER_LEFT_1) || M5Cardputer.Keyboard.isKeyPressed(CARDPUTER_LEFT_2)) {
+    if (share::emuControlPressed(share::EmuProfile::Nes, share::EmuAction::Left)) {
         value ^= (1 << 2); // left
     }
-    if (M5Cardputer.Keyboard.isKeyPressed(CARDPUTER_RIGHT_1) || M5Cardputer.Keyboard.isKeyPressed(CARDPUTER_RIGHT_2)) {
+    if (share::emuControlPressed(share::EmuProfile::Nes, share::EmuAction::Right)) {
         value ^= (1 << 3); // right
     }
 
-    if (M5Cardputer.Keyboard.isKeyPressed(CARDPUTER_UP_1) || M5Cardputer.Keyboard.isKeyPressed(CARDPUTER_UP_2)) {
+    if (share::emuControlPressed(share::EmuProfile::Nes, share::EmuAction::Up)) {
         value ^= (1 << 0); // up
     }
-    if (M5Cardputer.Keyboard.isKeyPressed(CARDPUTER_DOWN_1) || M5Cardputer.Keyboard.isKeyPressed(CARDPUTER_DOWN_2) || M5Cardputer.Keyboard.isKeyPressed(CARDPUTER_DOWN_3)) {
+    if (share::emuControlPressed(share::EmuProfile::Nes, share::EmuAction::Down)) {
         value ^= (1 << 1); // down
     }
 
-    if (M5Cardputer.Keyboard.isKeyPressed(CARDPUTER_BTN_SELECT)) {
+    if (share::emuControlPressed(share::EmuProfile::Nes, share::EmuAction::Select)) {
         value ^= (1 << 4); // select
     }
 
-    if (M5Cardputer.Keyboard.isKeyPressed(CARDPUTER_BTN_START)) {
+    if (share::emuControlPressed(share::EmuProfile::Nes, share::EmuAction::Start)) {
         value ^= (1 << 5); // start
     }
 
-    if (M5Cardputer.Keyboard.isKeyPressed(CARDPUTER_BTN_A_1) || M5Cardputer.Keyboard.isKeyPressed(CARDPUTER_BTN_A_2)) {
+    if (share::emuControlPressed(share::EmuProfile::Nes, share::EmuAction::A)) {
         value ^= (1 << 6); // A
     }
-    if (M5Cardputer.Keyboard.isKeyPressed(CARDPUTER_BTN_B)) {
+    if (share::emuControlPressed(share::EmuProfile::Nes, share::EmuAction::B)) {
         value ^= (1 << 7); // B
     }
 

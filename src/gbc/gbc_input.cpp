@@ -1,6 +1,7 @@
 #include "gbc_input.h"
 #include <M5Cardputer.h>
 #include <Arduino.h>
+#include "share/emu_controls.h"
 #include "share/input.h"
 
 extern "C" {
@@ -71,49 +72,35 @@ extern "C" int gbc_input_poll(void)
 
     // ================== DIRECTIONS ==================
     // Left : 'a' or ','
-    if (M5Cardputer.Keyboard.isKeyPressed(CARDPUTER_LEFT_1) ||
-        M5Cardputer.Keyboard.isKeyPressed(CARDPUTER_LEFT_2)) {
+    if (share::emuControlPressed(share::EmuProfile::Gbc, share::EmuAction::Left)) {
         pad |=  GB_PAD_LEFT;
     }
 
-    // Right : 'd' or '/'
-    if (M5Cardputer.Keyboard.isKeyPressed(CARDPUTER_RIGHT_1) ||
-        M5Cardputer.Keyboard.isKeyPressed(CARDPUTER_RIGHT_2)) {
+    if (share::emuControlPressed(share::EmuProfile::Gbc, share::EmuAction::Right)) {
         pad |=  GB_PAD_RIGHT;
     }
 
-    // Up : 'e' or ';'
-    if (M5Cardputer.Keyboard.isKeyPressed(CARDPUTER_UP_1) ||
-        M5Cardputer.Keyboard.isKeyPressed(CARDPUTER_UP_2)) {
+    if (share::emuControlPressed(share::EmuProfile::Gbc, share::EmuAction::Up)) {
         pad |=  GB_PAD_UP;
     }
 
-    // Down : 's', '.' or 'z'
-    if (M5Cardputer.Keyboard.isKeyPressed(CARDPUTER_DOWN_1) ||
-        M5Cardputer.Keyboard.isKeyPressed(CARDPUTER_DOWN_2) ||
-        M5Cardputer.Keyboard.isKeyPressed(CARDPUTER_DOWN_3)) {
+    if (share::emuControlPressed(share::EmuProfile::Gbc, share::EmuAction::Down)) {
         pad |=  GB_PAD_DOWN;
     }
 
-    // ================== BOUTONS GBC ==================
-    // A
-    if (M5Cardputer.Keyboard.isKeyPressed(CARDPUTER_BTN_A_1) ||
-        M5Cardputer.Keyboard.isKeyPressed(CARDPUTER_BTN_A_2)) {
+    if (share::emuControlPressed(share::EmuProfile::Gbc, share::EmuAction::A)) {
         pad |=  GB_PAD_A;
     }
 
-    // B
-    if (M5Cardputer.Keyboard.isKeyPressed(CARDPUTER_BTN_B)) {
+    if (share::emuControlPressed(share::EmuProfile::Gbc, share::EmuAction::B)) {
         pad |=  GB_PAD_B;
     }
 
-    // START
-    if (M5Cardputer.Keyboard.isKeyPressed(CARDPUTER_BTN_START)) {
+    if (share::emuControlPressed(share::EmuProfile::Gbc, share::EmuAction::Start)) {
         pad |=  GB_PAD_START;
     }
 
-    // SELECT
-    if (M5Cardputer.Keyboard.isKeyPressed(CARDPUTER_BTN_SELECT)) {
+    if (share::emuControlPressed(share::EmuProfile::Gbc, share::EmuAction::Select)) {
         pad |=  GB_PAD_SELECT;
     }
 

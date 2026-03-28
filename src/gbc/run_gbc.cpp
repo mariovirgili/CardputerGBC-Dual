@@ -8,12 +8,26 @@ extern "C" {
 #include "gbc_input.h"
 #include "gbc_save.h"
 #include "share/utils.h"
+#include "share/display_target.h"
+#include "share/emu_controls.h"
+#include "cardputer/CardputerView.h"
 
 static uint16_t* s_gbFramebuf = nullptr;
 static int16_t* s_audioBuf = nullptr;
 extern int gbc_sampleRate;
 
-// callback video GNUBOY
+static const char* gbc_hwtype_name(int hwtype)
+{
+    switch (hwtype) {
+        case GB_HW_CGB: return "CGB";
+        case GB_HW_SGB: return "SGB";
+        case GB_HW_DMG:
+        default:
+            return "DMG";
+    }
+}
+
+// GNUBOY video callback
 static void gbc_video_callback(void *buffer)
 {
     // buffer == s_gbFramebuf
@@ -21,7 +35,7 @@ static void gbc_video_callback(void *buffer)
     gbc_display_submit_frame(s_gbFramebuf, GB_WIDTH, GB_WIDTH, GB_HEIGHT);
 }
 
-// callback audio GNUBOY
+// GNUBOY audio callback
 void gbc_audio_callback(void *buffer, size_t length)
 {
     if (!buffer || length == 0) return;
@@ -30,7 +44,7 @@ void gbc_audio_callback(void *buffer, size_t length)
 }
 
 void gbc_allocate_buffers() {
-    // framebuffer GNUBOY
+    // GNUBOY framebuffer
     size_t fbSize = GB_WIDTH * GB_HEIGHT * sizeof(uint16_t);
     s_gbFramebuf = (uint16_t*)heap_caps_malloc(
         fbSize,
@@ -42,7 +56,7 @@ void gbc_allocate_buffers() {
     }
     memset(s_gbFramebuf, 0, fbSize);
 
-    // buffer audio GNUBOY
+    // GNUBOY audio buffer
     s_audioBuf = (int16_t*)heap_caps_malloc(
         2048 * sizeof(int16_t),
         MALLOC_CAP_8BIT | MALLOC_CAP_INTERNAL
@@ -55,25 +69,13 @@ void gbc_allocate_buffers() {
 
 }
 
-bool isGbcGame(const char* filename) {
-    if (!filename) return false;
-
-    size_t len = strlen(filename);
-    if (len < 4) return false;
-
-    const char* ext = filename + (len - 4);
-
-    return (strcasecmp(ext, ".gbc") == 0);
-}
-
 void run_gbc(const uint8_t* romData, size_t romLen, const char* romPathOrName) {
     // Audio Video
     gbc_display_init();
-    gbc_display_start();
     gbc_sound_init(gbc_sampleRate);
     gbc_allocate_buffers();
     
-    // init core GNUBOY
+    // init GNUBOY core
     int ret = gnuboy_init(
         gbc_sampleRate,
         GB_AUDIO_MONO_S16,
@@ -93,6 +95,34 @@ void run_gbc(const uint8_t* romData, size_t romLen, const char* romPathOrName) {
     printf("[GBC] gnuboy_load_rom => %d\n", ret);
     if (ret < 0) return;
 
+    const int hwtype = gnuboy_get_hwtype();
+    const bool colorGame = (hwtype == GB_HW_CGB);
+
+    // Use the user's display choice from the selection screen
+    const bool useExternal = (g_emu_display_target == EMU_DISPLAY_EXTERNAL);
+    gbc_display_set_target(useExternal ? GBC_DISPLAY_EXTERNAL : GBC_DISPLAY_INTERNAL);
+    if (!useExternal) {
+        // Game on internal → show info on external TFT
+        if (!emu_is_aux_screen_locked()) {
+            gbc_display_show_external_info(romPathOrName, colorGame);
+        }
+    }
+    gbc_display_start();
+    printf("[GBC] hardware => %s | display => %s\n",
+           gbc_hwtype_name(hwtype),
+           useExternal ? "external" : "internal");
+
+    // If game renders on external TFT, show control bindings on internal LCD
+    if (useExternal) {
+        CardputerView intDisplay;
+        intDisplay.topBar(colorGame ? "GBC ON EXTERNAL TFT" : "GB ON EXTERNAL TFT", false, false);
+        intDisplay.showControlBindings(
+            share::emuControlActionLabels(share::EmuProfile::Gbc),
+            share::emuControlKeyLabels(share::EmuProfile::Gbc),
+            "GO / HOLD ESC = QUIT"
+        );
+    }
+
     gnuboy_reset(true);
     gnuboy_set_pad(0);
     gbc_save_init(romPathOrName);
@@ -107,16 +137,15 @@ void run_gbc(const uint8_t* romData, size_t romLen, const char* romPathOrName) {
     const uint32_t frame_us   = 1000000u / (uint32_t)targetFps; // 16.6 ms
     uint64_t next_frame_us    = esp_timer_get_time();
     bool drawFrame            = true; 
-    bool gbcGame              = isGbcGame(romPathOrName);
-    gbPalette                 = gbcGame ? -1 : gbPalette;
+    gbPalette                 = colorGame ? -1 : gbPalette;
     int lastPalette           = -1;
 
-    printf("Palette initiale: %d\n", gbPalette);
+    printf("Initial palette: %d\n", gbPalette);
 
     printf("[GBC] starting main loop @ %d FPS\n", targetFps);
 
     while (true) {
-        if (!gbcGame && lastPalette != gbPalette) {
+        if (!colorGame && lastPalette != gbPalette) {
             lastPalette = gbPalette;
             gnuboy_set_palette((gb_palette_t)gbPalette);
         }

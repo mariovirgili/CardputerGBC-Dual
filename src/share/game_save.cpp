@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <atomic> // Added missing include for std::atomic
 
 namespace
 {
@@ -99,14 +100,12 @@ namespace share
             name[L - 2] = 'a';
             name[L - 1] = 'v';
         } else {
+            // Replaced strncat with snprintf to avoid compiler warnings
             const char* ext = ".sav";
-            size_t extLen = std::strlen(ext);
-            size_t curLen = std::strlen(name);
-            size_t space  = sizeof(name) - 1 - curLen;
-            if (space > 0) {
-                size_t toCopy = (extLen < space) ? extLen : space;
-                std::strncat(name, ext, toCopy);
-                name[sizeof(name) - 1] = '\0';
+            // Append extension safely
+            size_t remaining = sizeof(name) - L;
+            if (remaining > 1) {
+                std::snprintf(name + L, remaining, "%s", ext);
             }
         }
 

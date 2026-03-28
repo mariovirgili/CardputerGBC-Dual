@@ -61,7 +61,11 @@ void genesis_display_end_frame(void);
 // Display task
 void display_task(void* arg);
 
-
 #ifdef __cplusplus
 }
+#endif
+
+#ifdef __cplusplus
+// Show ROM info + controls on external TFT (when game renders on internal)
+void genesis_display_show_external_info(const char* romTitle);
 #endif

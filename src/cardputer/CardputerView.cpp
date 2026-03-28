@@ -2,6 +2,8 @@
 #include "Welcome.h"
 #include "CardputerInput.h"
 
+#include <algorithm>
+
 M5GFX* CardputerView::Display = nullptr;
 
 void CardputerView::initialize() {
@@ -170,16 +172,83 @@ void CardputerView::showKeymapping6ButtonsSnes() {
     keyBox(centerX + 6 + ssShiftRight,       ssY, ssW, ssH, "2");
 }
 
+void CardputerView::showControlBindings(
+    const std::vector<std::string>& actions,
+    const std::vector<std::string>& keys,
+    const std::string& footer
+) {
+    clearMainView(5);
+
+    const int frameX = 10;
+    const int frameY = 35;
+    const int frameW = Display->width() - 20;
+    const int frameH = 90;
+
+    Display->fillRoundRect(frameX, frameY, frameW, frameH, DEFAULT_ROUND_RECT, TFT_BLACK);
+    Display->drawRoundRect(frameX, frameY, frameW, frameH, DEFAULT_ROUND_RECT, PRIMARY_COLOR);
+
+    Display->setTextSize(TEXT_WIDE);
+    Display->setTextColor(PRIMARY_COLOR);
+    Display->drawCenterString("CONTROLS", Display->width() / 2, 44);
+
+    const size_t count = std::min(actions.size(), keys.size());
+    if (count == 0) {
+        return;
+    }
+
+    const int cols = (count > 4) ? 2 : 1;
+    const int rows = static_cast<int>((count + cols - 1) / cols);
+    const bool compact = rows > 4;
+    const bool showFooter = !footer.empty() && rows <= 3;
+    const int gapX = 10;
+    const int innerX = frameX + 12;
+    const int topY = frameY + 24;
+    const int footerH = showFooter ? 14 : 0;
+    const int usableH = frameH - 34 - footerH;
+    const int rowH = std::max(compact ? 8 : 12, usableH / std::max(1, rows));
+    const int colW = (frameW - 24 - ((cols - 1) * gapX)) / cols;
+
+    Display->setTextColor(TEXT_COLOR);
+    Display->setTextSize(compact ? TEXT_TINY : TEXT_SMALL);
+    Display->setTextDatum(top_left);
+
+    for (size_t i = 0; i < count; ++i) {
+        const int col = static_cast<int>(i) / rows;
+        const int row = static_cast<int>(i) % rows;
+        const int cellX = innerX + col * (colW + gapX);
+        const int cellY = topY + row * rowH;
+
+        auto action = truncateString(actions[i], compact ? 6 : ((cols == 2) ? 8 : 12));
+        const auto key = truncateString(keys[i], compact ? 4 : 6);
+        const int badgeW = std::max(compact ? 18 : 24, Display->textWidth(key.c_str()) + (compact ? 8 : 12));
+        const int badgeH = rowH - 2;
+        const int badgeX = cellX + colW - badgeW;
+        const int badgeY = cellY;
+        const int textY = cellY + std::max(0, (rowH - Display->fontHeight()) / 2) - 1;
+
+        Display->drawString(action.c_str(), cellX, textY);
+
+        Display->fillRoundRect(badgeX, badgeY, badgeW, badgeH, 4, RECT_COLOR_DARK);
+        Display->drawRoundRect(badgeX, badgeY, badgeW, badgeH, 4, PRIMARY_COLOR);
+        Display->drawCenterString(key.c_str(), badgeX + badgeW / 2, badgeY + badgeH / 2 - 2);
+    }
+
+    if (showFooter) {
+        Display->setTextColor(PRIMARY_COLOR);
+        Display->setTextSize(TEXT_TINY);
+        Display->drawCenterString(footer.c_str(), Display->width() / 2, frameY + frameH - 17);
+    }
+
+    Display->setTextDatum(middle_center);
+}
+
 void CardputerView::welcome() {
     Display->setSwapBytes(true);
     Display->pushImage(0, 0, BGGAMESTATION_S_WIDTH, BGGAMESTATION_S_HEIGHT, bggamestation_s);
    
-    // Title
-    std::string title = "Game Station 1.0";
     Display->setTextColor(TEXT_COLOR);
     Display->setTextSize(TEXT_BIG);
-    Display->setCursor(getCenterOffset(title), 65);
-    Display->printf("%s", title.c_str());
+    Display->drawCenterString("GameStation 1.0", Display->width() / 2, (Display->height() / 2) - 15);
 
     Display->setSwapBytes(false);
 }
@@ -951,6 +1020,8 @@ uint16_t CardputerView::colorForExt(const std::string& extRaw) const {
     if (ext == ".pce") return PCE_COLOR;
     if (ext == ".gb" || ext == ".gbc") return GAMEBOY_COLOR;
     if (ext == ".lnx") return LYNX_COLOR;
+    if (ext == ".a26") return LYNX_COLOR;
+    if (ext == ".a78") return LYNX_COLOR;
     if (ext == ".sfc" || ext == ".smc") return SNES_COLOR;
 
     return TEXT_COLOR;
@@ -1080,6 +1151,7 @@ void CardputerView::showValidExt(const std::vector<std::string>& exts) {
     Display->setTextColor(TEXT_COLOR);
 }
 
+
 void CardputerView::copyProgress(size_t total, size_t current, void* userCtx) {
     if (!Display) return;
 
@@ -1108,7 +1180,7 @@ void CardputerView::copyProgress(size_t total, size_t current, void* userCtx) {
     const int barY = boxY + (boxH - barH) / 2;
 
     // Texte taille
-    const int sizeY = boxY + boxH - 18;
+    const int sizeY = boxY + boxH - 24;
     char sizeStr[32];
     snprintf(sizeStr, sizeof(sizeStr), "%.0f KB", total / 1024.0f);
 
@@ -1138,7 +1210,7 @@ void CardputerView::copyProgress(size_t total, size_t current, void* userCtx) {
         Display->fillRoundRect(barX, barY, barW, barH, DEFAULT_ROUND_RECT, RECT_COLOR_DARK);
 
         // Taille
-        Display->setTextSize(TEXT_SMALL);
+        Display->setTextSize(TEXT_MEDIUM_LARGE);
         Display->setTextColor(TEXT_COLOR);
         Display->drawCenterString(sizeStr, Display->width() / 2, sizeY);
     }
