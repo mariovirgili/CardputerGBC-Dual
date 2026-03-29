@@ -195,16 +195,19 @@ extern "C" void run_genesis(const uint8_t* rom, size_t len, const char* romName)
   // Dual-screen info: show info on whichever screen is NOT rendering the game
   const bool useExternal = (g_emu_display_target == EMU_DISPLAY_EXTERNAL);
   {
-    CardputerView display;
-    display.initialize();
     if (useExternal) {
       // Game on external TFT → show control bindings on internal LCD
-      display.topBar("GENESIS ON EXTERNAL TFT", false, false);
-      display.showControlBindings(
-        share::emuControlActionLabels(share::EmuProfile::Genesis),
-        share::emuControlKeyLabels(share::EmuProfile::Genesis),
-        "GO / HOLD ESC = QUIT"
-      );
+      if (!emu_is_internal_screen_locked()) {
+        CardputerView display;
+        display.initialize();
+        display.topBar("GENESIS ON EXTERNAL TFT", false, false);
+        display.showControlBindings(
+          share::emuControlActionLabels(share::EmuProfile::Genesis),
+          share::emuControlKeyLabels(share::EmuProfile::Genesis),
+          "GO / HOLD ESC = QUIT"
+        );
+        emu_set_internal_screen_locked(true);
+      }
     } else {
       // Game on internal LCD → show ROM info + controls on external TFT
       if (!emu_is_aux_screen_locked()) {

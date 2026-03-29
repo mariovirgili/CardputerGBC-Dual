@@ -629,7 +629,7 @@ void myGraphicsBlitLine(unsigned char render)
                         myPalettes[64 + i]  = NGPC_TO_SDL16(bwTable[bw_palette_table[8  + i] & 0x07]);
                         myPalettes[68 + i]  = NGPC_TO_SDL16(bwTable[bw_palette_table[12 + i] & 0x07]);
                         myPalettes[128 + i] = NGPC_TO_SDL16(bwTable[bw_palette_table[16 + i] & 0x07]);
-                        myPalettes[132 + i] = NGPC_TO_SDL16(bw_palette_table[20 + i] & 0x07);
+                        myPalettes[132 + i] = NGPC_TO_SDL16(bwTable[bw_palette_table[20 + i] & 0x07]);
                     }
                 } else if (palette_table) {
                     // 192 entries NGPC

@@ -9,6 +9,8 @@ emu_color_depth_t g_emu_color_depth = EMU_COLOR_16BIT;
 
 // Secondary screen redraw lock — default to unlocked
 bool g_emu_aux_screen_locked = false;
+// Internal pre-game screen redraw lock — default to unlocked
+bool g_emu_internal_screen_locked = false;
 
 // ROM type values from select_rom.h RomType enum
 // UNKNOWN=0, NES=1, SMS=2, GG=3, NGP=4, GENESIS=5, WS=6, PCE=7, GB=8, LYNX=9, SNES=10
@@ -120,4 +122,14 @@ void emu_set_aux_screen_locked(bool locked)
 bool emu_is_aux_screen_locked(void)
 {
     return g_emu_aux_screen_locked;
+}
+
+void emu_set_internal_screen_locked(bool locked)
+{
+    g_emu_internal_screen_locked = locked;
+}
+
+bool emu_is_internal_screen_locked(void)
+{
+    return g_emu_internal_screen_locked;
 }

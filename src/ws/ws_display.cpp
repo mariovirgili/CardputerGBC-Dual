@@ -14,6 +14,7 @@ extern "C" {
 #include <algorithm>
 #include <esp_attr.h>
 #include <string>
+#include "ws_profiler.h"
 
 // External TFT instance (file-scoped)
 static TFT_eSPI s_tft;
@@ -39,6 +40,7 @@ static int lastZoomPercent = -1;
 static bool lastFullscreen = true;
 
 static uint16_t* s_line16 = nullptr;
+static uint8_t*  s_line12 = nullptr;
 static uint16_t* s_xmap   = nullptr;
 static uint16_t* s_ymap   = nullptr;
 static int s_dstW = 0, s_dstH = 0;
@@ -50,6 +52,7 @@ static uint16_t* s_bottomCache       = nullptr;
 static int       s_bottomCacheLines  = 0;
 static int       s_bottomCacheW      = 0;
 static int       s_bottomCacheStartY = 0;
+static uint16_t* s_frameCache        = nullptr;
 
 static inline int ws_target_w() {
   return s_use_ext ? EXT_W : INT_W;
@@ -61,11 +64,130 @@ static inline int ws_fb_stride() {
   return SCREEN_WIDTH;
 }
 
+static void ws_log_video_state_if_due(const uint16_t* fb) {
+  static uint64_t s_lastVideoLogUs = 0;
+  const uint64_t nowUs = esp_timer_get_time();
+  if (!fb || (nowUs - s_lastVideoLogUs) < 1000000ULL) {
+    return;
+  }
+  s_lastVideoLogUs = nowUs;
+
+  uint16_t baseColor = 0;
+  if (LCDSLP & 0x01) {
+    if (COLCTL & 0xE0) {
+      baseColor = Palette[(BORDER & 0xF0) >> 4][BORDER & 0x0F];
+    } else {
+      baseColor = MonoColor[BORDER & 0x07];
+    }
+  }
+
+  uint32_t baseCount = 0;
+  uint32_t nonBaseCount = 0;
+  uint16_t minColor = 0xFFFF;
+  uint16_t maxColor = 0x0000;
+  int firstNonBaseX = -1;
+  int firstNonBaseY = -1;
+  uint16_t firstNonBase = 0;
+
+  for (int y = 0; y < kSrcH; ++y) {
+    const uint16_t* row = fb + y * ws_fb_stride();
+    for (int x = 0; x < kSrcW; ++x) {
+      const uint16_t c = row[x];
+      if (c < minColor) minColor = c;
+      if (c > maxColor) maxColor = c;
+      if (c == baseColor) {
+        baseCount++;
+      } else {
+        nonBaseCount++;
+        if (firstNonBaseX < 0) {
+          firstNonBaseX = x;
+          firstNonBaseY = y;
+          firstNonBase = c;
+        }
+      }
+    }
+  }
+
+  const uint16_t sample00 = fb[0];
+  const uint16_t sampleMid = fb[(kSrcH / 2) * ws_fb_stride() + (kSrcW / 2)];
+  const uint16_t sampleLast = fb[(kSrcH - 1) * ws_fb_stride() + (kSrcW - 1)];
+  const uint8_t bank0 = IO[0xC0];
+  const uint8_t bank1 = IO[0xC1];
+  const uint8_t bank2 = IO[0xC2];
+  const uint8_t bank3 = IO[0xC3];
+  const uint8_t scr1m0 = Scr1TMap ? Scr1TMap[0] : 0xFF;
+  const uint8_t scr1m1 = Scr1TMap ? Scr1TMap[1] : 0xFF;
+  const uint8_t scr1m2 = Scr1TMap ? Scr1TMap[2] : 0xFF;
+  const uint8_t scr1m3 = Scr1TMap ? Scr1TMap[3] : 0xFF;
+  const uint8_t scr2m0 = Scr2TMap ? Scr2TMap[0] : 0xFF;
+  const uint8_t scr2m1 = Scr2TMap ? Scr2TMap[1] : 0xFF;
+  const uint8_t scr2m2 = Scr2TMap ? Scr2TMap[2] : 0xFF;
+  const uint8_t scr2m3 = Scr2TMap ? Scr2TMap[3] : 0xFF;
+  const uint8_t tile0 = IRAM ? IRAM[0x2000] : 0xFF;
+  const uint8_t tile1 = IRAM ? IRAM[0x2001] : 0xFF;
+  const uint8_t tile2 = IRAM ? IRAM[0x2002] : 0xFF;
+  const uint8_t tile3 = IRAM ? IRAM[0x2003] : 0xFF;
+  const uint32_t dmaSrc = WsLastDMASrc;
+  const uint16_t dmaDst = WsLastDMADst;
+  const uint16_t dmaCnt = WsLastDMACnt;
+
+  printf(
+      "[WS-VID] regs dsp=%02X lcd=%02X seg=%02X col=%02X border=%02X scrmap=%02X s1=%02X,%02X s2=%02X,%02X bnk=%02X/%02X/%02X/%02X layers=%d/%d/%d\n",
+      DSPCTL,
+      LCDSLP,
+      LCDSEG,
+      COLCTL,
+      BORDER,
+      SCRMAP,
+      SCR1X,
+      SCR1Y,
+      SCR2X,
+      SCR2Y,
+      bank0,
+      bank1,
+      bank2,
+      bank3,
+      Layer[0],
+      Layer[1],
+      Layer[2]);
+  printf(
+      "[WS-VID] map scr1=%02X %02X %02X %02X scr2=%02X %02X %02X %02X tile@2000=%02X %02X %02X %02X\n",
+      scr1m0, scr1m1, scr1m2, scr1m3,
+      scr2m0, scr2m1, scr2m2, scr2m3,
+      tile0, tile1, tile2, tile3);
+  if (WsLastDMAValid) {
+    printf(
+        "[WS-VID] dma src=%05X dst=%04X cnt=%u src0=%02X %02X %02X %02X\n",
+        (unsigned)dmaSrc,
+        dmaDst,
+        (unsigned)dmaCnt,
+        WsLastDMASrcBytes[0],
+        WsLastDMASrcBytes[1],
+        WsLastDMASrcBytes[2],
+        WsLastDMASrcBytes[3]);
+  }
+  printf(
+      "[WS-VID] fb base=%04X basePx=%u nonBasePx=%u min=%04X max=%04X p00=%04X pmid=%04X plast=%04X firstNonBase=%d,%d:%04X\n",
+      baseColor,
+      (unsigned)baseCount,
+      (unsigned)nonBaseCount,
+      minColor,
+      maxColor,
+      sample00,
+      sampleMid,
+      sampleLast,
+      firstNonBaseX,
+      firstNonBaseY,
+      firstNonBase);
+}
+
 static void ws_display_free_buffers() {
   free(s_line16); s_line16 = nullptr; s_lineCap = 0;
+  free(s_line12); s_line12 = nullptr;
   free(s_xmap);   s_xmap   = nullptr;
   free(s_ymap);   s_ymap   = nullptr;
   free(s_bottomCache); s_bottomCache = nullptr;
+  free(s_frameCache); s_frameCache = nullptr;
   s_bottomCacheLines = 0;
   s_bottomCacheW = 0;
 }
@@ -118,6 +240,12 @@ static void ws_display_compute_scaler() {
                                            MALLOC_CAP_DMA | MALLOC_CAP_8BIT);
     s_lineCap = s_line16 ? maxW : 0;
   }
+  if (s_use_12bit) {
+    const int needed12 = ((s_dstW + 1) / 2) * 3;
+    if (!s_line12) {
+      s_line12 = (uint8_t*)heap_caps_malloc(needed12, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    }
+  }
 
   // Build LUTs
   if (s_xmap) {
@@ -163,6 +291,19 @@ static inline void ws_render_one_frame()
     printf("[WS-DISP] frame#%d ext=%d 12b=%d dstW=%d dstH=%d fb[0]=%04X stride=%d\n",
            s_frameCnt, ext, use12, dstW, dstH, fb[0], ws_fb_stride());
     s_frameCnt++;
+  }
+  ws_log_video_state_if_due(fb);
+
+  if (!s_frameCache) {
+    s_frameCache = (uint16_t*)heap_caps_malloc(kSrcW * kSrcH * sizeof(uint16_t),
+                                               MALLOC_CAP_8BIT);
+  }
+  if (s_frameCache) {
+    for (int y = 0; y < kSrcH; ++y) {
+      memcpy(s_frameCache + y * kSrcW,
+             fb + y * ws_fb_stride(),
+             kSrcW * sizeof(uint16_t));
+    }
   }
 
   // External-TFT path only: snapshot ~60% of bottom framebuffer
@@ -218,8 +359,11 @@ static inline void ws_render_one_frame()
     if (sy != last_sy || use12) {
       const uint16_t* srcLine = nullptr;
 
+      if (s_frameCache) {
+        srcLine = s_frameCache + sy * kSrcW;
+      }
       // Use bottom cache if available
-      if (s_bottomCache && sy >= s_bottomCacheStartY) {
+      if (!srcLine && s_bottomCache && sy >= s_bottomCacheStartY) {
         int idx = sy - s_bottomCacheStartY;
         if (idx >= 0 && idx < s_bottomCacheLines) {
           srcLine = s_bottomCache + idx * s_bottomCacheW;
@@ -249,7 +393,7 @@ static inline void ws_render_one_frame()
 
     if (ext && use12) {
       // RGB444 packed: convert RGB565 line -> 2 pixels -> 3 bytes.
-      uint8_t *buf12 = (uint8_t*)s_line16;
+      uint8_t *buf12 = s_line12 ? s_line12 : (uint8_t*)s_line16;
       int pairs = dstW / 2;
       for (int p = 0; p < pairs; p++) {
         uint16_t c1 = s_line16[p * 2];
@@ -295,8 +439,12 @@ static void ws_display_task(void* arg)
   }
 
   for (;;) {
-    ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+    uint32_t notifyCount = (uint32_t)ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+    const uint64_t renderStart = esp_timer_get_time();
     ws_render_one_frame();
+    ws_profiler_submit_display_frame(
+        (uint32_t)(esp_timer_get_time() - renderStart),
+        notifyCount);
     if ((xTaskGetTickCount() & 7) == 0) taskYIELD();
   }
 }
@@ -328,18 +476,23 @@ extern "C" void ws_display_start()
 {
   if (s_wsDispTask) return;
 
+  const BaseType_t displayCore = 0;
+
   BaseType_t ok = xTaskCreatePinnedToCore(
       ws_display_task, "WSDisp",
       s_use_ext ? 4096 : 2048,
       nullptr,
       s_use_ext ? 3 : 5,
       &s_wsDispTask,
-      s_use_ext ? 1 : 0);
+      displayCore);
 
   if (ok != pdPASS) {
     s_wsDispTask = nullptr;
     printf("[WS][ERR] display task create failed\n");
+    return;
   }
+
+  ws_profiler_note_display_core(displayCore);
 }
 
 extern "C" void ws_display_stop()
@@ -383,6 +536,95 @@ static void ws_draw_key_badge(int x, int y, const std::string& key)
   s_tft.setTextColor(TFT_WHITE, TFT_DARKGREY);
   s_tft.drawCentreString(key.c_str(), x + bw / 2, y + 1, 2);
   s_tft.drawRoundRect(x, y, bw, bh, 4, TFT_YELLOW);
+}
+
+static void ws_draw_internal_binding_row(
+    M5GFX& lcd,
+    int x,
+    int y,
+    int w,
+    const char* label,
+    const std::string& key,
+    uint16_t accent)
+{
+  const int badgeW = 18;
+  const int badgeH = 11;
+  const int badgeX = x + w - badgeW;
+  const int textX = x;
+
+  lcd.setTextSize(1);
+  lcd.setTextDatum(top_left);
+  lcd.setTextColor(TFT_WHITE, TFT_BLACK);
+  lcd.drawString(label, textX, y + 1, 1);
+
+  lcd.fillRoundRect(badgeX, y, badgeW, badgeH, 2, TFT_DARKGREY);
+  lcd.drawRoundRect(badgeX, y, badgeW, badgeH, 2, accent);
+  lcd.setTextDatum(middle_center);
+  lcd.setTextColor(TFT_WHITE, TFT_DARKGREY);
+  lcd.drawString(key.c_str(), badgeX + badgeW / 2, y + badgeH / 2, 1);
+}
+
+void ws_display_show_internal_info(bool isColor, bool verticalMode)
+{
+  auto& lcd = M5Cardputer.Display;
+  constexpr uint16_t kWsAccent = TFT_CYAN;
+  const auto keys = share::emuControlKeyLabels(share::EmuProfile::Ws);
+  if (keys.size() < 12) {
+    return;
+  }
+
+  lcd.setRotation(1);
+  lcd.setSwapBytes(true);
+  lcd.setFont(&fonts::Font0);
+  lcd.fillScreen(TFT_BLACK);
+  lcd.setTextSize(1);
+  lcd.setTextWrap(false);
+  lcd.setTextDatum(middle_center);
+
+  lcd.drawRoundRect(4, 4, INT_W - 8, INT_H - 8, 6, kWsAccent);
+
+  lcd.setTextColor(kWsAccent, TFT_BLACK);
+  lcd.drawCentreString(isColor ? "WSC EXT TFT" : "WS EXT TFT", INT_W / 2, 8, 1);
+
+  const int modeY = 31;
+  const int headingY = 45;
+  const int colY = 56;
+  const int footerRuleY = 112;
+  lcd.setTextColor(TFT_WHITE, TFT_BLACK);
+  lcd.drawCentreString(verticalMode ? "VERT MODE" : "HORZ MODE", INT_W / 2, modeY, 1);
+
+  const int colW = 60;
+  const int rowStep = 13;
+  const int xColX = 12;
+  const int sysColX = 90;
+  const int yColX = 168;
+
+  lcd.setTextColor(TFT_CYAN, TFT_BLACK);
+  lcd.drawCentreString("X PAD", xColX + colW / 2, headingY, 1);
+  lcd.drawCentreString("SYSTEM", sysColX + colW / 2, headingY, 1);
+  lcd.drawCentreString("Y PAD", yColX + colW / 2, headingY, 1);
+
+  const uint16_t xAccent = verticalMode ? TFT_DARKGREY : TFT_CYAN;
+  const uint16_t yAccent = verticalMode ? TFT_CYAN : TFT_DARKGREY;
+
+  ws_draw_internal_binding_row(lcd, xColX, colY + rowStep * 0, colW, "X1", keys[0], xAccent);
+  ws_draw_internal_binding_row(lcd, xColX, colY + rowStep * 1, colW, "X2", keys[1], xAccent);
+  ws_draw_internal_binding_row(lcd, xColX, colY + rowStep * 2, colW, "X3", keys[2], xAccent);
+  ws_draw_internal_binding_row(lcd, xColX, colY + rowStep * 3, colW, "X4", keys[3], xAccent);
+
+  ws_draw_internal_binding_row(lcd, sysColX, colY + rowStep * 0, colW, "A", keys[8], TFT_YELLOW);
+  ws_draw_internal_binding_row(lcd, sysColX, colY + rowStep * 1, colW, "B", keys[9], TFT_YELLOW);
+  ws_draw_internal_binding_row(lcd, sysColX, colY + rowStep * 2, colW, "START", keys[10], TFT_YELLOW);
+  ws_draw_internal_binding_row(lcd, sysColX, colY + rowStep * 3, colW, "OPT", keys[11], TFT_YELLOW);
+
+  ws_draw_internal_binding_row(lcd, yColX, colY + rowStep * 0, colW, "Y1", keys[4], yAccent);
+  ws_draw_internal_binding_row(lcd, yColX, colY + rowStep * 1, colW, "Y2", keys[5], yAccent);
+  ws_draw_internal_binding_row(lcd, yColX, colY + rowStep * 2, colW, "Y3", keys[6], yAccent);
+  ws_draw_internal_binding_row(lcd, yColX, colY + rowStep * 3, colW, "Y4", keys[7], yAccent);
+
+  lcd.setTextColor(kWsAccent, TFT_BLACK);
+  lcd.drawFastHLine(12, footerRuleY, INT_W - 24, kWsAccent);
+  lcd.setTextDatum(middle_center);
 }
 
 void ws_display_show_external_info(const char* romTitle, bool isColor)

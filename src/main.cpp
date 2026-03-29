@@ -39,6 +39,7 @@
 #include "cardputer/WelcomeExternalDs.h"
 
 void nes_display_show_external_info(const char* romTitle);
+static bool getProfileForRomType(RomType romType, share::EmuProfile& outProfile);
 
 static bool detectGameBoyColorFromRomData(const uint8_t* romData, size_t romLen)
 {
@@ -48,6 +49,46 @@ static bool detectGameBoyColorFromRomData(const uint8_t* romData, size_t romLen)
 
   const uint8_t cgbFlag = romData[0x143];
   return cgbFlag == 0x80 || cgbFlag == 0xC0;
+}
+
+static bool detectWonderSwanVerticalModeFromRomData(const uint8_t* romData, size_t romLen)
+{
+  if (!romData || romLen < 10) {
+    return false;
+  }
+
+  return (romData[romLen - 4] & 0x01) != 0;
+}
+
+static void showInternalControlsPreview(
+    RomType romType,
+    const std::string& romPath,
+    const std::string& romName)
+{
+  if (romType == ROM_TYPE_WS && g_emu_display_target == EMU_DISPLAY_EXTERNAL) {
+    ws_display_show_internal_info(
+        detectWonderSwanFromRom(romPath),
+        detectWonderSwanVerticalModeFromRomData(get_rom_ptr(), get_rom_size()));
+    emu_set_internal_screen_locked(true);
+    return;
+  }
+
+  CardputerView display;
+  display.initialize();
+  if (romType == ROM_TYPE_NES || romType == ROM_TYPE_SMS || romType == ROM_TYPE_GAMEGEAR ||
+      romType == ROM_TYPE_NGP || romType == ROM_TYPE_GENESIS || romType == ROM_TYPE_PCE ||
+      romType == ROM_TYPE_GB || romType == ROM_TYPE_LYNX || romType == ROM_TYPE_SNES) {
+    share::EmuProfile emuProfile = share::EmuProfile::Nes;
+    if (getProfileForRomType(romType, emuProfile)) {
+      display.topBar("- + SOUND [ ] BRIGHT", false, false);
+      display.showControlBindings(
+        share::emuControlActionLabels(emuProfile),
+        share::emuControlKeyLabels(emuProfile),
+        "HOLD GO = CFG"
+      );
+      emu_set_internal_screen_locked(true);
+    }
+  }
 }
 
 static void showExternalControlsPreview(RomType romType, const std::string& romPath, const std::string& romName)
@@ -88,6 +129,7 @@ static void showExternalControlsPreview(RomType romType, const std::string& romP
 static void clearExternalTft(const char* message = "Select Rom!")
 {
   emu_set_aux_screen_locked(false);
+  emu_set_internal_screen_locked(false);
   TFT_eSPI extTft;
   extTft.begin();
   extTft.setRotation(3);
@@ -101,6 +143,7 @@ static void clearExternalTft(const char* message = "Select Rom!")
 static void showExternalRomSelectorTft()
 {
   emu_set_aux_screen_locked(false);
+  emu_set_internal_screen_locked(false);
   struct ExternalRomBadge {
     const char* label;
     uint16_t color;
@@ -155,6 +198,7 @@ static void showExternalRomSelectorTft()
 static void welcomeExternalTft()
 {
   emu_set_aux_screen_locked(false);
+  emu_set_internal_screen_locked(false);
   TFT_eSPI extTft;
   extTft.begin();
   extTft.setRotation(3);
@@ -414,6 +458,7 @@ void setup() {
   // Display target selection (for cores that support external TFT)
   if (emu_has_external_display_support((int)ext)) {
     emu_set_aux_screen_locked(false);
+    emu_set_internal_screen_locked(false);
     emu_display_target_t savedTarget = emu_load_display_target((int)ext);
 
     VerticalSelector displaySelector(display, input);
@@ -484,6 +529,7 @@ void setup() {
       showExternalControlsPreview(ext, romPath, romName);
     } else {
       emu_set_aux_screen_locked(false);
+      emu_set_internal_screen_locked(false);
     }
   } else {
     g_emu_display_target = EMU_DISPLAY_INTERNAL;
@@ -491,17 +537,22 @@ void setup() {
   }
 
   // Show keymapping
-  display.topBar("- + SOUND [ ] BRIGHT", false, false);
-  if (hasProfile) {
+  if (hasProfile && g_emu_display_target == EMU_DISPLAY_EXTERNAL) {
+    showInternalControlsPreview(ext, romPath, romName);
+  } else if (hasProfile) {
+    display.topBar("- + SOUND [ ] BRIGHT", false, false);
     display.showControlBindings(
       share::emuControlActionLabels(emuProfile),
       share::emuControlKeyLabels(emuProfile),
       "HOLD GO = CFG"
     );
+    emu_set_internal_screen_locked(true);
   } else {
+    display.topBar("- + SOUND [ ] BRIGHT", false, false);
     int numButtons = (ext == ROM_TYPE_GENESIS) ? 3 : 2;
     numButtons = (ext == ROM_TYPE_SNES) ? 6 : numButtons;
     display.showKeymapping(numButtons);
+    emu_set_internal_screen_locked(true);
   }
 
   // Wait for key press or show tips
@@ -516,12 +567,17 @@ void setup() {
         if (g_emu_display_target == EMU_DISPLAY_INTERNAL) {
           showExternalControlsPreview(ext, romPath, romName);
         }
-        display.topBar("- + SOUND [ ] BRIGHT", false, false);
-        display.showControlBindings(
-          share::emuControlActionLabels(emuProfile),
-          share::emuControlKeyLabels(emuProfile),
-          "HOLD GO = CFG"
-        );
+        if (g_emu_display_target == EMU_DISPLAY_EXTERNAL) {
+          showInternalControlsPreview(ext, romPath, romName);
+        } else {
+          display.topBar("- + SOUND [ ] BRIGHT", false, false);
+          display.showControlBindings(
+            share::emuControlActionLabels(emuProfile),
+            share::emuControlKeyLabels(emuProfile),
+            "HOLD GO = CFG"
+          );
+          emu_set_internal_screen_locked(true);
+        }
       }
       lastUpdate = millis();
       continue;
@@ -531,7 +587,7 @@ void setup() {
     // Show tips
     uint32_t now = millis();
     const int stateCount = hasProfile ? 6 : 5;
-    if (now - lastUpdate >= 2000) {
+    if (!emu_is_internal_screen_locked() && now - lastUpdate >= 2000) {
       lastUpdate = now;
       state = (state + 1) % stateCount;
       switch (state) {

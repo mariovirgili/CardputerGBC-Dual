@@ -7,12 +7,14 @@ extern "C" {
 #include <string.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "ws_profiler.h"
 
 static int           g_sample_rate = 48000;
 static constexpr int kFps          = 75;
 static int           g_chunk       = 0; 
 static constexpr int kChannel      = 0;
-static constexpr int kMaxChunk = 400;
+static constexpr int kMaxChunk = 1024;
+static constexpr size_t kTargetQueuedBlocks = 2;
 static int16_t* s_buf0 = NULL;
 static int16_t* s_buf1 = NULL;
 static int16_t* s_buf[2] = { NULL, NULL };
@@ -21,7 +23,6 @@ static uint8_t  s_flip   = 0;
 // Task
 static TaskHandle_t s_taskAudio  = nullptr;
 static volatile bool s_runAudio  = false;
-static TickType_t    s_periodTicks = 0;
 
 // -----------------------------------------------------------------------------
 // Utils
@@ -33,7 +34,7 @@ static inline int16_t clamp16(int32_t v) {
 }
 
 static bool buffers_ok() {
-  return g_chunk <= kMaxChunk;
+  return g_chunk > 0 && g_chunk <= kMaxChunk;
 }
 
 static inline void build_block_from_apu(int16_t* dst) {
@@ -78,6 +79,9 @@ static inline void queue_block(const int16_t* pcm) {
 extern "C" void ws_sound_init(int sample_rate_hz) {
   g_sample_rate = sample_rate_hz > 0 ? sample_rate_hz : 48000;
   g_chunk = (g_sample_rate + kFps/2) / kFps;
+  if (g_chunk < 1) {
+    g_chunk = 1;
+  }
 
   if (!buffers_ok()) {
     g_chunk = kMaxChunk;
@@ -90,10 +94,10 @@ extern "C" void ws_sound_init(int sample_rate_hz) {
           s_buf[0] = s_buf[1] = NULL;
       }
 
-  s_buf0 = (int16_t*)malloc(kMaxChunk * sizeof(int16_t));
-  s_buf1 = (int16_t*)malloc(kMaxChunk * sizeof(int16_t));
-  memset(s_buf0, 0, kMaxChunk * sizeof(int16_t));
-  memset(s_buf1, 0, kMaxChunk * sizeof(int16_t));
+  s_buf0 = (int16_t*)malloc((size_t)g_chunk * sizeof(int16_t));
+  s_buf1 = (int16_t*)malloc((size_t)g_chunk * sizeof(int16_t));
+  memset(s_buf0, 0, (size_t)g_chunk * sizeof(int16_t));
+  memset(s_buf1, 0, (size_t)g_chunk * sizeof(int16_t));
   s_buf[0] = s_buf0;
   s_buf[1] = s_buf1;
 
@@ -108,6 +112,9 @@ extern "C" void ws_sound_init(int sample_rate_hz) {
     cfg.task_pinned_core  = 0;
     M5Cardputer.Speaker.config(cfg);
     M5Cardputer.Speaker.begin();
+    ws_profiler_note_speaker_core(cfg.task_pinned_core);
+  } else {
+    ws_profiler_note_speaker_core(0);
   }
 
   M5Cardputer.Speaker.setVolume(80);
@@ -124,23 +131,22 @@ extern "C" void ws_sound_shutdown(void) {
 }
 
 extern "C" void ws_sound_frame(void) {
-  size_t queued = M5Cardputer.Speaker.isPlaying(kChannel);
+  const int have = apuBufLen();
+  const size_t queued = M5Cardputer.Speaker.isPlaying(kChannel);
+  uint32_t underflowed = 0;
 
-  if (queued == 0) {
-    // Amorcer 2 blocs
-    for (int i = 0; i < 2; ++i) {
-      build_block_from_apu(s_buf[s_flip]);
-      queue_block(s_buf[s_flip]);
-      s_flip ^= 1;
+  size_t queued_now = queued;
+  while (queued_now < kTargetQueuedBlocks) {
+    if (apuBufLen() < g_chunk) {
+      underflowed = 1;
     }
-  } else if (queued == 1) {
-    // Maintenir 2 blocs
     build_block_from_apu(s_buf[s_flip]);
     queue_block(s_buf[s_flip]);
     s_flip ^= 1;
-  } else {
-    // queued >= 2
+    queued_now++;
   }
+
+  ws_profiler_submit_audio_tick((uint32_t)have, (uint32_t)queued, underflowed);
 }
 
 // -----------------------------------------------------------------------------
@@ -148,11 +154,17 @@ extern "C" void ws_sound_frame(void) {
 // -----------------------------------------------------------------------------
 static void ws_audio_task(void* arg) {
   (void)arg;
-  TickType_t last = xTaskGetTickCount();
 
   while (s_runAudio) {
+    while (s_runAudio && M5Cardputer.Speaker.isPlaying(kChannel) >= kTargetQueuedBlocks) {
+      vTaskDelay(pdMS_TO_TICKS(1));
+    }
+    if (!s_runAudio) {
+      break;
+    }
+
     ws_sound_frame();
-    vTaskDelayUntil(&last, s_periodTicks);
+    taskYIELD();
   }
   vTaskDelete(nullptr);
 }
@@ -160,11 +172,12 @@ static void ws_audio_task(void* arg) {
 extern "C" void ws_sound_start_task(uint32_t period_ms, int core) {
   if (s_taskAudio) return;
 
-  if (period_ms == 0) period_ms = 8; 
-  s_periodTicks = pdMS_TO_TICKS(period_ms);
+  (void)period_ms;
+  const BaseType_t audioCore = (core == 1) ? 1 : 0;
 
   s_runAudio = true;
-  xTaskCreatePinnedToCore(ws_audio_task, "ws_audio", 2048, nullptr, 6, &s_taskAudio, 0);
+  xTaskCreatePinnedToCore(ws_audio_task, "ws_audio", 2048, nullptr, 6, &s_taskAudio, audioCore);
+  ws_profiler_note_audio_core(audioCore);
 }
 
 extern "C" void ws_sound_stop_task(void) {

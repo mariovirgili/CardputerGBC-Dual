@@ -65,12 +65,16 @@ void run_pce(const uint8_t* rom, size_t len, const char* rom_name)
   if (useExternal) {
     // Game on external TFT → show control bindings on internal LCD
     CardputerView intDisplay;
-    intDisplay.topBar("PCE ON EXTERNAL TFT", false, false);
-    intDisplay.showControlBindings(
-      share::emuControlActionLabels(share::EmuProfile::Pce),
-      share::emuControlKeyLabels(share::EmuProfile::Pce),
-      "GO / HOLD ESC = QUIT"
-    );
+    if (!emu_is_internal_screen_locked()) {
+      intDisplay.initialize();
+      intDisplay.topBar("PCE ON EXTERNAL TFT", false, false);
+      intDisplay.showControlBindings(
+        share::emuControlActionLabels(share::EmuProfile::Pce),
+        share::emuControlKeyLabels(share::EmuProfile::Pce),
+        "GO / HOLD ESC = QUIT"
+      );
+      emu_set_internal_screen_locked(true);
+    }
   } else {
     // Game on internal LCD → show ROM info + controls on external TFT
     if (!emu_is_aux_screen_locked()) {

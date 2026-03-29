@@ -27,6 +27,9 @@ extern emu_color_depth_t g_emu_color_depth;
 // True when the secondary screen has already been drawn and must not be
 // refreshed again during the current game session.
 extern bool g_emu_aux_screen_locked;
+// True when the internal pre-game controls/help screen is already drawn and
+// should stay static until the emulator takes over that panel.
+extern bool g_emu_internal_screen_locked;
 
 // Check if a ROM type supports external display rendering
 // romType corresponds to the RomType enum values in select_rom.h
@@ -46,6 +49,11 @@ void emu_save_color_depth(int romType, emu_color_depth_t depth);
 // Lock/unlock the secondary info/controls screen for the current session.
 void emu_set_aux_screen_locked(bool locked);
 bool emu_is_aux_screen_locked(void);
+
+// Lock/unlock the internal pre-game controls/help screen for the current
+// session.
+void emu_set_internal_screen_locked(bool locked);
+bool emu_is_internal_screen_locked(void);
 
 #ifdef __cplusplus
 }

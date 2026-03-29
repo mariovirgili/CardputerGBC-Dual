@@ -12,6 +12,13 @@ $Rev: 71 $
 #include "WSRender.h"
 #include "cpu/necintrf.h"
 
+#ifndef MAX_SRAM_ALLOCATED
+#define MAX_SRAM_ALLOCATED 0x8000
+#endif
+
+static BYTE g_ws_fallback_sram[MAX_SRAM_ALLOCATED];
+static BYTE* g_ws_heap_sram = NULL;
+
 #define ERR_MALLOC					0
 #define ERR_OVER_RAMSIZE			0
 #define ERR_WRITE_ROM				0
@@ -229,6 +236,10 @@ int WsCreate(char *CartName)
             return ERR_MALLOC;
         }
     }
+    for (i = 0; i < ROMBanks; i++)
+    {
+        ROMMap[i] = ROMMap[0x100 - ROMBanks + i];
+    }
     fclose(fp);
     if (i >= 0)
     {
@@ -349,6 +360,19 @@ int WsCreateFromMemory(const uint8_t *romData, size_t romSize)
         return -1;
     }
 
+    if (g_ws_heap_sram) {
+        free(g_ws_heap_sram);
+        g_ws_heap_sram = NULL;
+    }
+
+    for (i = 0; i < 256; ++i) {
+        ROMMap[i] = MemDummy;
+        RAMMap[i] = MemDummy;
+    }
+    if (IRAM) memset(IRAM, 0x00, 0x10000u);
+    if (IO) memset(IO, 0x00, 0x100u);
+    if (MemDummy) *MemDummy = 0xA0;
+
     /* Read the last 10 bytes */
     memcpy(footer, romData + romSize - 10, 10);
     printf("[WS] Footer: ");
@@ -398,20 +422,26 @@ int WsCreateFromMemory(const uint8_t *romData, size_t romSize)
         size_t ofs = ((size_t)i) << 16;          // i * 64K
         ROMMap[dst] = (ofs < romSize) ? (BYTE*)(romData + ofs) : MemDummy;
     }
+    /* Mirror low logical bank numbers to the loaded cart window.
+       Some titles touch bank 0/page 1 even on larger carts. */
+    for (i = 0; i < ROMBanks; ++i) {
+        ROMMap[i] = ROMMap[0x100 - ROMBanks + i];
+    }
 
     /* SRAM 1/2 page (32KB) */
     /* Can't support game with multiple RAM banks, no mem space left for that */
     /* MAX_SRAM_ALLOCATED is defined in WS.c */
     if (RAMBanks == 1) {
-        BYTE* one = (BYTE*)malloc(0x8000);
+        BYTE* one = (BYTE*)malloc(MAX_SRAM_ALLOCATED);
         if (!one) {
-            printf("[WS] RAM malloc 32K failed, mapping to MemDummy\n");
-            for (i = 0; i < 256; ++i) RAMMap[i] = MemDummy;
+            one = g_ws_fallback_sram;
+            printf("[WS] RAM malloc 32K failed, using static fallback buffer\n");
         } else {
-            memset(one, 0x00, 0x8000);  
-            RAMMap[0] = one; 
-            for (i = RAMBanks; i < 256; ++i) RAMMap[i] = MemDummy;
+            g_ws_heap_sram = one;
         }
+        memset(one, 0x00, MAX_SRAM_ALLOCATED);
+        RAMMap[0] = one;
+        for (i = RAMBanks; i < 256; ++i) RAMMap[i] = MemDummy;
     }
 
     WsReset();

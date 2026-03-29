@@ -228,7 +228,6 @@ void sms_display_write_frame() {
       s_tft.writecommand(0x3A);
       s_tft.writedata(0x53);
     }
-    s_tft.setAddrWindow(offX, offY, dstW, dstH);
   } else {
     M5.Display.startWrite();
     M5.Display.setAddrWindow(offX, offY, dstW, dstH);
@@ -270,6 +269,7 @@ void sms_display_write_frame() {
     }
 
     if (s_use_ext && s_use_12bit) {
+      s_tft.setAddrWindow(offX, offY + y, dstW, 1);
       // RGB444 packed: 2 pixels → 3 bytes (in-place, write pointer behind read)
       uint8_t *buf12 = (uint8_t*)lineBuf;
       int pairs = dstW / 2;
@@ -291,6 +291,7 @@ void sms_display_write_frame() {
       int byteCount = ((dstW + 1) / 2) * 3;
       s_tft.pushColors((uint16_t*)buf12, (byteCount + 1) / 2, false);
     } else if (s_use_ext) {
+      s_tft.setAddrWindow(offX, offY + y, dstW, 1);
       s_tft.pushColors(lineBuf, dstW, true);  // swap=true: LE → SPI byte order
     } else {
       M5.Display.writePixels(lineBuf, dstW, true);

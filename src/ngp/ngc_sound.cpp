@@ -16,6 +16,10 @@ static constexpr int kFps        = 60;     // NGP 60 Hz
 static constexpr int kChunk      = (kSampleRate + kFps/2) / kFps; // 368 smp/frame
 static constexpr int kChannel    = 0;
 
+#ifndef NGC_AUDIO_CORE
+#define NGC_AUDIO_CORE 0
+#endif
+
 // -------- Buffers --------
 static int16_t*  s_buf[2]   = {nullptr, nullptr}; // double buffer mono
 static uint16_t* s_psg      = nullptr;
@@ -73,15 +77,16 @@ extern "C" {
 void ngc_sound_init(void) {
   sound_init(kSampleRate);
 
+  auto cfg = M5Cardputer.Speaker.config();
+  cfg.sample_rate       = kSampleRate;
+  cfg.stereo            = false; // mono out
+  cfg.dma_buf_len       = 512;
+  cfg.dma_buf_count     = 8;
+  cfg.task_priority     = 6;
+  cfg.task_pinned_core  = NGC_AUDIO_CORE;
+  M5Cardputer.Speaker.config(cfg);
+
   if (!M5Cardputer.Speaker.isRunning()) {
-    auto cfg = M5Cardputer.Speaker.config();
-    cfg.sample_rate       = kSampleRate;
-    cfg.stereo            = false; // mono out
-    cfg.dma_buf_len       = 512;
-    cfg.dma_buf_count     = 8;
-    cfg.task_priority     = 4;
-    cfg.task_pinned_core  = 0;
-    M5Cardputer.Speaker.config(cfg);
     M5Cardputer.Speaker.begin();
   }
 
@@ -90,6 +95,7 @@ void ngc_sound_init(void) {
   }
 
   M5Cardputer.Speaker.setVolume(80);
+  M5Cardputer.Speaker.stop(kChannel);
   s_flip = 0;
 }
 

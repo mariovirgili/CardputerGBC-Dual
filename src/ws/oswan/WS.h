@@ -19,11 +19,16 @@ extern BYTE *Page[0x10];
 extern BYTE* IRAM;
 extern BYTE *IO;
 extern BYTE *MemDummy;
-extern BYTE **ROMMap;     // C-ROM�o���N�}�b�v
-extern int ROMBanks;            // C-ROM�o���N��
-extern BYTE **RAMMap;     // C-RAM�o���N�}�b�v
-extern int RAMBanks;            // C-RAM�o���N��
-extern int RAMSize;             // C-RAM���e��
+extern BYTE **ROMMap;     // C-ROM bank map
+extern int ROMBanks;      // C-ROM bank count
+extern BYTE **RAMMap;     // C-RAM bank map
+extern int RAMBanks;      // C-RAM bank count
+extern int RAMSize;       // C-RAM size
+extern DWORD WsLastDMASrc;
+extern WORD WsLastDMADst;
+extern WORD WsLastDMACnt;
+extern BYTE WsLastDMASrcBytes[4];
+extern BYTE WsLastDMAValid;
 extern WORD IEep[64];
 extern struct EEPROM sIEep;
 extern struct EEPROM sCEep;

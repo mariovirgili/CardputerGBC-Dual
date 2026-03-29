@@ -5,6 +5,7 @@ $Rev: 71 $
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
+#include "esp_timer.h"
 
 //#include "entry.h"
 #include "WSRender.h"
@@ -14,6 +15,7 @@ $Rev: 71 $
 #include "WSPdata.h"
 #include "WSBandai.h"
 #include "cpu/necintrf.h"
+#include "../ws_profiler.h"
 
 extern void ws_graphics_paint(void); // SDL drawing of screen
 extern unsigned long SDL_UXTimerRead(void);
@@ -21,6 +23,12 @@ extern void init_ModRM_tables(void);
 
 #define IPeriod 32          // HBlank/8 (256/8)
 #define MAX_SRAM_ALLOCATED 0x8000  // 32KB
+
+DWORD WsLastDMASrc = 0;
+WORD WsLastDMADst = 0;
+WORD WsLastDMACnt = 0;
+BYTE WsLastDMASrcBytes[4] = {0, 0, 0, 0};
+BYTE WsLastDMAValid = 0;
 
 int Run;
 BYTE *Page[16];             // �o���N���蓖��
@@ -46,6 +54,11 @@ static int RtcCount;
 static int RAMEnable;
 int FrameSkip = 4;
 static int SkipCnt = 0;
+static int s_prof_frame_active = 0;
+static uint32_t s_prof_cpu_us = 0;
+static uint32_t s_prof_video_us = 0;
+static uint32_t s_prof_input_us = 0;
+static uint32_t s_prof_notify_us = 0;
 static int TblSkip[5][5] = {
     {1,1,1,1,1},
     {0,1,1,1,1},
@@ -435,6 +448,14 @@ void  WriteIO(DWORD A, BYTE V)
             i = DMASRC;
             j = DMADST;
             k = DMACNT;
+            WsLastDMASrc = (DWORD)i;
+            WsLastDMADst = (WORD)j;
+            WsLastDMACnt = (WORD)k;
+            WsLastDMASrcBytes[0] = ReadMem(i + 0);
+            WsLastDMASrcBytes[1] = ReadMem(i + 1);
+            WsLastDMASrcBytes[2] = ReadMem(i + 2);
+            WsLastDMASrcBytes[3] = ReadMem(i + 3);
+            WsLastDMAValid = 1;
             while(k--)
             {
                 WriteMem(j++, ReadMem(i++));
@@ -791,6 +812,7 @@ void WsReset (void)
     WriteIO(0xBD, 0x01); // �������݋���
     WriteIO(0xBE, 0x83);
     IO[0xC0] = 0x0F;
+    WriteIO(0xC1, 0x00);
     j = 0xF0;
     Page[0x4] = ROMMap[0x4 | j];
     Page[0x5] = ROMMap[0x5 | j];
@@ -862,7 +884,11 @@ int Interrupt(void)
             {
                 DWORD VCounter;
 
+                uint64_t inputStart = esp_timer_get_time();
                 ButtonState = WsInputGetState(HVMode);
+                if (s_prof_frame_active) {
+                    s_prof_input_us += (uint32_t)(esp_timer_get_time() - inputStart);
+                }
                 if((ButtonState ^ Joyz) & Joyz)
                 {
                     if(IRQENA & KEY_IFLAG)
@@ -908,11 +934,19 @@ int Interrupt(void)
                 {
                     if(RSTRL < 144)
                     {
+                        uint64_t videoStart = esp_timer_get_time();
                         RefreshLine(RSTRL);
+                        if (s_prof_frame_active) {
+                            s_prof_video_us += (uint32_t)(esp_timer_get_time() - videoStart);
+                        }
                     }
                     if(RSTRL == 144)
                     {
+                        uint64_t notifyStart = esp_timer_get_time();
                         ws_graphics_paint();
+                        if (s_prof_frame_active) {
+                            s_prof_notify_us += (uint32_t)(esp_timer_get_time() - notifyStart);
+                        }
                     }
                 }
             }
@@ -983,10 +1017,19 @@ int WsRun(void)
 {
     static int period = IPeriod;
     int i, cycle, iack, inum;
+    uint64_t frameStart = esp_timer_get_time();
+
+    s_prof_frame_active = 1;
+    s_prof_cpu_us = 0;
+    s_prof_video_us = 0;
+    s_prof_input_us = 0;
+    s_prof_notify_us = 0;
 
     for(i = 0; i < 159 * 8; i++) // 1/75s
     {
+        uint64_t cpuStart = esp_timer_get_time();
         cycle = nec_execute(period);
+        s_prof_cpu_us += (uint32_t)(esp_timer_get_time() - cpuStart);
         period += IPeriod - cycle;
         if(Interrupt())
         {
@@ -1002,6 +1045,13 @@ int WsRun(void)
             nec_int((inum + IRQBSE) << 2);
         }
     }
+    s_prof_frame_active = 0;
+    ws_profiler_submit_core_frame(
+        (uint32_t)(esp_timer_get_time() - frameStart),
+        s_prof_cpu_us,
+        s_prof_video_us,
+        s_prof_input_us,
+        s_prof_notify_us);
     return 0;
 }
 

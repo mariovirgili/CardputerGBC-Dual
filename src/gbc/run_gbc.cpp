@@ -115,12 +115,16 @@ void run_gbc(const uint8_t* romData, size_t romLen, const char* romPathOrName) {
     // If game renders on external TFT, show control bindings on internal LCD
     if (useExternal) {
         CardputerView intDisplay;
-        intDisplay.topBar(colorGame ? "GBC ON EXTERNAL TFT" : "GB ON EXTERNAL TFT", false, false);
-        intDisplay.showControlBindings(
-            share::emuControlActionLabels(share::EmuProfile::Gbc),
-            share::emuControlKeyLabels(share::EmuProfile::Gbc),
-            "GO / HOLD ESC = QUIT"
-        );
+        if (!emu_is_internal_screen_locked()) {
+            intDisplay.initialize();
+            intDisplay.topBar(colorGame ? "GBC ON EXTERNAL TFT" : "GB ON EXTERNAL TFT", false, false);
+            intDisplay.showControlBindings(
+                share::emuControlActionLabels(share::EmuProfile::Gbc),
+                share::emuControlKeyLabels(share::EmuProfile::Gbc),
+                "GO / HOLD ESC = QUIT"
+            );
+            emu_set_internal_screen_locked(true);
+        }
     }
 
     gnuboy_reset(true);

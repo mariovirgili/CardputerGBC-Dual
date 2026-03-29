@@ -44,6 +44,7 @@ static bool s_primed = false;
 static portMUX_TYPE g_ymMux = portMUX_INITIALIZER_UNLOCKED;
 static int16_t* s_buf[2]   = { nullptr, nullptr };
 uint8_t genesis_audio_volume = 50;
+static bool s_audioEnabled = false;
 
 // Audio config
 static constexpr int kSampleRate = 53267;    // Hz
@@ -89,7 +90,9 @@ static void audio_task(void*){
     taskYIELD();
     AudioMsg m;
     if (xQueueReceive(s_audioQ, &m, portMAX_DELAY) != pdTRUE) continue;
-    M5.Speaker.playRaw(m.buf, m.n, AUDIO_SR, AUDIO_STEREO, 1, /*channel*/0, /*stop_current*/false);
+    if (s_audioEnabled) {
+      M5Cardputer.Speaker.playRaw(m.buf, m.n, AUDIO_SR, AUDIO_STEREO, 1, /*channel*/0, /*stop_current*/false);
+    }
   }
 }
 
@@ -97,28 +100,58 @@ static void audio_task(void*){
 void genesis_sound_init() {
   sn76489_index = sn76489_clock = 0;
   ym2612_index  = ym2612_clock  = 0;
+  s_audioEnabled = false;
 
   auto cfg = M5Cardputer.Speaker.config();
   cfg.sample_rate       = AUDIO_SR;
   cfg.stereo            = AUDIO_STEREO;
-  cfg.dma_buf_len       = 512;
-  cfg.dma_buf_count     = 8;
+  cfg.dma_buf_len       = 256;
+  cfg.dma_buf_count     = 4;
   cfg.task_priority     = 4;
   cfg.task_pinned_core  = 0;
   M5Cardputer.Speaker.config(cfg);
-  if (!M5Cardputer.Speaker.isRunning()) M5Cardputer.Speaker.begin();
+  if (M5Cardputer.Speaker.isRunning()) {
+    s_audioEnabled = true;
+  } else {
+    s_audioEnabled = M5Cardputer.Speaker.begin();
+  }
+  if (!s_audioEnabled) {
+    printf("[MD-AUDIO] speaker begin failed, audio disabled\n");
+    genesis_audio_volume = 0;
+    return;
+  }
   M5Cardputer.Speaker.setVolume(genesis_audio_volume);
 
   if (!s_audioQ) {
     s_audioQ = xQueueCreate(AUDIO_Q_DEPTH, sizeof(AudioMsg));
   }
+  if (!s_audioQ) {
+    printf("[MD-AUDIO] queue alloc failed, audio disabled\n");
+    s_audioEnabled = false;
+    genesis_audio_volume = 0;
+    return;
+  }
   if (!s_audioTask) {
-    xTaskCreatePinnedToCore(audio_task, "AudioTask", 2048, nullptr, 6, &s_audioTask, 0);
+    BaseType_t ok = xTaskCreatePinnedToCore(audio_task, "AudioTask", 4096, nullptr, 6, &s_audioTask, 0);
+    if (ok != pdPASS) {
+      printf("[MD-AUDIO] task create failed, audio disabled\n");
+      s_audioTask = nullptr;
+      s_audioEnabled = false;
+      genesis_audio_volume = 0;
+    }
   }
 }
 
 /* Submit a frame of audio to the cardputer speaker */
 void genesis_sound_submit_frame(void) {
+  if (!s_audioEnabled || !s_audioQ || !s_buf[0] || !s_buf[1]) {
+    taskENTER_CRITICAL(&g_ymMux);
+    ym2612_index  = 0;
+    sn76489_index = 0;
+    taskEXIT_CRITICAL(&g_ymMux);
+    return;
+  }
+
   // Snapshot des index 
   int ym_n, psg_n;
   taskENTER_CRITICAL(&g_ymMux);
@@ -190,6 +223,7 @@ static void ym_task(void*){
 
 /* Start the YM2612 audio processing task */
 extern "C" void genesis_sound_ym_start(void) {
+  if (!s_audioEnabled) return;
   if (s_ymTaskHandle) return; // déjà démarré
   BaseType_t ok = xTaskCreatePinnedToCore(
     ym_task, "YMTask",

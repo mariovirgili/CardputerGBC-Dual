@@ -104,15 +104,18 @@ void run_lynx(const uint8_t* romData, size_t romLen, const char* romName)
     // Dual-screen info: show info on whichever screen is NOT rendering the game
     const bool useExternal = (g_emu_display_target == EMU_DISPLAY_EXTERNAL);
     {
-      CardputerView display;
-      display.initialize();
       if (useExternal) {
-        display.topBar("LYNX ON EXTERNAL TFT", false, false);
-      display.showControlBindings(
-          share::emuControlActionLabels(share::EmuProfile::Lynx),
-          share::emuControlKeyLabels(share::EmuProfile::Lynx),
-          "GO / HOLD ESC = QUIT"
-        );
+        if (!emu_is_internal_screen_locked()) {
+          CardputerView display;
+          display.initialize();
+          display.topBar("LYNX ON EXTERNAL TFT", false, false);
+          display.showControlBindings(
+              share::emuControlActionLabels(share::EmuProfile::Lynx),
+              share::emuControlKeyLabels(share::EmuProfile::Lynx),
+              "GO / HOLD ESC = QUIT"
+            );
+          emu_set_internal_screen_locked(true);
+        }
       } else {
         if (!emu_is_aux_screen_locked()) {
           lynx_display_show_external_info(romName);

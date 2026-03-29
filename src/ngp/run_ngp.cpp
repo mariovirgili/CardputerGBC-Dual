@@ -76,7 +76,9 @@ static void set_defaults_after_boot(void)
 {
   // Couleur/mono selon ROM
   tlcsMemWriteB(0x00006F91, tlcsMemReadB(0x00200023));
-  if (tipo_consola == 1) tlcsMemWriteB(0x00006F91, 0x00); // forcer mono
+  if (m_emuInfo.machine == NGP) {
+    tlcsMemWriteB(0x00006F91, 0x00); // force mono for .ngp titles
+  }
 
   // Langue ROM
   tlcsMemWriteB(0x00006F87, (NGP_LANG == NGP_LANG_EN) ? 0x01 : 0x00);
@@ -137,20 +139,27 @@ void run_ngp(const uint8_t* rom_base, size_t rom_size, int machine, const char* 
   // Sys info
   m_emuInfo.machine = machine;
   m_emuInfo.romSize = (int)rom_size;
-  tipo_consola      = 0;      // 0 = NGPC, 1 = NGP (mono)
+  tipo_consola      = (machine == NGP) ? 1 : 0; // legacy convention: 1 = NGP mono
+
+  printf("[NGP] machine=%s (header/ext detect=%d)\n",
+         (machine == NGP) ? "NGP mono" : "NGPC color",
+         machine);
 
   // Dual-screen info: show info on whichever screen is NOT rendering the game
   const bool useExternal = (g_emu_display_target == EMU_DISPLAY_EXTERNAL);
   {
-    CardputerView display;
-    display.initialize();
     if (useExternal) {
-      display.topBar("NGP ON EXTERNAL TFT", false, false);
-      display.showControlBindings(
-        share::emuControlActionLabels(share::EmuProfile::Ngp),
-        share::emuControlKeyLabels(share::EmuProfile::Ngp),
-        "GO / HOLD ESC = QUIT"
-      );
+      if (!emu_is_internal_screen_locked()) {
+        CardputerView display;
+        display.initialize();
+        display.topBar("NGP ON EXTERNAL TFT", false, false);
+        display.showControlBindings(
+          share::emuControlActionLabels(share::EmuProfile::Ngp),
+          share::emuControlKeyLabels(share::EmuProfile::Ngp),
+          "GO / HOLD ESC = QUIT"
+        );
+        emu_set_internal_screen_locked(true);
+      }
     } else {
       if (!emu_is_aux_screen_locked()) {
         ngc_display_show_external_info(romName);
@@ -170,6 +179,8 @@ void run_ngp(const uint8_t* rom_base, size_t rom_size, int machine, const char* 
   if (bgSelect) *bgSelect |= 0x80;  // enable bgTable[index]
 
   // CPU
+  // Reassert mono/color identity before the game code starts running.
+  set_defaults_after_boot();
   tlcs_init();
   tlcs_reset();
   Z80_Init();
@@ -177,6 +188,9 @@ void run_ngp(const uint8_t* rom_base, size_t rom_size, int machine, const char* 
 
   // Flags post boot
   set_defaults_after_boot();
+  printf("[NGP] boot flags: machine=%s 6F91=%02X\n",
+         (m_emuInfo.machine == NGP) ? "NGP mono" : "NGPC color",
+         tlcsMemReadB(0x00006F91));
 
   // Init video
   ngc_display_init();
@@ -249,9 +263,6 @@ void run_ngp(const uint8_t* rom_base, size_t rom_size, int machine, const char* 
 
       // Execute one frame
       tlcs_execute((CPU_CLOCK_HZ) / 60);
-
-      // Feed audio each frame
-      ngc_sound_frame();
 
       // Log framerate
       uint32_t emuUs = micros() - t0ms;

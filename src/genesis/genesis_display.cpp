@@ -36,7 +36,7 @@ uint16_t *s_lineImg  = nullptr;
 uint16_t *s_lineFull = nullptr;
 int s_capImg  = 0;
 int s_capFull = 0;
-static uint16_t *s_xmap = nullptr;
+static uint16_t s_xmap[FB_W];
 static int s_xmap_srcW  = -1, s_xmap_dstW = -1;
 static int s_xmap_roiX0 = -1, s_xmap_roiW = -1;
 static int s_roiX0 = 0, s_roiY0 = 0, s_roiW = 0, s_roiH = 0;
@@ -78,17 +78,18 @@ static inline void compute_centered_roi(int srcW, int srcH) {
 }
 
 /* Ensure xmap ROI */
-static inline void ensure_xmap_roi(int srcW, int dstW, int roiX0, int roiW) {
+static inline bool ensure_xmap_roi(int srcW, int dstW, int roiX0, int roiW) {
+  if (dstW <= 0 || dstW > FB_W) {
+    printf("[MD-DISP] invalid xmap width %d\n", dstW);
+    return false;
+  }
   if (s_xmap &&
       s_xmap_srcW == srcW &&
       s_xmap_dstW == dstW &&
       s_xmap_roiX0 == roiX0 &&
       s_xmap_roiW  == roiW) {
-    return;
+    return true;
   }
-  free(s_xmap);
-  s_xmap = (uint16_t*)heap_caps_malloc(dstW * sizeof(uint16_t),
-                                       MALLOC_CAP_8BIT | MALLOC_CAP_DMA);
   s_xmap_srcW = srcW;
   s_xmap_dstW = dstW;
   s_xmap_roiX0 = roiX0;
@@ -98,22 +99,34 @@ static inline void ensure_xmap_roi(int srcW, int dstW, int roiX0, int roiW) {
   for (int x = 0; x < dstW; ++x) {
     s_xmap[x] = (uint16_t)(roiX0 + (int)((int64_t)x * roiW / dstW));
   }
+  return true;
 }
 
 /* Allocate buffers for line rendering */
-static inline void allocate_line_buffers() {
+static inline bool allocate_line_buffers() {
   if (g_viewW > s_capImg) {
+    uint16_t* newImg = (uint16_t*)heap_caps_malloc(g_viewW * sizeof(uint16_t),
+                                                   MALLOC_CAP_DMA | MALLOC_CAP_8BIT);
+    if (!newImg) {
+      printf("[MD-DISP] lineImg alloc failed for %d px\n", g_viewW);
+      return false;
+    }
     free(s_lineImg);
-    s_lineImg  = (uint16_t*)heap_caps_malloc(g_viewW * sizeof(uint16_t),
-                                             MALLOC_CAP_DMA | MALLOC_CAP_8BIT);
-    s_capImg   = g_viewW;
+    s_lineImg = newImg;
+    s_capImg  = g_viewW;
   }
   if (g_dstW > s_capFull) {
+    uint16_t* newFull = (uint16_t*)heap_caps_malloc(g_dstW * sizeof(uint16_t),
+                                                    MALLOC_CAP_DMA | MALLOC_CAP_8BIT);
+    if (!newFull) {
+      printf("[MD-DISP] lineFull alloc failed for %d px\n", g_dstW);
+      return false;
+    }
     free(s_lineFull);
-    s_lineFull = (uint16_t*)heap_caps_malloc(g_dstW * sizeof(uint16_t),
-                                             MALLOC_CAP_DMA | MALLOC_CAP_8BIT);
+    s_lineFull = newFull;
     s_capFull  = g_dstW;
   }
+  return s_lineImg && s_lineFull;
 }
 
 /* Initialize display subsystem */
@@ -153,7 +166,9 @@ extern "C" void genesis_display_init(void) {
 
 /* Display task */
 void display_task(void* arg) {
-  allocate_line_buffers();
+  if (!allocate_line_buffers()) {
+    printf("[MD-DISP] initial line buffer allocation failed\n");
+  }
   int prevDstY = 0;
   bool inFrame = false;
   int cachedSrcH = -1;
@@ -166,6 +181,15 @@ void display_task(void* arg) {
     if (xQueueReceive(g_scanQ, &m, portMAX_DELAY) != pdTRUE) continue;
 
     if (m.type == MSG_BEGIN_FRAME) {
+      if (!allocate_line_buffers()) {
+        if (inFrame) {
+          if (ext) s_tft.endWrite();
+          else M5.Lcd.endWrite();
+          inFrame = false;
+        }
+        vTaskDelay(1);
+        continue;
+      }
       cachedSrcH = m.srcH;
       compute_centered_roi(/*srcW=*/FB_W, /*srcH=*/cachedSrcH);
       roiInitForSrcW = -1;
@@ -199,10 +223,21 @@ void display_task(void* arg) {
 
     if (roiInitForSrcW != (int)m.w) {
       compute_centered_roi((int)m.w, (int)m.srcH);
-      ensure_xmap_roi(/*srcW*/ m.w, /*dstW*/ g_viewW, /*roiX0*/ s_roiX0, /*roiW*/ s_roiW);
+      if (!ensure_xmap_roi(/*srcW*/ m.w, /*dstW*/ g_viewW, /*roiX0*/ s_roiX0, /*roiW*/ s_roiW)) {
+        vTaskDelay(1);
+        continue;
+      }
       roiInitForSrcW = (int)m.w;
     } else {
-      ensure_xmap_roi(/*srcW*/ m.w, /*dstW*/ g_viewW, /*roiX0*/ s_roiX0, /*roiW*/ s_roiW);
+      if (!ensure_xmap_roi(/*srcW*/ m.w, /*dstW*/ g_viewW, /*roiX0*/ s_roiX0, /*roiW*/ s_roiW)) {
+        vTaskDelay(1);
+        continue;
+      }
+    }
+
+    if (!s_lineImg || !s_lineFull) {
+      vTaskDelay(1);
+      continue;
     }
 
     if (m.w == g_viewW && s_roiX0 == 0 && s_roiW == m.w) {
@@ -252,13 +287,10 @@ void display_task(void* arg) {
       int wordCount = (byteCount + 1) / 2;
 
       while (linesToPush > 0) {
-        int chunk = (linesToPush > 16) ? 16 : linesToPush;
-        s_tft.setAddrWindow(0, prevDstY, g_dstW, chunk);
-        for (int i = 0; i < chunk; ++i) {
-          s_tft.pushColors((uint16_t*)buf12, wordCount, false);
-        }
-        prevDstY    += chunk;
-        linesToPush -= chunk;
+        s_tft.setAddrWindow(0, prevDstY, g_dstW, 1);
+        s_tft.pushColors((uint16_t*)buf12, wordCount, false);
+        prevDstY++;
+        linesToPush--;
         if ((prevDstY & 31) == 0) vTaskDelay(0);
       }
     } else {
@@ -267,6 +299,7 @@ void display_task(void* arg) {
         if (ext) {
           s_tft.setAddrWindow(0, prevDstY, g_dstW, chunk);
           for (int i = 0; i < chunk; ++i) {
+            s_tft.setAddrWindow(0, prevDstY + i, g_dstW, 1);
             s_tft.pushColors(s_lineFull, g_dstW, true);  // swap=true: LE → SPI byte order
           }
         } else {
@@ -298,7 +331,7 @@ extern "C" void genesis_display_start(void) {
   if (!g_displayTaskHandle) {
     BaseType_t ok = xTaskCreatePinnedToCore(
       display_task, "DisplayTask",
-      3192, nullptr, 6, &g_displayTaskHandle,
+      4096, nullptr, 6, &g_displayTaskHandle,
       0 /* core  */
     );
     if (ok != pdPASS) {
