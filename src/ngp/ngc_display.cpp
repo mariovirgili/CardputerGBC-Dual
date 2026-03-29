@@ -42,16 +42,17 @@ bool s_interlace_parity = false;
 extern uint16_t* totalpalette;
 
 static uint16_t* s_linebuf_panel = nullptr;
+static uint8_t*  s_linebuf12     = nullptr;
+static int       s_linebuf12Cap  = 0;
 static uint16_t* s_lut_x_full    = nullptr;
 static uint16_t* s_lut_y_full    = nullptr;
 static uint16_t* s_lut_x_4x3     = nullptr;
 static uint16_t* s_fb            = nullptr;
 
 // Bottom cache (tearing reduction — snapshot bottom of drawBuffer)
-static uint16_t* s_bottomCache       = nullptr;
-static int       s_bottomCacheLines  = 0;
-static int       s_bottomCacheW      = 0;
-static int       s_bottomCacheStartY = 0;
+static uint16_t* s_frameCache   = nullptr;
+static int       s_frameCacheW  = 0;
+static int       s_frameCacheH  = 0;
 #ifdef NGP_ONLY_RENDER_VISIBLE_LINES
 uint8_t* s_lut_y_render    = nullptr;
 #endif
@@ -95,6 +96,12 @@ extern "C" void ngc_display_init(void)
   free(s_linebuf_panel);
   s_linebuf_panel = (uint16_t*)heap_caps_malloc(s_panelW * sizeof(uint16_t),
                                                 MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+  free(s_linebuf12);
+  s_linebuf12 = nullptr;
+  s_linebuf12Cap = 0;
+  s_linebuf12 = (uint8_t*)heap_caps_malloc(((s_panelW + 1) / 2) * 3,
+                                           MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+  s_linebuf12Cap = s_linebuf12 ? (((s_panelW + 1) / 2) * 3) : 0;
 
   free(s_lut_x_full);
   s_lut_x_full = (uint16_t*)heap_caps_malloc(s_panelW * sizeof(uint16_t),
@@ -171,10 +178,13 @@ static void build_scale_luts()
   s_lut_ready = true;
 }
 
-// ---------- 12-bit RGB444 helper (in-place) ----------
-static inline void convert_line_12bit(uint16_t* lineBuf, int pixelCount)
+// ---------- 12-bit RGB444 helper ----------
+static inline void convert_line_12bit(const uint16_t* lineBuf, int pixelCount)
 {
-  uint8_t *buf12 = (uint8_t*)lineBuf;
+  if (!s_linebuf12) {
+    return;
+  }
+  uint8_t *buf12 = s_linebuf12;
   int pairs = pixelCount / 2;
   for (int p = 0; p < pairs; p++) {
     uint16_t c1 = lineBuf[p * 2];
@@ -197,11 +207,23 @@ static inline void push_line_ext(uint16_t* lineBuf, int pixelCount)
 {
   if (s_12bit) {
     convert_line_12bit(lineBuf, pixelCount);
+    if (!s_linebuf12) {
+      return;
+    }
     int byteCount = ((pixelCount + 1) / 2) * 3;
-    s_tft.pushColors((uint16_t*)lineBuf, (byteCount + 1) / 2, false);
+    s_tft.pushColors((uint16_t*)s_linebuf12, (byteCount + 1) / 2, false);
   } else {
     s_tft.pushColors(lineBuf, pixelCount, true);
   }
+}
+
+static inline uint16_t ngp_panel_color(uint16_t raw)
+{
+#ifdef NGP_USE_THREADED_COLORMAPPING
+  return totalpalette[raw & 0x0FFF];
+#else
+  return raw;
+#endif
 }
 
 static inline void paint_fullscreen_stretch()
@@ -217,8 +239,14 @@ static inline void paint_fullscreen_stretch()
       s_tft.writecommand(0x3A);
       s_tft.writedata(0x53);
     }
+#ifndef NGP_INTERLACED
+    s_tft.setAddrWindow(0, 0, panelW, panelH);
+#endif
   } else {
     M5.Display.startWrite();
+#ifndef NGP_INTERLACED
+    M5.Display.setAddrWindow(0, 0, panelW, panelH);
+#endif
   }
 
   #ifdef NGP_INTERLACED
@@ -235,40 +263,28 @@ static inline void paint_fullscreen_stretch()
 
     int x = 0;
     for (; x <= panelW - 8; x += 8) {
-  #ifdef  NGP_USE_THREADED_COLORMAPPING
-      dst[x+0] = totalpalette[*(const uint16_t*)(base + lutx[x+0])];
-      dst[x+1] = totalpalette[*(const uint16_t*)(base + lutx[x+1])];
-      dst[x+2] = totalpalette[*(const uint16_t*)(base + lutx[x+2])];
-      dst[x+3] = totalpalette[*(const uint16_t*)(base + lutx[x+3])];
-      dst[x+4] = totalpalette[*(const uint16_t*)(base + lutx[x+4])];
-      dst[x+5] = totalpalette[*(const uint16_t*)(base + lutx[x+5])];
-      dst[x+6] = totalpalette[*(const uint16_t*)(base + lutx[x+6])];
-      dst[x+7] = totalpalette[*(const uint16_t*)(base + lutx[x+7])];
-  #else
-      dst[x+0] = *(const uint16_t*)(base + lutx[x+0]);
-      dst[x+1] = *(const uint16_t*)(base + lutx[x+1]);
-      dst[x+2] = *(const uint16_t*)(base + lutx[x+2]);
-      dst[x+3] = *(const uint16_t*)(base + lutx[x+3]);
-      dst[x+4] = *(const uint16_t*)(base + lutx[x+4]);
-      dst[x+5] = *(const uint16_t*)(base + lutx[x+5]);
-      dst[x+6] = *(const uint16_t*)(base + lutx[x+6]);
-      dst[x+7] = *(const uint16_t*)(base + lutx[x+7]);
-#endif
+      dst[x+0] = ngp_panel_color(*(const uint16_t*)(base + lutx[x+0]));
+      dst[x+1] = ngp_panel_color(*(const uint16_t*)(base + lutx[x+1]));
+      dst[x+2] = ngp_panel_color(*(const uint16_t*)(base + lutx[x+2]));
+      dst[x+3] = ngp_panel_color(*(const uint16_t*)(base + lutx[x+3]));
+      dst[x+4] = ngp_panel_color(*(const uint16_t*)(base + lutx[x+4]));
+      dst[x+5] = ngp_panel_color(*(const uint16_t*)(base + lutx[x+5]));
+      dst[x+6] = ngp_panel_color(*(const uint16_t*)(base + lutx[x+6]));
+      dst[x+7] = ngp_panel_color(*(const uint16_t*)(base + lutx[x+7]));
     }
     for (; x < panelW; ++x) {
-#ifdef NGP_USE_THREADED_COLORMAPPING
-      dst[x] = totalpalette[*(const uint16_t*)(base + lutx[x])];
-#else
-      dst[x] = *(const uint16_t*)(base + lutx[x]);
-#endif
+      dst[x] = ngp_panel_color(*(const uint16_t*)(base + lutx[x]));
     }
 
     if (s_ext) {
-      // Per-line setAddrWindow: required because interlace skips lines
+#ifdef NGP_INTERLACED
       s_tft.setAddrWindow(0, y, panelW, 1);
+#endif
       push_line_ext(dst, panelW);
     } else {
+#ifdef NGP_INTERLACED
       M5.Display.setAddrWindow(0, y, panelW, 1);
+#endif
       M5.Display.writePixels(dst, panelW, /*swap=*/true);
     }
   }
@@ -294,8 +310,14 @@ static inline void paint_fullheight_4x3()
       s_tft.writecommand(0x3A);
       s_tft.writedata(0x53);
     }
+#ifndef NGP_INTERLACED
+    s_tft.setAddrWindow(x_start, 0, outW, panelH);
+#endif
   } else {
     M5.Display.startWrite();
+#ifndef NGP_INTERLACED
+    M5.Display.setAddrWindow(x_start, 0, outW, panelH);
+#endif
   }
 
   #ifdef NGP_INTERLACED
@@ -311,40 +333,28 @@ static inline void paint_fullheight_4x3()
 
     int x = 0;
     for (; x <= 160 - 8; x += 8) {
-  #ifdef  NGP_USE_THREADED_COLORMAPPING
-      dst[x+0] = totalpalette[*(const uint16_t*)(base + ((x+0) << 1))];
-      dst[x+1] = totalpalette[*(const uint16_t*)(base + ((x+1) << 1))];
-      dst[x+2] = totalpalette[*(const uint16_t*)(base + ((x+2) << 1))];
-      dst[x+3] = totalpalette[*(const uint16_t*)(base + ((x+3) << 1))];
-      dst[x+4] = totalpalette[*(const uint16_t*)(base + ((x+4) << 1))];
-      dst[x+5] = totalpalette[*(const uint16_t*)(base + ((x+5) << 1))];
-      dst[x+6] = totalpalette[*(const uint16_t*)(base + ((x+6) << 1))];
-      dst[x+7] = totalpalette[*(const uint16_t*)(base + ((x+7) << 1))];
-  #else
-      dst[x+0] = *(const uint16_t*)(base + ((x+0) << 1));
-      dst[x+1] = *(const uint16_t*)(base + ((x+1) << 1));
-      dst[x+2] = *(const uint16_t*)(base + ((x+2) << 1));
-      dst[x+3] = *(const uint16_t*)(base + ((x+3) << 1));
-      dst[x+4] = *(const uint16_t*)(base + ((x+4) << 1));
-      dst[x+5] = *(const uint16_t*)(base + ((x+5) << 1));
-      dst[x+6] = *(const uint16_t*)(base + ((x+6) << 1));
-      dst[x+7] = *(const uint16_t*)(base + ((x+7) << 1));
-#endif
+      dst[x+0] = ngp_panel_color(*(const uint16_t*)(base + ((x+0) << 1)));
+      dst[x+1] = ngp_panel_color(*(const uint16_t*)(base + ((x+1) << 1)));
+      dst[x+2] = ngp_panel_color(*(const uint16_t*)(base + ((x+2) << 1)));
+      dst[x+3] = ngp_panel_color(*(const uint16_t*)(base + ((x+3) << 1)));
+      dst[x+4] = ngp_panel_color(*(const uint16_t*)(base + ((x+4) << 1)));
+      dst[x+5] = ngp_panel_color(*(const uint16_t*)(base + ((x+5) << 1)));
+      dst[x+6] = ngp_panel_color(*(const uint16_t*)(base + ((x+6) << 1)));
+      dst[x+7] = ngp_panel_color(*(const uint16_t*)(base + ((x+7) << 1)));
     }
     for (; x < 160; ++x) {
-#ifdef NGP_USE_THREADED_COLORMAPPING
-      dst[x] = totalpalette[*(const uint16_t*)(base + (x << 1))];
-#else
-      dst[x] = *(const uint16_t*)(base + (x << 1));
-#endif
+      dst[x] = ngp_panel_color(*(const uint16_t*)(base + (x << 1)));
     }
 
     if (s_ext) {
-      // Per-line setAddrWindow: required because interlace skips lines
+#ifdef NGP_INTERLACED
       s_tft.setAddrWindow(x_start, y, outW, 1);
+#endif
       push_line_ext(dst, outW);
     } else {
+#ifdef NGP_INTERLACED
       M5.Display.setAddrWindow(x_start, y, outW, 1);
+#endif
       M5.Display.writePixels(dst, outW, /*swap=*/true);
     }
   }
@@ -357,46 +367,34 @@ static inline void paint_fullheight_4x3()
 }
 
 // Snapshot bottom of drawBuffer for tearing reduction
-static void ngp_snapshot_bottom_cache()
+static void ngp_snapshot_frame_cache()
 {
   const int srcH = NGPC_H;
   const int srcW = NGPC_W;
-  int cacheLines = (srcH * 60 + 99) / 100;
-  if (cacheLines < 1) cacheLines = 1;
-  int cacheStartY = srcH - cacheLines;
-  if (cacheStartY < 0) cacheStartY = 0;
-  int neededWords = cacheLines * srcW;
+  const int neededWords = srcW * srcH;
 
-  if (!s_bottomCache || neededWords > (s_bottomCacheLines * s_bottomCacheW)) {
-    free(s_bottomCache);
-    s_bottomCache = (uint16_t*)heap_caps_malloc(
-        neededWords * sizeof(uint16_t), MALLOC_CAP_8BIT);
-    if (s_bottomCache) {
-      s_bottomCacheLines = cacheLines;
-      s_bottomCacheW     = srcW;
+  if (!s_frameCache || s_frameCacheW != srcW || s_frameCacheH != srcH) {
+    free(s_frameCache);
+    s_frameCache = (uint16_t*)heap_caps_malloc(
+        neededWords * sizeof(uint16_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!s_frameCache) {
+      s_frameCache = (uint16_t*)heap_caps_malloc(
+          neededWords * sizeof(uint16_t), MALLOC_CAP_8BIT);
     }
+    s_frameCacheW = s_frameCache ? srcW : 0;
+    s_frameCacheH = s_frameCache ? srcH : 0;
   }
-  s_bottomCacheStartY = cacheStartY;
 
-  if (s_bottomCache) {
-    for (int i = 0; i < cacheLines; ++i) {
-      int ySrc = cacheStartY + i;
-      if (ySrc >= srcH) break;
-      memcpy(s_bottomCache + i * srcW,
-             drawBuffer + ySrc * srcW,
-             srcW * sizeof(uint16_t));
-    }
+  if (s_frameCache) {
+    memcpy(s_frameCache, drawBuffer, neededWords * sizeof(uint16_t));
   }
 }
 
 // Get source line, using cache for bottom lines
 static inline const uint16_t* ngp_get_src_line(int srcY)
 {
-  if (s_bottomCache && srcY >= s_bottomCacheStartY) {
-    int idx = srcY - s_bottomCacheStartY;
-    if (idx >= 0 && idx < s_bottomCacheLines) {
-      return s_bottomCache + idx * s_bottomCacheW;
-    }
+  if (s_frameCache && (unsigned)srcY < (unsigned)s_frameCacheH) {
+    return s_frameCache + (size_t)srcY * s_frameCacheW;
   }
   return drawBuffer + (size_t)srcY * NGPC_W;
 }
@@ -407,7 +405,7 @@ extern "C" IRAM_ATTR void graphics_paint(unsigned char render)
   if (!s_lut_ready) build_scale_luts();
 
   // Snapshot bottom of framebuffer before rendering (tearing reduction)
-  ngp_snapshot_bottom_cache();
+  ngp_snapshot_frame_cache();
 
   if (s_lastScreenMode && !ngpFullscreen) {
     if (s_ext) {

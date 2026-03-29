@@ -15,20 +15,23 @@
 
 void run_sms(const uint8_t* romPtr, size_t romLen, bool isGG, const char* romName)
 {
-  CardputerView display;
   CardputerInput input;
-  display.initialize();
 
   // Dual-screen info: show info on whichever screen is NOT rendering the game
   const bool useExternal = (g_emu_display_target == EMU_DISPLAY_EXTERNAL);
   if (useExternal) {
     const char* sysLabel = isGG ? "GAME GEAR ON EXTERNAL TFT" : "SMS ON EXTERNAL TFT";
-    display.topBar(sysLabel, false, false);
-    display.showControlBindings(
-      share::emuControlActionLabels(share::EmuProfile::Sms),
-      share::emuControlKeyLabels(share::EmuProfile::Sms),
-      "GO / HOLD ESC = QUIT"
-    );
+    if (!emu_is_internal_screen_locked()) {
+      CardputerView display;
+      display.initialize();
+      display.topBar(sysLabel, false, false);
+      display.showControlBindings(
+        share::emuControlActionLabels(share::EmuProfile::Sms),
+        share::emuControlKeyLabels(share::EmuProfile::Sms),
+        "GO / HOLD ESC = QUIT"
+      );
+      emu_set_internal_screen_locked(true);
+    }
   } else {
     if (!emu_is_aux_screen_locked()) {
       sms_display_show_external_info(romName, isGG);

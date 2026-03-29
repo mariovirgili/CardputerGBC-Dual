@@ -7,6 +7,7 @@ extern "C" {
 #include <M5Cardputer.h>
 #include "esp_timer.h"
 #include "ws_display.h"
+#include "ws_profiler.h"
 #include "ws_sound.h"
 #include "ws_save.h"
 #include "../share/display_target.h"
@@ -18,6 +19,7 @@ extern "C" void run_ws(const uint8_t* rom, size_t len, const char* rom_name, boo
          (unsigned)len, is_color ? "COLOR" : "MONO");
 
   const bool useExternal = (g_emu_display_target == EMU_DISPLAY_EXTERNAL);
+  ws_profiler_begin_run(useExternal ? 1 : 0, xPortGetCoreID());
 
   if (!useExternal) {
     // Game on internal LCD
@@ -63,14 +65,28 @@ extern "C" void run_ws(const uint8_t* rom, size_t len, const char* rom_name, boo
   for (;;) {
     // Run one frame
     WsRun();
+    const uint64_t saveStart = esp_timer_get_time();
     ws_save_tick();
+    ws_profiler_add_save_us((uint32_t)(esp_timer_get_time() - saveStart));
     frameCount++;
 
     // Frame pacing (75Hz)
     next += frame_us;
-    int64_t remain = (int64_t)next - (int64_t)esp_timer_get_time();
-    if (remain > 2000) vTaskDelay(remain / 1000 / portTICK_PERIOD_MS);
-    else if (remain > 0) ets_delay_us((uint32_t)remain);
-    else next = esp_timer_get_time();
+    const int64_t now_us = (int64_t)esp_timer_get_time();
+    int64_t remain = (int64_t)next - now_us;
+    if (remain > 2000) {
+      ws_profiler_add_sleep_us((uint32_t)remain);
+      vTaskDelay(remain / 1000 / portTICK_PERIOD_MS);
+    } else if (remain > 0) {
+      ws_profiler_add_sleep_us((uint32_t)remain);
+      ets_delay_us((uint32_t)remain);
+    } else {
+      ws_profiler_note_frame_late();
+      ws_profiler_note_main_yield();
+      taskYIELD();
+      next = esp_timer_get_time();
+    }
+
+    ws_profiler_log_if_due();
   }
 }

@@ -20,5 +20,6 @@ extern int  ws_zoomPercent;
 
 /* C++ only — external info screen */
 void ws_display_show_external_info(const char* romTitle, bool isColor);
+void ws_display_show_internal_info(bool isColor, bool verticalMode);
 
 #endif

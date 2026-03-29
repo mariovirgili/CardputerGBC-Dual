@@ -50,12 +50,25 @@ static inline bool hasRomExt(const std::string& path) {
 
 static inline int detectNeoGeoPocketFromRom(const uint8_t* rom, size_t size, const std::string& filepath)
 {
-  // Header cart 0x23
+  // Prefer the file extension for NGP/NGPC: many sets already encode
+  // the intended mode there, while some dumps have inconsistent header bits.
+  size_t dotPos = filepath.find_last_of('.');
+  if (dotPos != std::string::npos && dotPos + 1 < filepath.size()) {
+    std::string ext = filepath.substr(dotPos + 1);
+    for (auto& ch : ext) {
+      ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+    }
+    if (ext == "ngp") return NGP;
+    if (ext == "ngc") return NGPC;
+  }
+
+  // Header cart 0x23 fallback
   if (rom && size >= 0x24) {
     const uint8_t comp = rom[0x23];
     if (comp == NGP)  return NGP;
     if (comp == NGPC) return NGPC;
   }
+
   // fallback
   return NGPC;
 }

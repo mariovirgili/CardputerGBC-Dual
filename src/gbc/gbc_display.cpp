@@ -408,7 +408,6 @@ static void gbc_display_task(void *arg)
         tft.writecommand(0x3A);
         tft.writedata(0x53);
       }
-      tft.setAddrWindow(xOff, yOff, dstW, dstH);
     }
 
     for (int y = 0; y < dstH; ++y) {
@@ -427,6 +426,7 @@ static void gbc_display_task(void *arg)
       }
 
       if (use12) {
+        tft.setAddrWindow(xOff, yOff + y, dstW, 1);
         // Identical to PCE 12-bit: read LE source → pack to RGB444
         // NO in-place aliasing (reads from srcLine, writes to buf12)
         uint8_t *buf12 = (uint8_t*)s_lineBuf;
@@ -456,6 +456,7 @@ static void gbc_display_task(void *arg)
         if (gameOnInternal) {
           M5Cardputer.Display.writePixels(s_lineBuf, dstW, true);
         } else {
+          tft.setAddrWindow(xOff, yOff + y, dstW, 1);
           tft.pushColors(s_lineBuf, dstW);
         }
       }
@@ -478,9 +479,11 @@ extern "C" void gbc_display_set_target(gbc_display_target_t target)
   s_target = target;
   gbc_reset_transform_cache();
 
-  M5Cardputer.Display.setRotation(1);
-  M5Cardputer.Display.setSwapBytes(true);
-  M5Cardputer.Display.fillScreen(TFT_BLACK);
+  if (target == GBC_DISPLAY_INTERNAL) {
+    M5Cardputer.Display.setRotation(1);
+    M5Cardputer.Display.setSwapBytes(true);
+    M5Cardputer.Display.fillScreen(TFT_BLACK);
+  }
 
   if (target == GBC_DISPLAY_EXTERNAL) {
     tft.begin();
@@ -510,9 +513,11 @@ extern "C" void gbc_display_init(void)
     tft.fillScreen(TFT_BLACK);
   }
 
-  M5Cardputer.Display.setRotation(1);
-  M5Cardputer.Display.setSwapBytes(true);
-  M5Cardputer.Display.fillScreen(TFT_BLACK);
+  if (gbc_game_on_internal()) {
+    M5Cardputer.Display.setRotation(1);
+    M5Cardputer.Display.setSwapBytes(true);
+    M5Cardputer.Display.fillScreen(TFT_BLACK);
+  }
 
   gbc_reset_transform_cache();
 

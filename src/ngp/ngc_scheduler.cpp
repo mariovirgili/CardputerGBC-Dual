@@ -37,10 +37,13 @@ static void taskInput(void* arg)
 static void taskAudio(void* arg)
 {
   (void)arg;
-  TickType_t last = xTaskGetTickCount();
   while (s_running) {
+    while (s_running && M5Cardputer.Speaker.isPlaying(0) >= 2) {
+      vTaskDelay(pdMS_TO_TICKS(1));
+    }
+    if (!s_running) break;
     ngc_sound_frame();
-    vTaskDelayUntil(&last, 16);
+    taskYIELD();
   }
   vTaskDelete(nullptr);
 }
@@ -62,8 +65,8 @@ extern "C" void ngc_scheduler_start(void)
   s_running = true;
 
   xTaskCreatePinnedToCore(taskInput, "ngp_input", 2048, nullptr, 6, &s_taskInput, NGC_INPUT_CORE);
-  xTaskCreatePinnedToCore(taskAudio, "ngp_audio", 2048, nullptr, 6, &s_taskAudio, NGC_AUDIO_CORE);
-  xTaskCreatePinnedToCore(taskVideo, "ngp_video", 2048, nullptr, 6, &s_taskVideo, NGC_VIDEO_CORE);
+  xTaskCreatePinnedToCore(taskAudio, "ngp_audio", 2048, nullptr, 7, &s_taskAudio, NGC_AUDIO_CORE);
+  xTaskCreatePinnedToCore(taskVideo, "ngp_video", 4096, nullptr, 6, &s_taskVideo, NGC_VIDEO_CORE);
 }
 
 extern "C" void ngc_scheduler_stop(void)

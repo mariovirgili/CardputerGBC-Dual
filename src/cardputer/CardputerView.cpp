@@ -1210,7 +1210,7 @@ void CardputerView::copyProgress(size_t total, size_t current, void* userCtx) {
         Display->fillRoundRect(barX, barY, barW, barH, DEFAULT_ROUND_RECT, RECT_COLOR_DARK);
 
         // Taille
-        Display->setTextSize(TEXT_MEDIUM_LARGE);
+        Display->setTextSize(TEXT_BIG);
         Display->setTextColor(TEXT_COLOR);
         Display->drawCenterString(sizeStr, Display->width() / 2, sizeY);
     }

@@ -507,7 +507,7 @@ void ngp_mem_init(void)
             mainram[0x6F80-0x4000] = 0xFF; //Lots of battery power!
             mainram[0x6F81-0x4000] = 0x03;
             mainram[0x6F95-0x4000] = 0x10;
-            mainram[0x6F91-0x4000] = 0x10; // Colour bios
+            mainram[0x6F91-0x4000] = (m_emuInfo.machine == NGP) ? 0x00 : 0x10;
             mainram[0x6F84-0x4000] = 0x40; // "Power On" startup
             mainram[0x6F85-0x4000] = 0x00; // No shutdown request
             mainram[0x6F86-0x4000] = 0x00; // No user answer (?)
@@ -562,7 +562,7 @@ void ngp_mem_init(void)
             mainram[0x6F80-0x4000] = 0xFF; //Lots of battery power!
             mainram[0x6F81-0x4000] = 0x03;
             mainram[0x6F95-0x4000] = 0x10;
-            mainram[0x6F91-0x4000] = 0x10; // Colour bios
+            mainram[0x6F91-0x4000] = (m_emuInfo.machine == NGP) ? 0x00 : 0x10;
             mainram[0x6F84-0x4000] = 0x40; // "Power On" startup
             mainram[0x6F85-0x4000] = 0x00; // No shutdown request
             mainram[0x6F86-0x4000] = 0x00; // No user answer (?)
