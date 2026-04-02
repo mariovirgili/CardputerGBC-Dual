@@ -14,8 +14,6 @@
 #include "atari2600/a2600_display.h"
 #include "atari7800/run_a7800.h"
 #include "atari7800/a7800_video.h"
-#include "msx/run_msx.h"
-#include "msx/msx_config.h"
 #include "last_game.h"
 #include "esp_system.h"
 #include "esp_task_wdt.h"
@@ -55,8 +53,6 @@ static void showExternalRomSelectorTft()
   static const ExternalRomBadge badges[] = {
     {"A26",  LYNX_COLOR},
     {"A78",  LYNX_COLOR},
-    {"MSX",  PRIMARY_COLOR},
-    {"MSX2", PRIMARY_COLOR},
   };
 
   TFT_eSPI extTft;
@@ -178,77 +174,16 @@ static bool getProfileForRomType(RomType romType, share::EmuProfile& outProfile)
     case ROM_TYPE_A7800:
       outProfile = share::EmuProfile::A7800;
       return true;
-    case ROM_TYPE_MSX:
-    case ROM_TYPE_MSX_DISK:
-      outProfile = share::EmuProfile::MSX;
-      return true;
     default:
       return false;
   }
 }
 
-static void selectMsxLaunchSystem(CardputerView& display, CardputerInput& input, RomType romType)
-{
-  if (romType != ROM_TYPE_MSX && romType != ROM_TYPE_MSX_DISK) {
-    return;
-  }
-
-  const MsxMachineMode savedMode = msx_config_load_machine_mode();
-  VerticalSelector selector(display, input);
-  const std::vector<std::string> options = {
-    "Auto (MSX1 first)",
-    "MSX1",
-    "MSX2",
-  };
-
-  int initialIndex = 0;
-  switch (savedMode) {
-    case MsxMachineMode::MSX1:
-      initialIndex = 1;
-      break;
-    case MsxMachineMode::MSX2:
-      initialIndex = 2;
-      break;
-    case MsxMachineMode::Auto:
-    default:
-      initialIndex = 0;
-      break;
-  }
-
-  display.topBar("SELECT MSX SYSTEM", false, false);
-  const int selected = selector.select("Launch system",
-                                       options,
-                                       false,
-                                       false,
-                                       {},
-                                       {},
-                                       false,
-                                       true,
-                                       true,
-                                       initialIndex);
-
-  int resolvedIndex = selected;
-  if (resolvedIndex < 0) {
-    resolvedIndex = initialIndex;
-  }
-
-  MsxMachineMode launchMode = MsxMachineMode::Auto;
-  if (resolvedIndex == 1) {
-    launchMode = MsxMachineMode::MSX1;
-  } else if (resolvedIndex == 2) {
-    launchMode = MsxMachineMode::MSX2;
-  }
-
-  msx_config_set_machine_mode(launchMode, false);
-  printf("[MSX] launch mode selected: %s\n", msx_config_machine_mode_label(launchMode));
-}
-
 static void restartForPendingLaunch(CardputerView& display,
                                     SdService& sd,
-                                    const std::string& romPath,
-                                    int machineMode = -1)
+                                    const std::string& romPath)
 {
-  if (!savePendingLaunchToNvs(romPath, machineMode)) {
+  if (!savePendingLaunchToNvs(romPath)) {
     printf("[LAUNCH] pending launch save failed, continuing in current session\n");
     return;
   }
@@ -383,9 +318,6 @@ void setup() {
   PendingLaunchState pendingLaunch;
   if (!forceRomSelector && !resetSavedRomState && !quittingGame) {
     pendingLaunch = consumePendingLaunchFromNvs(sd);
-    if (pendingLaunch.valid() && pendingLaunch.machineMode >= 0) {
-      msx_config_set_machine_mode(static_cast<MsxMachineMode>(pendingLaunch.machineMode), false);
-    }
   }
 
   if (pendingLaunch.valid()) {
@@ -435,12 +367,7 @@ void setup() {
 
   const RomType ext = getRomType(romPath);
   if (!pendingLaunch.valid() && selectedFromBrowser && ext != ROM_TYPE_UNKNOWN) {
-    int machineMode = -1;
-    if (ext == ROM_TYPE_MSX || ext == ROM_TYPE_MSX_DISK) {
-      selectMsxLaunchSystem(display, input, ext);
-      machineMode = static_cast<int>(msx_config_get_machine_mode());
-    }
-    restartForPendingLaunch(display, sd, romPath, machineMode);
+    restartForPendingLaunch(display, sd, romPath);
   }
 
   printf("Selected ROM: %s\n", romPath.c_str());
@@ -618,10 +545,7 @@ void setup() {
       saveLastGameToNvs(romPath);
   }
 
-  const bool emulatorNeedsSdAtRuntime = (ext == ROM_TYPE_MSX || ext == ROM_TYPE_MSX_DISK);
-  if (!emulatorNeedsSdAtRuntime) {
-    sd.close();
-  }
+  sd.close();
 
   printf("HEAP BEFORE EMU: %u bytes\n", esp_get_free_heap_size());
 
@@ -637,14 +561,6 @@ void setup() {
       // Atari 7800
       run_a7800(get_rom_ptr(), get_rom_size(), romName.c_str());
   }
-  else if (ext == ROM_TYPE_MSX) {
-      // MSX cartridge ROM
-      run_msx(get_rom_ptr(), get_rom_size(), romName.c_str());
-  }
-  else if (ext == ROM_TYPE_MSX_DISK) {
-      // MSX disk image (.dsk) â€” ROM partition holds the DSK data via XIP
-      run_msx_disk(get_rom_ptr(), get_rom_size(), romName.c_str());
-  }
   else {
       display.topBar("ERROR", false, false);
       display.subMessage("Unsupported ROM type", 0);
@@ -655,6 +571,7 @@ void setup() {
 void loop() {
   /* run_emulator is blocking */
 }
+
 
 
 

@@ -20,7 +20,6 @@ static constexpr const char* ROM_BROWSER_STATE_DIR = "/.cardputer";
 static constexpr const char* ROM_BROWSER_FOLDER_FILE = "/.cardputer/last_rom_folder.txt";
 static constexpr const char* ROM_BROWSER_SELECTION_FILE = "/.cardputer/last_rom_selection.txt";
 static constexpr const char* PENDING_LAUNCH_ROM_KEY = "pending_rom";
-static constexpr const char* PENDING_LAUNCH_MODE_KEY = "pending_mode";
 
 struct RomBrowserSelectionState {
     std::string folderPath;
@@ -33,7 +32,6 @@ struct RomBrowserSelectionState {
 
 struct PendingLaunchState {
     std::string romPath;
-    int machineMode = -1;
 
     bool valid() const {
         return !romPath.empty();
@@ -254,7 +252,7 @@ static inline void clearLastGameFromNvs() {
     prefs.end();
 }
 
-static inline bool savePendingLaunchToNvs(const std::string& filePath, int machineMode = -1) {
+static inline bool savePendingLaunchToNvs(const std::string& filePath) {
     if (filePath.empty()) {
         return false;
     }
@@ -264,17 +262,15 @@ static inline bool savePendingLaunchToNvs(const std::string& filePath, int machi
 
     std::string cleanPath = normalizeRomBrowserPath(filePath);
     const bool okPath = prefs.putString(PENDING_LAUNCH_ROM_KEY, cleanPath.c_str()) > 0;
-    const bool okMode = prefs.putInt(PENDING_LAUNCH_MODE_KEY, machineMode) > 0;
     prefs.end();
 
-    return okPath && okMode;
+    return okPath;
 }
 
 static inline void clearPendingLaunchFromNvs() {
     Preferences prefs;
     prefs.begin("cardputer_emu", false);
     prefs.remove(PENDING_LAUNCH_ROM_KEY);
-    prefs.remove(PENDING_LAUNCH_MODE_KEY);
     prefs.end();
 }
 
@@ -284,19 +280,15 @@ static inline PendingLaunchState consumePendingLaunchFromNvs(SdService& sdServic
     Preferences prefs;
     prefs.begin("cardputer_emu", false);
     String pendingRom = prefs.getString(PENDING_LAUNCH_ROM_KEY, "");
-    state.machineMode = prefs.getInt(PENDING_LAUNCH_MODE_KEY, -1);
     prefs.remove(PENDING_LAUNCH_ROM_KEY);
-    prefs.remove(PENDING_LAUNCH_MODE_KEY);
     prefs.end();
 
     if (pendingRom.isEmpty()) {
-        state.machineMode = -1;
         return state;
     }
 
     std::string cleanPath = normalizeRomBrowserPath(pendingRom.c_str());
     if (!sdService.isFile(cleanPath)) {
-        state.machineMode = -1;
         return state;
     }
 
