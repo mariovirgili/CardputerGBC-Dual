@@ -65,6 +65,7 @@ public:
     );
     void value(std::string label, std::string val);
     void subMessage(std::string message, int delayMs);
+    void subMessage(std::string line1, std::string line2, int delayMs);
     void stringPrompt(std::string label, std::string value, bool backButton, size_t minLength);
     void confirmationPrompt(std::string label);
     void debug(const std::string& message);

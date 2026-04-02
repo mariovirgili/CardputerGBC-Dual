@@ -17,22 +17,36 @@ int VerticalSelector::select(
         bool handleInactivity,
         bool romBrowserControls,
         int initialIndex,
-        int longEscResult) 
+        int longEscResult,
+        int shortEscResult) 
 {
     int currentIndex = 0, lastIndex = -1, lastQuerySize = 0;
     char key = KEY_NONE;
     std::string searchQuery;
-    std::vector<std::string> filteredOptions = options;
-    if (!filteredOptions.empty()) {
+    std::vector<std::string> filteredOptions;
+    const std::vector<std::string>* activeOptions = &options;
+
+    auto optionCount = [&]() -> int {
+        return static_cast<int>(activeOptions->size());
+    };
+
+    auto clampCurrentIndex = [&]() {
+        if (activeOptions->empty()) {
+            currentIndex = 0;
+            return;
+        }
+
         currentIndex = initialIndex;
         if (currentIndex < 0) {
             currentIndex = 0;
         }
-        const int maxIndex = (int)filteredOptions.size() - 1;
+        const int maxIndex = optionCount() - 1;
         if (currentIndex > maxIndex) {
             currentIndex = maxIndex;
         }
-    }
+    };
+
+    clampCurrentIndex();
 
     // Marquee state
     std::string mBase;
@@ -50,15 +64,15 @@ int VerticalSelector::select(
     uint32_t nextPageRepeatMs = 0;
 
     auto pageUp = [&]() {
-        if (filteredOptions.empty()) return;
+        if (activeOptions->empty()) return;
         currentIndex -= PAGE_STEP;
         if (currentIndex < 0) currentIndex = 0;
     };
 
     auto pageDown = [&]() {
-        if (filteredOptions.empty()) return;
+        if (activeOptions->empty()) return;
         currentIndex += PAGE_STEP;
-        const int last = (int)filteredOptions.size() - 1;
+        const int last = optionCount() - 1;
         if (currentIndex > last) currentIndex = last;
     };
 
@@ -88,15 +102,15 @@ int VerticalSelector::select(
         // Full redraw
         if (selectionChanged) {
             display.topBar(searchQuery.empty() ? title : searchQuery, subMenu, searchBar);
-            display.verticalSelection(filteredOptions, currentIndex, VISIBLE_ROWS, options2, shortcuts, visibleMention);
-            if (!filteredOptions.empty()) mBase = filteredOptions[currentIndex];
+            display.verticalSelection(*activeOptions, currentIndex, VISIBLE_ROWS, options2, shortcuts, visibleMention);
+            if (!activeOptions->empty()) mBase = (*activeOptions)[currentIndex];
             offset = 0;
             lastMs = millis();
             lastIndex = currentIndex;
             lastQuerySize = (int)searchQuery.size();
-        } else if (!filteredOptions.empty()) {
+        } else if (!activeOptions->empty()) {
             // Redraw partial
-            const std::string& base = filteredOptions[currentIndex];
+            const std::string& base = (*activeOptions)[currentIndex];
             uint32_t now = millis();
 
             size_t startRow = (currentIndex / VISIBLE_ROWS) * VISIBLE_ROWS;
@@ -158,6 +172,9 @@ int VerticalSelector::select(
                     case 'k':
                         key = KEY_ESC_CUSTOM;
                         break;
+                    case KEY_GO_CUSTOM:
+                        key = KEY_NONE;
+                        break;
                     case 'a':
                         key = '\x11'; // page up sentinel
                         break;
@@ -170,14 +187,40 @@ int VerticalSelector::select(
             }
         }
 
+        else if (!searchBar) {
+            if (key == KEY_GO_CUSTOM) {
+                key = KEY_ESC_CUSTOM;
+            }
+
+            switch (std::tolower((unsigned char)key)) {
+                case 'e':
+                    key = KEY_ARROW_UP;
+                    break;
+                case 'z':
+                    key = KEY_ARROW_DOWN;
+                    break;
+                case 'a':
+                    key = KEY_ARROW_LEFT;
+                    break;
+                case 'd':
+                    key = KEY_ARROW_RIGHT;
+                    break;
+                case 'p':
+                    key = KEY_OK;
+                    break;
+                default:
+                    break;
+            }
+        }
+
         switch (key) {
             case KEY_ARROW_UP:
-                if (!filteredOptions.empty())
-                    currentIndex = (currentIndex > 0) ? currentIndex - 1 : (int)filteredOptions.size() - 1;
+                if (!activeOptions->empty())
+                    currentIndex = (currentIndex > 0) ? currentIndex - 1 : optionCount() - 1;
                 break;
             case KEY_ARROW_DOWN:
-                if (!filteredOptions.empty())
-                    currentIndex = (currentIndex < (int)filteredOptions.size() - 1) ? currentIndex + 1 : 0;
+                if (!activeOptions->empty())
+                    currentIndex = (currentIndex < optionCount() - 1) ? currentIndex + 1 : 0;
                 break;
             case '\x11':
                 pageUp();
@@ -185,13 +228,18 @@ int VerticalSelector::select(
             case '\x12':
                 pageDown();
                 break;
+            case KEY_ARROW_RIGHT:
             case KEY_OK:
-                if (!filteredOptions.empty())
+                if (!activeOptions->empty()) {
+                    if (activeOptions == &options) {
+                        return currentIndex;
+                    }
                     for (size_t i = 0; i < options.size(); ++i)
-                        if (options[i] == filteredOptions[currentIndex]) return (int)i;
+                        if (options[i] == (*activeOptions)[currentIndex]) return (int)i;
+                }
                 break;
             case KEY_ESC_CUSTOM:
-                return -1;
+                return shortEscResult;
             case KEY_ESC_LONG_CUSTOM:
                 return longEscResult;
             case KEY_ARROW_LEFT:
@@ -202,9 +250,19 @@ int VerticalSelector::select(
             case KEY_DEL:
                 if (searchBar && !searchQuery.empty()) {
                     searchQuery.pop_back();
-                    filteredOptions = filterOptions(options, searchQuery);
+                    if (searchQuery.empty()) {
+                        filteredOptions.clear();
+                        activeOptions = &options;
+                    } else {
+                        filteredOptions = filterOptions(options, searchQuery);
+                        activeOptions = &filteredOptions;
+                    }
                     currentIndex = 0;
-                } else filteredOptions = options;
+                } else if (searchBar) {
+                    filteredOptions.clear();
+                    activeOptions = &options;
+                    currentIndex = 0;
+                }
                 break;
             default:
                 auto valid = std::isalnum((unsigned char)key) || key == ' ' || key == '-' || key == '_';
@@ -225,6 +283,7 @@ int VerticalSelector::select(
                 if (searchBar && valid) {
                     searchQuery += key;
                     filteredOptions = filterOptions(options, searchQuery);
+                    activeOptions = searchQuery.empty() ? &options : &filteredOptions;
                     currentIndex = 0;
                 }
                 break;
@@ -257,4 +316,5 @@ int VerticalSelector::checkShortcut(const std::vector<std::string>& shortcuts, c
     }
     return -1;
 }
+
 

@@ -27,7 +27,11 @@ public:
     bool getFileSize(const std::string& filePath, size_t& outSize);
     bool getSdState();
 
-    std::vector<std::string> listElements(const std::string& dirPath, size_t limit = 0);
+    std::vector<std::string> listElements(
+        const std::string& dirPath,
+        size_t limit = 0,
+        const std::vector<std::string>* allowedExts = nullptr
+    );
     std::vector<uint8_t> readBinaryFile(const std::string& filePath);
     std::string readFile(const std::string& filePath);
 
@@ -40,7 +44,12 @@ public:
     std::string getFileExt(const std::string& path);
     std::string getParentDirectory(const std::string& path);
     std::string getFileName(const std::string& path);
-    std::vector<std::string> getCachedDirectoryElements(const std::string& path);
+    std::vector<std::string> getCachedDirectoryElements(
+        const std::string& path,
+        const std::vector<std::string>* allowedExts = nullptr,
+        size_t limit = 0,
+        bool forceRefresh = false
+    );
     void setCachedDirectoryElements(const std::string& path, const std::vector<std::string>& elements);
     void removeCachedPath(const std::string& path);
 };

@@ -1,4 +1,4 @@
-#include "a7800_video.h"
+﻿#include "a7800_video.h"
 
 #include <Arduino.h>
 #include <M5Cardputer.h>
@@ -27,14 +27,20 @@ static float s_aspectRatio = 4.0f / 3.0f;
 static unsigned s_baseWidth = 320;
 static unsigned s_baseHeight = 223;
 
+static int16_t s_xmapStatic[EXT_W];
+static int16_t s_ymapStatic[272];
+static uint16_t s_lineBufStatic[EXT_W];
+
 static uint16_t* s_lineBuf = nullptr;
 static int s_lineCap = 0;
-/* Lines batched per pushPixels call; reduces per-call SPI overhead ~8×. */
-static constexpr int kVideoBatchLines = 8;
-static int16_t* s_xmap = nullptr;
-static int s_xmapCap = 0;
-static int16_t* s_ymap = nullptr;
-static int s_ymapCap = 0;
+static int s_lineRows = 0;
+/* Target rows batched per pushPixels call; low-memory fallback can shrink to 1. */
+static constexpr int kVideoBatchLinesTarget = 8;
+static int16_t* s_xmap = s_xmapStatic;
+static int s_xmapCap = EXT_W;
+static int16_t* s_ymap = s_ymapStatic;
+static int s_ymapCap = 272;
+static bool s_lineBufOwned = false;
 
 static int s_lastSrcW = -1;
 static int s_lastSrcH = -1;
@@ -223,30 +229,46 @@ static void a7800_compute_plan(int srcW, int srcH, bool isPal, A7800RenderPlan& 
 
 static bool a7800_prepare_luts(const A7800RenderPlan& plan)
 {
-    if (plan.dstW > s_xmapCap) {
-        free(s_xmap);
-        s_xmap = (int16_t*)malloc((size_t)plan.dstW * sizeof(int16_t));
-        s_xmapCap = s_xmap ? plan.dstW : 0;
-    }
-
-    if (plan.dstH > s_ymapCap) {
-        free(s_ymap);
-        s_ymap = (int16_t*)malloc((size_t)plan.dstH * sizeof(int16_t));
-        s_ymapCap = s_ymap ? plan.dstH : 0;
+    if (plan.dstW > s_xmapCap || plan.dstH > s_ymapCap) {
+        return false;
     }
 
     if (plan.dstW > s_lineCap) {
-        /* Both internal and external paths batch kVideoBatchLines rows per
-         * pushPixels/pushColors call to cut per-call SPI overhead ~8×. */
-        free(s_lineBuf);
-        s_lineBuf = (uint16_t*)heap_caps_malloc(
-            (size_t)plan.dstW * kVideoBatchLines * sizeof(uint16_t),
-            MALLOC_CAP_DMA | MALLOC_CAP_8BIT
-        );
-        if (!s_lineBuf) {
-            s_lineBuf = (uint16_t*)malloc((size_t)plan.dstW * kVideoBatchLines * sizeof(uint16_t));
+        /* Prefer multi-line batches, but gracefully fall back to fewer rows
+         * when the heap is too fragmented to hold the larger scratch buffer. */
+        if (s_lineBufOwned && s_lineBuf) {
+            free(s_lineBuf);
         }
-        s_lineCap = s_lineBuf ? plan.dstW : 0;
+        s_lineBuf = nullptr;
+        s_lineCap = 0;
+        s_lineRows = 0;
+        s_lineBufOwned = false;
+
+        for (int rows = kVideoBatchLinesTarget; rows >= 1; rows /= 2) {
+            s_lineBuf = (uint16_t*)heap_caps_malloc(
+                (size_t)plan.dstW * rows * sizeof(uint16_t),
+                MALLOC_CAP_DMA | MALLOC_CAP_8BIT
+            );
+            if (!s_lineBuf) {
+                s_lineBuf = (uint16_t*)malloc((size_t)plan.dstW * rows * sizeof(uint16_t));
+            }
+            if (s_lineBuf) {
+                s_lineCap = plan.dstW;
+                s_lineRows = rows;
+                s_lineBufOwned = true;
+                break;
+            }
+            if (rows == 1) {
+                break;
+            }
+        }
+
+        if (!s_lineBuf && plan.dstW <= EXT_W) {
+            s_lineBuf = s_lineBufStatic;
+            s_lineCap = EXT_W;
+            s_lineRows = 1;
+            s_lineBufOwned = false;
+        }
     }
 
     if (!s_xmap || !s_ymap || !s_lineBuf) {
@@ -437,25 +459,49 @@ void a7800_video_init(double fps, unsigned baseWidth, unsigned baseHeight, float
 
     a7800_reset_layout_cache();
 
-    /* Pre-allocate s_lineBuf NOW — before a7800_audio_init fragments the DMA
+    /* Pre-allocate s_lineBuf NOW â€” before a7800_audio_init fragments the DMA
      * heap with I2S buffers.  At this point MARIA + flat_buf are already
      * allocated but audio is not, so a contiguous DMA block is still
      * available.  External path needs only 1 line; internal batches 8. */
     {
         const int maxDstW = s_use_ext ? EXT_W : M5Cardputer.Display.width();
         if (maxDstW > s_lineCap) {
-            free(s_lineBuf);
-            s_lineBuf = (uint16_t*)heap_caps_malloc(
-                (size_t)maxDstW * kVideoBatchLines * sizeof(uint16_t),
-                MALLOC_CAP_DMA | MALLOC_CAP_8BIT
-            );
-            if (!s_lineBuf) {
-                s_lineBuf = (uint16_t*)malloc((size_t)maxDstW * kVideoBatchLines * sizeof(uint16_t));
+            if (s_lineBufOwned && s_lineBuf) {
+                free(s_lineBuf);
             }
-            s_lineCap = s_lineBuf ? maxDstW : 0;
+            s_lineBuf = nullptr;
+            s_lineCap = 0;
+            s_lineRows = 0;
+            s_lineBufOwned = false;
+            for (int rows = kVideoBatchLinesTarget; rows >= 1; rows /= 2) {
+                s_lineBuf = (uint16_t*)heap_caps_malloc(
+                    (size_t)maxDstW * rows * sizeof(uint16_t),
+                    MALLOC_CAP_DMA | MALLOC_CAP_8BIT
+                );
+                if (!s_lineBuf) {
+                    s_lineBuf = (uint16_t*)malloc((size_t)maxDstW * rows * sizeof(uint16_t));
+                }
+                if (s_lineBuf) {
+                    s_lineCap = maxDstW;
+                    s_lineRows = rows;
+                    s_lineBufOwned = true;
+                    break;
+                }
+                if (rows == 1) {
+                    break;
+                }
+            }
+            if (!s_lineBuf && maxDstW <= EXT_W) {
+                s_lineBuf = s_lineBufStatic;
+                s_lineCap = EXT_W;
+                s_lineRows = 1;
+                s_lineBufOwned = false;
+            }
             if (!s_lineBuf) {
                 printf("[A7800][DISP] lineBuf pre-alloc failed (heap=%u)\n",
                        esp_get_free_heap_size());
+            } else if (s_lineRows < kVideoBatchLinesTarget) {
+                printf("[A7800][DISP] low-memory lineBuf rows=%d\n", s_lineRows);
             }
         }
     }
@@ -472,17 +518,17 @@ void a7800_video_init(double fps, unsigned baseWidth, unsigned baseHeight, float
 
 void a7800_video_shutdown(void)
 {
-    free(s_lineBuf);
-    s_lineBuf = nullptr;
+    if (s_lineBufOwned && s_lineBuf) {
+        free(s_lineBuf);
+    }
+    s_lineBuf = s_lineBufStatic;
     s_lineCap = 0;
-
-    free(s_xmap);
-    s_xmap = nullptr;
-    s_xmapCap = 0;
-
-    free(s_ymap);
-    s_ymap = nullptr;
-    s_ymapCap = 0;
+    s_lineRows = 0;
+    s_lineBufOwned = false;
+    s_xmap = s_xmapStatic;
+    s_xmapCap = EXT_W;
+    s_ymap = s_ymapStatic;
+    s_ymapCap = 272;
 
     a7800_reset_layout_cache();
 }
@@ -522,6 +568,106 @@ void a7800_video_get_and_reset_stats(int64_t* totalUs, uint32_t* count)
     s_videoCount   = 0;
 }
 
+void a7800_video_submit_rows(const uint8_t* const* rows,
+                             unsigned width,
+                             unsigned height,
+                             const uint16_t* palette565,
+                             bool isPal)
+{
+    if (s_skipFrame) {
+        return;
+    }
+    if (!rows || width == 0 || height == 0) {
+        return;
+    }
+    if (!palette565) {
+        return;
+    }
+
+    const int64_t tVideoStart = esp_timer_get_time();
+    const int batchLines = (s_lineRows > 0) ? s_lineRows : 1;
+
+    A7800RenderPlan plan = {};
+    a7800_compute_plan((int)width, (int)height, isPal, plan);
+
+    if (!a7800_prepare_luts(plan)) {
+        printf("[A7800][DISP] buffer allocation failed\n");
+        return;
+    }
+
+    if (a7800_layout_changed(plan, (int)width, (int)height)) {
+        a7800_clear_target();
+    }
+
+    const bool isPixelPerfectHalf = !s_use_ext
+        && (plan.dstW * 2 == plan.roiW)
+        && (plan.dstH * 2 == plan.roiH);
+
+    if (isPixelPerfectHalf) {
+        M5Cardputer.Display.startWrite();
+        M5Cardputer.Display.setAddrWindow(plan.xOff, plan.yOff, plan.dstW, plan.dstH);
+        for (int y = 0; y < plan.dstH; y += batchLines) {
+            const int batch = (y + batchLines <= plan.dstH)
+                ? batchLines : (plan.dstH - y);
+            for (int row = 0; row < batch; ++row) {
+                const uint8_t* srcLine = rows[plan.srcY0 + (y + row) * 2];
+                uint16_t* dst = s_lineBuf + (size_t)row * plan.dstW;
+                for (int x = 0; x < plan.dstW; ++x) {
+                    dst[x] = palette565[srcLine[x * 2]];
+                }
+            }
+            M5Cardputer.Display.pushPixels(s_lineBuf, plan.dstW * batch);
+        }
+        M5Cardputer.Display.endWrite();
+    } else if (!s_use_ext) {
+        M5Cardputer.Display.startWrite();
+        M5Cardputer.Display.setAddrWindow(plan.xOff, plan.yOff, plan.dstW, plan.dstH);
+        for (int y = 0; y < plan.dstH; y += batchLines) {
+            const int batch = (y + batchLines <= plan.dstH)
+                ? batchLines : (plan.dstH - y);
+            for (int row = 0; row < batch; ++row) {
+                const uint8_t* srcLine = rows[s_ymap[y + row]];
+                uint16_t* dst = s_lineBuf + (size_t)row * plan.dstW;
+                for (int x = 0; x < plan.dstW; ++x) {
+                    dst[x] = palette565[srcLine[s_xmap[x]]];
+                }
+            }
+            M5Cardputer.Display.pushPixels(s_lineBuf, plan.dstW * batch);
+        }
+        M5Cardputer.Display.endWrite();
+    } else if (!s_use_12bit) {
+        s_tft.startWrite();
+        s_tft.setAddrWindow(plan.xOff, plan.yOff, plan.dstW, plan.dstH);
+        for (int y = 0; y < plan.dstH; y += batchLines) {
+            const int batch = (y + batchLines <= plan.dstH)
+                ? batchLines : (plan.dstH - y);
+            for (int row = 0; row < batch; ++row) {
+                const uint8_t* srcLine = rows[s_ymap[y + row]];
+                uint16_t* dst = s_lineBuf + (size_t)row * plan.dstW;
+                for (int x = 0; x < plan.dstW; ++x) {
+                    dst[x] = palette565[srcLine[s_xmap[x]]];
+                }
+            }
+            s_tft.pushColors(s_lineBuf, plan.dstW * batch, true);
+        }
+        s_tft.endWrite();
+    } else {
+        s_tft.startWrite();
+        s_tft.writecommand(0x3A);
+        s_tft.writedata(0x53);
+        s_tft.setAddrWindow(plan.xOff, plan.yOff, plan.dstW, plan.dstH);
+
+        for (int y = 0; y < plan.dstH; ++y) {
+            const uint8_t* srcLine = rows[s_ymap[y]];
+            a7800_draw_line_12bit_indexed(srcLine, palette565, plan.dstW);
+        }
+
+        s_tft.endWrite();
+    }
+
+    s_videoTotalUs += (esp_timer_get_time() - tVideoStart);
+    s_videoCount++;
+}
 void a7800_video_submit_frame(const void* frame,
                               unsigned width,
                               unsigned height,
@@ -541,6 +687,7 @@ void a7800_video_submit_frame(const void* frame,
     }
 
     const int64_t tVideoStart = esp_timer_get_time();
+    const int batchLines = (s_lineRows > 0) ? s_lineRows : 1;
 
     A7800RenderPlan plan = {};
     a7800_compute_plan((int)width, (int)height, isPal, plan);
@@ -564,12 +711,12 @@ void a7800_video_submit_frame(const void* frame,
         && (plan.dstH * 2 == plan.roiH);
 
     if (isPixelPerfectHalf) {
-        /* Batch kVideoBatchLines rows per pushPixels to cut per-call SPI overhead. */
+        /* Batch as many rows as the current scratch buffer can hold. */
         M5Cardputer.Display.startWrite();
         M5Cardputer.Display.setAddrWindow(plan.xOff, plan.yOff, plan.dstW, plan.dstH);
-        for (int y = 0; y < plan.dstH; y += kVideoBatchLines) {
-            const int batch = (y + kVideoBatchLines <= plan.dstH)
-                ? kVideoBatchLines : (plan.dstH - y);
+        for (int y = 0; y < plan.dstH; y += batchLines) {
+            const int batch = (y + batchLines <= plan.dstH)
+                ? batchLines : (plan.dstH - y);
             for (int row = 0; row < batch; ++row) {
                 const uint8_t* srcLine = (const uint8_t*)frame
                     + (size_t)(plan.srcY0 + (y + row) * 2) * pitch;
@@ -585,13 +732,13 @@ void a7800_video_submit_frame(const void* frame,
     /* ------------------------------------------------------------------ */
 
     if (!s_use_ext && indexed) {
-        /* Batched internal indexed path: fill kVideoBatchLines rows then
-         * push once, reducing per-call SPI overhead ~8×. */
+        /* Batched internal indexed path: fill as many rows as the scratch
+         * buffer currently allows, then push in one call. */
         M5Cardputer.Display.startWrite();
         M5Cardputer.Display.setAddrWindow(plan.xOff, plan.yOff, plan.dstW, plan.dstH);
-        for (int y = 0; y < plan.dstH; y += kVideoBatchLines) {
-            const int batch = (y + kVideoBatchLines <= plan.dstH)
-                ? kVideoBatchLines : (plan.dstH - y);
+        for (int y = 0; y < plan.dstH; y += batchLines) {
+            const int batch = (y + batchLines <= plan.dstH)
+                ? batchLines : (plan.dstH - y);
             for (int row = 0; row < batch; ++row) {
                 const uint8_t* srcLine = (const uint8_t*)frame + (size_t)s_ymap[y + row] * pitch;
                 uint16_t* dst = s_lineBuf + (size_t)row * plan.dstW;
@@ -603,13 +750,12 @@ void a7800_video_submit_frame(const void* frame,
         }
         M5Cardputer.Display.endWrite();
     } else if (s_use_ext && indexed && !s_use_12bit) {
-        /* Batched external 16-bit indexed: fill kVideoBatchLines rows then
-         * pushColors once, cutting per-call SPI overhead ~8×. */
+        /* Batched external 16-bit indexed path with adaptive row count. */
         s_tft.startWrite();
         s_tft.setAddrWindow(plan.xOff, plan.yOff, plan.dstW, plan.dstH);
-        for (int y = 0; y < plan.dstH; y += kVideoBatchLines) {
-            const int batch = (y + kVideoBatchLines <= plan.dstH)
-                ? kVideoBatchLines : (plan.dstH - y);
+        for (int y = 0; y < plan.dstH; y += batchLines) {
+            const int batch = (y + batchLines <= plan.dstH)
+                ? batchLines : (plan.dstH - y);
             for (int row = 0; row < batch; ++row) {
                 const uint8_t* srcLine = (const uint8_t*)frame + (size_t)s_ymap[y + row] * pitch;
                 uint16_t* dst = s_lineBuf + (size_t)row * plan.dstW;
@@ -664,3 +810,4 @@ void a7800_video_submit_frame(const void* frame,
     s_videoTotalUs += (esp_timer_get_time() - tVideoStart);
     s_videoCount++;
 }
+

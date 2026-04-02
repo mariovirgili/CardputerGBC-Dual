@@ -12,6 +12,7 @@
 #include "a7800_video.h"
 #include "core/core/Maria.h"
 #include "cardputer/CardputerView.h"
+#include "esp_heap_caps.h"
 #include "esp_timer.h"
 #include "share/display_target.h"
 #include "share/emu_controls.h"
@@ -76,7 +77,17 @@ void run_a7800(const uint8_t* romData, size_t romLen, const char* romName)
         avInfo ? avInfo->geometry.base_height : (isPal ? 272 : 223),
         avInfo ? avInfo->geometry.aspect_ratio : (4.0f / 3.0f)
     );
-    a7800_audio_init(sampleRate);
+    {
+        const size_t freeDma = heap_caps_get_free_size(MALLOC_CAP_DMA | MALLOC_CAP_8BIT);
+        const size_t largestDma = heap_caps_get_largest_free_block(MALLOC_CAP_DMA | MALLOC_CAP_8BIT);
+        if (freeDma >= 8192u && largestDma >= 4096u) {
+            a7800_audio_init(sampleRate);
+        } else {
+            printf("[A7800][AUDIO] skipped due to low DMA heap free=%u largest=%u\n",
+                   (unsigned)freeDma,
+                   (unsigned)largestDma);
+        }
+    }
 
     printf("[A7800] core loaded, fps=%.2f, rate=%u, base=%ux%u, pal=%d\n",
            targetFps,

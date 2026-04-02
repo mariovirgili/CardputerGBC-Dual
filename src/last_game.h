@@ -19,6 +19,8 @@ static inline std::string _basename(const std::string& path) {
 static constexpr const char* ROM_BROWSER_STATE_DIR = "/.cardputer";
 static constexpr const char* ROM_BROWSER_FOLDER_FILE = "/.cardputer/last_rom_folder.txt";
 static constexpr const char* ROM_BROWSER_SELECTION_FILE = "/.cardputer/last_rom_selection.txt";
+static constexpr const char* PENDING_LAUNCH_ROM_KEY = "pending_rom";
+static constexpr const char* PENDING_LAUNCH_MODE_KEY = "pending_mode";
 
 struct RomBrowserSelectionState {
     std::string folderPath;
@@ -26,6 +28,15 @@ struct RomBrowserSelectionState {
 
     bool valid() const {
         return !folderPath.empty() && !entryName.empty();
+    }
+};
+
+struct PendingLaunchState {
+    std::string romPath;
+    int machineMode = -1;
+
+    bool valid() const {
+        return !romPath.empty();
     }
 };
 
@@ -234,6 +245,84 @@ static inline void saveLastGameToNvs(const std::string& filePath) {
 
     prefs.putString("last_game", cleanPath.c_str());
     prefs.end();
+}
+
+static inline void clearLastGameFromNvs() {
+    Preferences prefs;
+    prefs.begin("cardputer_emu", false);
+    prefs.remove("last_game");
+    prefs.end();
+}
+
+static inline bool savePendingLaunchToNvs(const std::string& filePath, int machineMode = -1) {
+    if (filePath.empty()) {
+        return false;
+    }
+
+    Preferences prefs;
+    prefs.begin("cardputer_emu", false);
+
+    std::string cleanPath = normalizeRomBrowserPath(filePath);
+    const bool okPath = prefs.putString(PENDING_LAUNCH_ROM_KEY, cleanPath.c_str()) > 0;
+    const bool okMode = prefs.putInt(PENDING_LAUNCH_MODE_KEY, machineMode) > 0;
+    prefs.end();
+
+    return okPath && okMode;
+}
+
+static inline void clearPendingLaunchFromNvs() {
+    Preferences prefs;
+    prefs.begin("cardputer_emu", false);
+    prefs.remove(PENDING_LAUNCH_ROM_KEY);
+    prefs.remove(PENDING_LAUNCH_MODE_KEY);
+    prefs.end();
+}
+
+static inline PendingLaunchState consumePendingLaunchFromNvs(SdService& sdService) {
+    PendingLaunchState state;
+
+    Preferences prefs;
+    prefs.begin("cardputer_emu", false);
+    String pendingRom = prefs.getString(PENDING_LAUNCH_ROM_KEY, "");
+    state.machineMode = prefs.getInt(PENDING_LAUNCH_MODE_KEY, -1);
+    prefs.remove(PENDING_LAUNCH_ROM_KEY);
+    prefs.remove(PENDING_LAUNCH_MODE_KEY);
+    prefs.end();
+
+    if (pendingRom.isEmpty()) {
+        state.machineMode = -1;
+        return state;
+    }
+
+    std::string cleanPath = normalizeRomBrowserPath(pendingRom.c_str());
+    if (!sdService.isFile(cleanPath)) {
+        state.machineMode = -1;
+        return state;
+    }
+
+    state.romPath = "/sd" + cleanPath;
+    return state;
+}
+
+static inline bool clearRomBrowserStateFromSd(SdService& sdService) {
+    if (!sdService.getSdState()) {
+        return false;
+    }
+
+    const bool folderCleared =
+        !sdService.isFile(ROM_BROWSER_FOLDER_FILE) ||
+        sdService.deleteFile(ROM_BROWSER_FOLDER_FILE);
+    const bool selectionCleared =
+        !sdService.isFile(ROM_BROWSER_SELECTION_FILE) ||
+        sdService.deleteFile(ROM_BROWSER_SELECTION_FILE);
+
+    return folderCleared && selectionCleared;
+}
+
+static inline void clearSavedRomState(SdService& sdService) {
+    clearLastGameFromNvs();
+    clearPendingLaunchFromNvs();
+    (void)clearRomBrowserStateFromSd(sdService);
 }
 
 static inline std::string getRomFolderFromNvs(

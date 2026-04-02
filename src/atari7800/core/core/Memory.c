@@ -1,4 +1,4 @@
-/* ----------------------------------------------------------------------------
+﻿/* ----------------------------------------------------------------------------
  *   ___  ___  ___  ___       ___  ____  ___  _  _
  *  /__/ /__/ /  / /__  /__/ /__    /   /_   / |/ /
  * /    / \  /__/ ___/ ___/ ___/   /   /__  /    /  emulator
@@ -36,9 +36,19 @@
 #include "Cartridge.h"
 #include "Tia.h"
 #include "Riot.h"
+#include "../../../share/emu_static_pool.h"
 
 #ifdef ESP_PLATFORM
 uint8_t* memory_pages[MEMORY_NUM_PAGES] = {0};
+static uint8_t* const memory_static_pages[6] = {
+   g_emu_static_pool + (0u * MEMORY_PAGE_SIZE),
+   g_emu_static_pool + (1u * MEMORY_PAGE_SIZE),
+   g_emu_static_pool + (2u * MEMORY_PAGE_SIZE),
+   g_emu_static_pool + (3u * MEMORY_PAGE_SIZE),
+   g_emu_static_pool + (4u * MEMORY_PAGE_SIZE),
+   g_emu_static_pool + (5u * MEMORY_PAGE_SIZE),
+};
+static uint8_t* const memory_static_rom_flags = g_emu_static_pool + (6u * MEMORY_PAGE_SIZE);
 uint8_t* memory_flat_buf = NULL; /* non-NULL when backed by one 64 KB block */
 uint8_t* memory_ram      = NULL; /* always = memory_pages[0] when allocated */
 #else
@@ -46,6 +56,17 @@ uint8_t* memory_ram = NULL;
 #endif
 uint8_t* memory_rom = NULL;
 uint8_t* memory_souper_ram = NULL;
+
+#ifdef ESP_PLATFORM
+static bool memory_IsStaticPage(const uint8_t* ptr)
+{
+   int i;
+   for(i = 0; i < 6; i++)
+      if(ptr == memory_static_pages[i] || ptr == memory_static_rom_flags)
+         return true;
+   return false;
+}
+#endif
 
 static bool memory_IsROMAddress(uint16_t address)
 {
@@ -97,12 +118,6 @@ bool memory_EnsureAllocated(void)
 #ifdef ESP_PLATFORM
    if(!memory_pages[0])
    {
-      /* Try a single contiguous 64 KB block first.  When it succeeds all four
-       * pages alias into it, giving the D-cache a single hot 64 KB region.
-       * On this hardware (no PSRAM, ~131 KB largest free block) the attempt
-       * almost always fails once MARIA has been allocated, so the paged
-       * fallback is the expected path — the code is here for future benefit
-       * if heap layout improves. */
       memory_flat_buf = (uint8_t*)memory_Alloc(MEMORY_SIZE, true);
       if(memory_flat_buf)
       {
@@ -113,27 +128,43 @@ bool memory_EnsureAllocated(void)
       }
       else
       {
-         /* Flat allocation failed — fall back to four independent 16 KB pages. */
+         const int staticPageCount = 6;
          int i;
-         for(i = 0; i < MEMORY_NUM_PAGES; i++)
+         for(i = 0; i < staticPageCount; i++)
+         {
+            memory_pages[i] = memory_static_pages[i];
+            memset(memory_pages[i], 0, MEMORY_PAGE_SIZE);
+         }
+         for(i = staticPageCount; i < MEMORY_NUM_PAGES; i++)
          {
             memory_pages[i] = (uint8_t*)memory_Alloc(MEMORY_PAGE_SIZE, true);
             if(!memory_pages[i])
             {
+               int j;
                printf("[A7800][MEM] page %d alloc failed\n", i);
+               for(j = staticPageCount; j < i; j++)
+               {
+                  free(memory_pages[j]);
+                  memory_pages[j] = NULL;
+               }
+               for(j = 0; j < staticPageCount; j++)
+                  memory_pages[j] = NULL;
                return false;
             }
          }
-         printf("[A7800][MEM] alloc ram 4x%u bytes\n", (unsigned)MEMORY_PAGE_SIZE);
+         printf("[A7800][MEM] alloc ram %dxstatic + %dx%u dyn\n",
+                staticPageCount,
+                MEMORY_NUM_PAGES - staticPageCount,
+                (unsigned)MEMORY_PAGE_SIZE);
       }
       memory_ram = memory_pages[0];
    }
 
    if(!memory_rom)
-      memory_rom = (uint8_t*)memory_Alloc(MEMORY_ROM_FLAGS_SIZE, false);
-
-   if(!memory_rom)
-      return false;
+   {
+      memory_rom = memory_static_rom_flags;
+      memset(memory_rom, 0x00, MEMORY_ROM_FLAGS_SIZE);
+   }
 #else
    if(!memory_ram)
       memory_ram = (uint8_t*)memory_Alloc(MEMORY_SIZE, true);
@@ -174,7 +205,7 @@ void memory_Shutdown(void)
       {
          for(i = 0; i < MEMORY_NUM_PAGES; i++)
          {
-            if(memory_pages[i])
+            if(memory_pages[i] && !memory_IsStaticPage(memory_pages[i]))
                free(memory_pages[i]);
          }
       }
@@ -190,11 +221,11 @@ void memory_Shutdown(void)
    }
 #endif
 
-   if(memory_rom)
+   if(memory_rom && memory_rom != memory_static_rom_flags)
    {
       free(memory_rom);
-      memory_rom = NULL;
    }
+   memory_rom = NULL;
 
    if(memory_souper_ram)
    {
@@ -424,3 +455,16 @@ void memory_ClearROM(uint16_t address, uint16_t size)
          memory_SetROMAddress((uint16_t)(address + index), false);
    }
 }
+
+
+
+
+
+
+
+
+
+
+
+
+

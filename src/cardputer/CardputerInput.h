@@ -8,6 +8,7 @@
 #define KEY_DEL '\b'
 #define KEY_ESC_CUSTOM '`'
 #define KEY_ESC_LONG_CUSTOM '~'
+#define KEY_GO_CUSTOM '\x1D'
 #define KEY_NONE '\0'
 #define KEY_RETURN_CUSTOM '\r'
 #define KEY_ARROW_UP ';'

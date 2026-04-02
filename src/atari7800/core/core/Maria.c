@@ -1,4 +1,4 @@
-/* ----------------------------------------------------------------------------
+﻿/* ----------------------------------------------------------------------------
  *   ___  ___  ___  ___       ___  ____  ___  _  _
  *  /__/ /__/ /  / /__  /__/ /__    /   /_   / |/ /
  * /    / \  /__/ ___/ ___/ ___/   /   /__  /    /  emulator
@@ -31,7 +31,7 @@
 #include "esp_attr.h"
 /* Place the MARIA render hot-loop functions in IRAM so they never suffer
  * instruction-cache misses on the inner loops.  On ESP32-S3 this typically
- * saves 5–20 µs per scanline compared to running the same code from flash
+ * saves 5â€“20 Âµs per scanline compared to running the same code from flash
  * cache.  Total code size for these functions is <10 KB. */
 #define MARIA_HOT IRAM_ATTR
 #else
@@ -49,6 +49,11 @@
 rect maria_displayArea = {0, 16, 319, 258};
 rect maria_visibleArea = {0, 26, 319, 248};
 uint8_t* maria_surface = NULL;
+uint8_t* maria_surface_rows[MARIA_SURFACE_ROWS_MAX] = {0};
+bool maria_surface_segmented = false;
+uint16_t maria_surface_top_crop = 0;
+uint16_t maria_surface_height = 0;
+static uint8_t* maria_surface_slabs[MARIA_SURFACE_SLABS_MAX] = {0};
 uint32_t maria_surface_size = MARIA_SURFACE_SIZE;
 uint16_t maria_scanline = 1;
 
@@ -81,34 +86,231 @@ static void* maria_Alloc(size_t size)
 #endif
 }
 
-bool maria_EnsureAllocated(void)
+static uint32_t maria_GetVisibleWidth(void)
 {
-   if(!maria_surface)
-   {
+   return Rect_GetLength(&maria_visibleArea);
+}
+
+static uint32_t maria_GetVisibleHeight(void)
+{
+   return (uint32_t)((maria_visibleArea.bottom - maria_visibleArea.top) + 1);
+}
+
+static void maria_SetSurfaceWindow(bool segmented, uint32_t visibleHeight)
+{
+   maria_surface_top_crop = 0;
+   maria_surface_height = (uint16_t)visibleHeight;
+
 #ifdef ESP_PLATFORM
-      /* Pick the smallest surface that fits the detected region */
-      maria_surface_size = (cartridge_region == REGION_PAL)
-                            ? MARIA_SURFACE_SIZE_PAL
-                            : MARIA_SURFACE_SIZE_NTSC;
-      printf("[A7800][MARIA] alloc %u bytes (%s), free=%u, largest=%u\n",
-             (unsigned)maria_surface_size,
-             (cartridge_region == REGION_PAL) ? "PAL" : "NTSC",
-             (unsigned)heap_caps_get_free_size(MALLOC_CAP_8BIT),
-             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
+   if(segmented && visibleHeight > 32)
+   {
+      const uint16_t cropTop = 4;
+      const uint16_t cropBottom = 4;
+      if(visibleHeight > (uint32_t)(cropTop + cropBottom))
+      {
+         maria_surface_top_crop = cropTop;
+         maria_surface_height = (uint16_t)(visibleHeight - cropTop - cropBottom);
+      }
+   }
 #else
-      maria_surface_size = MARIA_SURFACE_SIZE;
+   (void)segmented;
 #endif
-      maria_surface = (uint8_t*)maria_Alloc(maria_surface_size);
-      if(!maria_surface)
-         printf("[A7800][MARIA] allocation FAILED\n");
+}
+
+static void maria_ClearRows(void)
+{
+   memset(maria_surface_rows, 0, sizeof(maria_surface_rows));
+}
+
+static void maria_ClearSlabs(void)
+{
+   memset(maria_surface_slabs, 0, sizeof(maria_surface_slabs));
+}
+
+static void maria_SetSurfaceRows(uint32_t width, uint32_t height)
+{
+   uint32_t row;
+   maria_ClearRows();
+   if(maria_surface)
+   {
+      for(row = 0; row < height && row < MARIA_SURFACE_ROWS_MAX; row++)
+         maria_surface_rows[row] = maria_surface + ((size_t)row * width);
+   }
+}
+
+static bool maria_SetSegmentedRows(uint32_t width, uint32_t height)
+{
+   uint32_t slabIndex = 0;
+   uint32_t rowBase = 0;
+
+   maria_ClearRows();
+   maria_ClearSlabs();
+
+   while(rowBase < height && slabIndex < MARIA_SURFACE_SLABS_MAX)
+   {
+      const uint32_t remainingRows = height - rowBase;
+      uint32_t rowsInSlab = remainingRows;
+      size_t slabSize;
+      uint8_t* slabPtr = NULL;
+      uint32_t row;
+
+#ifdef ESP_PLATFORM
+      {
+         const size_t reserveBytes = 1024;
+         const size_t largestBlock = heap_caps_get_largest_free_block(MALLOC_CAP_8BIT);
+         if(largestBlock > reserveBytes + width)
+         {
+            const uint32_t maxRowsByLargest = (uint32_t)((largestBlock - reserveBytes) / width);
+            if(maxRowsByLargest > 0 && rowsInSlab > maxRowsByLargest)
+               rowsInSlab = maxRowsByLargest;
+         }
+      }
+#endif
+
+      if(rowsInSlab > MARIA_SURFACE_SLAB_ROWS_TARGET)
+         rowsInSlab = MARIA_SURFACE_SLAB_ROWS_TARGET;
+
+      if(rowsInSlab >= MARIA_SURFACE_SLAB_ROWS_MIN)
+      {
+         rowsInSlab = (rowsInSlab / MARIA_SURFACE_SLAB_ROWS_MIN) * MARIA_SURFACE_SLAB_ROWS_MIN;
+         if(rowsInSlab == 0)
+            rowsInSlab = (remainingRows >= MARIA_SURFACE_SLAB_ROWS_MIN)
+               ? MARIA_SURFACE_SLAB_ROWS_MIN
+               : remainingRows;
+      }
+
+      while(rowsInSlab > 0)
+      {
+         slabSize = (size_t)width * rowsInSlab;
+         slabPtr = (uint8_t*)maria_Alloc(slabSize);
+         if(slabPtr)
+            break;
+
+         if(rowsInSlab <= MARIA_SURFACE_SLAB_ROWS_MIN)
+            break;
+
+         rowsInSlab /= 2;
+         if(rowsInSlab >= MARIA_SURFACE_SLAB_ROWS_MIN)
+            rowsInSlab = (rowsInSlab / MARIA_SURFACE_SLAB_ROWS_MIN) * MARIA_SURFACE_SLAB_ROWS_MIN;
+         else
+            rowsInSlab = MARIA_SURFACE_SLAB_ROWS_MIN;
+
+         if(rowsInSlab > remainingRows)
+            rowsInSlab = remainingRows;
+      }
+
+      if(!slabPtr)
+      {
+         printf("[A7800][MARIA] slab alloc failed slab=%u rows=%u width=%u\n",
+                (unsigned)slabIndex,
+                (unsigned)rowsInSlab,
+                (unsigned)width);
+         return false;
+      }
+
+      maria_surface_slabs[slabIndex] = slabPtr;
+      for(row = 0; row < rowsInSlab; row++)
+         maria_surface_rows[rowBase + row] = maria_surface_slabs[slabIndex] + ((size_t)row * width);
+
+      rowBase += rowsInSlab;
+      slabIndex++;
    }
 
-   return maria_surface != NULL;
+   return rowBase == height;
+}
+
+static void maria_ReleaseRows(void)
+{
+   uint32_t slabIndex;
+   if(maria_surface_segmented)
+   {
+      for(slabIndex = 0; slabIndex < MARIA_SURFACE_SLABS_MAX; slabIndex++)
+      {
+         if(maria_surface_slabs[slabIndex])
+            free(maria_surface_slabs[slabIndex]);
+      }
+   }
+   maria_ClearRows();
+   maria_ClearSlabs();
+   maria_surface_segmented = false;
+}
+
+static void maria_ClearSurface(void)
+{
+   uint32_t row;
+   const uint32_t width = maria_GetVisibleWidth();
+   const uint32_t height = maria_surface_height ? maria_surface_height : maria_GetVisibleHeight();
+
+   if(maria_surface)
+   {
+      memset(maria_surface, 0, maria_surface_size);
+      return;
+   }
+
+   for(row = 0; row < height && row < MARIA_SURFACE_ROWS_MAX; row++)
+   {
+      if(maria_surface_rows[row])
+         memset(maria_surface_rows[row], 0, width);
+   }
+}
+
+bool maria_EnsureAllocated(void)
+{
+   const uint32_t width = maria_GetVisibleWidth();
+   const uint32_t visibleHeight = maria_GetVisibleHeight();
+
+   if(maria_surface || maria_surface_rows[0])
+      return true;
+
+   maria_SetSurfaceWindow(false, visibleHeight);
+   maria_surface_size = (uint32_t)((size_t)width * maria_surface_height);
+
+#ifdef ESP_PLATFORM
+   /* Pick the smallest surface that fits the detected region. */
+   printf("[A7800][MARIA] alloc %u bytes (%s), free=%u, largest=%u\n",
+          (unsigned)maria_surface_size,
+          (cartridge_region == REGION_PAL) ? "PAL" : "NTSC",
+          (unsigned)heap_caps_get_free_size(MALLOC_CAP_8BIT),
+          (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
+#else
+   maria_surface_size = MARIA_SURFACE_SIZE;
+#endif
+
+   maria_surface = (uint8_t*)maria_Alloc(maria_surface_size);
+   if(maria_surface)
+   {
+      maria_surface_segmented = false;
+      maria_SetSurfaceRows(width, maria_surface_height);
+      return true;
+   }
+
+#ifdef ESP_PLATFORM
+   printf("[A7800][MARIA] contiguous allocation failed, falling back to slab rows\n");
+   maria_surface_segmented = true;
+   maria_SetSurfaceWindow(true, visibleHeight);
+   maria_surface_size = (uint32_t)((size_t)width * maria_surface_height);
+   if(maria_surface_top_crop != 0)
+   {
+      printf("[A7800][MARIA] segmented crop top=%u bottom=%u height=%u\n",
+             (unsigned)maria_surface_top_crop,
+             (unsigned)(visibleHeight - maria_surface_height - maria_surface_top_crop),
+             (unsigned)maria_surface_height);
+   }
+   if(!maria_SetSegmentedRows(width, maria_surface_height))
+   {
+      maria_ReleaseRows();
+      return false;
+   }
+   return true;
+#else
+   printf("[A7800][MARIA] allocation FAILED\n");
+   return false;
+#endif
 }
 
 bool maria_IsReady(void)
 {
-   return maria_surface != NULL;
+   return maria_surface != NULL || maria_surface_rows[0] != NULL;
 }
 
 void maria_Shutdown(void)
@@ -118,8 +320,9 @@ void maria_Shutdown(void)
       free(maria_surface);
       maria_surface = NULL;
    }
-}
 
+   maria_ReleaseRows();
+}
 static MARIA_HOT uint8_t maria_ReadByte(uint16_t address)
 {
    uint32_t page, chrOffset;
@@ -235,7 +438,7 @@ static MARIA_HOT void maria_StoreGraphic(void)
 static MARIA_HOT void maria_WriteLineRAM(uint8_t* buffer)
 {
    /* Cache the 32-entry background colour table (BACKGRND..BACKGRND+31,
-    * addresses 32–63) once per call.  Every output pixel needs one entry;
+    * addresses 32â€“63) once per call.  Every output pixel needs one entry;
     * without this cache each pixel does a paged mem_rd in maria_GetColor.
     * Uses maria_ReadByte so SOUPER-cart remapping is handled correctly.  */
    uint8_t bg[32];
@@ -390,7 +593,7 @@ void maria_Reset(void)
    if(!maria_EnsureAllocated())
       return;
 
-   memset(maria_surface, 0, maria_surface_size);
+   maria_ClearSurface();
 }
 
 MARIA_HOT uint32_t maria_RenderScanline(void)
@@ -417,7 +620,14 @@ MARIA_HOT uint32_t maria_RenderScanline(void)
             sally_ExecuteNMI();
       }
       else if(!maria_skip_render && maria_scanline >= maria_visibleArea.top && maria_scanline <= maria_visibleArea.bottom)
-         maria_WriteLineRAM(maria_surface + ((maria_scanline - maria_displayArea.top) * Rect_GetLength(&maria_displayArea)));
+      {
+         const uint32_t visibleRow = (uint32_t)(maria_scanline - maria_visibleArea.top);
+         if(visibleRow >= maria_surface_top_crop &&
+            visibleRow < (uint32_t)(maria_surface_top_crop + maria_surface_height))
+         {
+            maria_WriteLineRAM(maria_surface_rows[visibleRow - maria_surface_top_crop]);
+         }
+      }
 
       if(maria_scanline != maria_displayArea.bottom)
       {
@@ -445,5 +655,10 @@ void maria_Clear(void)
    if(!maria_IsReady())
       return;
 
-   memset(maria_surface, 0, maria_surface_size);
+   maria_ClearSurface();
 }
+
+
+
+
+

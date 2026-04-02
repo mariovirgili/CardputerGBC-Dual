@@ -12,12 +12,14 @@ bool ConfirmationSelector::select(const std::string& title, const std::string& d
         key = input.handler();
         const char lowerKey = static_cast<char>(std::tolower(static_cast<unsigned char>(key)));
 
-        if (key == KEY_OK || key == KEY_ARROW_RIGHT || lowerKey == 'd') {
+        if (key == KEY_OK || key == KEY_ARROW_RIGHT || lowerKey == 'd' || lowerKey == 'p') {
             return true;
         }
-        if (key == KEY_ESC_CUSTOM || key == KEY_ESC_LONG_CUSTOM || key == KEY_ARROW_LEFT || lowerKey == 'a') {
+        if (key == KEY_GO_CUSTOM || key == KEY_ESC_CUSTOM || key == KEY_ESC_LONG_CUSTOM || key == KEY_ARROW_LEFT || lowerKey == 'a') {
             return false;
         }
         delay(5);
     }
 }
+
+

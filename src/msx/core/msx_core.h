@@ -1,0 +1,72 @@
+#pragma once
+
+#include <stddef.h>
+#include <stdint.h>
+
+#include "msx_bios.h"
+#include "msx_cart.h"
+#include "msx_cpu.h"
+#include "msx_disk.h"
+#include "msx_memory.h"
+#include "msx_psg.h"
+#include "msx_vdp.h"
+#include "../msx_display.h"
+#include "../msx_input.h"
+#include "../msx_media.h"
+
+struct MsxCoreState {
+    bool initialized;
+    bool directBoot;
+    bool videoHookReady;
+    bool audioHookReady;
+    uint32_t frameCounter;
+    uint32_t lastFrameCycles;
+    uint32_t lastStatusFrame;
+    uint32_t audioSampleRate;
+    uint16_t lastAudioSamples;
+    MsxRomImage rom;
+    MsxBiosTarget biosTarget;
+    MsxMachineMode machineMode;
+    uint16_t bootPc;
+    uint16_t lastStatusPc;
+    uint8_t lastStatusMode;
+    uint8_t lastStatusRunState;
+    uint8_t lastStatusUnsupportedOpcode;
+    char statusText[64];
+    char romName[96];
+    MsxDisplayFrame displayFrame;
+    MsxBiosState bios;
+    MsxCartState cart;
+    MsxDiskState disk;
+    MsxMemoryState memory;
+    MsxVdpState vdp;
+    MsxPsgState psg;
+    MsxCpuState cpu;
+};
+
+bool msx_core_init(MsxCoreState* state,
+                   const MsxRomImage* rom,
+                   const MsxBiosBundle* bios,
+                   const char* romName,
+                   uint32_t audioSampleRate);
+
+bool msx_core_init_basic(MsxCoreState* state,
+                         const MsxBiosBundle* bios,
+                         const char* name,
+                         uint32_t audioSampleRate);
+
+bool msx_core_init_disk(MsxCoreState* state,
+                        const MsxBiosBundle* bios,
+                        const uint8_t* diskRomData, size_t diskRomSize,
+                        const uint8_t* dskData, size_t dskSize,
+                        const char* name,
+                        uint32_t audioSampleRate);
+
+void msx_core_attach_disk_rom(MsxCoreState* state,
+                              const uint8_t* diskRomData,
+                              size_t diskRomSize);
+
+void msx_core_handle_input(MsxCoreState* state, const MsxInputState* input);
+void msx_core_step_frame(MsxCoreState* state);
+size_t msx_core_drain_audio(MsxCoreState* state, int16_t* dst, size_t capacity);
+void msx_core_shutdown(MsxCoreState* state);

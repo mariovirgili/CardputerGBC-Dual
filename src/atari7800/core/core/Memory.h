@@ -1,4 +1,4 @@
-/* ----------------------------------------------------------------------------
+﻿/* ----------------------------------------------------------------------------
  *   ___  ___  ___  ___       ___  ____  ___  _  _
  *  /__/ /__/ /  / /__  /__/ /__    /   /_   / |/ /
  * /    / \  /__/ ___/ ___/ ___/   /   /__  /    /  emulator
@@ -60,11 +60,11 @@ extern uint8_t* memory_flat_buf;
 
 #ifdef ESP_PLATFORM
 /* On ESP32-S3 without PSRAM the 64 KB address space is split into
- * 4 × 16 KB pages so each piece fits in the fragmented internal heap. */
-#define MEMORY_PAGE_BITS  14
-#define MEMORY_PAGE_SIZE  (1u << MEMORY_PAGE_BITS)   /* 16384 */
+ * 8 x 8 KB pages so each piece fits in the fragmented internal heap. */
+#define MEMORY_PAGE_BITS  13
+#define MEMORY_PAGE_SIZE  (1u << MEMORY_PAGE_BITS)   /* 8192 */
 #define MEMORY_PAGE_MASK  (MEMORY_PAGE_SIZE - 1)
-#define MEMORY_NUM_PAGES  (MEMORY_SIZE / MEMORY_PAGE_SIZE)  /* 4 */
+#define MEMORY_NUM_PAGES  (MEMORY_SIZE / MEMORY_PAGE_SIZE)  /* 8 */
 
 extern uint8_t* memory_pages[MEMORY_NUM_PAGES];
 
@@ -80,7 +80,7 @@ static inline uint8_t* mem_ptr(uint16_t addr) {
 
 /* ------------------------------------------------------------------ */
 /* Fast inline read for the Sally (6502) hot loop.                    */
-/* Handles the INTIM/INTFLG side-effect (clear bit 7 of INTFLG on    */
+/* Handles the INTIM/INTFLG side-effect (clear bit 7 of INTFLG on     */
 /* read) inline and returns mem_rd() for every other address.         */
 /* ------------------------------------------------------------------ */
 /* INTIM = 644, INTFLG = 645; mirrors at 646, 647 (Equates.h) */

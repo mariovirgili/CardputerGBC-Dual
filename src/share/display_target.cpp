@@ -1,41 +1,23 @@
 #include "display_target.h"
 #include <Preferences.h>
 
-// Global display target — default to external
+// Global display target - default to external
 emu_display_target_t g_emu_display_target = EMU_DISPLAY_EXTERNAL;
 
-// Global color depth — default to 16-bit
+// Global color depth - default to 16-bit
 emu_color_depth_t g_emu_color_depth = EMU_COLOR_16BIT;
 
-// Secondary screen redraw lock — default to unlocked
+// Secondary screen redraw lock - default to unlocked
 bool g_emu_aux_screen_locked = false;
 
 // ROM type values from select_rom.h RomType enum
 // UNKNOWN=0, NES=1, SMS=2, GG=3, NGP=4, GENESIS=5, WS=6, PCE=7, GB=8, LYNX=9, SNES=10, A2600=11, A7800=12
-static constexpr int kRomNes     = 1;
-static constexpr int kRomSms     = 2;
-static constexpr int kRomGg      = 3;
-static constexpr int kRomNgp     = 4;
-static constexpr int kRomGenesis = 5;
-static constexpr int kRomWs      = 6;
-static constexpr int kRomPce     = 7;
-static constexpr int kRomGb      = 8;
-static constexpr int kRomLynx    = 9;
-static constexpr int kRomA2600   = 11;
-static constexpr int kRomA7800   = 12;
+static constexpr int kRomA2600 = 11;
+static constexpr int kRomA7800 = 12;
 
 bool emu_has_external_display_support(int romType)
 {
     switch (romType) {
-        case kRomNes:
-        case kRomSms:
-        case kRomGg:
-        case kRomNgp:
-        case kRomGenesis:
-        case kRomWs:
-        case kRomPce:
-        case kRomGb:
-        case kRomLynx:
         case kRomA2600:
         case kRomA7800:
             return true;
@@ -47,18 +29,9 @@ bool emu_has_external_display_support(int romType)
 static const char* romTypeToKey(int romType)
 {
     switch (romType) {
-        case kRomNes:     return "nes";
-        case kRomSms:     return "sms";
-        case kRomGg:      return "gg";
-        case kRomNgp:     return "ngp";
-        case kRomGenesis: return "gen";
-        case kRomWs:      return "ws";
-        case kRomPce:     return "pce";
-        case kRomGb:      return "gb";
-        case kRomLynx:    return "lynx";
-        case kRomA2600:   return "a26";
-        case kRomA7800:   return "a78";
-        default:          return "unk";
+        case kRomA2600: return "a26";
+        case kRomA7800: return "a78";
+        default:        return "unk";
     }
 }
 
@@ -67,7 +40,7 @@ static constexpr const char* kNvsNamespace = "disp_tgt";
 emu_display_target_t emu_load_display_target(int romType)
 {
     Preferences prefs;
-    prefs.begin(kNvsNamespace, true);  // read-only
+    prefs.begin(kNvsNamespace, true);
     int val = prefs.getInt(romTypeToKey(romType), (int)EMU_DISPLAY_EXTERNAL);
     prefs.end();
     return (emu_display_target_t)val;
@@ -76,28 +49,17 @@ emu_display_target_t emu_load_display_target(int romType)
 void emu_save_display_target(int romType, emu_display_target_t target)
 {
     Preferences prefs;
-    prefs.begin(kNvsNamespace, false);  // read-write
+    prefs.begin(kNvsNamespace, false);
     prefs.putInt(romTypeToKey(romType), (int)target);
     prefs.end();
 }
 
-// ---- Color depth ----
-
 emu_color_depth_t emu_recommended_color_depth(int romType)
 {
     switch (romType) {
-        case kRomNes:     return EMU_COLOR_12BIT;   // 64 native colors → 4K plenty
-        case kRomSms:     return EMU_COLOR_12BIT;   // 64 native colors (6-bit RGB) → 4K plenty
-        case kRomGg:      return EMU_COLOR_12BIT;   // 4096 native colors (12-bit RGB exact match)
-        case kRomNgp:     return EMU_COLOR_12BIT;   // 146 native colors → 4K plenty
-        case kRomGenesis: return EMU_COLOR_12BIT;   // 512 native colors (9-bit RGB) → 4K plenty
-        case kRomWs:      return EMU_COLOR_12BIT;   // 4096 native colors (12-bit RGB) → exact match
-        case kRomPce:     return EMU_COLOR_12BIT;   // 512 native colors → 4K plenty
-        case kRomGb:      return EMU_COLOR_16BIT;   // up to 32K colors, 12-bit loses nuance
-        case kRomLynx:    return EMU_COLOR_12BIT;   // 4096 native colors (12-bit RGB)
-        case kRomA2600:   return EMU_COLOR_12BIT;   // 256 palette entries are a good fit for RGB444
-        case kRomA7800:   return EMU_COLOR_12BIT;   // RGB565 input converts cleanly to RGB444 on the external TFT
-        default:          return EMU_COLOR_16BIT;
+        case kRomA2600: return EMU_COLOR_12BIT;
+        case kRomA7800: return EMU_COLOR_12BIT;
+        default:        return EMU_COLOR_16BIT;
     }
 }
 

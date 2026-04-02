@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -18,6 +18,11 @@ void a7800_video_submit_frame(const void* frame,
                               bool indexed,
                               bool isPal);
 
+void a7800_video_submit_rows(const uint8_t* const* rows,
+                             unsigned width,
+                             unsigned height,
+                             const uint16_t* palette565,
+                             bool isPal);
 void a7800_video_set_frame_skip(bool skip);
 
 /* Read-and-reset video submit timing counters (called once per second from run loop). */
@@ -25,3 +30,4 @@ void a7800_video_get_and_reset_stats(int64_t* totalUs, uint32_t* count);
 
 extern bool a7800FullScreen;
 extern int a7800ZoomPercent;
+

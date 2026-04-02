@@ -1,4 +1,4 @@
-#include "a7800_host_libretro.h"
+﻿#include "a7800_host_libretro.h"
 
 #include <string.h>
 
@@ -137,15 +137,25 @@ static void a7800_video_refresh_cb(const void* data, unsigned width, unsigned he
     s_host->framePitch = pitch;
     s_host->videoFrameCount++;
 
-    a7800_video_submit_frame(
-        data,
-        width,
-        height,
-        pitch,
-        a7800_core_get_palette16(),
-        true,
-        s_host->isPal
-    );
+    if (pitch == 0) {
+        a7800_video_submit_rows(
+            static_cast<const uint8_t* const*>(data),
+            width,
+            height,
+            a7800_core_get_palette16(),
+            s_host->isPal
+        );
+    } else {
+        a7800_video_submit_frame(
+            data,
+            width,
+            height,
+            pitch,
+            a7800_core_get_palette16(),
+            true,
+            s_host->isPal
+        );
+    }
 }
 
 static void a7800_audio_sample_cb(int16_t left, int16_t right)
@@ -316,3 +326,4 @@ void a7800_host_shutdown(A7800HostState* state)
         s_host = nullptr;
     }
 }
+

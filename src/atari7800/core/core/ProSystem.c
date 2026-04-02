@@ -1,4 +1,4 @@
-/* ----------------------------------------------------------------------------
+﻿/* ----------------------------------------------------------------------------
  *   ___  ___  ___  ___       ___  ____  ___  _  _
  *  /__/ /__/ /  / /__  /__/ /__    /   /_   / |/ /
  * /    / \  /__/ ___/ ___/ ___/   /   /__  /    /  emulator
@@ -29,7 +29,8 @@
 
 #ifdef ESP_PLATFORM
 #include "esp_attr.h"
-/* IRAM_ATTR not applied here — prosystem_ExecuteFrame calls Sally (flash)
+#include "esp_heap_caps.h"
+/* IRAM_ATTR not applied here â€” prosystem_ExecuteFrame calls Sally (flash)
  * so keeping it in flash avoids pulling any additional rodata into DRAM. */
 #define PROSYS_HOT
 #else
@@ -57,10 +58,52 @@ bool prosystem_Reset(void)
    if(!cartridge_IsLoaded())
       return false;
 
-   /* Allocate the largest buffer (maria_surface, 93 KB) first while the
-    * heap is least fragmented, then the smaller memory_ram (64 KB).
-    * On ESP32-S3 without PSRAM the contiguous-block requirement makes
-    * allocation order critical. */
+#ifdef ESP_PLATFORM
+   {
+      const uint32_t neededMaria = (cartridge_region == REGION_PAL)
+         ? MARIA_SURFACE_SIZE_PAL
+         : MARIA_SURFACE_SIZE_NTSC;
+      const uint32_t largestBlock = heap_caps_get_largest_free_block(MALLOC_CAP_8BIT);
+      const bool preferMemoryFirst = largestBlock < neededMaria;
+
+      /* When MARIA cannot possibly get one contiguous block, allocate the
+       * paged system RAM first. The row-buffer fallback for MARIA tolerates
+       * fragmentation much better than the 8 KB RAM pages do. */
+      if(preferMemoryFirst)
+      {
+         printf("[A7800][CORE] largest=%u < maria=%u, allocating RAM first\n",
+                (unsigned)largestBlock,
+                (unsigned)neededMaria);
+
+         if(!memory_EnsureAllocated())
+         {
+            printf("[A7800][CORE] memory_EnsureAllocated failed\n");
+            return false;
+         }
+
+         if(!maria_EnsureAllocated())
+         {
+            printf("[A7800][CORE] maria_EnsureAllocated failed\n");
+            return false;
+         }
+      }
+      else
+      {
+         if(!maria_EnsureAllocated())
+         {
+            printf("[A7800][CORE] maria_EnsureAllocated failed\n");
+            return false;
+         }
+
+         if(!memory_EnsureAllocated())
+         {
+            printf("[A7800][CORE] memory_EnsureAllocated failed\n");
+            return false;
+         }
+      }
+   }
+#else
+   /* Allocate the largest buffer first while the heap is least fragmented. */
    if(!maria_EnsureAllocated())
    {
       printf("[A7800][CORE] maria_EnsureAllocated failed\n");
@@ -72,7 +115,7 @@ bool prosystem_Reset(void)
       printf("[A7800][CORE] memory_EnsureAllocated failed\n");
       return false;
    }
-
+#endif
    if(cartridge_pokey && !pokey_EnsureAllocated())
    {
       printf("[A7800][CORE] pokey_EnsureAllocated failed\n");
@@ -447,3 +490,4 @@ void save_uint32_to_buffer(char* buffer, uint32_t* size, uint32_t data)
    for (i = 0; i < 8; i++)
       buffer[index++] = (data >> (shiftby -= 4)) & 0xF;
 }
+

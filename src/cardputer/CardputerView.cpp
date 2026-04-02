@@ -245,11 +245,6 @@ void CardputerView::showControlBindings(
 void CardputerView::welcome() {
     Display->setSwapBytes(true);
     Display->pushImage(0, 0, BGGAMESTATION_S_WIDTH, BGGAMESTATION_S_HEIGHT, bggamestation_s);
-   
-    Display->setTextColor(TEXT_COLOR);
-    Display->setTextSize(TEXT_BIG);
-    Display->drawCenterString("GameStation 1.0", Display->width() / 2, (Display->height() / 2) - 15);
-
     Display->setSwapBytes(false);
 }
 
@@ -567,6 +562,21 @@ void CardputerView::subMessage(std::string message, int delayMs) {
     Display->printf(message.c_str());
     Display->setTextSize(TEXT_MEDIUM);
 
+    if (delayMs) {
+        delay(delayMs);
+    }
+}
+
+void CardputerView::subMessage(std::string line1, std::string line2, int delayMs) {
+    clearMainView(5);
+    Display->drawRoundRect(10, 35, Display->width() - 20, 90, DEFAULT_ROUND_RECT, PRIMARY_COLOR);
+    Display->setTextSize(TEXT_WIDE);
+    Display->setTextColor(TEXT_COLOR);
+    Display->setCursor(getCenterOffset(line1), 67);
+    Display->printf(line1.c_str());
+    Display->setCursor(getCenterOffset(line2), 93);
+    Display->printf(line2.c_str());
+    Display->setTextSize(TEXT_MEDIUM);
     if (delayMs) {
         delay(delayMs);
     }
@@ -1022,6 +1032,7 @@ uint16_t CardputerView::colorForExt(const std::string& extRaw) const {
     if (ext == ".lnx") return LYNX_COLOR;
     if (ext == ".a26") return LYNX_COLOR;
     if (ext == ".a78") return LYNX_COLOR;
+    if (ext == ".rom" || ext == ".dsk") return PRIMARY_COLOR;
     if (ext == ".sfc" || ext == ".smc") return SNES_COLOR;
 
     return TEXT_COLOR;

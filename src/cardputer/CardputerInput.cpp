@@ -34,7 +34,7 @@ char CardputerInput::handler() {
         }
         if (M5Cardputer.BtnA.wasClicked()) {
             delay(20);
-            return KEY_ESC_CUSTOM;
+            return KEY_GO_CUSTOM;
         }
     }
     
@@ -116,3 +116,4 @@ char CardputerInput::readChar() {
 
     return KEY_NONE;
 }
+

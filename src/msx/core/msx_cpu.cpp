@@ -1,0 +1,1554 @@
+#include "msx_cpu.h"
+
+#include <cstring>
+#include "msx_psg.h"
+
+namespace {
+
+constexpr uint8_t kFlagC = 0x01;
+constexpr uint8_t kFlagN = 0x02;
+constexpr uint8_t kFlagPV = 0x04;
+constexpr uint8_t kFlagX = 0x08;
+constexpr uint8_t kFlagH = 0x10;
+constexpr uint8_t kFlagY = 0x20;
+constexpr uint8_t kFlagZ = 0x40;
+constexpr uint8_t kFlagS = 0x80;
+
+inline uint8_t msx_hi(uint16_t value)
+{
+    return static_cast<uint8_t>(value >> 8);
+}
+
+inline uint8_t msx_lo(uint16_t value)
+{
+    return static_cast<uint8_t>(value & 0x00FFu);
+}
+
+inline void msx_set_hi(uint16_t* value, uint8_t hi)
+{
+    *value = static_cast<uint16_t>((*value & 0x00FFu) | (static_cast<uint16_t>(hi) << 8));
+}
+
+inline void msx_set_lo(uint16_t* value, uint8_t lo)
+{
+    *value = static_cast<uint16_t>((*value & 0xFF00u) | lo);
+}
+
+inline uint8_t msx_cpu_a(const MsxCpuState* state)
+{
+    return msx_hi(state->af);
+}
+
+inline uint8_t msx_cpu_f(const MsxCpuState* state)
+{
+    return msx_lo(state->af);
+}
+
+inline void msx_cpu_set_a(MsxCpuState* state, uint8_t value)
+{
+    msx_set_hi(&state->af, value);
+}
+
+inline void msx_cpu_set_f(MsxCpuState* state, uint8_t value)
+{
+    msx_set_lo(&state->af, value);
+}
+
+inline bool msx_parity_even(uint8_t value)
+{
+    value ^= static_cast<uint8_t>(value >> 4);
+    value &= 0x0Fu;
+    return ((0x6996u >> value) & 0x01u) != 0;
+}
+
+inline uint8_t msx_flags_szxy(uint8_t value)
+{
+    uint8_t flags = static_cast<uint8_t>(value & (kFlagS | kFlagX | kFlagY));
+    if (value == 0) {
+        flags |= kFlagZ;
+    }
+    return flags;
+}
+
+inline uint8_t msx_flags_szpxy(uint8_t value)
+{
+    uint8_t flags = msx_flags_szxy(value);
+    if (msx_parity_even(value)) {
+        flags |= kFlagPV;
+    }
+    return flags;
+}
+
+inline int8_t msx_signed_offset(uint8_t value)
+{
+    return static_cast<int8_t>(value);
+}
+
+inline uint8_t msx_cpu_mem_read8(const MsxMemoryState* memory, uint16_t address)
+{
+    const uint8_t bank = static_cast<uint8_t>(address >> 13);
+    return memory->readMap[bank][address & 0x1FFFu];
+}
+
+inline uint16_t msx_cpu_mem_read16(const MsxMemoryState* memory, uint16_t address)
+{
+    const uint8_t lo = msx_cpu_mem_read8(memory, address);
+    const uint8_t hi = msx_cpu_mem_read8(memory, static_cast<uint16_t>(address + 1u));
+    return static_cast<uint16_t>(lo | (static_cast<uint16_t>(hi) << 8));
+}
+
+inline void msx_cpu_mem_write8(MsxMemoryState* memory, uint16_t address, uint8_t value)
+{
+    const uint8_t bank = static_cast<uint8_t>(address >> 13);
+    const uint16_t offset = static_cast<uint16_t>(address & 0x1FFFu);
+    uint8_t* const writePage = memory->writeMap[bank];
+    if (writePage) {
+        writePage[offset] = value;
+        return;
+    }
+
+    const uint8_t page = static_cast<uint8_t>(address >> 14);
+    const uint8_t slot = static_cast<uint8_t>((memory->slotRegister >> (page * 2u)) & 0x03u);
+    if (slot == 1u) {
+        msx_cart_write(&memory->cart, address, value);
+        msx_memory_refresh_maps(memory);
+    }
+}
+
+inline void msx_cpu_mem_write16(MsxMemoryState* memory, uint16_t address, uint16_t value)
+{
+    msx_cpu_mem_write8(memory, address, static_cast<uint8_t>(value & 0xFFu));
+    msx_cpu_mem_write8(memory, static_cast<uint16_t>(address + 1u), static_cast<uint8_t>(value >> 8));
+}
+
+uint8_t msx_cpu_get_reg8(const MsxCpuState* state, const MsxMemoryState* memory, uint8_t reg)
+{
+    switch (reg & 0x07u) {
+        case 0: return msx_hi(state->bc);
+        case 1: return msx_lo(state->bc);
+        case 2: return msx_hi(state->de);
+        case 3: return msx_lo(state->de);
+        case 4: return msx_hi(state->hl);
+        case 5: return msx_lo(state->hl);
+        case 6: return msx_cpu_mem_read8(memory, state->hl);
+        default: return msx_cpu_a(state);
+    }
+}
+
+void msx_cpu_set_reg8(MsxCpuState* state, MsxMemoryState* memory, uint8_t reg, uint8_t value)
+{
+    switch (reg & 0x07u) {
+        case 0: msx_set_hi(&state->bc, value); break;
+        case 1: msx_set_lo(&state->bc, value); break;
+        case 2: msx_set_hi(&state->de, value); break;
+        case 3: msx_set_lo(&state->de, value); break;
+        case 4: msx_set_hi(&state->hl, value); break;
+        case 5: msx_set_lo(&state->hl, value); break;
+        case 6: msx_cpu_mem_write8(memory, state->hl, value); break;
+        default: msx_cpu_set_a(state, value); break;
+    }
+}
+
+uint16_t* msx_cpu_reg16_ptr(MsxCpuState* state, uint8_t pair)
+{
+    switch (pair & 0x03u) {
+        case 0: return &state->bc;
+        case 1: return &state->de;
+        case 2: return &state->hl;
+        default: return &state->sp;
+    }
+}
+
+uint16_t* msx_cpu_stack_reg16_ptr(MsxCpuState* state, uint8_t pair)
+{
+    switch (pair & 0x03u) {
+        case 0: return &state->bc;
+        case 1: return &state->de;
+        case 2: return &state->hl;
+        default: return &state->af;
+    }
+}
+
+uint16_t msx_cpu_fetch16(MsxCpuState* state, const MsxMemoryState* memory);
+
+// Forward declaration: msx_cpu_step_xy's default case re-dispatches here
+int msx_cpu_step_opcode(MsxCpuState* state, MsxMemoryState* memory);
+
+uint8_t msx_cpu_fetch8(MsxCpuState* state, const MsxMemoryState* memory)
+{
+    const uint8_t value = msx_cpu_mem_read8(memory, state->pc);
+    state->pc = static_cast<uint16_t>(state->pc + 1u);
+    state->r = static_cast<uint8_t>(state->r + 1u);
+    return value;
+}
+
+uint16_t msx_cpu_fetch16(MsxCpuState* state, const MsxMemoryState* memory)
+{
+    const uint8_t lo = msx_cpu_fetch8(state, memory);
+    const uint8_t hi = msx_cpu_fetch8(state, memory);
+    return static_cast<uint16_t>(lo | (static_cast<uint16_t>(hi) << 8));
+}
+
+void msx_cpu_push16(MsxCpuState* state, MsxMemoryState* memory, uint16_t value)
+{
+    state->sp = static_cast<uint16_t>(state->sp - 2u);
+    msx_cpu_mem_write16(memory, state->sp, value);
+}
+
+uint16_t msx_cpu_pop16(MsxCpuState* state, const MsxMemoryState* memory)
+{
+    const uint16_t value = msx_cpu_mem_read16(memory, state->sp);
+    state->sp = static_cast<uint16_t>(state->sp + 2u);
+    return value;
+}
+
+bool msx_cpu_condition(const MsxCpuState* state, uint8_t condition)
+{
+    const uint8_t flags = msx_cpu_f(state);
+    switch (condition & 0x07u) {
+        case 0: return (flags & kFlagZ) == 0;
+        case 1: return (flags & kFlagZ) != 0;
+        case 2: return (flags & kFlagC) == 0;
+        case 3: return (flags & kFlagC) != 0;
+        case 4: return (flags & kFlagPV) == 0;
+        case 5: return (flags & kFlagPV) != 0;
+        case 6: return (flags & kFlagS) == 0;
+        default: return (flags & kFlagS) != 0;
+    }
+}
+
+void msx_cpu_exchange16(uint16_t* lhs, uint16_t* rhs)
+{
+    const uint16_t value = *lhs;
+    *lhs = *rhs;
+    *rhs = value;
+}
+
+uint8_t msx_cpu_inc8(MsxCpuState* state, uint8_t value)
+{
+    const uint8_t result = static_cast<uint8_t>(value + 1u);
+    uint8_t flags = static_cast<uint8_t>(msx_cpu_f(state) & kFlagC);
+    flags |= msx_flags_szxy(result);
+    if ((value & 0x0Fu) == 0x0Fu) {
+        flags |= kFlagH;
+    }
+    if (value == 0x7Fu) {
+        flags |= kFlagPV;
+    }
+    msx_cpu_set_f(state, flags);
+    return result;
+}
+
+uint8_t msx_cpu_dec8(MsxCpuState* state, uint8_t value)
+{
+    const uint8_t result = static_cast<uint8_t>(value - 1u);
+    uint8_t flags = static_cast<uint8_t>((msx_cpu_f(state) & kFlagC) | kFlagN);
+    flags |= msx_flags_szxy(result);
+    if ((value & 0x0Fu) == 0x00u) {
+        flags |= kFlagH;
+    }
+    if (value == 0x80u) {
+        flags |= kFlagPV;
+    }
+    msx_cpu_set_f(state, flags);
+    return result;
+}
+
+uint8_t msx_cpu_add8(MsxCpuState* state, uint8_t lhs, uint8_t rhs, uint8_t carry)
+{
+    const uint16_t full = static_cast<uint16_t>(lhs) + static_cast<uint16_t>(rhs) + static_cast<uint16_t>(carry);
+    const uint8_t result = static_cast<uint8_t>(full & 0x00FFu);
+    uint8_t flags = msx_flags_szxy(result);
+    if (((lhs & 0x0Fu) + (rhs & 0x0Fu) + carry) > 0x0Fu) {
+        flags |= kFlagH;
+    }
+    if (((~(lhs ^ rhs) & (lhs ^ result)) & 0x80u) != 0) {
+        flags |= kFlagPV;
+    }
+    if ((full & 0x0100u) != 0) {
+        flags |= kFlagC;
+    }
+    msx_cpu_set_a(state, result);
+    msx_cpu_set_f(state, flags);
+    return result;
+}
+
+uint8_t msx_cpu_sub8(MsxCpuState* state, uint8_t lhs, uint8_t rhs, uint8_t carry)
+{
+    const uint16_t full = static_cast<uint16_t>(lhs) - static_cast<uint16_t>(rhs) - static_cast<uint16_t>(carry);
+    const uint8_t result = static_cast<uint8_t>(full & 0x00FFu);
+    uint8_t flags = static_cast<uint8_t>(msx_flags_szxy(result) | kFlagN);
+    if ((static_cast<uint16_t>(lhs & 0x0Fu) - static_cast<uint16_t>(rhs & 0x0Fu) - carry) & 0x0010u) {
+        flags |= kFlagH;
+    }
+    if ((((lhs ^ rhs) & (lhs ^ result)) & 0x80u) != 0) {
+        flags |= kFlagPV;
+    }
+    if ((full & 0x0100u) != 0) {
+        flags |= kFlagC;
+    }
+    msx_cpu_set_a(state, result);
+    msx_cpu_set_f(state, flags);
+    return result;
+}
+
+void msx_cpu_logic_and(MsxCpuState* state, uint8_t value)
+{
+    const uint8_t result = static_cast<uint8_t>(msx_cpu_a(state) & value);
+    msx_cpu_set_a(state, result);
+    msx_cpu_set_f(state, static_cast<uint8_t>(msx_flags_szpxy(result) | kFlagH));
+}
+
+void msx_cpu_logic_xor(MsxCpuState* state, uint8_t value)
+{
+    const uint8_t result = static_cast<uint8_t>(msx_cpu_a(state) ^ value);
+    msx_cpu_set_a(state, result);
+    msx_cpu_set_f(state, msx_flags_szpxy(result));
+}
+
+void msx_cpu_logic_or(MsxCpuState* state, uint8_t value)
+{
+    const uint8_t result = static_cast<uint8_t>(msx_cpu_a(state) | value);
+    msx_cpu_set_a(state, result);
+    msx_cpu_set_f(state, msx_flags_szpxy(result));
+}
+
+void msx_cpu_compare8(MsxCpuState* state, uint8_t value)
+{
+    const uint8_t accumulator = msx_cpu_a(state);
+    const uint16_t full = static_cast<uint16_t>(accumulator) - static_cast<uint16_t>(value);
+    const uint8_t result = static_cast<uint8_t>(full & 0x00FFu);
+    uint8_t flags = static_cast<uint8_t>((value & (kFlagX | kFlagY)) | kFlagN);
+    if (result & 0x80u) {
+        flags |= kFlagS;
+    }
+    if (result == 0) {
+        flags |= kFlagZ;
+    }
+    if ((static_cast<uint16_t>(accumulator & 0x0Fu) - static_cast<uint16_t>(value & 0x0Fu)) & 0x0010u) {
+        flags |= kFlagH;
+    }
+    if ((((accumulator ^ value) & (accumulator ^ result)) & 0x80u) != 0) {
+        flags |= kFlagPV;
+    }
+    if ((full & 0x0100u) != 0) {
+        flags |= kFlagC;
+    }
+    msx_cpu_set_f(state, flags);
+}
+
+void msx_cpu_add16_hl(MsxCpuState* state, uint16_t value)
+{
+    const uint16_t lhs = state->hl;
+    const uint32_t full = static_cast<uint32_t>(lhs) + static_cast<uint32_t>(value);
+    const uint16_t result = static_cast<uint16_t>(full & 0xFFFFu);
+    uint8_t flags = static_cast<uint8_t>(msx_cpu_f(state) & (kFlagS | kFlagZ | kFlagPV));
+    flags |= static_cast<uint8_t>((result >> 8) & (kFlagX | kFlagY));
+    if (((lhs & 0x0FFFu) + (value & 0x0FFFu)) > 0x0FFFu) {
+        flags |= kFlagH;
+    }
+    if ((full & 0x10000u) != 0) {
+        flags |= kFlagC;
+    }
+    state->hl = result;
+    msx_cpu_set_f(state, flags);
+}
+
+void msx_cpu_adc16_hl(MsxCpuState* state, uint16_t value)
+{
+    const uint32_t lhs = state->hl;
+    const uint32_t carry = (msx_cpu_f(state) & kFlagC) ? 1u : 0u;
+    const uint32_t full = lhs + static_cast<uint32_t>(value) + carry;
+    const uint16_t result = static_cast<uint16_t>(full & 0xFFFFu);
+    uint8_t flags = static_cast<uint8_t>((result >> 8) & (kFlagS | kFlagX | kFlagY));
+    if (result == 0) {
+        flags |= kFlagZ;
+    }
+    if (((lhs & 0x0FFFu) + (static_cast<uint32_t>(value) & 0x0FFFu) + carry) > 0x0FFFu) {
+        flags |= kFlagH;
+    }
+    if (((~(lhs ^ static_cast<uint32_t>(value)) & (lhs ^ result)) & 0x8000u) != 0) {
+        flags |= kFlagPV;
+    }
+    if ((full & 0x10000u) != 0) {
+        flags |= kFlagC;
+    }
+    state->hl = result;
+    msx_cpu_set_f(state, flags);
+}
+
+void msx_cpu_sbc16_hl(MsxCpuState* state, uint16_t value)
+{
+    const uint32_t lhs = state->hl;
+    const uint32_t carry = (msx_cpu_f(state) & kFlagC) ? 1u : 0u;
+    const uint32_t full = lhs - static_cast<uint32_t>(value) - carry;
+    const uint16_t result = static_cast<uint16_t>(full & 0xFFFFu);
+    uint8_t flags = static_cast<uint8_t>(((result >> 8) & (kFlagS | kFlagX | kFlagY)) | kFlagN);
+    if (result == 0) {
+        flags |= kFlagZ;
+    }
+    if ((static_cast<uint32_t>(lhs & 0x0FFFu) - static_cast<uint32_t>(value & 0x0FFFu) - carry) & 0x1000u) {
+        flags |= kFlagH;
+    }
+    if ((((lhs ^ static_cast<uint32_t>(value)) & (lhs ^ result)) & 0x8000u) != 0) {
+        flags |= kFlagPV;
+    }
+    if ((full & 0x10000u) != 0) {
+        flags |= kFlagC;
+    }
+    state->hl = result;
+    msx_cpu_set_f(state, flags);
+}
+
+void msx_cpu_daa(MsxCpuState* state)
+{
+    const uint8_t oldA = msx_cpu_a(state);
+    uint8_t adjust = 0;
+    uint8_t flags = msx_cpu_f(state);
+    bool carry = (flags & kFlagC) != 0;
+
+    if ((flags & kFlagN) == 0) {
+        if ((flags & kFlagH) != 0 || (oldA & 0x0Fu) > 0x09u) {
+            adjust |= 0x06u;
+        }
+        if (carry || oldA > 0x99u) {
+            adjust |= 0x60u;
+            carry = true;
+        }
+        msx_cpu_set_a(state, static_cast<uint8_t>(oldA + adjust));
+    } else {
+        if ((flags & kFlagH) != 0) {
+            adjust |= 0x06u;
+        }
+        if (carry) {
+            adjust |= 0x60u;
+        }
+        msx_cpu_set_a(state, static_cast<uint8_t>(oldA - adjust));
+    }
+
+    const uint8_t result = msx_cpu_a(state);
+    uint8_t newFlags = static_cast<uint8_t>(flags & kFlagN);
+    newFlags |= msx_flags_szpxy(result);
+    if ((((oldA ^ result) ^ adjust) & 0x10u) != 0) {
+        newFlags |= kFlagH;
+    }
+    if (carry) {
+        newFlags |= kFlagC;
+    }
+    msx_cpu_set_f(state, newFlags);
+}
+
+void msx_cpu_acc_rotate_left_carry(MsxCpuState* state)
+{
+    const uint8_t value = msx_cpu_a(state);
+    const uint8_t result = static_cast<uint8_t>((value << 1) | (value >> 7));
+    uint8_t flags = static_cast<uint8_t>((msx_cpu_f(state) & (kFlagS | kFlagZ | kFlagPV)) | (result & (kFlagX | kFlagY)));
+    if (value & 0x80u) {
+        flags |= kFlagC;
+    }
+    msx_cpu_set_a(state, result);
+    msx_cpu_set_f(state, flags);
+}
+
+void msx_cpu_acc_rotate_right_carry(MsxCpuState* state)
+{
+    const uint8_t value = msx_cpu_a(state);
+    const uint8_t result = static_cast<uint8_t>((value >> 1) | (value << 7));
+    uint8_t flags = static_cast<uint8_t>((msx_cpu_f(state) & (kFlagS | kFlagZ | kFlagPV)) | (result & (kFlagX | kFlagY)));
+    if (value & 0x01u) {
+        flags |= kFlagC;
+    }
+    msx_cpu_set_a(state, result);
+    msx_cpu_set_f(state, flags);
+}
+
+void msx_cpu_acc_rotate_left(MsxCpuState* state)
+{
+    const uint8_t value = msx_cpu_a(state);
+    const uint8_t carry = (msx_cpu_f(state) & kFlagC) ? 1u : 0u;
+    const uint8_t result = static_cast<uint8_t>((value << 1) | carry);
+    uint8_t flags = static_cast<uint8_t>((msx_cpu_f(state) & (kFlagS | kFlagZ | kFlagPV)) | (result & (kFlagX | kFlagY)));
+    if (value & 0x80u) {
+        flags |= kFlagC;
+    }
+    msx_cpu_set_a(state, result);
+    msx_cpu_set_f(state, flags);
+}
+
+void msx_cpu_acc_rotate_right(MsxCpuState* state)
+{
+    const uint8_t value = msx_cpu_a(state);
+    const uint8_t carry = (msx_cpu_f(state) & kFlagC) ? 0x80u : 0u;
+    const uint8_t result = static_cast<uint8_t>((value >> 1) | carry);
+    uint8_t flags = static_cast<uint8_t>((msx_cpu_f(state) & (kFlagS | kFlagZ | kFlagPV)) | (result & (kFlagX | kFlagY)));
+    if (value & 0x01u) {
+        flags |= kFlagC;
+    }
+    msx_cpu_set_a(state, result);
+    msx_cpu_set_f(state, flags);
+}
+
+void msx_cpu_mark_unsupported(MsxCpuState* state, uint8_t opcode)
+{
+    state->unsupportedOpcode = opcode;
+    state->unsupportedPc = state->lastPc;
+    state->runState = MsxCpuRunState::Unsupported;
+}
+
+int msx_cpu_service_irq(MsxCpuState* state, MsxMemoryState* memory)
+{
+    if (!state || !memory) {
+        return 0;
+    }
+
+    state->irqPending = false;
+    if (!state->iff1) {
+        return 0;
+    }
+
+    state->iff1 = false;
+    state->iff2 = false;
+    state->halted = false;
+    state->runState = MsxCpuRunState::Running;
+    msx_cpu_push16(state, memory, state->pc);
+    state->pc = 0x0038u;
+    return 13;
+}
+
+void msx_cpu_do_alu(MsxCpuState* state, uint8_t aluOp, uint8_t value)
+{
+    switch (aluOp & 0x07u) {
+        case 0: msx_cpu_add8(state, msx_cpu_a(state), value, 0); break;
+        case 1: msx_cpu_add8(state, msx_cpu_a(state), value, (msx_cpu_f(state) & kFlagC) ? 1u : 0u); break;
+        case 2: msx_cpu_sub8(state, msx_cpu_a(state), value, 0); break;
+        case 3: msx_cpu_sub8(state, msx_cpu_a(state), value, (msx_cpu_f(state) & kFlagC) ? 1u : 0u); break;
+        case 4: msx_cpu_logic_and(state, value); break;
+        case 5: msx_cpu_logic_xor(state, value); break;
+        case 6: msx_cpu_logic_or(state, value); break;
+        default: msx_cpu_compare8(state, value); break;
+    }
+}
+
+uint8_t msx_cpu_cb_rotate(MsxCpuState* state, uint8_t operation, uint8_t value)
+{
+    uint8_t result = value;
+    uint8_t flags = 0;
+
+    switch (operation & 0x07u) {
+        case 0:
+            result = static_cast<uint8_t>((value << 1) | (value >> 7));
+            if (value & 0x80u) flags |= kFlagC;
+            break;
+        case 1:
+            result = static_cast<uint8_t>((value >> 1) | (value << 7));
+            if (value & 0x01u) flags |= kFlagC;
+            break;
+        case 2: {
+            const uint8_t carry = (msx_cpu_f(state) & kFlagC) ? 1u : 0u;
+            result = static_cast<uint8_t>((value << 1) | carry);
+            if (value & 0x80u) flags |= kFlagC;
+            break;
+        }
+        case 3: {
+            const uint8_t carry = (msx_cpu_f(state) & kFlagC) ? 0x80u : 0u;
+            result = static_cast<uint8_t>((value >> 1) | carry);
+            if (value & 0x01u) flags |= kFlagC;
+            break;
+        }
+        case 4:
+            result = static_cast<uint8_t>(value << 1);
+            if (value & 0x80u) flags |= kFlagC;
+            break;
+        case 5:
+            result = static_cast<uint8_t>((value >> 1) | (value & 0x80u));
+            if (value & 0x01u) flags |= kFlagC;
+            break;
+        case 6:
+            result = static_cast<uint8_t>((value >> 1) | 0x80u);
+            if (value & 0x01u) flags |= kFlagC;
+            break;
+        default:
+            result = static_cast<uint8_t>(value >> 1);
+            if (value & 0x01u) flags |= kFlagC;
+            break;
+    }
+
+    flags |= msx_flags_szpxy(result);
+    msx_cpu_set_f(state, flags);
+    return result;
+}
+
+// ---- IX / IY prefix helpers (DD / FD) ----
+// Based on fMSX Z80 engine by Marat Fayzullin, as ported to ESP32 in esplay-fMSX.
+// Adapted to the existing code style: explicit switch dispatch instead of the
+// canonical CodesXX.h macro trick, same correctness guarantees.
+
+inline uint8_t msx_cpu_xyh(const uint16_t* xy)
+{
+    return static_cast<uint8_t>(*xy >> 8);
+}
+
+inline uint8_t msx_cpu_xyl(const uint16_t* xy)
+{
+    return static_cast<uint8_t>(*xy & 0xFFu);
+}
+
+inline void msx_cpu_set_xyh(uint16_t* xy, uint8_t v)
+{
+    *xy = static_cast<uint16_t>((*xy & 0x00FFu) | (static_cast<uint16_t>(v) << 8));
+}
+
+inline void msx_cpu_set_xyl(uint16_t* xy, uint8_t v)
+{
+    *xy = static_cast<uint16_t>((*xy & 0xFF00u) | v);
+}
+
+// Consume displacement byte and return effective address (IX+d) or (IY+d).
+inline uint16_t msx_cpu_xy_ea(MsxCpuState* state, const MsxMemoryState* memory, const uint16_t* xy)
+{
+    const int8_t disp = static_cast<int8_t>(msx_cpu_fetch8(state, memory));
+    return static_cast<uint16_t>(static_cast<int32_t>(*xy) + static_cast<int32_t>(disp));
+}
+
+// ADD IX,rr / ADD IY,rr — same as msx_cpu_add16_hl but uses xy in place of HL.
+void msx_cpu_add16_xy(MsxCpuState* state, uint16_t* xy, uint16_t value)
+{
+    const uint16_t lhs = *xy;
+    const uint32_t full = static_cast<uint32_t>(lhs) + static_cast<uint32_t>(value);
+    const uint16_t result = static_cast<uint16_t>(full & 0xFFFFu);
+    uint8_t flags = static_cast<uint8_t>(msx_cpu_f(state) & (kFlagS | kFlagZ | kFlagPV));
+    flags |= static_cast<uint8_t>((result >> 8) & (kFlagX | kFlagY));
+    if (((lhs & 0x0FFFu) + (value & 0x0FFFu)) > 0x0FFFu) {
+        flags |= kFlagH;
+    }
+    if ((full & 0x10000u) != 0u) {
+        flags |= kFlagC;
+    }
+    *xy = result;
+    msx_cpu_set_f(state, flags);
+}
+
+// DDCB / FDCB: indexed bit operations.
+// Encoding: DD CB <disp> <op> — displacement is fetched before the operation opcode.
+int msx_cpu_step_xycb(MsxCpuState* state, MsxMemoryState* memory, const uint16_t* xy)
+{
+    const int8_t  disp   = static_cast<int8_t>(msx_cpu_fetch8(state, memory));
+    const uint16_t ea    = static_cast<uint16_t>(static_cast<int32_t>(*xy) + static_cast<int32_t>(disp));
+    const uint8_t  opcode = msx_cpu_fetch8(state, memory);
+    const uint8_t  group  = static_cast<uint8_t>(opcode >> 6);
+    const uint8_t  y      = static_cast<uint8_t>((opcode >> 3) & 0x07u);
+    const uint8_t  value  = msx_cpu_mem_read8(memory, ea);
+
+    if (group == 0u) {
+        // Rotate / shift on (IX+d)
+        const uint8_t result = msx_cpu_cb_rotate(state, y, value);
+        msx_cpu_mem_write8(memory, ea, result);
+        return 23;
+    }
+
+    if (group == 1u) {
+        // BIT y,(IX+d)
+        uint8_t flags = static_cast<uint8_t>((msx_cpu_f(state) & kFlagC) | kFlagH);
+        if ((value & static_cast<uint8_t>(1u << y)) == 0u) {
+            flags |= static_cast<uint8_t>(kFlagZ | kFlagPV);
+        }
+        if (y == 7u && (value & 0x80u) != 0u) {
+            flags |= kFlagS;
+        }
+        msx_cpu_set_f(state, flags);
+        return 20;
+    }
+
+    // RES y,(IX+d) or SET y,(IX+d)
+    const uint8_t result = (group == 2u)
+        ? static_cast<uint8_t>(value & ~static_cast<uint8_t>(1u << y))
+        : static_cast<uint8_t>(value |  static_cast<uint8_t>(1u << y));
+    msx_cpu_mem_write8(memory, ea, result);
+    return 23;
+}
+
+// DD / FD prefix handler.
+// xy points to state->ix (DD) or state->iy (FD).
+// For opcodes that have no IX/IY variant the prefix is silently discarded and
+// the opcode is re-decoded by the base dispatcher — correct Z80 behaviour.
+int msx_cpu_step_xy(MsxCpuState* state, MsxMemoryState* memory, uint16_t* xy)
+{
+    const uint8_t opcode = msx_cpu_fetch8(state, memory);
+
+    switch (opcode) {
+        // 16-bit loads and arithmetic — HL replaced by IX/IY
+        case 0x09: msx_cpu_add16_xy(state, xy, state->bc); return 15;
+        case 0x19: msx_cpu_add16_xy(state, xy, state->de); return 15;
+        case 0x21: *xy = msx_cpu_fetch16(state, memory); return 14;
+        case 0x22: { const uint16_t a = msx_cpu_fetch16(state, memory); msx_cpu_mem_write16(memory, a, *xy); return 20; }
+        case 0x23: *xy = static_cast<uint16_t>(*xy + 1u); return 10;
+        case 0x29: msx_cpu_add16_xy(state, xy, *xy); return 15;
+        case 0x2A: { const uint16_t a = msx_cpu_fetch16(state, memory); *xy = msx_cpu_mem_read16(memory, a); return 20; }
+        case 0x2B: *xy = static_cast<uint16_t>(*xy - 1u); return 10;
+        case 0x39: msx_cpu_add16_xy(state, xy, state->sp); return 15;
+
+        // IXH / IXL operations (documented on real silicon; used by MSX BIOS)
+        case 0x24: msx_cpu_set_xyh(xy, msx_cpu_inc8(state, msx_cpu_xyh(xy))); return 4;
+        case 0x25: msx_cpu_set_xyh(xy, msx_cpu_dec8(state, msx_cpu_xyh(xy))); return 4;
+        case 0x26: msx_cpu_set_xyh(xy, msx_cpu_fetch8(state, memory)); return 7;
+        case 0x2C: msx_cpu_set_xyl(xy, msx_cpu_inc8(state, msx_cpu_xyl(xy))); return 4;
+        case 0x2D: msx_cpu_set_xyl(xy, msx_cpu_dec8(state, msx_cpu_xyl(xy))); return 4;
+        case 0x2E: msx_cpu_set_xyl(xy, msx_cpu_fetch8(state, memory)); return 7;
+
+        // LD r, IXH/IXL
+        case 0x44: msx_set_hi(&state->bc, msx_cpu_xyh(xy)); return 4;
+        case 0x45: msx_set_hi(&state->bc, msx_cpu_xyl(xy)); return 4;
+        case 0x4C: msx_set_lo(&state->bc, msx_cpu_xyh(xy)); return 4;
+        case 0x4D: msx_set_lo(&state->bc, msx_cpu_xyl(xy)); return 4;
+        case 0x54: msx_set_hi(&state->de, msx_cpu_xyh(xy)); return 4;
+        case 0x55: msx_set_hi(&state->de, msx_cpu_xyl(xy)); return 4;
+        case 0x5C: msx_set_lo(&state->de, msx_cpu_xyh(xy)); return 4;
+        case 0x5D: msx_set_lo(&state->de, msx_cpu_xyl(xy)); return 4;
+        case 0x7C: msx_cpu_set_a(state, msx_cpu_xyh(xy)); return 4;
+        case 0x7D: msx_cpu_set_a(state, msx_cpu_xyl(xy)); return 4;
+
+        // LD IXH, r
+        case 0x60: msx_cpu_set_xyh(xy, msx_hi(state->bc));  return 4;
+        case 0x61: msx_cpu_set_xyh(xy, msx_lo(state->bc));  return 4;
+        case 0x62: msx_cpu_set_xyh(xy, msx_hi(state->de));  return 4;
+        case 0x63: msx_cpu_set_xyh(xy, msx_lo(state->de));  return 4;
+        case 0x64: /* LD IXH,IXH */ return 4;
+        case 0x65: msx_cpu_set_xyh(xy, msx_cpu_xyl(xy));    return 4;
+        case 0x67: msx_cpu_set_xyh(xy, msx_cpu_a(state));   return 4;
+
+        // LD IXL, r
+        case 0x68: msx_cpu_set_xyl(xy, msx_hi(state->bc));  return 4;
+        case 0x69: msx_cpu_set_xyl(xy, msx_lo(state->bc));  return 4;
+        case 0x6A: msx_cpu_set_xyl(xy, msx_hi(state->de));  return 4;
+        case 0x6B: msx_cpu_set_xyl(xy, msx_lo(state->de));  return 4;
+        case 0x6C: msx_cpu_set_xyl(xy, msx_cpu_xyh(xy));    return 4;
+        case 0x6D: /* LD IXL,IXL */ return 4;
+        case 0x6F: msx_cpu_set_xyl(xy, msx_cpu_a(state));   return 4;
+
+        // ALU A, IXH
+        case 0x84: msx_cpu_do_alu(state, 0, msx_cpu_xyh(xy)); return 4;
+        case 0x8C: msx_cpu_do_alu(state, 1, msx_cpu_xyh(xy)); return 4;
+        case 0x94: msx_cpu_do_alu(state, 2, msx_cpu_xyh(xy)); return 4;
+        case 0x9C: msx_cpu_do_alu(state, 3, msx_cpu_xyh(xy)); return 4;
+        case 0xA4: msx_cpu_do_alu(state, 4, msx_cpu_xyh(xy)); return 4;
+        case 0xAC: msx_cpu_do_alu(state, 5, msx_cpu_xyh(xy)); return 4;
+        case 0xB4: msx_cpu_do_alu(state, 6, msx_cpu_xyh(xy)); return 4;
+        case 0xBC: msx_cpu_do_alu(state, 7, msx_cpu_xyh(xy)); return 4;
+
+        // ALU A, IXL
+        case 0x85: msx_cpu_do_alu(state, 0, msx_cpu_xyl(xy)); return 4;
+        case 0x8D: msx_cpu_do_alu(state, 1, msx_cpu_xyl(xy)); return 4;
+        case 0x95: msx_cpu_do_alu(state, 2, msx_cpu_xyl(xy)); return 4;
+        case 0x9D: msx_cpu_do_alu(state, 3, msx_cpu_xyl(xy)); return 4;
+        case 0xA5: msx_cpu_do_alu(state, 4, msx_cpu_xyl(xy)); return 4;
+        case 0xAD: msx_cpu_do_alu(state, 5, msx_cpu_xyl(xy)); return 4;
+        case 0xB5: msx_cpu_do_alu(state, 6, msx_cpu_xyl(xy)); return 4;
+        case 0xBD: msx_cpu_do_alu(state, 7, msx_cpu_xyl(xy)); return 4;
+
+        // INC / DEC / LD on indexed memory (IX+d)
+        case 0x34: {
+            const uint16_t ea = msx_cpu_xy_ea(state, memory, xy);
+            msx_cpu_mem_write8(memory, ea, msx_cpu_inc8(state, msx_cpu_mem_read8(memory, ea)));
+            return 23;
+        }
+        case 0x35: {
+            const uint16_t ea = msx_cpu_xy_ea(state, memory, xy);
+            msx_cpu_mem_write8(memory, ea, msx_cpu_dec8(state, msx_cpu_mem_read8(memory, ea)));
+            return 23;
+        }
+        case 0x36: {
+            const uint16_t ea  = msx_cpu_xy_ea(state, memory, xy);
+            const uint8_t  imm = msx_cpu_fetch8(state, memory);
+            msx_cpu_mem_write8(memory, ea, imm);
+            return 19;
+        }
+
+        // LD r,(IX+d) — destination is always the true register (not IXH/IXL)
+        case 0x46: { const uint16_t ea = msx_cpu_xy_ea(state, memory, xy); msx_set_hi(&state->bc, msx_cpu_mem_read8(memory, ea)); return 19; }
+        case 0x4E: { const uint16_t ea = msx_cpu_xy_ea(state, memory, xy); msx_set_lo(&state->bc, msx_cpu_mem_read8(memory, ea)); return 19; }
+        case 0x56: { const uint16_t ea = msx_cpu_xy_ea(state, memory, xy); msx_set_hi(&state->de, msx_cpu_mem_read8(memory, ea)); return 19; }
+        case 0x5E: { const uint16_t ea = msx_cpu_xy_ea(state, memory, xy); msx_set_lo(&state->de, msx_cpu_mem_read8(memory, ea)); return 19; }
+        case 0x66: { const uint16_t ea = msx_cpu_xy_ea(state, memory, xy); msx_set_hi(&state->hl, msx_cpu_mem_read8(memory, ea)); return 19; }
+        case 0x6E: { const uint16_t ea = msx_cpu_xy_ea(state, memory, xy); msx_set_lo(&state->hl, msx_cpu_mem_read8(memory, ea)); return 19; }
+        case 0x7E: { const uint16_t ea = msx_cpu_xy_ea(state, memory, xy); msx_cpu_set_a(state, msx_cpu_mem_read8(memory, ea)); return 19; }
+
+        // LD (IX+d),r — source is always the true register (not IXH/IXL)
+        case 0x70: { const uint16_t ea = msx_cpu_xy_ea(state, memory, xy); msx_cpu_mem_write8(memory, ea, msx_hi(state->bc)); return 19; }
+        case 0x71: { const uint16_t ea = msx_cpu_xy_ea(state, memory, xy); msx_cpu_mem_write8(memory, ea, msx_lo(state->bc)); return 19; }
+        case 0x72: { const uint16_t ea = msx_cpu_xy_ea(state, memory, xy); msx_cpu_mem_write8(memory, ea, msx_hi(state->de)); return 19; }
+        case 0x73: { const uint16_t ea = msx_cpu_xy_ea(state, memory, xy); msx_cpu_mem_write8(memory, ea, msx_lo(state->de)); return 19; }
+        case 0x74: { const uint16_t ea = msx_cpu_xy_ea(state, memory, xy); msx_cpu_mem_write8(memory, ea, msx_hi(state->hl)); return 19; }
+        case 0x75: { const uint16_t ea = msx_cpu_xy_ea(state, memory, xy); msx_cpu_mem_write8(memory, ea, msx_lo(state->hl)); return 19; }
+        case 0x77: { const uint16_t ea = msx_cpu_xy_ea(state, memory, xy); msx_cpu_mem_write8(memory, ea, msx_cpu_a(state)); return 19; }
+
+        // ALU A,(IX+d)
+        case 0x86: { const uint16_t ea = msx_cpu_xy_ea(state, memory, xy); msx_cpu_do_alu(state, 0, msx_cpu_mem_read8(memory, ea)); return 19; }
+        case 0x8E: { const uint16_t ea = msx_cpu_xy_ea(state, memory, xy); msx_cpu_do_alu(state, 1, msx_cpu_mem_read8(memory, ea)); return 19; }
+        case 0x96: { const uint16_t ea = msx_cpu_xy_ea(state, memory, xy); msx_cpu_do_alu(state, 2, msx_cpu_mem_read8(memory, ea)); return 19; }
+        case 0x9E: { const uint16_t ea = msx_cpu_xy_ea(state, memory, xy); msx_cpu_do_alu(state, 3, msx_cpu_mem_read8(memory, ea)); return 19; }
+        case 0xA6: { const uint16_t ea = msx_cpu_xy_ea(state, memory, xy); msx_cpu_do_alu(state, 4, msx_cpu_mem_read8(memory, ea)); return 19; }
+        case 0xAE: { const uint16_t ea = msx_cpu_xy_ea(state, memory, xy); msx_cpu_do_alu(state, 5, msx_cpu_mem_read8(memory, ea)); return 19; }
+        case 0xB6: { const uint16_t ea = msx_cpu_xy_ea(state, memory, xy); msx_cpu_do_alu(state, 6, msx_cpu_mem_read8(memory, ea)); return 19; }
+        case 0xBE: { const uint16_t ea = msx_cpu_xy_ea(state, memory, xy); msx_cpu_do_alu(state, 7, msx_cpu_mem_read8(memory, ea)); return 19; }
+
+        // Stack and jump with IX/IY
+        case 0xE1: *xy = msx_cpu_pop16(state, memory); return 14;
+        case 0xE3: {
+            const uint16_t top = msx_cpu_mem_read16(memory, state->sp);
+            msx_cpu_mem_write16(memory, state->sp, *xy);
+            *xy = top;
+            return 23;
+        }
+        case 0xE5: msx_cpu_push16(state, memory, *xy); return 15;
+        case 0xE9: state->pc = *xy; return 8;
+        case 0xF9: state->sp = *xy; return 10;
+
+        // DDCB / FDCB: 4-byte indexed bit operations
+        case 0xCB: return msx_cpu_step_xycb(state, memory, xy);
+
+        // Nested DD/FD: second prefix restarts with new register target
+        case 0xDD: return msx_cpu_step_xy(state, memory, &state->ix);
+        case 0xFD: return msx_cpu_step_xy(state, memory, &state->iy);
+
+        // Unrecognised opcode after DD/FD: prefix is ignored on real Z80.
+        // Undo the fetch so the base dispatcher sees the opcode unmodified.
+        default:
+            state->pc = static_cast<uint16_t>(state->pc - 1u);
+            state->r  = static_cast<uint8_t>(state->r  - 1u);
+            return msx_cpu_step_opcode(state, memory);
+    }
+}
+
+int msx_cpu_step_cb(MsxCpuState* state, MsxMemoryState* memory)
+{
+    const uint8_t opcode = msx_cpu_fetch8(state, memory);
+    const uint8_t group = static_cast<uint8_t>(opcode >> 6);
+    const uint8_t y = static_cast<uint8_t>((opcode >> 3) & 0x07u);
+    const uint8_t z = static_cast<uint8_t>(opcode & 0x07u);
+    const uint8_t value = msx_cpu_get_reg8(state, memory, z);
+
+    if (group == 0) {
+        const uint8_t result = msx_cpu_cb_rotate(state, y, value);
+        msx_cpu_set_reg8(state, memory, z, result);
+        return z == 6 ? 15 : 8;
+    }
+
+    if (group == 1) {
+        uint8_t flags = static_cast<uint8_t>((msx_cpu_f(state) & kFlagC) | kFlagH);
+        if ((value & static_cast<uint8_t>(1u << y)) == 0) {
+            flags |= static_cast<uint8_t>(kFlagZ | kFlagPV);
+        }
+        if (y == 7 && (value & 0x80u) != 0) {
+            flags |= kFlagS;
+        }
+        flags |= static_cast<uint8_t>(value & (kFlagX | kFlagY));
+        msx_cpu_set_f(state, flags);
+        return z == 6 ? 12 : 8;
+    }
+
+    uint8_t result = value;
+    if (group == 2) {
+        result = static_cast<uint8_t>(value & ~static_cast<uint8_t>(1u << y));
+    } else {
+        result = static_cast<uint8_t>(value | static_cast<uint8_t>(1u << y));
+    }
+
+    msx_cpu_set_reg8(state, memory, z, result);
+    return z == 6 ? 15 : 8;
+}
+
+void msx_cpu_block_ldi(MsxCpuState* state, MsxMemoryState* memory, int direction)
+{
+    const uint8_t value = msx_cpu_mem_read8(memory, state->hl);
+    msx_cpu_mem_write8(memory, state->de, value);
+    state->hl = static_cast<uint16_t>(state->hl + direction);
+    state->de = static_cast<uint16_t>(state->de + direction);
+    state->bc = static_cast<uint16_t>(state->bc - 1u);
+
+    uint8_t flags = static_cast<uint8_t>(msx_cpu_f(state) & (kFlagS | kFlagZ | kFlagC));
+    if (state->bc != 0) {
+        flags |= kFlagPV;
+    }
+    const uint8_t mix = static_cast<uint8_t>(msx_cpu_a(state) + value);
+    flags |= static_cast<uint8_t>(mix & (kFlagX | kFlagY));
+    msx_cpu_set_f(state, flags);
+}
+
+void msx_cpu_block_outi(MsxCpuState* state, MsxMemoryState* memory, int direction)
+{
+    const uint8_t value = msx_cpu_mem_read8(memory, state->hl);
+    msx_memory_out(memory, msx_lo(state->bc), value);
+    state->hl = static_cast<uint16_t>(state->hl + direction);
+    msx_set_hi(&state->bc, static_cast<uint8_t>(msx_hi(state->bc) - 1u));
+
+    uint8_t flags = static_cast<uint8_t>(kFlagN | (msx_hi(state->bc) & (kFlagS | kFlagX | kFlagY)));
+    if (msx_hi(state->bc) == 0) {
+        flags |= kFlagZ;
+    } else {
+        flags |= kFlagPV;
+    }
+    msx_cpu_set_f(state, flags);
+}
+
+// CPI / CPD / CPIR / CPDR: compare A with (HL), HL±=1, BC-=1.
+// PV flag reflects BC!=0 after decrement; Z reflects match (A == mem value).
+void msx_cpu_block_cpi(MsxCpuState* state, MsxMemoryState* memory, int direction)
+{
+    const uint8_t mem    = msx_cpu_mem_read8(memory, state->hl);
+    const uint8_t a      = msx_cpu_a(state);
+    const uint8_t result = static_cast<uint8_t>(a - mem);
+    state->hl = static_cast<uint16_t>(state->hl + direction);
+    state->bc = static_cast<uint16_t>(state->bc - 1u);
+
+    uint8_t flags = static_cast<uint8_t>((msx_cpu_f(state) & kFlagC) | kFlagN);
+    flags |= static_cast<uint8_t>(result & kFlagS);
+    if (result == 0u) {
+        flags |= kFlagZ;
+    }
+    if ((a & 0x0Fu) < (mem & 0x0Fu)) {
+        flags |= kFlagH;
+    }
+    if (state->bc != 0u) {
+        flags |= kFlagPV;
+    }
+    // X/Y from (result - H_flag) per Z80 spec; use result for simplicity
+    const uint8_t n = static_cast<uint8_t>(result - ((flags & kFlagH) ? 1u : 0u));
+    flags |= static_cast<uint8_t>((n & kFlagX) | ((n >> 4u) & kFlagY));
+    msx_cpu_set_f(state, flags);
+}
+
+// INI / IND / INIR / INDR: read one byte from port (C) into memory[HL], HL±=1, B-=1.
+void msx_cpu_block_ini(MsxCpuState* state, MsxMemoryState* memory, int direction)
+{
+    const uint8_t value = msx_memory_in(memory, msx_lo(state->bc));
+    msx_cpu_mem_write8(memory, state->hl, value);
+    state->hl = static_cast<uint16_t>(state->hl + direction);
+    msx_set_hi(&state->bc, static_cast<uint8_t>(msx_hi(state->bc) - 1u));
+
+    uint8_t flags = static_cast<uint8_t>(kFlagN | (msx_hi(state->bc) & (kFlagS | kFlagX | kFlagY)));
+    if (msx_hi(state->bc) == 0) {
+        flags |= kFlagZ;
+    } else {
+        flags |= kFlagPV;
+    }
+    msx_cpu_set_f(state, flags);
+}
+
+int msx_cpu_step_ed(MsxCpuState* state, MsxMemoryState* memory)
+{
+    const uint8_t opcode = msx_cpu_fetch8(state, memory);
+    const uint8_t regPair = static_cast<uint8_t>((opcode >> 4) & 0x03u);
+
+    switch (opcode) {
+        case 0x40:
+        case 0x48:
+        case 0x50:
+        case 0x58:
+        case 0x60:
+        case 0x68:
+        case 0x78: {
+            const uint8_t value = msx_memory_in(memory, msx_lo(state->bc));
+            msx_cpu_set_reg8(state, memory, static_cast<uint8_t>((opcode >> 3) & 0x07u), value);
+            msx_cpu_set_f(state, static_cast<uint8_t>((msx_cpu_f(state) & kFlagC) | msx_flags_szpxy(value)));
+            return 12;
+        }
+        case 0x41:
+        case 0x49:
+        case 0x51:
+        case 0x59:
+        case 0x61:
+        case 0x69:
+        case 0x79: {
+            const uint8_t value = msx_cpu_get_reg8(state, memory, static_cast<uint8_t>((opcode >> 3) & 0x07u));
+            msx_memory_out(memory, msx_lo(state->bc), value);
+            return 12;
+        }
+        case 0x42:
+        case 0x52:
+        case 0x62:
+        case 0x72:
+            msx_cpu_sbc16_hl(state, *msx_cpu_reg16_ptr(state, regPair));
+            return 15;
+        case 0x4A:
+        case 0x5A:
+        case 0x6A:
+        case 0x7A:
+            msx_cpu_adc16_hl(state, *msx_cpu_reg16_ptr(state, regPair));
+            return 15;
+        case 0x43:
+        case 0x53:
+        case 0x63:
+        case 0x73: {
+            const uint16_t address = msx_cpu_fetch16(state, memory);
+            msx_cpu_mem_write16(memory, address, *msx_cpu_reg16_ptr(state, regPair));
+            return 20;
+        }
+        case 0x4B:
+        case 0x5B:
+        case 0x6B:
+        case 0x7B: {
+            const uint16_t address = msx_cpu_fetch16(state, memory);
+            *msx_cpu_reg16_ptr(state, regPair) = msx_cpu_mem_read16(memory, address);
+            return 20;
+        }
+        case 0x44:
+        case 0x4C:
+        case 0x54:
+        case 0x5C:
+        case 0x64:
+        case 0x6C:
+        case 0x74:
+        case 0x7C:
+            msx_cpu_sub8(state, 0, msx_cpu_a(state), 0);
+            return 8;
+        case 0x45:
+        case 0x4D:
+            state->pc = msx_cpu_pop16(state, memory);
+            state->iff1 = state->iff2;
+            return 14;
+        case 0x46:
+        case 0x4E:
+        case 0x66:
+        case 0x6E:
+            state->im = 0;
+            return 8;
+        case 0x56:
+        case 0x76:
+            state->im = 1;
+            return 8;
+        case 0x5E:
+        case 0x7E:
+            state->im = 2;
+            return 8;
+        case 0x47:
+            state->i = msx_cpu_a(state);
+            return 9;
+        case 0x4F:
+            state->r = msx_cpu_a(state);
+            return 9;
+        case 0x57: {
+            const uint8_t value = state->i;
+            msx_cpu_set_a(state, value);
+            uint8_t flags = static_cast<uint8_t>((msx_cpu_f(state) & kFlagC) | msx_flags_szxy(value));
+            if (state->iff2) {
+                flags |= kFlagPV;
+            }
+            msx_cpu_set_f(state, flags);
+            return 9;
+        }
+        case 0x5F: {
+            const uint8_t value = state->r;
+            msx_cpu_set_a(state, value);
+            uint8_t flags = static_cast<uint8_t>((msx_cpu_f(state) & kFlagC) | msx_flags_szxy(value));
+            if (state->iff2) {
+                flags |= kFlagPV;
+            }
+            msx_cpu_set_f(state, flags);
+            return 9;
+        }
+        case 0xA0:
+            msx_cpu_block_ldi(state, memory, 1);
+            return 16;
+        case 0xA8:
+            msx_cpu_block_ldi(state, memory, -1);
+            return 16;
+        case 0xB0:
+            msx_cpu_block_ldi(state, memory, 1);
+            if (state->bc != 0) {
+                state->pc = static_cast<uint16_t>(state->pc - 2u);
+                return 21;
+            }
+            return 16;
+        case 0xB8:
+            msx_cpu_block_ldi(state, memory, -1);
+            if (state->bc != 0) {
+                state->pc = static_cast<uint16_t>(state->pc - 2u);
+                return 21;
+            }
+            return 16;
+        case 0xA3:
+            msx_cpu_block_outi(state, memory, 1);
+            return 16;
+        case 0xAB:
+            msx_cpu_block_outi(state, memory, -1);
+            return 16;
+        case 0xB3:
+            msx_cpu_block_outi(state, memory, 1);
+            if (msx_hi(state->bc) != 0) {
+                state->pc = static_cast<uint16_t>(state->pc - 2u);
+                return 21;
+            }
+            return 16;
+        case 0xBB:
+            msx_cpu_block_outi(state, memory, -1);
+            if (msx_hi(state->bc) != 0) {
+                state->pc = static_cast<uint16_t>(state->pc - 2u);
+                return 21;
+            }
+            return 16;
+        case 0xA2:                                   // INI
+            msx_cpu_block_ini(state, memory, 1);
+            return 16;
+        case 0xAA:                                   // IND
+            msx_cpu_block_ini(state, memory, -1);
+            return 16;
+        case 0xB2:                                   // INIR
+            msx_cpu_block_ini(state, memory, 1);
+            if (msx_hi(state->bc) != 0) {
+                state->pc = static_cast<uint16_t>(state->pc - 2u);
+                return 21;
+            }
+            return 16;
+        case 0xBA:                                   // INDR
+            msx_cpu_block_ini(state, memory, -1);
+            if (msx_hi(state->bc) != 0) {
+                state->pc = static_cast<uint16_t>(state->pc - 2u);
+                return 21;
+            }
+            return 16;
+        case 0xA1:                                   // CPI
+            msx_cpu_block_cpi(state, memory, 1);
+            return 16;
+        case 0xA9:                                   // CPD
+            msx_cpu_block_cpi(state, memory, -1);
+            return 16;
+        case 0xB1:                                   // CPIR
+            msx_cpu_block_cpi(state, memory, 1);
+            if ((msx_cpu_f(state) & kFlagPV) && !(msx_cpu_f(state) & kFlagZ)) {
+                state->pc = static_cast<uint16_t>(state->pc - 2u);
+                return 21;
+            }
+            return 16;
+        case 0xB9:                                   // CPDR
+            msx_cpu_block_cpi(state, memory, -1);
+            if ((msx_cpu_f(state) & kFlagPV) && !(msx_cpu_f(state) & kFlagZ)) {
+                state->pc = static_cast<uint16_t>(state->pc - 2u);
+                return 21;
+            }
+            return 16;
+        case 0x67: {                                 // RRD
+            const uint8_t mem = msx_cpu_mem_read8(memory, state->hl);
+            const uint8_t a   = msx_cpu_a(state);
+            msx_cpu_mem_write8(memory, state->hl, static_cast<uint8_t>((a << 4) | (mem >> 4)));
+            msx_cpu_set_a(state, static_cast<uint8_t>((a & 0xF0u) | (mem & 0x0Fu)));
+            msx_cpu_set_f(state, static_cast<uint8_t>((msx_cpu_f(state) & kFlagC) | msx_flags_szpxy(msx_cpu_a(state))));
+            return 18;
+        }
+        case 0x6F: {                                 // RLD
+            const uint8_t mem = msx_cpu_mem_read8(memory, state->hl);
+            const uint8_t a   = msx_cpu_a(state);
+            msx_cpu_mem_write8(memory, state->hl, static_cast<uint8_t>((mem << 4) | (a & 0x0Fu)));
+            msx_cpu_set_a(state, static_cast<uint8_t>((a & 0xF0u) | (mem >> 4)));
+            msx_cpu_set_f(state, static_cast<uint8_t>((msx_cpu_f(state) & kFlagC) | msx_flags_szpxy(msx_cpu_a(state))));
+            return 18;
+        }
+        default:
+            msx_cpu_mark_unsupported(state, opcode);
+            return 0;
+    }
+}
+
+int msx_cpu_step_opcode(MsxCpuState* state, MsxMemoryState* memory)
+{
+    if (!state || !memory) {
+        return 0;
+    }
+
+    state->lastPc = state->pc;
+    const uint8_t opcode = msx_cpu_fetch8(state, memory);
+    state->lastOpcode = opcode;
+
+    if ((opcode & 0xC7u) == 0x04u) {
+        const uint8_t reg = static_cast<uint8_t>((opcode >> 3) & 0x07u);
+        const uint8_t value = msx_cpu_get_reg8(state, memory, reg);
+        msx_cpu_set_reg8(state, memory, reg, msx_cpu_inc8(state, value));
+        return reg == 6 ? 11 : 4;
+    }
+
+    if ((opcode & 0xC7u) == 0x05u) {
+        const uint8_t reg = static_cast<uint8_t>((opcode >> 3) & 0x07u);
+        const uint8_t value = msx_cpu_get_reg8(state, memory, reg);
+        msx_cpu_set_reg8(state, memory, reg, msx_cpu_dec8(state, value));
+        return reg == 6 ? 11 : 4;
+    }
+
+    if ((opcode & 0xC7u) == 0x06u) {
+        const uint8_t reg = static_cast<uint8_t>((opcode >> 3) & 0x07u);
+        const uint8_t value = msx_cpu_fetch8(state, memory);
+        msx_cpu_set_reg8(state, memory, reg, value);
+        return reg == 6 ? 10 : 7;
+    }
+
+    if ((opcode & 0xCFu) == 0x01u) {
+        *msx_cpu_reg16_ptr(state, static_cast<uint8_t>((opcode >> 4) & 0x03u)) = msx_cpu_fetch16(state, memory);
+        return 10;
+    }
+
+    if ((opcode & 0xCFu) == 0x03u) {
+        uint16_t* reg = msx_cpu_reg16_ptr(state, static_cast<uint8_t>((opcode >> 4) & 0x03u));
+        *reg = static_cast<uint16_t>(*reg + 1u);
+        return 6;
+    }
+
+    if ((opcode & 0xCFu) == 0x0Bu) {
+        uint16_t* reg = msx_cpu_reg16_ptr(state, static_cast<uint8_t>((opcode >> 4) & 0x03u));
+        *reg = static_cast<uint16_t>(*reg - 1u);
+        return 6;
+    }
+
+    if ((opcode & 0xCFu) == 0x09u) {
+        msx_cpu_add16_hl(state, *msx_cpu_reg16_ptr(state, static_cast<uint8_t>((opcode >> 4) & 0x03u)));
+        return 11;
+    }
+
+    if ((opcode & 0xC0u) == 0x40u) {
+        if (opcode == 0x76u) {
+            state->halted = true;
+            state->runState = MsxCpuRunState::Halted;
+            return 4;
+        }
+        const uint8_t dst = static_cast<uint8_t>((opcode >> 3) & 0x07u);
+        const uint8_t src = static_cast<uint8_t>(opcode & 0x07u);
+        const uint8_t value = msx_cpu_get_reg8(state, memory, src);
+        msx_cpu_set_reg8(state, memory, dst, value);
+        return (dst == 6 || src == 6) ? 7 : 4;
+    }
+
+    if ((opcode & 0xC0u) == 0x80u) {
+        const uint8_t value = msx_cpu_get_reg8(state, memory, static_cast<uint8_t>(opcode & 0x07u));
+        msx_cpu_do_alu(state, static_cast<uint8_t>((opcode >> 3) & 0x07u), value);
+        return (opcode & 0x07u) == 6 ? 7 : 4;
+    }
+
+    if ((opcode & 0xC7u) == 0xC0u) {
+        if (msx_cpu_condition(state, static_cast<uint8_t>((opcode >> 3) & 0x07u))) {
+            state->pc = msx_cpu_pop16(state, memory);
+            return 11;
+        }
+        return 5;
+    }
+
+    if ((opcode & 0xC7u) == 0xC2u) {
+        const uint16_t address = msx_cpu_fetch16(state, memory);
+        if (msx_cpu_condition(state, static_cast<uint8_t>((opcode >> 3) & 0x07u))) {
+            state->pc = address;
+        }
+        return 10;
+    }
+
+    if ((opcode & 0xC7u) == 0xC4u) {
+        const uint16_t address = msx_cpu_fetch16(state, memory);
+        if (msx_cpu_condition(state, static_cast<uint8_t>((opcode >> 3) & 0x07u))) {
+            msx_cpu_push16(state, memory, state->pc);
+            state->pc = address;
+            return 17;
+        }
+        return 10;
+    }
+
+    if ((opcode & 0xCFu) == 0xC1u) {
+        *msx_cpu_stack_reg16_ptr(state, static_cast<uint8_t>((opcode >> 4) & 0x03u)) = msx_cpu_pop16(state, memory);
+        return 10;
+    }
+
+    if ((opcode & 0xCFu) == 0xC5u) {
+        msx_cpu_push16(state, memory, *msx_cpu_stack_reg16_ptr(state, static_cast<uint8_t>((opcode >> 4) & 0x03u)));
+        return 11;
+    }
+
+    if ((opcode & 0xC7u) == 0xC7u) {
+        msx_cpu_push16(state, memory, state->pc);
+        state->pc = static_cast<uint16_t>(opcode & 0x38u);
+        return 11;
+    }
+
+    switch (opcode) {
+        case 0x00:
+            return 4;
+        case 0x02:
+            msx_cpu_mem_write8(memory, state->bc, msx_cpu_a(state));
+            return 7;
+        case 0x07:
+            msx_cpu_acc_rotate_left_carry(state);
+            return 4;
+        case 0x08:
+            msx_cpu_exchange16(&state->af, &state->af2);
+            return 4;
+        case 0x0A:
+            msx_cpu_set_a(state, msx_cpu_mem_read8(memory, state->bc));
+            return 7;
+        case 0x0F:
+            msx_cpu_acc_rotate_right_carry(state);
+            return 4;
+        case 0x10: {
+            const int8_t offset = msx_signed_offset(msx_cpu_fetch8(state, memory));
+            msx_set_hi(&state->bc, static_cast<uint8_t>(msx_hi(state->bc) - 1u));
+            if (msx_hi(state->bc) != 0) {
+                state->pc = static_cast<uint16_t>(state->pc + offset);
+                return 13;
+            }
+            return 8;
+        }
+        case 0x12:
+            msx_cpu_mem_write8(memory, state->de, msx_cpu_a(state));
+            return 7;
+        case 0x17:
+            msx_cpu_acc_rotate_left(state);
+            return 4;
+        case 0x18:
+            state->pc = static_cast<uint16_t>(state->pc + msx_signed_offset(msx_cpu_fetch8(state, memory)));
+            return 12;
+        case 0x1A:
+            msx_cpu_set_a(state, msx_cpu_mem_read8(memory, state->de));
+            return 7;
+        case 0x1F:
+            msx_cpu_acc_rotate_right(state);
+            return 4;
+        case 0x20:
+        case 0x28:
+        case 0x30:
+        case 0x38: {
+            const int8_t offset = msx_signed_offset(msx_cpu_fetch8(state, memory));
+            const uint8_t condition = static_cast<uint8_t>((opcode >> 3) & 0x03u);
+            if (msx_cpu_condition(state, condition)) {
+                state->pc = static_cast<uint16_t>(state->pc + offset);
+                return 12;
+            }
+            return 7;
+        }
+        case 0x22: {
+            const uint16_t address = msx_cpu_fetch16(state, memory);
+            msx_cpu_mem_write16(memory, address, state->hl);
+            return 16;
+        }
+        case 0x27:
+            msx_cpu_daa(state);
+            return 4;
+        case 0x2A: {
+            const uint16_t address = msx_cpu_fetch16(state, memory);
+            state->hl = msx_cpu_mem_read16(memory, address);
+            return 16;
+        }
+        case 0x2F:
+            msx_cpu_set_a(state, static_cast<uint8_t>(msx_cpu_a(state) ^ 0xFFu));
+            msx_cpu_set_f(state, static_cast<uint8_t>((msx_cpu_f(state) & (kFlagS | kFlagZ | kFlagPV | kFlagC)) |
+                                                      (msx_cpu_a(state) & (kFlagX | kFlagY)) |
+                                                      kFlagH | kFlagN));
+            return 4;
+        case 0x32: {
+            const uint16_t address = msx_cpu_fetch16(state, memory);
+            msx_cpu_mem_write8(memory, address, msx_cpu_a(state));
+            return 13;
+        }
+        case 0x37:
+            msx_cpu_set_f(state, static_cast<uint8_t>((msx_cpu_f(state) & (kFlagS | kFlagZ | kFlagPV)) |
+                                                      (msx_cpu_a(state) & (kFlagX | kFlagY)) |
+                                                      kFlagC));
+            return 4;
+        case 0x3A: {
+            const uint16_t address = msx_cpu_fetch16(state, memory);
+            msx_cpu_set_a(state, msx_cpu_mem_read8(memory, address));
+            return 13;
+        }
+        case 0x3F: {
+            const bool oldCarry = (msx_cpu_f(state) & kFlagC) != 0;
+            uint8_t flags = static_cast<uint8_t>((msx_cpu_f(state) & (kFlagS | kFlagZ | kFlagPV)) |
+                                                 (msx_cpu_a(state) & (kFlagX | kFlagY)));
+            if (oldCarry) {
+                flags |= kFlagH;
+            } else {
+                flags |= kFlagC;
+            }
+            msx_cpu_set_f(state, flags);
+            return 4;
+        }
+        case 0xC3:
+            state->pc = msx_cpu_fetch16(state, memory);
+            return 10;
+        case 0xC6:
+            msx_cpu_do_alu(state, 0, msx_cpu_fetch8(state, memory));
+            return 7;
+        case 0xC9:
+            state->pc = msx_cpu_pop16(state, memory);
+            return 10;
+        case 0xCB:
+            return msx_cpu_step_cb(state, memory);
+        case 0xCD: {
+            const uint16_t address = msx_cpu_fetch16(state, memory);
+            msx_cpu_push16(state, memory, state->pc);
+            state->pc = address;
+            return 17;
+        }
+        case 0xCE:
+            msx_cpu_do_alu(state, 1, msx_cpu_fetch8(state, memory));
+            return 7;
+        case 0xD3:
+            msx_memory_out(memory, msx_cpu_fetch8(state, memory), msx_cpu_a(state));
+            return 11;
+        case 0xD6:
+            msx_cpu_do_alu(state, 2, msx_cpu_fetch8(state, memory));
+            return 7;
+        case 0xD9:
+            msx_cpu_exchange16(&state->bc, &state->bc2);
+            msx_cpu_exchange16(&state->de, &state->de2);
+            msx_cpu_exchange16(&state->hl, &state->hl2);
+            return 4;
+        case 0xDB:
+            msx_cpu_set_a(state, msx_memory_in(memory, msx_cpu_fetch8(state, memory)));
+            msx_cpu_set_f(state, static_cast<uint8_t>((msx_cpu_f(state) & kFlagC) | msx_flags_szpxy(msx_cpu_a(state))));
+            return 11;
+        case 0xDE:
+            msx_cpu_do_alu(state, 3, msx_cpu_fetch8(state, memory));
+            return 7;
+        case 0xE3: {
+            const uint16_t memoryValue = msx_cpu_mem_read16(memory, state->sp);
+            msx_cpu_mem_write16(memory, state->sp, state->hl);
+            state->hl = memoryValue;
+            return 19;
+        }
+        case 0xE6:
+            msx_cpu_do_alu(state, 4, msx_cpu_fetch8(state, memory));
+            return 7;
+        case 0xE9:
+            state->pc = state->hl;
+            return 4;
+        case 0xEB:
+            msx_cpu_exchange16(&state->de, &state->hl);
+            return 4;
+        case 0xED:
+            return msx_cpu_step_ed(state, memory);
+        case 0xEE:
+            msx_cpu_do_alu(state, 5, msx_cpu_fetch8(state, memory));
+            return 7;
+        case 0xF3:
+            state->iff1 = false;
+            state->iff2 = false;
+            return 4;
+        case 0xF6:
+            msx_cpu_do_alu(state, 6, msx_cpu_fetch8(state, memory));
+            return 7;
+        case 0xF9:
+            state->sp = state->hl;
+            return 6;
+        case 0xFB:
+            state->iff1 = true;
+            state->iff2 = true;
+            return 4;
+        case 0xFE:
+            msx_cpu_do_alu(state, 7, msx_cpu_fetch8(state, memory));
+            return 7;
+        case 0xDD: return msx_cpu_step_xy(state, memory, &state->ix);
+        case 0xFD: return msx_cpu_step_xy(state, memory, &state->iy);
+        default:
+            msx_cpu_mark_unsupported(state, opcode);
+            return 0;
+    }
+}
+
+} // namespace
+
+void msx_cpu_init(MsxCpuState* state)
+{
+    if (!state) {
+        return;
+    }
+
+    std::memset(state, 0, sizeof(*state));
+    state->ix = 0xFFFFu;
+    state->iy = 0xFFFFu;
+    state->runState = MsxCpuRunState::Running;
+}
+
+void msx_cpu_reset(MsxCpuState* state, uint16_t resetPc, uint16_t resetSp)
+{
+    if (!state) {
+        return;
+    }
+
+    std::memset(state, 0, sizeof(*state));
+    state->pc = resetPc;
+    state->sp = resetSp;
+    state->ix = 0xFFFFu;
+    state->iy = 0xFFFFu;
+    state->af = 0x0040u;
+    state->runState = MsxCpuRunState::Running;
+}
+
+void msx_cpu_request_irq(MsxCpuState* state)
+{
+    if (!state) {
+        return;
+    }
+
+    state->irqPending = true;
+}
+
+int msx_cpu_run_cycles(MsxCpuState* state, MsxMemoryState* memory, int cycleBudget)
+{
+    if (!state || !memory || cycleBudget <= 0) {
+        return 0;
+    }
+
+    if (state->runState == MsxCpuRunState::Unsupported || state->runState == MsxCpuRunState::Faulted) {
+        return 0;
+    }
+
+    int usedCycles = 0;
+    while (usedCycles < cycleBudget) {
+        if (state->irqPending && state->iff1) {
+            const int irqCycles = msx_cpu_service_irq(state, memory);
+            usedCycles += irqCycles;
+            state->totalCycles += static_cast<uint32_t>(irqCycles);
+            if (memory->psg) {
+                msx_psg_run_cycles(memory->psg, static_cast<uint32_t>(irqCycles));
+            }
+            continue;
+        }
+
+        if (state->halted) {
+            state->runState = MsxCpuRunState::Halted;
+            const int burn = cycleBudget - usedCycles;
+            usedCycles += burn;
+            state->totalCycles += static_cast<uint32_t>(burn);
+            if (memory->psg) {
+                msx_psg_run_cycles(memory->psg, static_cast<uint32_t>(burn));
+            }
+            break;
+        }
+
+        state->runState = MsxCpuRunState::Running;
+        const int stepCycles = msx_cpu_step_opcode(state, memory);
+        if (stepCycles <= 0) {
+            break;
+        }
+
+        usedCycles += stepCycles;
+        state->totalCycles += static_cast<uint32_t>(stepCycles);
+        if (memory->psg) {
+            msx_psg_run_cycles(memory->psg, static_cast<uint32_t>(stepCycles));
+        }
+    }
+
+    return usedCycles;
+}
+
+const char* msx_cpu_run_state_label(MsxCpuRunState state)
+{
+    switch (state) {
+        case MsxCpuRunState::Running:
+            return "RUN";
+        case MsxCpuRunState::Halted:
+            return "HALT";
+        case MsxCpuRunState::Unsupported:
+            return "UNSUP";
+        case MsxCpuRunState::Faulted:
+        default:
+            return "FAULT";
+    }
+}
+
+
+
+
+
+
