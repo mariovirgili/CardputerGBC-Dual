@@ -17,18 +17,6 @@
 
 enum RomType {
     ROM_TYPE_UNKNOWN = 0,
-    ROM_TYPE_NES,
-    ROM_TYPE_SMS,
-    ROM_TYPE_GAMEGEAR,
-    ROM_TYPE_NGP,
-    ROM_TYPE_GENESIS,
-    ROM_TYPE_WS,
-    ROM_TYPE_PCE,
-    ROM_TYPE_GB,
-    ROM_TYPE_LYNX,
-    ROM_TYPE_SNES,
-    ROM_TYPE_A2600,
-    ROM_TYPE_A7800,
     ROM_TYPE_MSX,
     ROM_TYPE_MSX_DISK
 };
@@ -44,7 +32,7 @@ static inline bool hasRomExt(const std::string& path) {
     for (auto& ch : ext)
         ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
 
-    return (ext == "a26" || ext == "a78" || ext == "rom" || ext == "dsk");
+    return (ext == "rom" || ext == "dsk");
 }
 
 static inline RomType getRomType(const std::string& path) {
@@ -59,8 +47,6 @@ static inline RomType getRomType(const std::string& path) {
     for (auto& c : ext)
         c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
 
-    if (ext == "a26") return ROM_TYPE_A2600;
-    if (ext == "a78") return ROM_TYPE_A7800;
     if (ext == "rom") return ROM_TYPE_MSX;
     if (ext == "dsk") return ROM_TYPE_MSX_DISK;
 
@@ -108,7 +94,7 @@ static inline int findPreferredRomIndex(
 
 static inline std::string getRomPath(SdService& sdService, CardputerView& display, CardputerInput& input, const std::string& initialFolder = "/", bool skipWelcome = false) {
     VerticalSelector verticalSelector(display, input);
-    std::vector<std::string> supportedExts = {".a26", ".a78", ".rom", ".dsk"};
+    std::vector<std::string> supportedExts = {".rom", ".dsk"};
     static constexpr size_t kRomBrowserMaxElements = 1024;
     static constexpr int kRomBrowserMenuResult = -3;
     auto releaseElementNames = [](std::vector<std::string>& names) {

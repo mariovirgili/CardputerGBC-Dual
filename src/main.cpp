@@ -10,10 +10,6 @@
 #include <stdio.h>
 #include <stdint.h>
 #include <string.h>
-#include "atari2600/run_a2600.h"
-#include "atari2600/a2600_display.h"
-#include "atari7800/run_a7800.h"
-#include "atari7800/a7800_video.h"
 #include "msx/run_msx.h"
 #include "msx/msx_config.h"
 #include "last_game.h"
@@ -27,23 +23,6 @@
 #include "cardputer/Welcome.h"
 #include "cardputer/WelcomeExternalImage.h"
 
-static void showExternalControlsPreview(RomType romType, const std::string& romName)
-{
-  switch (romType) {
-    case ROM_TYPE_A2600:
-      a2600_display_show_external_info(romName.c_str());
-      break;
-    case ROM_TYPE_A7800:
-      a7800_video_show_external_info(romName.c_str());
-      break;
-    default:
-      return;
-  }
-
-  emu_set_aux_screen_locked(true);
-}
-
-
 static void showExternalRomSelectorTft()
 {
   emu_set_aux_screen_locked(false);
@@ -53,8 +32,6 @@ static void showExternalRomSelectorTft()
   };
 
   static const ExternalRomBadge badges[] = {
-    {"A26",  LYNX_COLOR},
-    {"A78",  LYNX_COLOR},
     {"MSX",  PRIMARY_COLOR},
     {"MSX2", PRIMARY_COLOR},
   };
@@ -69,7 +46,7 @@ static void showExternalRomSelectorTft()
   extTft.setTextColor(PRIMARY_COLOR, TFT_BLACK);
   extTft.drawCentreString("Supported systems", 160, 52, 2);
 
-  const int cols = 4;
+  const int cols = 2;
   const int badgeW = 68;
   const int badgeH = 30;
   const int gapX = 8;
@@ -167,23 +144,6 @@ static StartupBootAction getStartupBootAction(CardputerView& display)
     }
 
     delay(10);
-  }
-}
-
-static bool getProfileForRomType(RomType romType, share::EmuProfile& outProfile) {
-  switch (romType) {
-    case ROM_TYPE_A2600:
-      outProfile = share::EmuProfile::A2600;
-      return true;
-    case ROM_TYPE_A7800:
-      outProfile = share::EmuProfile::A7800;
-      return true;
-    case ROM_TYPE_MSX:
-    case ROM_TYPE_MSX_DISK:
-      outProfile = share::EmuProfile::MSX;
-      return true;
-    default:
-      return false;
   }
 }
 
@@ -435,12 +395,8 @@ void setup() {
 
   const RomType ext = getRomType(romPath);
   if (!pendingLaunch.valid() && selectedFromBrowser && ext != ROM_TYPE_UNKNOWN) {
-    int machineMode = -1;
-    if (ext == ROM_TYPE_MSX || ext == ROM_TYPE_MSX_DISK) {
-      selectMsxLaunchSystem(display, input, ext);
-      machineMode = static_cast<int>(msx_config_get_machine_mode());
-    }
-    restartForPendingLaunch(display, sd, romPath, machineMode);
+    selectMsxLaunchSystem(display, input, ext);
+    restartForPendingLaunch(display, sd, romPath, static_cast<int>(msx_config_get_machine_mode()));
   }
 
   printf("Selected ROM: %s\n", romPath.c_str());
@@ -476,8 +432,8 @@ void setup() {
   vfs_xip_register();
 
   // Check the extension to choose the emulator
-  share::EmuProfile emuProfile = share::EmuProfile::A2600;
-  const bool hasProfile = getProfileForRomType(ext, emuProfile);
+  const share::EmuProfile emuProfile = share::EmuProfile::MSX;
+  const bool hasProfile = (ext == ROM_TYPE_MSX || ext == ROM_TYPE_MSX_DISK);
   if (hasProfile) {
     share::emuControlsLoad(sd, emuProfile);
   }
@@ -554,12 +510,8 @@ void setup() {
       g_emu_color_depth = EMU_COLOR_16BIT;
     }
 
-    display.initialize();  // re-init display after selectors
-    if (chosen == EMU_DISPLAY_INTERNAL) {
-      showExternalControlsPreview(ext, romName);
-    } else {
-      emu_set_aux_screen_locked(false);
-    }
+    display.initialize();
+    emu_set_aux_screen_locked(false);
   } else {
     g_emu_display_target = EMU_DISPLAY_INTERNAL;
     g_emu_color_depth = EMU_COLOR_16BIT;
@@ -581,9 +533,6 @@ void setup() {
     if (key == KEY_ESC_LONG_CUSTOM) {
       share::emuControlsEdit(sd, emuProfile, display, input);
       input.flushInput(150);
-      if (g_emu_display_target == EMU_DISPLAY_INTERNAL) {
-        showExternalControlsPreview(ext, romName);
-      }
       display.topBar("- + SOUND [ ] BRIGHT", false, false);
       display.showControlBindings(
         share::emuControlActionLabels(emuProfile),
@@ -618,26 +567,13 @@ void setup() {
       saveLastGameToNvs(romPath);
   }
 
-  const bool emulatorNeedsSdAtRuntime = (ext == ROM_TYPE_MSX || ext == ROM_TYPE_MSX_DISK);
-  if (!emulatorNeedsSdAtRuntime) {
-    sd.close();
-  }
-
   printf("HEAP BEFORE EMU: %u bytes\n", esp_get_free_heap_size());
 
   // Initialize I2C M5Stack JoyV2 if any
   share::detectI2cPad();
   
   // Run the emulator
-  if (ext == ROM_TYPE_A2600) {
-      // Atari 2600
-      run_a2600(get_rom_ptr(), get_rom_size(), romName.c_str());
-  }
-  else if (ext == ROM_TYPE_A7800) {
-      // Atari 7800
-      run_a7800(get_rom_ptr(), get_rom_size(), romName.c_str());
-  }
-  else if (ext == ROM_TYPE_MSX) {
+  if (ext == ROM_TYPE_MSX) {
       // MSX cartridge ROM
       run_msx(get_rom_ptr(), get_rom_size(), romName.c_str());
   }

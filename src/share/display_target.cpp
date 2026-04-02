@@ -11,26 +11,21 @@ emu_color_depth_t g_emu_color_depth = EMU_COLOR_16BIT;
 bool g_emu_aux_screen_locked = false;
 
 // ROM type values from select_rom.h RomType enum
-// UNKNOWN=0, NES=1, SMS=2, GG=3, NGP=4, GENESIS=5, WS=6, PCE=7, GB=8, LYNX=9, SNES=10, A2600=11, A7800=12
-static constexpr int kRomA2600 = 11;
-static constexpr int kRomA7800 = 12;
+// UNKNOWN=0, MSX=1, MSX_DISK=2
+static constexpr int kRomMsx = 1;
+static constexpr int kRomMsxDisk = 2;
 
 bool emu_has_external_display_support(int romType)
 {
-    switch (romType) {
-        case kRomA2600:
-        case kRomA7800:
-            return true;
-        default:
-            return false;
-    }
+    (void)romType;
+    return false;
 }
 
 static const char* romTypeToKey(int romType)
 {
     switch (romType) {
-        case kRomA2600: return "a26";
-        case kRomA7800: return "a78";
+        case kRomMsx: return "msx";
+        case kRomMsxDisk: return "dsk";
         default:        return "unk";
     }
 }
@@ -56,11 +51,8 @@ void emu_save_display_target(int romType, emu_display_target_t target)
 
 emu_color_depth_t emu_recommended_color_depth(int romType)
 {
-    switch (romType) {
-        case kRomA2600: return EMU_COLOR_12BIT;
-        case kRomA7800: return EMU_COLOR_12BIT;
-        default:        return EMU_COLOR_16BIT;
-    }
+    (void)romType;
+    return EMU_COLOR_16BIT;
 }
 
 static constexpr const char* kNvsColorNs = "color_dep";

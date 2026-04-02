@@ -11,9 +11,7 @@ class CardputerInput;
 namespace share {
 
 enum class EmuProfile : uint8_t {
-    A2600 = 0,
-    A7800,
-    MSX,
+    MSX = 0,
     Count
 };
 

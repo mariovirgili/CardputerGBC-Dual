@@ -1,7 +1,5 @@
 #include "emu_controls.h"
 
-#include "../atari2600/a2600_display.h"
-#include "../atari7800/a7800_config.h"
 #include "../cardputer/CardputerInput.h"
 #include "../cardputer/CardputerView.h"
 #include "../cardputer/SdService.h"
@@ -33,28 +31,6 @@ struct ProfileDef {
     size_t entryCount;
 };
 
-constexpr ControlEntry kA2600Entries[] = {
-    {EmuAction::Up, "up", "UP", 'e'},
-    {EmuAction::Down, "down", "DOWN", 's'},
-    {EmuAction::Left, "left", "LEFT", 'a'},
-    {EmuAction::Right, "right", "RIGHT", 'd'},
-    {EmuAction::A, "fire", "FIRE", 'l'},
-    {EmuAction::Select, "select", "SELECT", '2'},
-    {EmuAction::Start, "reset", "RESET", '1'},
-};
-
-constexpr ControlEntry kA7800Entries[] = {
-    {EmuAction::Up, "up", "UP", 'e'},
-    {EmuAction::Down, "down", "DOWN", 's'},
-    {EmuAction::Left, "left", "LEFT", 'a'},
-    {EmuAction::Right, "right", "RIGHT", 'd'},
-    {EmuAction::A, "fire1", "FIRE 1", 'l'},
-    {EmuAction::B, "fire2", "FIRE 2", 'k'},
-    {EmuAction::Select, "select", "SELECT", '2'},
-    {EmuAction::Start, "reset", "RESET", '1'},
-    {EmuAction::Pause, "pause", "PAUSE", 'o'},
-};
-
 constexpr ControlEntry kMsxEntries[] = {
     {EmuAction::Up, "up", "UP", 'e'},
     {EmuAction::Down, "down", "DOWN", 's'},
@@ -67,8 +43,6 @@ constexpr ControlEntry kMsxEntries[] = {
 };
 
 constexpr ProfileDef kProfiles[] = {
-    {"A2600", "A2600.opt", kA2600Entries, sizeof(kA2600Entries) / sizeof(kA2600Entries[0])},
-    {"A7800", "A7800.opt", kA7800Entries, sizeof(kA7800Entries) / sizeof(kA7800Entries[0])},
     {"MSX", "MSX.opt", kMsxEntries, sizeof(kMsxEntries) / sizeof(kMsxEntries[0])},
 };
 
@@ -126,12 +100,10 @@ const ControlEntry* findEntry(EmuProfile profile, EmuAction action) {
 
 const ControlEntry* findEntryById(EmuProfile profile, const std::string& id) {
     std::string resolvedId = id;
-    if (profile == EmuProfile::MSX) {
-        if (resolvedId == "ret") {
-            resolvedId = "start";
-        } else if (resolvedId == "space") {
-            resolvedId = "select";
-        }
+    if (resolvedId == "ret") {
+        resolvedId = "start";
+    } else if (resolvedId == "space") {
+        resolvedId = "select";
     }
 
     const auto& def = getProfileDef(profile);
@@ -387,107 +359,14 @@ bool emuControlsEdit(SdService& sd, EmuProfile profile, CardputerView& display, 
     ensureInitialized();
 
     const auto& def = getProfileDef(profile);
-    const auto original = s_bindings[static_cast<size_t>(profile)];
-    const bool hasInternalViewOption =
-        profile == EmuProfile::A2600 ||
-        profile == EmuProfile::A7800 ||
-        profile == EmuProfile::MSX;
-    const bool hasMachineOption = profile == EmuProfile::MSX;
-
-    const int wideInternalView = 1;
+    const auto originalBindings = s_bindings[static_cast<size_t>(profile)];
     const int pixelInternalView = 0;
+    const int wideInternalView = 1;
 
-    auto loadInternalView = [&]() -> int {
-        switch (profile) {
-            case EmuProfile::A2600:
-                return static_cast<int>(a2600_display_load_internal_view_mode());
-            case EmuProfile::A7800:
-                return static_cast<int>(a7800_config_load_internal_view_mode());
-            case EmuProfile::MSX:
-                return static_cast<int>(msx_config_load_internal_view_mode());
-            default:
-                return wideInternalView;
-        }
-    };
-
-    auto applyInternalView = [&](int value, bool persist) {
-        switch (profile) {
-            case EmuProfile::A2600:
-                a2600_display_set_internal_view_mode(
-                    value == pixelInternalView
-                        ? A2600InternalViewMode::PixelPerfect
-                        : A2600InternalViewMode::Wide,
-                    persist
-                );
-                break;
-            case EmuProfile::A7800:
-                a7800_config_set_internal_view_mode(
-                    value == pixelInternalView
-                        ? A7800InternalViewMode::PixelPerfect
-                        : A7800InternalViewMode::Wide,
-                    persist
-                );
-                break;
-            case EmuProfile::MSX:
-                msx_config_set_internal_view_mode(
-                    value == pixelInternalView
-                        ? MsxInternalViewMode::PixelPerfect
-                        : MsxInternalViewMode::Wide,
-                    persist
-                );
-                break;
-            default:
-                break;
-        }
-    };
-
-    auto internalViewLabel = [&](int value) -> const char* {
-        switch (profile) {
-            case EmuProfile::A2600:
-                return a2600_display_internal_view_mode_label(
-                    value == pixelInternalView
-                        ? A2600InternalViewMode::PixelPerfect
-                        : A2600InternalViewMode::Wide
-                );
-            case EmuProfile::A7800:
-                return a7800_config_internal_view_mode_label(
-                    value == pixelInternalView
-                        ? A7800InternalViewMode::PixelPerfect
-                        : A7800InternalViewMode::Wide
-                );
-            case EmuProfile::MSX:
-                return msx_config_internal_view_mode_label(
-                    value == pixelInternalView
-                        ? MsxInternalViewMode::PixelPerfect
-                        : MsxInternalViewMode::Wide
-                );
-            default:
-                return "WIDE";
-        }
-    };
-
-    const int autoMachineMode = static_cast<int>(MsxMachineMode::Auto);
-    int originalMachineMode = autoMachineMode;
-    if (hasMachineOption) {
-        originalMachineMode = static_cast<int>(msx_config_load_machine_mode());
-    }
-    int pendingMachineMode = originalMachineMode;
-
-    auto machineModeLabel = [&](int value) -> const char* {
-        return msx_config_machine_mode_label(static_cast<MsxMachineMode>(value));
-    };
-
-    auto applyMachineMode = [&](int value, bool persist) {
-        if (hasMachineOption) {
-            msx_config_set_machine_mode(static_cast<MsxMachineMode>(value), persist);
-        }
-    };
-
-    int originalInternalView = wideInternalView;
-    if (hasInternalViewOption) {
-        originalInternalView = loadInternalView();
-    }
+    const int originalInternalView = static_cast<int>(msx_config_load_internal_view_mode());
     int pendingInternalView = originalInternalView;
+    int pendingMachineMode = static_cast<int>(msx_config_load_machine_mode());
+    const int originalMachineMode = pendingMachineMode;
     int selectedIndex = 0;
 
     VerticalSelector selector(display, input);
@@ -496,19 +375,18 @@ bool emuControlsEdit(SdService& sd, EmuProfile profile, CardputerView& display, 
         std::vector<std::string> values = emuControlKeyLabels(profile);
         std::vector<std::string> labels = emuControlActionLabels(profile);
 
-        if (hasInternalViewOption) {
-            labels.emplace_back("INT VIEW");
-            values.emplace_back(internalViewLabel(pendingInternalView));
-        }
+        labels.emplace_back("INT VIEW");
+        values.emplace_back(msx_config_internal_view_mode_label(
+            pendingInternalView == pixelInternalView
+                ? MsxInternalViewMode::PixelPerfect
+                : MsxInternalViewMode::Wide));
 
-        if (hasMachineOption) {
-            labels.emplace_back("MACHINE");
-            values.emplace_back(machineModeLabel(pendingMachineMode));
-        }
+        labels.emplace_back("MACHINE");
+        values.emplace_back(msx_config_machine_mode_label(static_cast<MsxMachineMode>(pendingMachineMode)));
 
         int nextIndex = static_cast<int>(def.entryCount);
-        const int internalViewIndex = hasInternalViewOption ? nextIndex++ : -1;
-        const int machineIndex = hasMachineOption ? nextIndex++ : -1;
+        const int internalViewIndex = nextIndex++;
+        const int machineIndex = nextIndex++;
         const int saveIndex = nextIndex++;
         const int defaultsIndex = nextIndex++;
         const int cancelIndex = nextIndex++;
@@ -520,152 +398,105 @@ bool emuControlsEdit(SdService& sd, EmuProfile profile, CardputerView& display, 
         values.emplace_back("RESTORE");
 
         labels.emplace_back("CANCEL");
-        values.emplace_back("DISCARD");
+        values.emplace_back("BACK");
 
-        const int index = selector.select(std::string(emuProfileName(profile)) + " CONFIG",
-                                          values,
-                                          false,
-                                          false,
-                                          labels,
-                                          {},
-                                          false,
-                                          true,
-                                          false,
-                                          selectedIndex);
+        const int selection = selector.select(
+            emuProfileName(profile),
+            labels,
+            false,
+            false,
+            {},
+            values,
+            false,
+            true,
+            true,
+            selectedIndex
+        );
 
-        if (index < 0 || index == cancelIndex) {
-            s_bindings[static_cast<size_t>(profile)] = original;
-            if (hasInternalViewOption) {
-                applyInternalView(originalInternalView, false);
-            }
-            if (hasMachineOption) {
-                applyMachineMode(originalMachineMode, false);
-            }
+        if (selection < 0) {
+            s_bindings[static_cast<size_t>(profile)] = originalBindings;
+            msx_config_set_internal_view_mode(static_cast<MsxInternalViewMode>(originalInternalView), false);
+            msx_config_set_machine_mode(static_cast<MsxMachineMode>(originalMachineMode), false);
             return false;
         }
 
-        selectedIndex = index;
+        selectedIndex = selection;
 
-        if (index == saveIndex) {
-            if (emuControlsSave(sd, profile)) {
-                if (hasInternalViewOption) {
-                    applyInternalView(pendingInternalView, true);
+        if (selection < static_cast<int>(def.entryCount)) {
+            const ControlEntry& entry = def.entries[static_cast<size_t>(selection)];
+            display.topBar(capturePrompt(entry.label), false, false);
+            display.subMessage("Press a key to bind", "ESC to cancel", 0);
+
+            while (true) {
+                const char key = input.handler();
+                if (key == KEY_NONE) {
+                    delay(1);
+                    continue;
                 }
-                if (hasMachineOption) {
-                    applyMachineMode(pendingMachineMode, true);
+
+                if (key == KEY_ESC_CUSTOM || key == KEY_ESC_LONG_CUSTOM) {
+                    break;
                 }
-                display.subMessage(std::string(emuProfileFileName(profile)) + " saved", 700);
-                return true;
+
+                if (isEditableKey(key)) {
+                    assignKey(profile, entry.action, key);
+                    break;
+                }
             }
 
-            display.subMessage("Save failed", 1200);
+            input.flushInput(120);
             continue;
         }
 
-        if (index == defaultsIndex) {
+        if (selection == internalViewIndex) {
+            pendingInternalView = pendingInternalView == pixelInternalView ? wideInternalView : pixelInternalView;
+            msx_config_set_internal_view_mode(
+                pendingInternalView == pixelInternalView
+                    ? MsxInternalViewMode::PixelPerfect
+                    : MsxInternalViewMode::Wide,
+                false
+            );
+            continue;
+        }
+
+        if (selection == machineIndex) {
+            pendingMachineMode = (pendingMachineMode + 1) % 3;
+            msx_config_set_machine_mode(static_cast<MsxMachineMode>(pendingMachineMode), false);
+            continue;
+        }
+
+        if (selection == defaultsIndex) {
             emuControlsResetDefaults(profile);
-            if (hasInternalViewOption) {
-                pendingInternalView = wideInternalView;
-                applyInternalView(pendingInternalView, false);
-            }
-            if (hasMachineOption) {
-                pendingMachineMode = autoMachineMode;
-                applyMachineMode(pendingMachineMode, false);
-            }
-            display.subMessage("Defaults restored", 700);
+            pendingInternalView = wideInternalView;
+            pendingMachineMode = static_cast<int>(MsxMachineMode::Auto);
+            msx_config_set_internal_view_mode(MsxInternalViewMode::Wide, false);
+            msx_config_set_machine_mode(MsxMachineMode::Auto, false);
             continue;
         }
 
-        if (index == internalViewIndex) {
-            VerticalSelector viewSelector(display, input);
-            const std::vector<std::string> viewOptions = {"Wide", "Pixel perfect"};
-            const int initialViewIndex =
-                (pendingInternalView == wideInternalView) ? 0 : 1;
-
-            const int selectedView = viewSelector.select("Internal view",
-                                                         viewOptions,
-                                                         false,
-                                                         false,
-                                                         {},
-                                                         {},
-                                                         false,
-                                                         true,
-                                                         true,
-                                                         initialViewIndex);
-
-            if (selectedView >= 0) {
-                pendingInternalView =
-                    (selectedView == 1) ? pixelInternalView : wideInternalView;
-                applyInternalView(pendingInternalView, false);
-                display.subMessage(std::string("Internal view -> ") +
-                                   internalViewLabel(pendingInternalView), 700);
-            }
-            continue;
+        if (selection == cancelIndex) {
+            s_bindings[static_cast<size_t>(profile)] = originalBindings;
+            msx_config_set_internal_view_mode(static_cast<MsxInternalViewMode>(originalInternalView), false);
+            msx_config_set_machine_mode(static_cast<MsxMachineMode>(originalMachineMode), false);
+            return false;
         }
 
-        if (index == machineIndex) {
-            VerticalSelector machineSelector(display, input);
-            const std::vector<std::string> machineOptions = {"Auto", "MSX1", "MSX2"};
-            int initialMachineIndex = 0;
-            if (pendingMachineMode == static_cast<int>(MsxMachineMode::MSX1)) {
-                initialMachineIndex = 1;
-            } else if (pendingMachineMode == static_cast<int>(MsxMachineMode::MSX2)) {
-                initialMachineIndex = 2;
-            }
+        if (selection == saveIndex) {
+            const bool saved = emuControlsSave(sd, profile);
+            msx_config_set_internal_view_mode(
+                pendingInternalView == pixelInternalView
+                    ? MsxInternalViewMode::PixelPerfect
+                    : MsxInternalViewMode::Wide,
+                true
+            );
+            msx_config_set_machine_mode(static_cast<MsxMachineMode>(pendingMachineMode), true);
 
-            const int selectedMachine = machineSelector.select("Machine mode",
-                                                               machineOptions,
-                                                               false,
-                                                               false,
-                                                               {},
-                                                               {},
-                                                               false,
-                                                               true,
-                                                               true,
-                                                               initialMachineIndex);
-
-            if (selectedMachine >= 0) {
-                if (selectedMachine == 1) {
-                    pendingMachineMode = static_cast<int>(MsxMachineMode::MSX1);
-                } else if (selectedMachine == 2) {
-                    pendingMachineMode = static_cast<int>(MsxMachineMode::MSX2);
-                } else {
-                    pendingMachineMode = autoMachineMode;
-                }
-                applyMachineMode(pendingMachineMode, false);
-                display.subMessage(std::string("Machine -> ") + machineModeLabel(pendingMachineMode), 700);
-            }
-            continue;
-        }
-
-        const ControlEntry& entry = def.entries[index];
-        display.topBar(capturePrompt(entry.label), false, false);
-        display.subMessage("Press new key", 700);
-        display.subMessage("GO cancels", 0);
-
-        while (true) {
-            const char key = input.handler();
-            if (key == KEY_NONE) {
-                delay(1);
-                continue;
-            }
-
-            if (key == KEY_GO_CUSTOM || key == KEY_ESC_CUSTOM || key == KEY_ESC_LONG_CUSTOM) {
-                break;
-            }
-
-            if (!isEditableKey(key)) {
-                display.subMessage("Key not allowed", 900);
-                continue;
-            }
-
-            assignKey(profile, entry.action, key);
-            display.subMessage(std::string(entry.label) + " -> " + keyLabel(key), 700);
-            break;
+            display.topBar(saved ? "CONFIG SAVED" : "SAVE FAILED", false, false);
+            display.subMessage(saved ? "MSX settings updated" : "Could not write config", 700);
+            input.flushInput(120);
+            return saved;
         }
     }
 }
 
 } // namespace share
-
-
