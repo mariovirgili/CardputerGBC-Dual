@@ -8,8 +8,15 @@
 #include "msx_disk.h"
 #include "msx_keyboard.h"
 
+struct MsxCpuState;
 struct MsxPsgState;
 struct MsxVdpState;
+
+// Callback invoked when the CPU executes the ED FE opcode (BIOS software trap).
+// patchAddress is the address of the ED instruction (= the patched DISK ROM entry point).
+typedef void (*MsxDiskPatchFn)(struct MsxCpuState* cpu,
+                               struct MsxMemoryState* memory,
+                               uint16_t patchAddress);
 
 struct MsxMemoryState {
     MsxMachineMode machineMode;
@@ -19,6 +26,7 @@ struct MsxMemoryState {
     MsxVdpState* vdp;
     MsxPsgState* psg;
     MsxDiskState* disk;
+    MsxDiskPatchFn diskPatch;
     const uint8_t* diskRom;
     size_t diskRomSize;
     uint8_t* ramBanks[16];

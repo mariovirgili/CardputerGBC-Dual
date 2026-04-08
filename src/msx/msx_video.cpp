@@ -237,7 +237,7 @@ void msx_video_draw_crop_frame(const MsxDisplayFrame* frame, const MsxVideoPlan&
                 + static_cast<size_t>(plan.srcX0);
             uint16_t* dst = s_lineBuf + static_cast<size_t>(row) * plan.dstW;
             for (int x = 0; x < plan.dstW; ++x) {
-                dst[x] = palette[src[x] & 0x0Fu];
+                dst[x] = palette[src[x]];
             }
         }
         M5Cardputer.Display.pushPixels(s_lineBuf, plan.dstW * batch);
@@ -259,7 +259,7 @@ void msx_video_draw_scaled_frame(const MsxDisplayFrame* frame, const MsxVideoPla
             const uint8_t* src = frame->indexed8 + static_cast<size_t>(s_ymap[y + row]) * frame->pitchBytes;
             uint16_t* dst = s_lineBuf + static_cast<size_t>(row) * plan.dstW;
             for (int x = 0; x < plan.dstW; ++x) {
-                dst[x] = palette[src[s_xmap[x]] & 0x0Fu];
+                dst[x] = palette[src[s_xmap[x]]];
             }
         }
         M5Cardputer.Display.pushPixels(s_lineBuf, plan.dstW * batch);

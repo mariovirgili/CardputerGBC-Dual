@@ -14,7 +14,36 @@ enum class MsxVdpMode : uint8_t {
     Multicolor,
     Graphics3,
     Bitmap4,
+    Bitmap6,
+    Bitmap7,
+    Bitmap8,
+    Text80,
     Unsupported,
+};
+
+enum class MsxVdpTransferCommand : uint8_t {
+    None = 0,
+    Lmcm,
+    Lmmc,
+    Hmmc,
+};
+
+struct MsxVdpCommandState {
+    MsxVdpTransferCommand transfer;
+    uint8_t screenMode;
+    uint8_t logicOp;
+    uint16_t sx;
+    uint16_t sy;
+    uint16_t dx;
+    uint16_t dy;
+    uint16_t nx;
+    uint16_t ny;
+    uint16_t asx;
+    uint16_t adx;
+    uint16_t anx;
+    uint16_t mx;
+    int16_t tx;
+    int16_t ty;
 };
 
 struct MsxVdpState {
@@ -29,6 +58,7 @@ struct MsxVdpState {
     uint8_t readBuffer;
     uint8_t paletteRaw[16][2];
     uint16_t palette565[16];
+    uint16_t screen8Palette565[256];
     uint32_t address;
     uint8_t latchedControl;
     uint8_t paletteLatch;
@@ -40,6 +70,7 @@ struct MsxVdpState {
     unsigned activeWidth;
     unsigned activeHeight;
     MsxVdpMode mode;
+    MsxVdpCommandState command;
 };
 
 bool msx_vdp_init(MsxVdpState* state, MsxMachineMode machineMode);

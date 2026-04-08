@@ -488,6 +488,11 @@ void msx_cpu_acc_rotate_right(MsxCpuState* state)
     msx_cpu_set_f(state, flags);
 }
 
+void msx_cpu_set_in_flags(MsxCpuState* state, uint8_t value)
+{
+    msx_cpu_set_f(state, static_cast<uint8_t>((msx_cpu_f(state) & kFlagC) | msx_flags_szpxy(value)));
+}
+
 void msx_cpu_mark_unsupported(MsxCpuState* state, uint8_t opcode)
 {
     state->unsupportedOpcode = opcode;
@@ -564,8 +569,9 @@ uint8_t msx_cpu_cb_rotate(MsxCpuState* state, uint8_t operation, uint8_t value)
             if (value & 0x01u) flags |= kFlagC;
             break;
         case 6:
-            result = static_cast<uint8_t>((value >> 1) | 0x80u);
-            if (value & 0x01u) flags |= kFlagC;
+            // SLL / SL1 (undocumented): shift left, force bit 0 = 1, carry ← old bit 7.
+            result = static_cast<uint8_t>((value << 1) | 0x01u);
+            if (value & 0x80u) flags |= kFlagC;
             break;
         default:
             result = static_cast<uint8_t>(value >> 1);
@@ -637,12 +643,16 @@ int msx_cpu_step_xycb(MsxCpuState* state, MsxMemoryState* memory, const uint16_t
     const uint8_t  opcode = msx_cpu_fetch8(state, memory);
     const uint8_t  group  = static_cast<uint8_t>(opcode >> 6);
     const uint8_t  y      = static_cast<uint8_t>((opcode >> 3) & 0x07u);
+    const uint8_t  z      = static_cast<uint8_t>(opcode & 0x07u);
     const uint8_t  value  = msx_cpu_mem_read8(memory, ea);
 
     if (group == 0u) {
         // Rotate / shift on (IX+d)
         const uint8_t result = msx_cpu_cb_rotate(state, y, value);
         msx_cpu_mem_write8(memory, ea, result);
+        if (z != 6u) {
+            msx_cpu_set_reg8(state, memory, z, result);
+        }
         return 23;
     }
 
@@ -652,7 +662,7 @@ int msx_cpu_step_xycb(MsxCpuState* state, MsxMemoryState* memory, const uint16_t
         if ((value & static_cast<uint8_t>(1u << y)) == 0u) {
             flags |= static_cast<uint8_t>(kFlagZ | kFlagPV);
         }
-        if (y == 7u && (value & 0x80u) != 0u) {
+        if (value & 0x80u) {
             flags |= kFlagS;
         }
         msx_cpu_set_f(state, flags);
@@ -664,6 +674,9 @@ int msx_cpu_step_xycb(MsxCpuState* state, MsxMemoryState* memory, const uint16_t
         ? static_cast<uint8_t>(value & ~static_cast<uint8_t>(1u << y))
         : static_cast<uint8_t>(value |  static_cast<uint8_t>(1u << y));
     msx_cpu_mem_write8(memory, ea, result);
+    if (z != 6u) {
+        msx_cpu_set_reg8(state, memory, z, result);
+    }
     return 23;
 }
 
@@ -838,7 +851,8 @@ int msx_cpu_step_cb(MsxCpuState* state, MsxMemoryState* memory)
         if ((value & static_cast<uint8_t>(1u << y)) == 0) {
             flags |= static_cast<uint8_t>(kFlagZ | kFlagPV);
         }
-        if (y == 7 && (value & 0x80u) != 0) {
+        // S reflects bit 7 of the operand regardless of which bit is being tested.
+        if (value & 0x80u) {
             flags |= kFlagS;
         }
         flags |= static_cast<uint8_t>(value & (kFlagX | kFlagY));
@@ -949,7 +963,7 @@ int msx_cpu_step_ed(MsxCpuState* state, MsxMemoryState* memory)
         case 0x78: {
             const uint8_t value = msx_memory_in(memory, msx_lo(state->bc));
             msx_cpu_set_reg8(state, memory, static_cast<uint8_t>((opcode >> 3) & 0x07u), value);
-            msx_cpu_set_f(state, static_cast<uint8_t>((msx_cpu_f(state) & kFlagC) | msx_flags_szpxy(value)));
+            msx_cpu_set_in_flags(state, value);
             return 12;
         }
         case 0x41:
@@ -1003,6 +1017,12 @@ int msx_cpu_step_ed(MsxCpuState* state, MsxMemoryState* memory)
             return 8;
         case 0x45:
         case 0x4D:
+        case 0x55:
+        case 0x5D:
+        case 0x65:
+        case 0x6D:
+        case 0x75:
+        case 0x7D:
             state->pc = msx_cpu_pop16(state, memory);
             state->iff1 = state->iff2;
             return 14;
@@ -1046,6 +1066,17 @@ int msx_cpu_step_ed(MsxCpuState* state, MsxMemoryState* memory)
             msx_cpu_set_f(state, flags);
             return 9;
         }
+        case 0x70: {
+            const uint8_t value = msx_memory_in(memory, msx_lo(state->bc));
+            msx_cpu_set_in_flags(state, value);
+            return 12;
+        }
+        case 0x71:
+            msx_memory_out(memory, msx_lo(state->bc), 0x00u);
+            return 12;
+        case 0x77:
+        case 0x7F:
+            return 8;
         case 0xA0:
             msx_cpu_block_ldi(state, memory, 1);
             return 16;
@@ -1142,9 +1173,16 @@ int msx_cpu_step_ed(MsxCpuState* state, MsxMemoryState* memory)
             msx_cpu_set_f(state, static_cast<uint8_t>((msx_cpu_f(state) & kFlagC) | msx_flags_szpxy(msx_cpu_a(state))));
             return 18;
         }
+        case 0xFE:
+            // BIOS software trap: ED FE is written by msx_disk_apply_rom_patches()
+            // at the DISK ROM entry points (PHYDIO, DSKCHG, GETDPB, DSKFMT, DRVOFF).
+            if (memory->diskPatch) {
+                memory->diskPatch(state, memory, state->lastPc);
+            }
+            return 8;
         default:
-            msx_cpu_mark_unsupported(state, opcode);
-            return 0;
+            // Unassigned ED-prefixed opcodes behave as NOPs on the Z80.
+            return 8;
     }
 }
 
@@ -1394,8 +1432,8 @@ int msx_cpu_step_opcode(MsxCpuState* state, MsxMemoryState* memory)
             msx_cpu_exchange16(&state->hl, &state->hl2);
             return 4;
         case 0xDB:
+            // IN A,(n): per Z80 spec, flags are NOT affected.
             msx_cpu_set_a(state, msx_memory_in(memory, msx_cpu_fetch8(state, memory)));
-            msx_cpu_set_f(state, static_cast<uint8_t>((msx_cpu_f(state) & kFlagC) | msx_flags_szpxy(msx_cpu_a(state))));
             return 11;
         case 0xDE:
             msx_cpu_do_alu(state, 3, msx_cpu_fetch8(state, memory));
@@ -1421,8 +1459,9 @@ int msx_cpu_step_opcode(MsxCpuState* state, MsxMemoryState* memory)
             msx_cpu_do_alu(state, 5, msx_cpu_fetch8(state, memory));
             return 7;
         case 0xF3:
-            state->iff1 = false;
-            state->iff2 = false;
+            state->iff1    = false;
+            state->iff2    = false;
+            state->eiDelay = false;
             return 4;
         case 0xF6:
             msx_cpu_do_alu(state, 6, msx_cpu_fetch8(state, memory));
@@ -1431,8 +1470,8 @@ int msx_cpu_step_opcode(MsxCpuState* state, MsxMemoryState* memory)
             state->sp = state->hl;
             return 6;
         case 0xFB:
-            state->iff1 = true;
-            state->iff2 = true;
+            // EI: enable interrupts after the *next* instruction (Z80 one-instruction delay).
+            state->eiDelay = true;
             return 4;
         case 0xFE:
             msx_cpu_do_alu(state, 7, msx_cpu_fetch8(state, memory));
@@ -1520,6 +1559,13 @@ int msx_cpu_run_cycles(MsxCpuState* state, MsxMemoryState* memory, int cycleBudg
         const int stepCycles = msx_cpu_step_opcode(state, memory);
         if (stepCycles <= 0) {
             break;
+        }
+
+        // Commit EI delay: IFF1/IFF2 become active after the instruction following EI.
+        if (state->eiDelay) {
+            state->eiDelay = false;
+            state->iff1    = true;
+            state->iff2    = true;
         }
 
         usedCycles += stepCycles;

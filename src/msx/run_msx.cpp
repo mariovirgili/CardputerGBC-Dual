@@ -13,6 +13,7 @@
 #include "cardputer/CardputerInput.h"
 #include "cardputer/CardputerView.h"
 #include "core/msx_core.h"
+#include "core/msx_disk.h"
 #include "esp_timer.h"
 #include "msx_config.h"
 #include "msx_display.h"
@@ -467,14 +468,14 @@ void run_msx(const uint8_t* romData, size_t romLen, const char* romName)
     MsxBiosBundle bios = {};
     if (!msx_media_load_bios_bundle(&bios, &biosSearch)) {
         printf("[MSX] BIOS load failed: %s\n", bios.message);
-        msx_show_bios_reference_help(configuredMode, &bios);
+        msx_show_bios_reference_help(configuredMode, &bios);
     msx_media_release_bios_bundle(&bios);
         msx_display_shutdown();
         msx_request_quit_to_launcher();
         return;
     }
 
-    printf("[MSX] BIOS bundle ready: %s\n", msx_media_bios_target_label(bios.target));
+    printf("[MSX] BIOS bundle ready: %s\n", msx_media_bios_target_label(bios.target));
 
 #if MSX_AUDIO_ENABLED
     const uint32_t coreAudioSampleRate = kMsxSkeletonSampleRate;
@@ -488,7 +489,7 @@ void run_msx(const uint8_t* romData, size_t romLen, const char* romName)
     if (!msx_core_init(&core, &rom, &bios, romName, coreAudioSampleRate)) {
         printf("[MSX] core init failed\n");
         msx_show_launch_error("MSX START ERROR", "Core init failed", "Check ROM and BIOS set");
-        msx_sound_shutdown();
+        msx_sound_shutdown();
     msx_media_release_bios_bundle(&bios);
         msx_display_shutdown();
         msx_request_quit_to_launcher();
@@ -635,7 +636,7 @@ void run_msx(const uint8_t* romData, size_t romLen, const char* romName)
     }
 
     msx_core_shutdown(&core);
-    msx_sound_shutdown();
+    msx_sound_shutdown();
     msx_media_release_bios_bundle(&bios);
     msx_display_shutdown();
 
@@ -679,14 +680,14 @@ void run_msx_disk(const uint8_t* dskData, size_t dskLen, const char* dskName)
     MsxBiosBundle bios = {};
     if (!msx_media_load_bios_bundle(&bios, &biosSearch)) {
         printf("[MSX] BIOS load failed: %s\n", bios.message);
-        msx_show_bios_reference_help(configuredMode, &bios);
+        msx_show_bios_reference_help(configuredMode, &bios);
     msx_media_release_bios_bundle(&bios);
         msx_display_shutdown();
         msx_request_quit_to_launcher();
         return;
     }
 
-    printf("[MSX] BIOS bundle ready: %s\n", msx_media_bios_target_label(bios.target));
+    printf("[MSX] BIOS bundle ready: %s\n", msx_media_bios_target_label(bios.target));
 
 #if MSX_AUDIO_ENABLED
     const uint32_t coreAudioSampleRate = kMsxSkeletonSampleRate;
@@ -694,17 +695,29 @@ void run_msx_disk(const uint8_t* dskData, size_t dskLen, const char* dskName)
     const uint32_t coreAudioSampleRate = 0u;
 #endif
 
+    size_t diskRomSize = 0;
+    uint8_t* diskRomData = msx_load_bios_file("DISK.ROM", 16384u, &diskRomSize);
+    if (diskRomData) {
+        msx_disk_apply_rom_patches(diskRomData, diskRomSize);
+    } else {
+        printf("[MSX] DISK.ROM not found; disk boot will fall back to BIOS only\n");
+    }
+
     printf("[MSX] core init_disk begin\n");
     MsxCoreState core = {};
     if (!msx_core_init_disk(&core, &bios,
-                            nullptr, 0,
+                            diskRomData, diskRomSize,
                             dskData, dskLen,
                             dskName,
                             coreAudioSampleRate)) {
         printf("[MSX] core init_disk failed\n");
         msx_show_launch_error("MSX DISK ERROR", "Core init failed", "Check BIOS on SD");
-        msx_sound_shutdown();
-    msx_media_release_bios_bundle(&bios);
+        msx_sound_shutdown();
+        if (diskRomData && diskRomData != s_msx_disk_rom_static) {
+            heap_caps_free(diskRomData);
+        }
+        s_msx_disk_rom_static_used = false;
+        msx_media_release_bios_bundle(&bios);
         msx_display_shutdown();
         msx_request_quit_to_launcher();
         return;
@@ -718,15 +731,6 @@ void run_msx_disk(const uint8_t* dskData, size_t dskLen, const char* dskName)
 #else
     printf("[MSX] audio init skipped (build disabled)\n");
 #endif
-
-    // Load DISK.ROM after core/video init to reduce no-PSRAM heap pressure.
-    size_t diskRomSize = 0;
-    uint8_t* diskRomData = msx_load_bios_file("DISK.ROM", 16384u, &diskRomSize);
-    if (diskRomData) {
-        msx_core_attach_disk_rom(&core, diskRomData, diskRomSize);
-    } else {
-        printf("[MSX] DISK.ROM not found; will boot to BASIC\n");
-    }
 
     printf("[MSX] entering disk main loop\n");
 
@@ -829,7 +833,7 @@ void run_msx_disk(const uint8_t* dskData, size_t dskLen, const char* dskName)
         heap_caps_free(diskRomData);
     }
     s_msx_disk_rom_static_used = false;
-    msx_sound_shutdown();
+    msx_sound_shutdown();
     msx_media_release_bios_bundle(&bios);
     msx_display_shutdown();
 

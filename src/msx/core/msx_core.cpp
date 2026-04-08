@@ -4,6 +4,8 @@
 #include <cstdio>
 #include <cstring>
 
+#include "msx_disk.h"
+
 #ifndef MSX_CORE_LOG_ENABLED
 #define MSX_CORE_LOG_ENABLED 0
 #endif
@@ -19,7 +21,9 @@ namespace {
 constexpr int kMsxFrameCycles60Hz = 59659;
 constexpr uint8_t kMsxBootSlotBios = 0xD0;
 constexpr uint8_t kMsxBootSlotCart = 0xD4;
+constexpr uint8_t kMsxBootSlotDisk = 0xF8;
 constexpr uint16_t kMsxDefaultStack = 0xF380;
+constexpr uint16_t kMsxDiskBootAddress = 0xC000;
 constexpr uint32_t kMsxStatusRefreshPeriod = 8u;
 constexpr size_t kMsxCartRamSizeMsx1 = 0x8000u;
 
@@ -170,6 +174,47 @@ void msx_core_finish_no_cart_init(MsxCoreState* state)
 
     state->initialized = true;
     msx_core_capture_status_state(state);
+}
+
+bool msx_core_try_boot_disk_sector(MsxCoreState* state)
+{
+    if (!state || !state->memory.diskRom || !state->memory.disk || !state->memory.disk->dskData) {
+        return false;
+    }
+
+    uint8_t sector[kMsxDskSectorSize] = {};
+    if (!msx_disk_read_logical_sector(state->memory.disk, 0u, sector)) {
+        std::printf("[MSX] disk boot: sector 0 read failed\n");
+        return false;
+    }
+
+    const uint8_t jump = sector[0];
+    if (jump != 0xEBu && jump != 0xE9u && jump != 0xC3u) {
+        std::printf("[MSX] disk boot: sector 0 is not executable (opcode=%02X)\n",
+                    static_cast<unsigned>(jump));
+        return false;
+    }
+
+    state->memory.slotRegister = kMsxBootSlotDisk;
+    state->memory.lastPortA8 = kMsxBootSlotDisk;
+    msx_memory_refresh_maps(&state->memory);
+
+    for (uint16_t i = 0; i < static_cast<uint16_t>(kMsxDskSectorSize); ++i) {
+        msx_memory_write8(&state->memory, static_cast<uint16_t>(kMsxDiskBootAddress + i), sector[i]);
+    }
+
+    state->bootPc = kMsxDiskBootAddress;
+    state->directBoot = true;
+    msx_cpu_reset(&state->cpu, state->bootPc, kMsxDefaultStack);
+    state->cpu.af = 0x0000u; // A=0 selects drive A: for the boot sector entry path.
+
+    msx_vdp_render(&state->vdp);
+    msx_vdp_get_display_frame(&state->vdp, &state->displayFrame);
+
+    std::printf("[MSX] disk boot: sector 0 loaded at %04X, slot=%02X\n",
+                static_cast<unsigned>(state->bootPc),
+                static_cast<unsigned>(state->memory.slotRegister));
+    return true;
 }
 
 void msx_core_init_audio(MsxCoreState* state, uint32_t audioSampleRate)
@@ -359,6 +404,7 @@ void msx_core_attach_disk_rom(MsxCoreState* state,
 
     state->memory.diskRom = diskRomData;
     state->memory.diskRomSize = diskRomSize;
+    state->memory.diskPatch = diskRomData ? msx_disk_bios_patch_handler : nullptr;
     msx_memory_refresh_maps(&state->memory);
 
     std::printf("[MSX] core attach_disk_rom: %s size=%u\n",
@@ -460,10 +506,14 @@ bool msx_core_init_disk(MsxCoreState* state,
     msx_core_init_audio(state, audioSampleRate);
     state->memory.diskRom = diskRomData;
     state->memory.diskRomSize = diskRomSize;
+    state->memory.diskPatch = diskRomData ? msx_disk_bios_patch_handler : nullptr;
     msx_disk_init(&state->disk, dskData, dskSize);
     state->memory.disk = &state->disk;
 
     msx_core_finish_no_cart_init(state);
+    if (diskRomData) {
+        msx_core_try_boot_disk_sector(state);
+    }
     msx_core_set_status(state,
                         "DISK %s %s",
                         diskRomData ? "DISK.ROM" : "noDISK",

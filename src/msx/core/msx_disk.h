@@ -51,3 +51,17 @@ void    msx_disk_init(MsxDiskState* state, const uint8_t* dskData, size_t dskSiz
 void    msx_disk_reset(MsxDiskState* state);
 uint8_t msx_disk_in(MsxDiskState* state, uint8_t port);
 void    msx_disk_out(MsxDiskState* state, uint8_t port, uint8_t value);
+bool    msx_disk_read_logical_sector(const MsxDiskState* state, uint32_t logicalSector, uint8_t* dest);
+
+// Apply ED FE C9 patches to the DISK ROM buffer at the standard BIOS entry points
+// (PHYDIO=0x4010, DSKCHG=0x4013, GETDPB=0x4016, DSKFMT=0x401C, DRVOFF=0x401F).
+// diskRomBuf must be writable and at least 0x20 bytes long (disk ROM starts at 0x4000).
+void    msx_disk_apply_rom_patches(uint8_t* diskRomBuf, size_t diskRomSize);
+
+// BIOS software-trap handler invoked by the CPU when it executes ED FE.
+// Handles PHYDIO, DSKCHG, GETDPB, DSKFMT, DRVOFF without touching hardware registers.
+struct MsxCpuState;
+struct MsxMemoryState;
+void    msx_disk_bios_patch_handler(struct MsxCpuState* cpu,
+                                    struct MsxMemoryState* memory,
+                                    uint16_t patchAddress);
