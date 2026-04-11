@@ -8,6 +8,7 @@
 struct MsxCartState {
     const uint8_t* rom;
     size_t size;
+    size_t headerOffset;
     MsxCartridgeType type;
     uint8_t bankCount8K;
     uint8_t windowBanks[4];

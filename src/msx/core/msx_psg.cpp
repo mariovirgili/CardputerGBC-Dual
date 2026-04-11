@@ -8,10 +8,85 @@ constexpr uint32_t kMsxCpuClockHz = 3579545u;
 constexpr uint32_t kMsxPsgClockHz = 1789772u;
 constexpr size_t kMsxPsgRingSamples = 4096u;
 static int16_t s_psgRing[kMsxPsgRingSamples] = {};
+constexpr uint16_t kMsxVausMin = 164u;
+constexpr uint16_t kMsxVausMax = 309u;
+constexpr uint16_t kMsxVausCenter = 236u;
+constexpr uint8_t kMsxVausBits = 9u;
+constexpr uint16_t kMsxVausStep = 4u;
 constexpr int16_t kMsxPsgVolumeTable[16] = {
     0, 64, 90, 128, 181, 256, 362, 512,
     724, 1024, 1448, 2048, 2896, 4096, 5792, 8192,
 };
+
+uint16_t msx_psg_clamp_vaus_position(int value)
+{
+    if (value < static_cast<int>(kMsxVausMin)) {
+        return kMsxVausMin;
+    }
+    if (value > static_cast<int>(kMsxVausMax)) {
+        return kMsxVausMax;
+    }
+    return static_cast<uint16_t>(value);
+}
+
+void msx_psg_latch_vaus(MsxPsgState* state)
+{
+    if (!state) {
+        return;
+    }
+
+    state->vausShiftRegister = static_cast<uint16_t>(state->vausPosition & 0x01FFu);
+    state->vausBitIndex = static_cast<uint8_t>(kMsxVausBits - 1u);
+    state->vausDataBit = static_cast<uint8_t>((state->vausShiftRegister >> state->vausBitIndex) & 0x01u);
+}
+
+void msx_psg_step_vaus_serial(MsxPsgState* state)
+{
+    if (!state) {
+        return;
+    }
+
+    if (state->vausBitIndex > 0u && state->vausBitIndex < kMsxVausBits) {
+        state->vausBitIndex--;
+        state->vausDataBit = static_cast<uint8_t>((state->vausShiftRegister >> state->vausBitIndex) & 0x01u);
+    } else {
+        state->vausBitIndex = 0xFFu;
+        state->vausDataBit = 0u;
+    }
+}
+
+void msx_psg_update_vaus_control(MsxPsgState* state, uint8_t value)
+{
+    if (!state) {
+        return;
+    }
+
+    const bool newClockHigh = (value & 0x01u) != 0u;
+    const bool newResetHigh = (value & 0x10u) != 0u;
+
+    if (!state->vausResetHigh && newResetHigh) {
+        msx_psg_latch_vaus(state);
+    } else if (!state->vausClockHigh && newClockHigh) {
+        msx_psg_step_vaus_serial(state);
+    }
+
+    state->vausClockHigh = newClockHigh;
+    state->vausResetHigh = newResetHigh;
+}
+
+uint8_t msx_psg_read_vaus_port(const MsxPsgState* state)
+{
+    if (!state) {
+        return 0xFFu;
+    }
+
+    uint8_t value = 0xFCu;
+    value |= static_cast<uint8_t>(state->vausDataBit & 0x01u);
+    if (!state->vausButtonPressed) {
+        value |= 0x02u;
+    }
+    return value;
+}
 
 uint16_t msx_psg_tone_period(const MsxPsgState* state, uint8_t channel)
 {
@@ -153,23 +228,24 @@ int16_t msx_psg_render_sample(MsxPsgState* state)
     }
 
     int32_t mix = 0;
+    const uint8_t mixer = state->regs[7];
+    const bool noiseHigh = (state->lfsr & 0x0001u) != 0u;
     for (uint8_t channel = 0; channel < 3u; ++channel) {
         state->tonePhase[channel] += state->toneStep[channel];
         const bool toneHigh = (state->tonePhase[channel] & 0x80000000u) != 0u;
 
-        const uint8_t mixer = state->regs[7];
         const bool toneDisabled = (mixer & (1u << channel)) != 0u;
         const bool noiseDisabled = (mixer & (1u << (channel + 3u))) != 0u;
-        const bool noiseHigh = (state->lfsr & 0x0001u) != 0u;
         const bool gate = (toneDisabled || toneHigh) && (noiseDisabled || noiseHigh);
-        if (!gate) {
-            continue;
-        }
 
         const uint8_t volumeReg = static_cast<uint8_t>(state->regs[8u + channel] & 0x1Fu);
         const bool useEnvelope = (volumeReg & 0x10u) != 0u;
         const uint8_t level = useEnvelope ? state->envelopeVolume : static_cast<uint8_t>(volumeReg & 0x0Fu);
-        mix += kMsxPsgVolumeTable[level];
+        const int32_t amplitude = kMsxPsgVolumeTable[level];
+        if (amplitude == 0) {
+            continue;
+        }
+        mix += gate ? amplitude : -amplitude;
     }
 
     const uint32_t oldNoisePhase = state->noisePhase;
@@ -188,7 +264,8 @@ int16_t msx_psg_render_sample(MsxPsgState* state)
         msx_psg_step_envelope(state);
     }
 
-    mix -= (kMsxPsgVolumeTable[15] * 3) / 2;
+    mix /= 2;
+
     if (mix > 32767) {
         mix = 32767;
     } else if (mix < -32768) {
@@ -233,14 +310,20 @@ void msx_psg_reset(MsxPsgState* state)
     state->ring = s_psgRing;
     std::memset(state->ring, 0, sizeof(s_psgRing));
     state->selectedReg = 0u;
+    state->joystickPortA = 0xFFu; // active-low: 0xFF = no buttons pressed
+    state->joystickPortB = 0xFFu; // second GP port defaults to idle/high
+    state->vausPosition = kMsxVausCenter;
+    state->vausShiftRegister = kMsxVausCenter;
+    state->vausBitIndex = static_cast<uint8_t>(kMsxVausBits - 1u);
+    state->vausDataBit = static_cast<uint8_t>((kMsxVausCenter >> (kMsxVausBits - 1u)) & 0x01u);
     state->lfsr = 0x1FFFFu;
     state->envelopeDirection = -1;
     state->envelopeVolume = 15u;
     state->ready = true;
     state->regs[7] = 0x3Fu;
-    state->regs[8] = 0x0Fu;
-    state->regs[9] = 0x0Fu;
-    state->regs[10] = 0x0Fu;
+    state->regs[8] = 0x00u;
+    state->regs[9] = 0x00u;
+    state->regs[10] = 0x00u;
     msx_psg_update_cached_steps(state);
 }
 
@@ -269,6 +352,7 @@ void msx_psg_write_data(MsxPsgState* state, uint8_t value)
     }
 
     const uint8_t reg = state->selectedReg & 0x0Fu;
+    const uint8_t previous = state->regs[reg];
     state->regs[reg] = value;
 
     switch (reg) {
@@ -291,6 +375,9 @@ void msx_psg_write_data(MsxPsgState* state, uint8_t value)
             break;
         case 15:
             state->ioPortB = value;
+            if (state->vausEnabled && (previous != value)) {
+                msx_psg_update_vaus_control(state, value);
+            }
             break;
         default:
             break;
@@ -303,7 +390,65 @@ uint8_t msx_psg_read_data(const MsxPsgState* state)
         return 0xFFu;
     }
 
-    return state->regs[state->selectedReg & 0x0Fu];
+    // Register 14 is the joystick/input port A — always returns hardware state,
+    // Bits 6-7 stay high here to represent keyboard-type/cassette input as idle.
+    const uint8_t reg = static_cast<uint8_t>(state->selectedReg & 0x0Fu);
+    if (reg == 14u) {
+        const bool selectPortB = (state->regs[15] & 0x40u) != 0u;
+        uint8_t value = 0xFFu;
+        if (state->vausEnabled && !selectPortB) {
+            value = msx_psg_read_vaus_port(state);
+        } else {
+            value = selectPortB ? state->joystickPortB : state->joystickPortA;
+        }
+        value |= 0xC0u;
+        return value;
+    }
+
+    return state->regs[reg];
+}
+
+void msx_psg_set_joystick(MsxPsgState* state, uint8_t portA)
+{
+    msx_psg_set_joysticks(state, portA, 0xFFu);
+}
+
+void msx_psg_set_joysticks(MsxPsgState* state, uint8_t portA, uint8_t portB)
+{
+    if (!state) {
+        return;
+    }
+
+    state->joystickPortA = portA;
+    state->joystickPortB = portB;
+}
+
+void msx_psg_set_vaus_enabled(MsxPsgState* state, bool enabled)
+{
+    if (!state) {
+        return;
+    }
+
+    if (state->vausEnabled != enabled) {
+        state->vausEnabled = enabled;
+        state->vausClockHigh = (state->regs[15] & 0x01u) != 0u;
+        state->vausResetHigh = (state->regs[15] & 0x10u) != 0u;
+        msx_psg_latch_vaus(state);
+    }
+}
+
+void msx_psg_set_vaus_input(MsxPsgState* state, bool moveLeft, bool moveRight, bool buttonPressed)
+{
+    if (!state) {
+        return;
+    }
+
+    if (moveLeft != moveRight) {
+        const int delta = moveRight ? static_cast<int>(kMsxVausStep) : -static_cast<int>(kMsxVausStep);
+        state->vausPosition = msx_psg_clamp_vaus_position(static_cast<int>(state->vausPosition) + delta);
+    }
+
+    state->vausButtonPressed = buttonPressed;
 }
 
 void msx_psg_run_cycles(MsxPsgState* state, uint32_t cpuCycles)

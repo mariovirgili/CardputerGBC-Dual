@@ -17,6 +17,8 @@ constexpr MsxInternalViewMode kMsxDefaultInternalViewMode = MsxInternalViewMode:
 constexpr MsxMachineMode kMsxDefaultMachineMode = MsxMachineMode::Auto;
 
 MsxInternalViewMode s_internalViewMode = kMsxDefaultInternalViewMode;
+MsxInternalViewMode s_viewModeOverride = kMsxDefaultInternalViewMode;
+bool s_viewModeOverrideEnabled = false;
 MsxMachineMode s_machineMode = kMsxDefaultMachineMode;
 char s_genericBiosPath[96] = {0};
 char s_msx1BiosPath[96] = {0};
@@ -130,14 +132,24 @@ MsxInternalViewMode msx_config_get_internal_view_mode(void)
     return s_internalViewMode;
 }
 
+MsxInternalViewMode msx_config_get_active_view_mode(void)
+{
+    return s_viewModeOverrideEnabled ? s_viewModeOverride : s_internalViewMode;
+}
+
 const char* msx_config_internal_view_mode_label(MsxInternalViewMode mode)
 {
-    return mode == MsxInternalViewMode::PixelPerfect ? "PIXEL" : "WIDE";
+    return mode == MsxInternalViewMode::PixelPerfect ? "CROP" : "WIDE";
 }
 
 const char* msx_config_get_internal_view_mode_label(void)
 {
     return msx_config_internal_view_mode_label(s_internalViewMode);
+}
+
+const char* msx_config_get_active_view_mode_label(void)
+{
+    return msx_config_internal_view_mode_label(msx_config_get_active_view_mode());
 }
 
 void msx_config_set_internal_view_mode(MsxInternalViewMode mode, bool persist)
@@ -154,6 +166,33 @@ void msx_config_toggle_internal_view_mode(void)
         (s_internalViewMode == MsxInternalViewMode::PixelPerfect)
             ? MsxInternalViewMode::Wide
             : MsxInternalViewMode::PixelPerfect;
+    msx_config_set_internal_view_mode(nextMode, true);
+}
+
+void msx_config_set_view_mode_override(MsxInternalViewMode mode)
+{
+    s_viewModeOverride = msx_sanitize_internal_view_mode(static_cast<uint8_t>(mode));
+    s_viewModeOverrideEnabled = true;
+}
+
+void msx_config_clear_view_mode_override(void)
+{
+    s_viewModeOverrideEnabled = false;
+    s_viewModeOverride = s_internalViewMode;
+}
+
+void msx_config_toggle_active_view_mode(void)
+{
+    const MsxInternalViewMode nextMode =
+        (msx_config_get_active_view_mode() == MsxInternalViewMode::PixelPerfect)
+            ? MsxInternalViewMode::Wide
+            : MsxInternalViewMode::PixelPerfect;
+
+    if (s_viewModeOverrideEnabled) {
+        s_viewModeOverride = nextMode;
+        return;
+    }
+
     msx_config_set_internal_view_mode(nextMode, true);
 }
 

@@ -22,12 +22,22 @@ struct MsxPsgState {
     int8_t envelopeDirection;
     uint8_t ioPortA;
     uint8_t ioPortB;
+    uint8_t joystickPortA; // GP port 1 input (active-low); 0xFF = idle
+    uint8_t joystickPortB; // GP port 2 input (active-low); 0xFF = idle
+    uint16_t vausPosition;
+    uint16_t vausShiftRegister;
+    uint8_t vausBitIndex;
+    uint8_t vausDataBit;
     uint16_t ringReadIndex;
     uint16_t ringWriteIndex;
     uint16_t ringCount;
     uint32_t generatedSamples;
     uint32_t droppedSamples;
     bool envelopeHolding;
+    bool vausEnabled;
+    bool vausButtonPressed;
+    bool vausClockHigh;
+    bool vausResetHigh;
     bool ready;
     int16_t* ring;
 };
@@ -38,6 +48,10 @@ void msx_psg_shutdown(MsxPsgState* state);
 void msx_psg_select_register(MsxPsgState* state, uint8_t value);
 void msx_psg_write_data(MsxPsgState* state, uint8_t value);
 uint8_t msx_psg_read_data(const MsxPsgState* state);
+void msx_psg_set_joystick(MsxPsgState* state, uint8_t portA);
+void msx_psg_set_joysticks(MsxPsgState* state, uint8_t portA, uint8_t portB);
+void msx_psg_set_vaus_enabled(MsxPsgState* state, bool enabled);
+void msx_psg_set_vaus_input(MsxPsgState* state, bool moveLeft, bool moveRight, bool buttonPressed);
 void msx_psg_run_cycles(MsxPsgState* state, uint32_t cpuCycles);
 size_t msx_psg_read_samples(MsxPsgState* state, int16_t* dst, size_t maxSamples);
 void msx_psg_discard_samples(MsxPsgState* state, size_t sampleCount);

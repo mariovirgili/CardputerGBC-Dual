@@ -1,9 +1,21 @@
 #include "msx_cpu.h"
 
+#include <cstdio>
 #include <cstring>
+#include "../msx_media.h"
 #include "msx_psg.h"
+#include "msx_vdp.h"
+
+#ifndef MSX_CPU_TRACE_ENABLED
+#define MSX_CPU_TRACE_ENABLED 0
+#endif
 
 namespace {
+
+constexpr uint8_t kMsxPrimarySlotCartridge = 1u;
+constexpr uint8_t kMsxOpenBusFetchOpcodeRet = 0xC9u;
+constexpr uint8_t kMsxBootSlotCart = 0xD4u;
+constexpr uint8_t kMsxBootSecondaryCart = 0xA0u;
 
 constexpr uint8_t kFlagC = 0x01;
 constexpr uint8_t kFlagN = 0x02;
@@ -58,7 +70,7 @@ inline bool msx_parity_even(uint8_t value)
 {
     value ^= static_cast<uint8_t>(value >> 4);
     value &= 0x0Fu;
-    return ((0x6996u >> value) & 0x01u) != 0;
+    return ((0x6996u >> value) & 0x01u) == 0;
 }
 
 inline uint8_t msx_flags_szxy(uint8_t value)
@@ -84,10 +96,392 @@ inline int8_t msx_signed_offset(uint8_t value)
     return static_cast<int8_t>(value);
 }
 
+#if MSX_CPU_TRACE_ENABLED
+inline bool msx_cpu_trace_pc(uint16_t pc)
+{
+    return ((pc >= 0x3F18u) && (pc <= 0x3F30u)) ||
+           ((pc >= 0x4100u) && (pc <= 0x423Fu)) ||
+           ((pc >= 0x7D0Du) && (pc <= 0x7D10u)) ||
+           ((pc >= 0x8170u) && (pc <= 0x8190u)) ||
+           (pc == 0xFD9Au);
+}
+
+inline bool msx_cpu_trace_opcode_pc(uint16_t pc)
+{
+    return ((pc >= 0x3F18u) && (pc <= 0x3F30u)) ||
+           ((pc >= 0x4100u) && (pc <= 0x423Fu)) ||
+           ((pc >= 0x7D0Du) && (pc <= 0x7D10u)) ||
+           ((pc >= 0x8170u) && (pc <= 0x8190u)) ||
+           (pc == 0xFD9Au);
+}
+
+inline bool msx_cpu_trace_addr(uint16_t address)
+{
+    return (address >= 0xEFF0u) && (address <= 0xF020u);
+}
+
+inline bool msx_cpu_trace_cart_probe_addr(uint16_t address)
+{
+    return (address <= 0x0007u) ||
+           ((address >= 0x4000u) && (address <= 0x4007u)) ||
+           ((address >= 0x8000u) && (address <= 0x8007u));
+}
+
+inline bool msx_cpu_trace_workarea_addr(uint16_t address)
+{
+    return (address >= 0xF7C5u) && (address <= 0xF7C8u);
+}
+
+inline bool msx_cpu_trace_context_pc(uint16_t pc)
+{
+    return (pc == 0x0038u) ||
+           (pc == 0x3F18u) ||
+           (pc == 0x3F23u) ||
+           (pc == 0x3F24u) ||
+           (pc == 0x410Cu) ||
+           (pc == 0x4120u) ||
+           (pc == 0x41D1u) ||
+           (pc == 0x41D4u) ||
+           (pc == 0x7D0Du) ||
+           (pc == 0x7D10u) ||
+           (pc == 0x8132u) ||
+           (pc == 0x8175u) ||
+           (pc == 0xFD9Au);
+}
+
+inline bool msx_cpu_trace_stack_value(uint16_t value)
+{
+    return ((value >= 0x3F18u) && (value <= 0x3F30u)) ||
+           ((value >= 0x4100u) && (value <= 0x423Fu)) ||
+           ((value >= 0x7D0Du) && (value <= 0x7D10u)) ||
+           ((value >= 0x8170u) && (value <= 0x8190u)) ||
+           (value == 0x0038u) ||
+           (value == 0xFD9Au);
+}
+#else
+inline bool msx_cpu_trace_pc(uint16_t)
+{
+    return false;
+}
+
+inline bool msx_cpu_trace_opcode_pc(uint16_t)
+{
+    return false;
+}
+
+inline bool msx_cpu_trace_addr(uint16_t)
+{
+    return false;
+}
+
+inline bool msx_cpu_trace_cart_probe_addr(uint16_t)
+{
+    return false;
+}
+
+inline bool msx_cpu_trace_workarea_addr(uint16_t)
+{
+    return false;
+}
+
+inline bool msx_cpu_trace_context_pc(uint16_t)
+{
+    return false;
+}
+
+inline bool msx_cpu_trace_stack_value(uint16_t)
+{
+    return false;
+}
+#endif
+
+inline uint8_t msx_cpu_vdp_reg1(const MsxMemoryState* memory)
+{
+    return (memory && memory->vdp) ? memory->vdp->regs[1] : 0xFFu;
+}
+
+inline uint8_t msx_cpu_ram_segment_for_page(const MsxMemoryState* memory, uint8_t pageIndex)
+{
+    if (!memory || memory->ramSegmentCount == 0u) {
+        return 0u;
+    }
+
+    if (memory->mapperEnabled && memory->ramSegmentCount > 4u) {
+        return static_cast<uint8_t>(memory->mapperRegisters[pageIndex & 0x03u] % memory->ramSegmentCount);
+    }
+
+    return static_cast<uint8_t>(pageIndex % memory->ramSegmentCount);
+}
+
+inline const uint8_t* msx_cpu_raw_ram_bank_ptr(const MsxMemoryState* memory,
+                                               uint8_t pageIndex,
+                                               uint8_t subPage)
+{
+    if (!memory || (pageIndex >= 4u) || (subPage >= 2u) || (memory->ramSegmentCount == 0u)) {
+        return nullptr;
+    }
+
+    const uint8_t segment = msx_cpu_ram_segment_for_page(memory, pageIndex);
+    const uint8_t bankIndex = static_cast<uint8_t>(segment * 2u + subPage);
+    if ((segment >= memory->ramSegmentCount) ||
+        (bankIndex >= memory->ramBankCount) ||
+        (bankIndex >= 16u)) {
+        return nullptr;
+    }
+
+    return memory->ramBanks[bankIndex];
+}
+
+inline uint8_t msx_cpu_raw_page3_read8(const MsxMemoryState* memory, uint16_t address, bool* valid = nullptr)
+{
+    if ((address >> 14) != 3u) {
+        if (valid) {
+            *valid = false;
+        }
+        return 0xFFu;
+    }
+
+    const uint8_t* const bankPtr = msx_cpu_raw_ram_bank_ptr(
+        memory,
+        3u,
+        static_cast<uint8_t>((address >> 13) & 0x01u)
+    );
+    if (!bankPtr) {
+        if (valid) {
+            *valid = false;
+        }
+        return 0xFFu;
+    }
+
+    if (valid) {
+        *valid = true;
+    }
+    return bankPtr[address & 0x1FFFu];
+}
+
+void msx_cpu_log_context(const MsxCpuState* state, const MsxMemoryState* memory, uint16_t pc)
+{
+    if (!state || !memory || !msx_cpu_trace_context_pc(pc)) {
+        return;
+    }
+
+    static uint16_t s_contextLogCount = 0u;
+    if (s_contextLogCount >= 128u) {
+        return;
+    }
+
+    std::printf("[MSX][CTX] pc=%04X af=%04X bc=%04X de=%04X hl=%04X sp=%04X iff=%u irq=%u halt=%u r1=%02X a8=%02X ssl3=%02X #%u\n",
+                static_cast<unsigned>(pc),
+                static_cast<unsigned>(state->af),
+                static_cast<unsigned>(state->bc),
+                static_cast<unsigned>(state->de),
+                static_cast<unsigned>(state->hl),
+                static_cast<unsigned>(state->sp),
+                state->iff1 ? 1u : 0u,
+                state->irqPending ? 1u : 0u,
+                state->halted ? 1u : 0u,
+                static_cast<unsigned>(msx_cpu_vdp_reg1(memory)),
+                static_cast<unsigned>(memory->slotRegister),
+                static_cast<unsigned>(memory->secondarySlotRegs[3]),
+                static_cast<unsigned>(s_contextLogCount));
+    ++s_contextLogCount;
+}
+
+void msx_cpu_log_flow(const char* kind,
+                      const MsxCpuState* state,
+                      const MsxMemoryState* memory,
+                      uint16_t from,
+                      uint16_t to)
+{
+    if (!kind || !state || !memory) {
+        return;
+    }
+
+    if (!msx_cpu_trace_pc(from) && !msx_cpu_trace_pc(to)) {
+        return;
+    }
+
+    static uint16_t s_flowLogCount = 0u;
+    if (s_flowLogCount >= 256u) {
+        return;
+    }
+
+    std::printf("[MSX][FLOW] %s %04X -> %04X sp=%04X iff=%u irq=%u halt=%u r1=%02X a8=%02X ssl3=%02X #%u\n",
+                kind,
+                static_cast<unsigned>(from),
+                static_cast<unsigned>(to),
+                static_cast<unsigned>(state->sp),
+                state->iff1 ? 1u : 0u,
+                state->irqPending ? 1u : 0u,
+                state->halted ? 1u : 0u,
+                static_cast<unsigned>(msx_cpu_vdp_reg1(memory)),
+                static_cast<unsigned>(memory->slotRegister),
+                static_cast<unsigned>(memory->secondarySlotRegs[3]),
+                static_cast<unsigned>(s_flowLogCount));
+    ++s_flowLogCount;
+}
+
+void msx_cpu_log_stack(const char* kind,
+                       const MsxCpuState* state,
+                       const MsxMemoryState* memory,
+                       uint16_t pc,
+                       uint16_t spBefore,
+                       uint16_t value)
+{
+    if (!kind || !state || !memory) {
+        return;
+    }
+
+    if (!msx_cpu_trace_pc(pc) &&
+        !msx_cpu_trace_addr(spBefore) &&
+        !msx_cpu_trace_stack_value(value)) {
+        return;
+    }
+
+    static uint16_t s_stackLogCount = 0u;
+    if (s_stackLogCount >= 128u) {
+        return;
+    }
+
+    std::printf("[MSX][STACK] %s pc=%04X sp=%04X value=%04X iff=%u irq=%u halt=%u r1=%02X a8=%02X ssl3=%02X #%u\n",
+                kind,
+                static_cast<unsigned>(pc),
+                static_cast<unsigned>(spBefore),
+                static_cast<unsigned>(value),
+                state->iff1 ? 1u : 0u,
+                state->irqPending ? 1u : 0u,
+                state->halted ? 1u : 0u,
+                static_cast<unsigned>(msx_cpu_vdp_reg1(memory)),
+                static_cast<unsigned>(memory->slotRegister),
+                static_cast<unsigned>(memory->secondarySlotRegs[3]),
+                static_cast<unsigned>(s_stackLogCount));
+    ++s_stackLogCount;
+}
+
+void msx_cpu_log_ram_access(const char* kind,
+                            const MsxMemoryState* memory,
+                            uint16_t address,
+                            uint8_t value)
+{
+    (void)kind;
+    (void)memory;
+    (void)address;
+    (void)value;
+}
+
+void msx_cpu_log_opcode(const MsxCpuState* state,
+                        const MsxMemoryState* memory,
+                        uint16_t pc,
+                        uint8_t opcode)
+{
+    if (!state || !memory || !msx_cpu_trace_opcode_pc(pc)) {
+        return;
+    }
+
+    static uint16_t s_opcodeLogCount = 0u;
+    if (s_opcodeLogCount >= 512u) {
+        return;
+    }
+
+    const uint8_t next1 = msx_memory_read8(memory, static_cast<uint16_t>(pc + 1u));
+    const uint8_t next2 = msx_memory_read8(memory, static_cast<uint16_t>(pc + 2u));
+    std::printf("[MSX][OP] pc=%04X op=%02X n1=%02X n2=%02X af=%04X bc=%04X de=%04X hl=%04X sp=%04X iff=%u irq=%u halt=%u r1=%02X a8=%02X ssl3=%02X #%u\n",
+                static_cast<unsigned>(pc),
+                static_cast<unsigned>(opcode),
+                static_cast<unsigned>(next1),
+                static_cast<unsigned>(next2),
+                static_cast<unsigned>(state->af),
+                static_cast<unsigned>(state->bc),
+                static_cast<unsigned>(state->de),
+                static_cast<unsigned>(state->hl),
+                static_cast<unsigned>(state->sp),
+                state->iff1 ? 1u : 0u,
+                state->irqPending ? 1u : 0u,
+                state->halted ? 1u : 0u,
+                static_cast<unsigned>(msx_cpu_vdp_reg1(memory)),
+                static_cast<unsigned>(memory->slotRegister),
+                static_cast<unsigned>(memory->secondarySlotRegs[3]),
+                static_cast<unsigned>(s_opcodeLogCount));
+    ++s_opcodeLogCount;
+}
+
 inline uint8_t msx_cpu_mem_read8(const MsxMemoryState* memory, uint16_t address)
 {
+    uint8_t mirroredValue = 0xFFu;
+    if (msx_memory_try_cart_header_mirror_read(memory, address, &mirroredValue)) {
+        msx_cpu_log_ram_access("RD", memory, address, mirroredValue);
+        return mirroredValue;
+    }
+
     const uint8_t bank = static_cast<uint8_t>(address >> 13);
-    return memory->readMap[bank][address & 0x1FFFu];
+
+    // Match fMSX RdZ80/WrZ80 fast path split: addresses in xx1111111xxx1xxx
+    // may have special semantics (secondary slot register, mapped DiskROM I/O).
+    if (((address & 0x3F88u) == 0x3F88u) || (bank >= 6u)) {
+        const uint8_t value = msx_memory_read8(memory, address);
+        msx_cpu_log_ram_access("RD", memory, address, value);
+        return value;
+    }
+
+    const uint8_t value = memory->readMap[bank][address & 0x1FFFu];
+    msx_cpu_log_ram_access("RD", memory, address, value);
+    return value;
+}
+
+inline bool msx_cpu_fetch_should_return_open_bus_ret(const MsxMemoryState* memory, uint16_t address)
+{
+    return memory && msx_memory_is_open_bus_fetch(memory, address);
+}
+
+inline bool msx_cpu_is_cart_boot_target(const MsxMemoryState* memory, uint16_t target)
+{
+    return memory &&
+           memory->ready &&
+           memory->cart.ready &&
+           memory->cart.directBootCandidate &&
+           memory->cartBootMappingRestoreArmed &&
+           (target >= 0x4000u) &&
+           (target < 0xC000u) &&
+           (memory->cart.initAddress == target);
+}
+
+void msx_cpu_restore_cart_boot_mapping(MsxMemoryState* memory, uint16_t target, uint16_t fromPc)
+{
+    if (!msx_cpu_is_cart_boot_target(memory, target)) {
+        return;
+    }
+
+    // The BIOS-to-cart init handoff is a one-shot bootstrap assist. After the
+    // first jump into the cartridge, the same work-area bytes can be reused by
+    // the game and must no longer trigger a synthetic 402A restart.
+    memory->cartBootMappingRestoreArmed = false;
+    memory->cartBootWorkareaFallbackArmed = false;
+
+    const uint8_t oldSlotRegister = memory->slotRegister;
+    const uint8_t oldSecondary3 = memory->secondarySlotRegs[3];
+    if ((oldSlotRegister == kMsxBootSlotCart) && (oldSecondary3 == kMsxBootSecondaryCart)) {
+        return;
+    }
+
+    memory->slotRegister = kMsxBootSlotCart;
+    memory->secondarySlotRegs[3] = kMsxBootSecondaryCart;
+    memory->lastPortA8 = kMsxBootSlotCart;
+    msx_memory_refresh_maps(memory);
+
+#if MSX_CPU_TRACE_ENABLED
+    static uint16_t s_cartBootMapRestoreLogCount = 0u;
+    if (s_cartBootMapRestoreLogCount < 16u) {
+        std::printf("[MSX][BOOTMAP] restore jump=%04X from=%04X A8=%02X->%02X SSL3=%02X->%02X #%u\n",
+                    static_cast<unsigned>(target),
+                    static_cast<unsigned>(fromPc),
+                    static_cast<unsigned>(oldSlotRegister),
+                    static_cast<unsigned>(kMsxBootSlotCart),
+                    static_cast<unsigned>(oldSecondary3),
+                    static_cast<unsigned>(kMsxBootSecondaryCart),
+                    static_cast<unsigned>(s_cartBootMapRestoreLogCount));
+        ++s_cartBootMapRestoreLogCount;
+    }
+#endif
 }
 
 inline uint16_t msx_cpu_mem_read16(const MsxMemoryState* memory, uint16_t address)
@@ -100,19 +494,28 @@ inline uint16_t msx_cpu_mem_read16(const MsxMemoryState* memory, uint16_t addres
 inline void msx_cpu_mem_write8(MsxMemoryState* memory, uint16_t address, uint8_t value)
 {
     const uint8_t bank = static_cast<uint8_t>(address >> 13);
+
+    if (((address & 0x3F88u) == 0x3F88u) || (bank >= 6u)) {
+        msx_memory_write8(memory, address, value);
+        msx_cpu_log_ram_access("WR", memory, address, value);
+        return;
+    }
+
     const uint16_t offset = static_cast<uint16_t>(address & 0x1FFFu);
     uint8_t* const writePage = memory->writeMap[bank];
     if (writePage) {
         writePage[offset] = value;
+        msx_cpu_log_ram_access("WR", memory, address, value);
         return;
     }
 
     const uint8_t page = static_cast<uint8_t>(address >> 14);
     const uint8_t slot = static_cast<uint8_t>((memory->slotRegister >> (page * 2u)) & 0x03u);
-    if (slot == 1u) {
+    if (slot == kMsxPrimarySlotCartridge) {
         msx_cart_write(&memory->cart, address, value);
         msx_memory_refresh_maps(memory);
     }
+    msx_cpu_log_ram_access("WR", memory, address, value);
 }
 
 inline void msx_cpu_mem_write16(MsxMemoryState* memory, uint16_t address, uint16_t value)
@@ -176,7 +579,10 @@ int msx_cpu_step_opcode(MsxCpuState* state, MsxMemoryState* memory);
 
 uint8_t msx_cpu_fetch8(MsxCpuState* state, const MsxMemoryState* memory)
 {
-    const uint8_t value = msx_cpu_mem_read8(memory, state->pc);
+    uint8_t value = msx_cpu_mem_read8(memory, state->pc);
+    if (msx_cpu_fetch_should_return_open_bus_ret(memory, state->pc)) {
+        value = kMsxOpenBusFetchOpcodeRet;
+    }
     state->pc = static_cast<uint16_t>(state->pc + 1u);
     state->r = static_cast<uint8_t>(state->r + 1u);
     return value;
@@ -191,14 +597,18 @@ uint16_t msx_cpu_fetch16(MsxCpuState* state, const MsxMemoryState* memory)
 
 void msx_cpu_push16(MsxCpuState* state, MsxMemoryState* memory, uint16_t value)
 {
+    const uint16_t spBefore = state->sp;
     state->sp = static_cast<uint16_t>(state->sp - 2u);
     msx_cpu_mem_write16(memory, state->sp, value);
+    msx_cpu_log_stack("PUSH", state, memory, state->lastPc, spBefore, value);
 }
 
 uint16_t msx_cpu_pop16(MsxCpuState* state, const MsxMemoryState* memory)
 {
+    const uint16_t spBefore = state->sp;
     const uint16_t value = msx_cpu_mem_read16(memory, state->sp);
     state->sp = static_cast<uint16_t>(state->sp + 2u);
+    msx_cpu_log_stack("POP", state, memory, state->lastPc, spBefore, value);
     return value;
 }
 
@@ -506,6 +916,7 @@ int msx_cpu_service_irq(MsxCpuState* state, MsxMemoryState* memory)
         return 0;
     }
 
+    const bool wasHalted = state->halted;
     state->irqPending = false;
     if (!state->iff1) {
         return 0;
@@ -515,8 +926,53 @@ int msx_cpu_service_irq(MsxCpuState* state, MsxMemoryState* memory)
     state->iff2 = false;
     state->halted = false;
     state->runState = MsxCpuRunState::Running;
+    #if MSX_CPU_TRACE_ENABLED
+    static uint16_t s_haltWakeLogCount = 0u;
+    if (wasHalted && s_haltWakeLogCount < 8u) {
+        const uint8_t resume0 = msx_memory_read8(memory, state->pc);
+        const uint8_t resume1 = msx_memory_read8(memory, static_cast<uint16_t>(state->pc + 1u));
+        const uint8_t resume2 = msx_memory_read8(memory, static_cast<uint16_t>(state->pc + 2u));
+        const uint8_t hook0 = msx_memory_read8(memory, 0xFD9Au);
+        const uint8_t hook1 = msx_memory_read8(memory, 0xFD9Bu);
+        const uint8_t hook2 = msx_memory_read8(memory, 0xFD9Cu);
+        std::printf("[MSX][HALT] wake at=%04X resume=%04X im=%u A8=%02X SSL3=%02X cart=%s banks=%u/%u/%u/%u bytes=%02X %02X %02X hook=%02X %02X %02X #%u\n",
+                    static_cast<unsigned>(state->lastPc),
+                    static_cast<unsigned>(state->pc),
+                    static_cast<unsigned>(state->im),
+                    static_cast<unsigned>(memory->slotRegister),
+                    static_cast<unsigned>(memory->secondarySlotRegs[3]),
+                    msx_media_cartridge_type_label(memory->cart.type),
+                    static_cast<unsigned>(memory->cart.windowBanks[0]),
+                    static_cast<unsigned>(memory->cart.windowBanks[1]),
+                    static_cast<unsigned>(memory->cart.windowBanks[2]),
+                    static_cast<unsigned>(memory->cart.windowBanks[3]),
+                    static_cast<unsigned>(resume0),
+                    static_cast<unsigned>(resume1),
+                    static_cast<unsigned>(resume2),
+                    static_cast<unsigned>(hook0),
+                    static_cast<unsigned>(hook1),
+                    static_cast<unsigned>(hook2),
+                    static_cast<unsigned>(s_haltWakeLogCount));
+        ++s_haltWakeLogCount;
+    }
+    #endif
     msx_cpu_push16(state, memory, state->pc);
+
+    if (state->im == 2u) {
+        // IM 2: vector table at (I << 8) | 0xFF
+        const uint16_t vecAddr = static_cast<uint16_t>((static_cast<uint16_t>(state->i) << 8) | 0xFFu);
+        state->pc = msx_cpu_mem_read16(memory, vecAddr);
+        if (msx_cpu_trace_pc(state->lastPc) || msx_cpu_trace_pc(state->pc) || msx_cpu_trace_addr(state->sp)) {
+            msx_cpu_log_flow("IRQ2", state, memory, state->lastPc, state->pc);
+        }
+        return 19;
+    }
+
+    // IM 0 / IM 1: jump to 0x0038
     state->pc = 0x0038u;
+    if (msx_cpu_trace_pc(state->lastPc) || msx_cpu_trace_pc(state->pc) || msx_cpu_trace_addr(state->sp)) {
+        msx_cpu_log_flow("IRQ", state, memory, state->lastPc, state->pc);
+    }
     return 13;
 }
 
@@ -662,7 +1118,7 @@ int msx_cpu_step_xycb(MsxCpuState* state, MsxMemoryState* memory, const uint16_t
         if ((value & static_cast<uint8_t>(1u << y)) == 0u) {
             flags |= static_cast<uint8_t>(kFlagZ | kFlagPV);
         }
-        if (value & 0x80u) {
+        if ((y == 7u) && ((value & 0x80u) != 0u)) {
             flags |= kFlagS;
         }
         msx_cpu_set_f(state, flags);
@@ -813,7 +1269,10 @@ int msx_cpu_step_xy(MsxCpuState* state, MsxMemoryState* memory, uint16_t* xy)
             return 23;
         }
         case 0xE5: msx_cpu_push16(state, memory, *xy); return 15;
-        case 0xE9: state->pc = *xy; return 8;
+        case 0xE9:
+            msx_cpu_restore_cart_boot_mapping(memory, *xy, state->lastPc);
+            state->pc = *xy;
+            return 8;
         case 0xF9: state->sp = *xy; return 10;
 
         // DDCB / FDCB: 4-byte indexed bit operations
@@ -851,8 +1310,8 @@ int msx_cpu_step_cb(MsxCpuState* state, MsxMemoryState* memory)
         if ((value & static_cast<uint8_t>(1u << y)) == 0) {
             flags |= static_cast<uint8_t>(kFlagZ | kFlagPV);
         }
-        // S reflects bit 7 of the operand regardless of which bit is being tested.
-        if (value & 0x80u) {
+        // BIT only updates S when testing bit 7 and that bit is set.
+        if ((y == 7u) && ((value & 0x80u) != 0u)) {
             flags |= kFlagS;
         }
         flags |= static_cast<uint8_t>(value & (kFlagX | kFlagY));
@@ -925,9 +1384,9 @@ void msx_cpu_block_cpi(MsxCpuState* state, MsxMemoryState* memory, int direction
     if (state->bc != 0u) {
         flags |= kFlagPV;
     }
-    // X/Y from (result - H_flag) per Z80 spec; use result for simplicity
+    // X/Y come from bits 3 and 5 of (result - H) on a real Z80.
     const uint8_t n = static_cast<uint8_t>(result - ((flags & kFlagH) ? 1u : 0u));
-    flags |= static_cast<uint8_t>((n & kFlagX) | ((n >> 4u) & kFlagY));
+    flags |= static_cast<uint8_t>(n & (kFlagX | kFlagY));
     msx_cpu_set_f(state, flags);
 }
 
@@ -1022,10 +1481,15 @@ int msx_cpu_step_ed(MsxCpuState* state, MsxMemoryState* memory)
         case 0x65:
         case 0x6D:
         case 0x75:
-        case 0x7D:
+        case 0x7D: {
+            const uint16_t from = state->lastPc;
             state->pc = msx_cpu_pop16(state, memory);
             state->iff1 = state->iff2;
+            if (msx_cpu_trace_pc(from) || msx_cpu_trace_pc(state->pc)) {
+                msx_cpu_log_flow("RETN", state, memory, from, state->pc);
+            }
             return 14;
+        }
         case 0x46:
         case 0x4E:
         case 0x66:
@@ -1193,7 +1657,10 @@ int msx_cpu_step_opcode(MsxCpuState* state, MsxMemoryState* memory)
     }
 
     state->lastPc = state->pc;
+    msx_cpu_log_context(state, memory, state->lastPc);
     const uint8_t opcode = msx_cpu_fetch8(state, memory);
+    msx_cpu_log_opcode(state, memory, state->lastPc, opcode);
+
     state->lastOpcode = opcode;
 
     if ((opcode & 0xC7u) == 0x04u) {
@@ -1243,6 +1710,39 @@ int msx_cpu_step_opcode(MsxCpuState* state, MsxMemoryState* memory)
         if (opcode == 0x76u) {
             state->halted = true;
             state->runState = MsxCpuRunState::Halted;
+            #if MSX_CPU_TRACE_ENABLED
+            static uint16_t s_haltEnterLogCount = 0u;
+            if (s_haltEnterLogCount < 8u) {
+                const uint8_t next0 = msx_memory_read8(memory, state->lastPc);
+                const uint8_t next1 = msx_memory_read8(memory, static_cast<uint16_t>(state->lastPc + 1u));
+                const uint8_t next2 = msx_memory_read8(memory, static_cast<uint16_t>(state->lastPc + 2u));
+                const uint8_t next3 = msx_memory_read8(memory, static_cast<uint16_t>(state->lastPc + 3u));
+                const uint8_t hook0 = msx_memory_read8(memory, 0xFD9Au);
+                const uint8_t hook1 = msx_memory_read8(memory, 0xFD9Bu);
+                const uint8_t hook2 = msx_memory_read8(memory, 0xFD9Cu);
+                std::printf("[MSX][HALT] enter at=%04X next=%04X iff1=%u irq=%u A8=%02X SSL3=%02X cart=%s banks=%u/%u/%u/%u bytes=%02X %02X %02X %02X hook=%02X %02X %02X #%u\n",
+                            static_cast<unsigned>(state->lastPc),
+                            static_cast<unsigned>(state->pc),
+                            state->iff1 ? 1u : 0u,
+                            state->irqPending ? 1u : 0u,
+                            static_cast<unsigned>(memory->slotRegister),
+                            static_cast<unsigned>(memory->secondarySlotRegs[3]),
+                            msx_media_cartridge_type_label(memory->cart.type),
+                            static_cast<unsigned>(memory->cart.windowBanks[0]),
+                            static_cast<unsigned>(memory->cart.windowBanks[1]),
+                            static_cast<unsigned>(memory->cart.windowBanks[2]),
+                            static_cast<unsigned>(memory->cart.windowBanks[3]),
+                            static_cast<unsigned>(next0),
+                            static_cast<unsigned>(next1),
+                            static_cast<unsigned>(next2),
+                            static_cast<unsigned>(next3),
+                            static_cast<unsigned>(hook0),
+                            static_cast<unsigned>(hook1),
+                            static_cast<unsigned>(hook2),
+                            static_cast<unsigned>(s_haltEnterLogCount));
+                ++s_haltEnterLogCount;
+            }
+            #endif
             return 4;
         }
         const uint8_t dst = static_cast<uint8_t>((opcode >> 3) & 0x07u);
@@ -1260,7 +1760,11 @@ int msx_cpu_step_opcode(MsxCpuState* state, MsxMemoryState* memory)
 
     if ((opcode & 0xC7u) == 0xC0u) {
         if (msx_cpu_condition(state, static_cast<uint8_t>((opcode >> 3) & 0x07u))) {
+            const uint16_t from = state->lastPc;
             state->pc = msx_cpu_pop16(state, memory);
+            if (msx_cpu_trace_pc(from) || msx_cpu_trace_pc(state->pc)) {
+                msx_cpu_log_flow("RETcc", state, memory, from, state->pc);
+            }
             return 11;
         }
         return 5;
@@ -1269,6 +1773,10 @@ int msx_cpu_step_opcode(MsxCpuState* state, MsxMemoryState* memory)
     if ((opcode & 0xC7u) == 0xC2u) {
         const uint16_t address = msx_cpu_fetch16(state, memory);
         if (msx_cpu_condition(state, static_cast<uint8_t>((opcode >> 3) & 0x07u))) {
+            msx_cpu_restore_cart_boot_mapping(memory, address, state->lastPc);
+            if (msx_cpu_trace_pc(state->lastPc) || msx_cpu_trace_pc(address)) {
+                msx_cpu_log_flow("JPcc", state, memory, state->lastPc, address);
+            }
             state->pc = address;
         }
         return 10;
@@ -1278,6 +1786,9 @@ int msx_cpu_step_opcode(MsxCpuState* state, MsxMemoryState* memory)
         const uint16_t address = msx_cpu_fetch16(state, memory);
         if (msx_cpu_condition(state, static_cast<uint8_t>((opcode >> 3) & 0x07u))) {
             msx_cpu_push16(state, memory, state->pc);
+            if (msx_cpu_trace_pc(state->lastPc) || msx_cpu_trace_pc(address)) {
+                msx_cpu_log_flow("CALLcc", state, memory, state->lastPc, address);
+            }
             state->pc = address;
             return 17;
         }
@@ -1297,6 +1808,9 @@ int msx_cpu_step_opcode(MsxCpuState* state, MsxMemoryState* memory)
     if ((opcode & 0xC7u) == 0xC7u) {
         msx_cpu_push16(state, memory, state->pc);
         state->pc = static_cast<uint16_t>(opcode & 0x38u);
+        if (msx_cpu_trace_pc(state->lastPc) || msx_cpu_trace_pc(state->pc)) {
+            msx_cpu_log_flow("RST", state, memory, state->lastPc, state->pc);
+        }
         return 11;
     }
 
@@ -1323,6 +1837,9 @@ int msx_cpu_step_opcode(MsxCpuState* state, MsxMemoryState* memory)
             msx_set_hi(&state->bc, static_cast<uint8_t>(msx_hi(state->bc) - 1u));
             if (msx_hi(state->bc) != 0) {
                 state->pc = static_cast<uint16_t>(state->pc + offset);
+                if (msx_cpu_trace_pc(state->lastPc) || msx_cpu_trace_pc(state->pc)) {
+                    msx_cpu_log_flow("DJNZ", state, memory, state->lastPc, state->pc);
+                }
                 return 13;
             }
             return 8;
@@ -1333,9 +1850,14 @@ int msx_cpu_step_opcode(MsxCpuState* state, MsxMemoryState* memory)
         case 0x17:
             msx_cpu_acc_rotate_left(state);
             return 4;
-        case 0x18:
-            state->pc = static_cast<uint16_t>(state->pc + msx_signed_offset(msx_cpu_fetch8(state, memory)));
+        case 0x18: {
+            const int8_t offset = msx_signed_offset(msx_cpu_fetch8(state, memory));
+            state->pc = static_cast<uint16_t>(state->pc + offset);
+            if (msx_cpu_trace_pc(state->lastPc) || msx_cpu_trace_pc(state->pc)) {
+                msx_cpu_log_flow("JR", state, memory, state->lastPc, state->pc);
+            }
             return 12;
+        }
         case 0x1A:
             msx_cpu_set_a(state, msx_cpu_mem_read8(memory, state->de));
             return 7;
@@ -1350,6 +1872,9 @@ int msx_cpu_step_opcode(MsxCpuState* state, MsxMemoryState* memory)
             const uint8_t condition = static_cast<uint8_t>((opcode >> 3) & 0x03u);
             if (msx_cpu_condition(state, condition)) {
                 state->pc = static_cast<uint16_t>(state->pc + offset);
+                if (msx_cpu_trace_pc(state->lastPc) || msx_cpu_trace_pc(state->pc)) {
+                    msx_cpu_log_flow("JRcc", state, memory, state->lastPc, state->pc);
+                }
                 return 12;
             }
             return 7;
@@ -1401,19 +1926,32 @@ int msx_cpu_step_opcode(MsxCpuState* state, MsxMemoryState* memory)
             return 4;
         }
         case 0xC3:
-            state->pc = msx_cpu_fetch16(state, memory);
+        {
+            const uint16_t address = msx_cpu_fetch16(state, memory);
+            msx_cpu_restore_cart_boot_mapping(memory, address, state->lastPc);
+            state->pc = address;
+            if (msx_cpu_trace_pc(state->lastPc) || msx_cpu_trace_pc(state->pc)) {
+                msx_cpu_log_flow("JP", state, memory, state->lastPc, state->pc);
+            }
             return 10;
+        }
         case 0xC6:
             msx_cpu_do_alu(state, 0, msx_cpu_fetch8(state, memory));
             return 7;
         case 0xC9:
             state->pc = msx_cpu_pop16(state, memory);
+            if (msx_cpu_trace_pc(state->lastPc) || msx_cpu_trace_pc(state->pc)) {
+                msx_cpu_log_flow("RET", state, memory, state->lastPc, state->pc);
+            }
             return 10;
         case 0xCB:
             return msx_cpu_step_cb(state, memory);
         case 0xCD: {
             const uint16_t address = msx_cpu_fetch16(state, memory);
             msx_cpu_push16(state, memory, state->pc);
+            if (msx_cpu_trace_pc(state->lastPc) || msx_cpu_trace_pc(address)) {
+                msx_cpu_log_flow("CALL", state, memory, state->lastPc, address);
+            }
             state->pc = address;
             return 17;
         }
@@ -1448,6 +1986,10 @@ int msx_cpu_step_opcode(MsxCpuState* state, MsxMemoryState* memory)
             msx_cpu_do_alu(state, 4, msx_cpu_fetch8(state, memory));
             return 7;
         case 0xE9:
+            msx_cpu_restore_cart_boot_mapping(memory, state->hl, state->lastPc);
+            if (msx_cpu_trace_pc(state->lastPc) || msx_cpu_trace_pc(state->hl)) {
+                msx_cpu_log_flow("JP(HL)", state, memory, state->lastPc, state->hl);
+            }
             state->pc = state->hl;
             return 4;
         case 0xEB:
@@ -1461,7 +2003,7 @@ int msx_cpu_step_opcode(MsxCpuState* state, MsxMemoryState* memory)
         case 0xF3:
             state->iff1    = false;
             state->iff2    = false;
-            state->eiDelay = false;
+            state->eiDelay = 0u;
             return 4;
         case 0xF6:
             msx_cpu_do_alu(state, 6, msx_cpu_fetch8(state, memory));
@@ -1471,7 +2013,7 @@ int msx_cpu_step_opcode(MsxCpuState* state, MsxMemoryState* memory)
             return 6;
         case 0xFB:
             // EI: enable interrupts after the *next* instruction (Z80 one-instruction delay).
-            state->eiDelay = true;
+            state->eiDelay = 2u;
             return 4;
         case 0xFE:
             msx_cpu_do_alu(state, 7, msx_cpu_fetch8(state, memory));
@@ -1519,6 +2061,20 @@ void msx_cpu_request_irq(MsxCpuState* state)
         return;
     }
 
+#if MSX_CPU_TRACE_ENABLED
+    static uint16_t s_irqRequestLogCount = 0u;
+    if (s_irqRequestLogCount < 64u &&
+        (msx_cpu_trace_pc(state->pc) || state->halted)) {
+        std::printf("[MSX][IRQ] request pc=%04X iff=%u halt=%u im=%u #%u\n",
+                    static_cast<unsigned>(state->pc),
+                    state->iff1 ? 1u : 0u,
+                    state->halted ? 1u : 0u,
+                    static_cast<unsigned>(state->im),
+                    static_cast<unsigned>(s_irqRequestLogCount));
+        ++s_irqRequestLogCount;
+    }
+#endif
+
     state->irqPending = true;
 }
 
@@ -1561,11 +2117,13 @@ int msx_cpu_run_cycles(MsxCpuState* state, MsxMemoryState* memory, int cycleBudg
             break;
         }
 
-        // Commit EI delay: IFF1/IFF2 become active after the instruction following EI.
-        if (state->eiDelay) {
-            state->eiDelay = false;
-            state->iff1    = true;
-            state->iff2    = true;
+        // EI takes effect only after the following instruction has fully completed.
+        if (state->eiDelay != 0u) {
+            state->eiDelay--;
+            if (state->eiDelay == 0u) {
+                state->iff1 = true;
+                state->iff2 = true;
+            }
         }
 
         usedCycles += stepCycles;

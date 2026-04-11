@@ -4,12 +4,15 @@
 #include <M5Cardputer.h>
 
 #include "../cardputer/CardputerInput.h"
+#include "../share/display_target.h"
 #include "../share/emu_controls.h"
 #include "../share/input.h"
+#include "msx_config.h"
 #include "core/msx_keyboard.h"
 
 #include <algorithm>
 #include <cctype>
+#include <cstdio>
 #include <cstring>
 
 namespace {
@@ -29,8 +32,44 @@ struct MsxInputBindingCache {
 } // namespace
 
 static constexpr uint32_t kBacktickLongPressMs = 700;
+static constexpr uint32_t kGoLongPressMs = 700;
 static uint32_t s_backtickPressedMs = 0;
 static bool s_backtickLongHandled = false;
+static bool s_goLongHandled = false;
+static bool s_suppressGoClick = false;
+static uint32_t s_suppressGoUntilMs = 0;
+
+struct MsxRuntimeOptions {
+    bool joystickEnabled;
+    bool keyboardEnabled;
+    bool vausEnabled;
+};
+
+enum class MsxRuntimeMenuItem : uint8_t {
+    Joystick = 0,
+    Keyboard,
+    Vaus,
+    View,
+    Close,
+    Count,
+};
+
+struct MsxRuntimeMenuState {
+    bool visible;
+    MsxRuntimeMenuItem selected;
+    bool prevHeld;
+    bool nextHeld;
+    bool acceptHeld;
+    bool backHeld;
+};
+
+static MsxRuntimeOptions s_runtimeOptions = {false, true, false};
+static MsxRuntimeMenuState s_runtimeMenu = {false, MsxRuntimeMenuItem::Joystick, false, false, false, false};
+
+static bool msx_view_toggle_allowed(void)
+{
+    return g_emu_display_target != EMU_DISPLAY_EXTERNAL;
+}
 
 static inline bool msx_key_pressed(char key)
 {
@@ -40,6 +79,11 @@ static inline bool msx_key_pressed(char key)
 static inline bool msx_key_pressed_any(char a, char b)
 {
     return msx_key_pressed(a) || msx_key_pressed(b);
+}
+
+static inline bool msx_is_view_toggle_key(char ch)
+{
+    return ch == CARDPUTER_SCREEN_TOGGLE || ch == '|';
 }
 
 static char msx_normalize_char(char ch)
@@ -67,6 +111,80 @@ static void msx_load_binding_cache(MsxInputBindingCache* cache)
     cache->start = msx_load_bound_char(share::EmuAction::Start);
     cache->select = msx_load_bound_char(share::EmuAction::Select);
     cache->hasI2cPad = share::hasI2cPad();
+}
+
+static void msx_reset_menu_latches(void)
+{
+    s_runtimeMenu.prevHeld = false;
+    s_runtimeMenu.nextHeld = false;
+    s_runtimeMenu.acceptHeld = false;
+    s_runtimeMenu.backHeld = false;
+}
+
+static bool msx_menu_edge(bool pressed, bool* held)
+{
+    if (!held) {
+        return false;
+    }
+
+    const bool fired = pressed && !*held;
+    *held = pressed;
+    return fired;
+}
+
+static void msx_toggle_runtime_menu(void)
+{
+    s_runtimeMenu.visible = !s_runtimeMenu.visible;
+    msx_reset_menu_latches();
+}
+
+static void msx_runtime_menu_move(int delta)
+{
+    const int count = static_cast<int>(MsxRuntimeMenuItem::Count);
+    int selected = static_cast<int>(s_runtimeMenu.selected);
+    selected = (selected + delta + count) % count;
+    s_runtimeMenu.selected = static_cast<MsxRuntimeMenuItem>(selected);
+}
+
+static void msx_runtime_log_options(void)
+{
+    std::printf("[MSX][MENU] joy=%s keyboard=%s vaus=%s view=%s menu=%s\n",
+                s_runtimeOptions.joystickEnabled ? "on" : "off",
+                s_runtimeOptions.keyboardEnabled ? "on" : "off",
+                s_runtimeOptions.vausEnabled ? "on" : "off",
+                msx_view_toggle_allowed() ? msx_config_get_active_view_mode_label() : "1:1",
+                s_runtimeMenu.visible ? "open" : "closed");
+}
+
+static void msx_runtime_menu_accept(void)
+{
+    switch (s_runtimeMenu.selected) {
+        case MsxRuntimeMenuItem::Joystick:
+            s_runtimeOptions.joystickEnabled = !s_runtimeOptions.joystickEnabled;
+            break;
+        case MsxRuntimeMenuItem::Keyboard:
+            s_runtimeOptions.keyboardEnabled = !s_runtimeOptions.keyboardEnabled;
+            break;
+        case MsxRuntimeMenuItem::Vaus:
+            s_runtimeOptions.vausEnabled = !s_runtimeOptions.vausEnabled;
+            break;
+        case MsxRuntimeMenuItem::View:
+            if (msx_view_toggle_allowed()) {
+                msx_config_toggle_active_view_mode();
+            }
+            break;
+        case MsxRuntimeMenuItem::Close:
+            s_runtimeMenu.visible = false;
+            break;
+        case MsxRuntimeMenuItem::Count:
+        default:
+            break;
+    }
+
+    msx_runtime_log_options();
+    if (!s_runtimeMenu.visible) {
+        msx_reset_menu_latches();
+    }
 }
 
 static inline bool msx_binding_pressed(char key)
@@ -137,6 +255,76 @@ static bool msx_is_reserved_fn_char(char ch)
     }
 }
 
+// Keys consumed for joystick in joystick mode: never pass to keyboard matrix.
+static bool msx_is_joystick_key(char ch, const MsxInputBindingCache& cache)
+{
+    const char normalized = msx_normalize_char(ch);
+    return normalized == cache.up ||
+           normalized == cache.down ||
+           normalized == cache.left ||
+           normalized == cache.right ||
+           normalized == cache.fire1 ||
+           normalized == cache.fire2;
+}
+
+// Set joystick direction/fire state from the configured emulator bindings.
+static void msx_apply_joystick_mode_actions(MsxInputState* state,
+                                            const MsxInputBindingCache& cache)
+{
+    if (!state) {
+        return;
+    }
+
+    state->up    |= msx_binding_pressed(cache.up);
+    state->down  |= msx_binding_pressed(cache.down);
+    state->left  |= msx_binding_pressed(cache.left);
+    state->right |= msx_binding_pressed(cache.right);
+    state->fire1 |= msx_binding_pressed(cache.fire1);
+    state->fire2 |= msx_binding_pressed(cache.fire2);
+}
+
+// Inject cursor keys from ;.,./ and F1-F5 from 1-5 without needing FN (joystick mode).
+static void msx_apply_joystick_mode_extras(MsxKeyboardMatrix* matrix)
+{
+    if (!matrix) {
+        return;
+    }
+
+    // ; or : → Up
+    if (msx_key_pressed_any(';', ':')) {
+        msx_keyboard_matrix_press_special(matrix, MsxKeyboardSpecialKey::Up);
+    }
+    // . or > → Down
+    if (msx_key_pressed_any('.', '>')) {
+        msx_keyboard_matrix_press_special(matrix, MsxKeyboardSpecialKey::Down);
+    }
+    // , or < → Left
+    if (msx_key_pressed_any(',', '<')) {
+        msx_keyboard_matrix_press_special(matrix, MsxKeyboardSpecialKey::Left);
+    }
+    // / or ? → Right
+    if (msx_key_pressed_any('/', '?')) {
+        msx_keyboard_matrix_press_special(matrix, MsxKeyboardSpecialKey::Right);
+    }
+
+    // 1–5 → F1–F5
+    if (msx_key_pressed_any('1', '!')) {
+        msx_keyboard_matrix_press_special(matrix, MsxKeyboardSpecialKey::F1);
+    }
+    if (msx_key_pressed_any('2', '@')) {
+        msx_keyboard_matrix_press_special(matrix, MsxKeyboardSpecialKey::F2);
+    }
+    if (msx_key_pressed_any('3', '#')) {
+        msx_keyboard_matrix_press_special(matrix, MsxKeyboardSpecialKey::F3);
+    }
+    if (msx_key_pressed_any('4', '$')) {
+        msx_keyboard_matrix_press_special(matrix, MsxKeyboardSpecialKey::F4);
+    }
+    if (msx_key_pressed_any('5', '%')) {
+        msx_keyboard_matrix_press_special(matrix, MsxKeyboardSpecialKey::F5);
+    }
+}
+
 static inline bool msx_is_bound_action_char(char ch, char bound)
 {
     return bound != 0 && bound == msx_normalize_char(ch);
@@ -157,14 +345,21 @@ static bool msx_is_bound_emulator_control_char(char ch, const MsxInputBindingCac
 
 static void msx_apply_printable_keys(MsxKeyboardMatrix* matrix,
                                      const Keyboard_Class::KeysState& keys,
-                                     const MsxInputBindingCache& cache)
+                                     const MsxInputBindingCache& cache,
+                                     bool joystickEnabled)
 {
     if (!matrix) {
         return;
     }
 
     for (char ch : keys.word) {
-        if (keys.fn && msx_is_reserved_fn_char(ch)) {
+        // In joystick mode all reserved-fn chars (digits 1-5, punctuation cursors,
+        // space, etc.) are handled elsewhere; skip them from printable injection.
+        if ((keys.fn || joystickEnabled) && msx_is_reserved_fn_char(ch)) {
+            continue;
+        }
+
+        if (msx_is_view_toggle_key(ch)) {
             continue;
         }
 
@@ -172,6 +367,8 @@ static void msx_apply_printable_keys(MsxKeyboardMatrix* matrix,
             continue;
         }
 
+        // Emulator control bindings are handled as virtual joystick or
+        // synthetic MSX keys; never leak them through as printable chars.
         if (msx_is_bound_emulator_control_char(ch, cache)) {
             continue;
         }
@@ -335,20 +532,112 @@ static void msx_apply_emulator_actions_to_matrix(MsxKeyboardMatrix* matrix, cons
 static void msx_build_keyboard_matrix(MsxKeyboardMatrix* matrix,
                                       const Keyboard_Class::KeysState& keys,
                                       const MsxInputState* state,
-                                      const MsxInputBindingCache& cache)
+                                      const MsxInputBindingCache& cache,
+                                      bool keyboardEnabled,
+                                      bool joystickEnabled)
 {
     msx_keyboard_matrix_clear(matrix);
+    if (!keyboardEnabled) {
+        return;
+    }
+
     msx_apply_modifier_keys(matrix, keys);
     msx_apply_direct_special_keys(matrix, keys);
     msx_apply_fn_combos(matrix, keys);
+
+    if (joystickEnabled) {
+        // When joystick emulation is enabled, keep the convenience overlay keys
+        // (cursor punctuation / function digits) available too.
+        msx_apply_joystick_mode_extras(matrix);
+    }
+
     msx_apply_emulator_actions_to_matrix(matrix, state);
-    msx_apply_printable_keys(matrix, keys, cache);
+    msx_apply_printable_keys(matrix, keys, cache, joystickEnabled);
+}
+
+static bool msx_menu_prev_pressed(const Keyboard_Class::KeysState& keys,
+                                  const MsxInputBindingCache& bindings,
+                                  uint32_t padState)
+{
+    return M5Cardputer.Keyboard.isKeyPressed(KEY_ARROW_UP) ||
+           M5Cardputer.Keyboard.isKeyPressed(KEY_ARROW_LEFT) ||
+           msx_binding_pressed(bindings.up) ||
+           msx_binding_pressed(bindings.left) ||
+           ((padState & (share::PAD_UP | share::PAD_LEFT)) != 0u) ||
+           keys.tab;
+}
+
+static bool msx_menu_next_pressed(const Keyboard_Class::KeysState& keys,
+                                  const MsxInputBindingCache& bindings,
+                                  uint32_t padState)
+{
+    return M5Cardputer.Keyboard.isKeyPressed(KEY_ARROW_DOWN) ||
+           M5Cardputer.Keyboard.isKeyPressed(KEY_ARROW_RIGHT) ||
+           msx_binding_pressed(bindings.down) ||
+           msx_binding_pressed(bindings.right) ||
+           ((padState & (share::PAD_DOWN | share::PAD_RIGHT)) != 0u);
+}
+
+static bool msx_menu_accept_pressed(const Keyboard_Class::KeysState& keys,
+                                    const MsxInputBindingCache& bindings,
+                                    uint32_t padState)
+{
+    return keys.enter ||
+           keys.space ||
+           msx_binding_pressed(bindings.fire1) ||
+           msx_binding_pressed(bindings.start) ||
+           ((padState & (share::PAD_A | share::PAD_START)) != 0u);
+}
+
+static bool msx_menu_back_pressed(const Keyboard_Class::KeysState& keys,
+                                  const MsxInputBindingCache& bindings,
+                                  uint32_t padState)
+{
+    return keys.del ||
+           msx_binding_pressed(bindings.fire2) ||
+           msx_binding_pressed(bindings.select) ||
+           ((padState & (share::PAD_B | share::PAD_SELECT)) != 0u);
+}
+
+static void msx_poll_runtime_menu(const Keyboard_Class::KeysState& keys,
+                                  const MsxInputBindingCache& bindings,
+                                  uint32_t padState,
+                                  bool goShortClicked)
+{
+    if (!s_runtimeMenu.visible) {
+        msx_reset_menu_latches();
+        return;
+    }
+
+    if (goShortClicked || msx_menu_edge(msx_menu_accept_pressed(keys, bindings, padState), &s_runtimeMenu.acceptHeld)) {
+        msx_runtime_menu_accept();
+    }
+    if (!s_runtimeMenu.visible) {
+        return;
+    }
+
+    if (msx_menu_edge(msx_menu_prev_pressed(keys, bindings, padState), &s_runtimeMenu.prevHeld)) {
+        msx_runtime_menu_move(-1);
+    }
+    if (msx_menu_edge(msx_menu_next_pressed(keys, bindings, padState), &s_runtimeMenu.nextHeld)) {
+        msx_runtime_menu_move(1);
+    }
+    if (msx_menu_edge(msx_menu_back_pressed(keys, bindings, padState), &s_runtimeMenu.backHeld)) {
+        s_runtimeMenu.visible = false;
+        msx_reset_menu_latches();
+        msx_runtime_log_options();
+    }
 }
 
 void msx_input_init(void)
 {
     s_backtickPressedMs = 0;
     s_backtickLongHandled = false;
+    s_goLongHandled = false;
+    s_suppressGoClick = false;
+    s_suppressGoUntilMs = 0;
+    s_runtimeOptions = {false, true, false};
+    s_runtimeMenu = {false, MsxRuntimeMenuItem::Joystick, false, false, false, false};
 }
 
 void msx_input_poll(MsxInputState* state)
@@ -366,8 +655,34 @@ void msx_input_poll(MsxInputState* state)
     msx_load_binding_cache(&bindings);
     msx_apply_system_keys(keys);
 
-    if (M5Cardputer.BtnA.wasClicked()) {
-        state->quitRequested = true;
+    uint32_t padState = 0u;
+    if (bindings.hasI2cPad) {
+        padState = share::pollI2cPad();
+    }
+
+    bool goShortClicked = false;
+    bool goLongToggledMenu = false;
+    if (M5Cardputer.BtnA.isPressed()) {
+        if (!s_goLongHandled && M5Cardputer.BtnA.pressedFor(kGoLongPressMs)) {
+            s_goLongHandled = true;
+            s_suppressGoClick = true;
+            s_suppressGoUntilMs = millis() + 250u;
+            msx_toggle_runtime_menu();
+            msx_runtime_log_options();
+            goLongToggledMenu = true;
+        }
+    } else {
+        if (s_goLongHandled) {
+            s_goLongHandled = false;
+        }
+        if (s_suppressGoClick) {
+            (void)M5Cardputer.BtnA.wasClicked();
+            if (millis() >= s_suppressGoUntilMs) {
+                s_suppressGoClick = false;
+            }
+        } else if (M5Cardputer.BtnA.wasClicked()) {
+            goShortClicked = true;
+        }
     }
 
     if (msx_key_pressed('`')) {
@@ -384,24 +699,73 @@ void msx_input_poll(MsxInputState* state)
         s_backtickLongHandled = false;
     }
 
-    if (keys.fn &&
+    if (msx_view_toggle_allowed() &&
         M5Cardputer.Keyboard.isChange() &&
         msx_key_pressed_any(CARDPUTER_SCREEN_TOGGLE, '|')) {
         state->toggleViewRequested = true;
     }
 
-    if (bindings.hasI2cPad) {
-        const uint32_t pad = share::pollI2cPad();
-        state->up |= (pad & share::PAD_UP) != 0;
-        state->down |= (pad & share::PAD_DOWN) != 0;
-        state->left |= (pad & share::PAD_LEFT) != 0;
-        state->right |= (pad & share::PAD_RIGHT) != 0;
-        state->fire1 |= (pad & share::PAD_A) != 0;
-        state->fire2 |= (pad & share::PAD_B) != 0;
-        state->start |= (pad & share::PAD_START) != 0;
-        state->select |= (pad & share::PAD_SELECT) != 0;
+    const bool menuWasVisible = s_runtimeMenu.visible;
+    if (menuWasVisible) {
+        msx_poll_runtime_menu(keys, bindings, padState, goShortClicked);
     }
 
-    msx_apply_shared_actions(state, keys, bindings);
-    msx_build_keyboard_matrix(&state->keyboardMatrix, keys, state, bindings);
+    if (!menuWasVisible && goShortClicked) {
+        state->quitRequested = true;
+    }
+
+    state->joystickMode = s_runtimeOptions.joystickEnabled;
+    state->joystickEnabled = s_runtimeOptions.joystickEnabled;
+    state->keyboardEnabled = s_runtimeOptions.keyboardEnabled;
+    state->vausEnabled = s_runtimeOptions.vausEnabled;
+    state->menuVisible = s_runtimeMenu.visible;
+
+    if (menuWasVisible || s_runtimeMenu.visible || goLongToggledMenu) {
+        return;
+    }
+
+    const bool gameplayInputEnabled =
+        s_runtimeOptions.joystickEnabled ||
+        s_runtimeOptions.keyboardEnabled ||
+        s_runtimeOptions.vausEnabled;
+
+    if (bindings.hasI2cPad && gameplayInputEnabled) {
+        state->up |= (padState & share::PAD_UP) != 0u;
+        state->down |= (padState & share::PAD_DOWN) != 0u;
+        state->left |= (padState & share::PAD_LEFT) != 0u;
+        state->right |= (padState & share::PAD_RIGHT) != 0u;
+        state->fire1 |= (padState & share::PAD_A) != 0u;
+        state->fire2 |= (padState & share::PAD_B) != 0u;
+        state->start |= (padState & share::PAD_START) != 0u;
+        state->select |= (padState & share::PAD_SELECT) != 0u;
+    }
+
+    if (s_runtimeOptions.joystickEnabled || s_runtimeOptions.vausEnabled) {
+        // Configurable emulator bindings drive the PSG joystick path and Vaus.
+        msx_apply_joystick_mode_actions(state, bindings);
+    }
+
+    if (s_runtimeOptions.keyboardEnabled) {
+        msx_apply_shared_actions(state, keys, bindings);
+    }
+
+    msx_build_keyboard_matrix(&state->keyboardMatrix,
+                              keys,
+                              state,
+                              bindings,
+                              s_runtimeOptions.keyboardEnabled,
+                              s_runtimeOptions.joystickEnabled);
+}
+
+void msx_input_get_overlay_state(MsxInputOverlayState* state)
+{
+    if (!state) {
+        return;
+    }
+
+    state->menuVisible = s_runtimeMenu.visible;
+    state->joystickEnabled = s_runtimeOptions.joystickEnabled;
+    state->keyboardEnabled = s_runtimeOptions.keyboardEnabled;
+    state->vausEnabled = s_runtimeOptions.vausEnabled;
+    state->selectedIndex = static_cast<uint8_t>(s_runtimeMenu.selected);
 }

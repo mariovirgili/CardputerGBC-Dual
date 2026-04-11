@@ -16,7 +16,7 @@
     // --- External driver 320x240 (Default) ---
     #define ILI9341_DRIVER
     // 80 MHz — ILI9341 max practical SPI clock
-    #define SPI_FREQUENCY        80000000
+    #define SPI_FREQUENCY        70000000
     #define SPI_READ_FREQUENCY  6000000     // was 6000000
 #endif
 

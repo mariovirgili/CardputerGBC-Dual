@@ -6,6 +6,7 @@
 struct MsxDisplayFrame {
     const uint8_t* indexed8;
     const uint16_t* palette565;
+    uint16_t paletteEntryCount;
     unsigned width;
     unsigned height;
     size_t pitchBytes;
@@ -24,3 +25,4 @@ struct MsxDisplayStatus {
 void msx_display_init(void);
 void msx_display_shutdown(void);
 void msx_display_submit_frame(const MsxDisplayFrame* frame, const MsxDisplayStatus* status);
+void msx_display_show_external_info(const char* romTitle);

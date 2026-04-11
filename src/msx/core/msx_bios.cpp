@@ -5,6 +5,9 @@
 namespace {
 
 constexpr size_t kMsxPageSize8K = 0x2000;
+constexpr uint16_t kMsxBiosPatchAddresses[] = {
+    0x00E1u, 0x00E4u, 0x00E7u, 0x00EAu, 0x00EDu, 0x00F0u, 0x00F3u,
+};
 
 const uint8_t* msx_wrap_page_ptr(const uint8_t* base, size_t size, size_t offset)
 {
@@ -16,6 +19,22 @@ const uint8_t* msx_wrap_page_ptr(const uint8_t* base, size_t size, size_t offset
     return base + wrapped;
 }
 
+void msx_bios_apply_rom_patches(uint8_t* rom, size_t size)
+{
+    if (!rom) {
+        return;
+    }
+
+    for (uint16_t address : kMsxBiosPatchAddresses) {
+        if (static_cast<size_t>(address + 3u) > size) {
+            continue;
+        }
+        rom[address + 0u] = 0xEDu;
+        rom[address + 1u] = 0xFEu;
+        rom[address + 2u] = 0xC9u;
+    }
+}
+
 } // namespace
 
 bool msx_bios_init(MsxBiosState* state, const MsxBiosBundle* bundle)
@@ -25,6 +44,7 @@ bool msx_bios_init(MsxBiosState* state, const MsxBiosBundle* bundle)
     }
 
     std::memset(state, 0, sizeof(*state));
+    msx_bios_apply_rom_patches(bundle->mainRom.data, bundle->mainRom.size);
     state->target = bundle->target;
     state->machineMode = msx_media_target_to_machine_mode(bundle->target);
     state->mainRom = bundle->mainRom.data;

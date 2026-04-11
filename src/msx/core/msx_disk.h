@@ -35,14 +35,18 @@ struct MsxDiskState {
     const uint8_t* dskData;      // DSK image pointer (XIP-mapped; may be nullptr = no disk)
     size_t         dskSize;      // total DSK image size in bytes
     uint8_t        sides;        // 1 or 2 (determined from image size)
+    bool           dskchgKnown;  // first DSKCHG returns unknown, later unchanged for immutable images
 
     uint8_t  trackReg;           // WD2793 track register
     uint8_t  sectorReg;          // WD2793 sector register (1-based)
     uint8_t  dataReg;            // WD2793 data register (seek target / write data)
     uint8_t  statusReg;          // WD2793 status register
     uint8_t  driveAndSide;       // port 0xD4: bit 0 = side, bits 1-2 = drive number
+    uint8_t  lastCommand;        // last WD2793 command written to port 0xD0
+    bool     stepDirectionIn;    // direction used by STEP commands
 
     uint8_t  sectorBuf[kMsxDskSectorSize];
+    uint16_t transferSize;       // bytes remaining in the current DRQ transfer
     uint16_t bufPos;             // read offset in sectorBuf; >= kMsxDskSectorSize means no data pending
     bool     ready;              // disk state initialised
 };

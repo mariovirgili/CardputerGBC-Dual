@@ -32,6 +32,38 @@ constexpr const char* kMsx2BiosMd5 = "ec3a01c91f24fbddcbcab0ad301bc9ef";
 constexpr const char* kMsx2ExtBiosName = "MSX2EXT.ROM";
 constexpr const char* kMsx2ExtBiosMd5 = "2183c2aff17cf4297bdb496de78c2e8a";
 
+bool msx_is_cart_exec_address(uint16_t address)
+{
+    return (address >= 0x4000u) && (address < 0xC000u);
+}
+
+bool msx_is_cart_text_address(uint16_t address)
+{
+    return (address >= 0x8000u) && (address < 0xC000u);
+}
+
+bool msx_has_ab_signature_at(const uint8_t* data, size_t size, size_t offset)
+{
+    return data && (offset + 2u <= size) && data[offset] == 'A' && data[offset + 1u] == 'B';
+}
+
+bool msx_is_plausible_header_at(const uint8_t* data, size_t size, size_t offset)
+{
+    if (!msx_has_ab_signature_at(data, size, offset) || (offset + 10u > size)) {
+        return false;
+    }
+
+    const uint16_t init = static_cast<uint16_t>(data[offset + 2u] | (static_cast<uint16_t>(data[offset + 3u]) << 8));
+    const uint16_t statement = static_cast<uint16_t>(data[offset + 4u] | (static_cast<uint16_t>(data[offset + 5u]) << 8));
+    const uint16_t device = static_cast<uint16_t>(data[offset + 6u] | (static_cast<uint16_t>(data[offset + 7u]) << 8));
+    const uint16_t text = static_cast<uint16_t>(data[offset + 8u] | (static_cast<uint16_t>(data[offset + 9u]) << 8));
+
+    return msx_is_cart_exec_address(init) ||
+           msx_is_cart_exec_address(statement) ||
+           msx_is_cart_exec_address(device) ||
+           msx_is_cart_text_address(text);
+}
+
 struct CandidateEntry {
     const char* path;
     const char* expectedName;
@@ -352,10 +384,20 @@ size_t msx_find_header_offset(const uint8_t* data, size_t size)
 {
     const size_t probeLimit = size < kMsxMaxHeaderProbe ? size : kMsxMaxHeaderProbe;
     for (size_t offset = 0; offset + 16 <= probeLimit; offset += kMsxHeaderStride) {
-        if (data[offset] == 'A' && data[offset + 1] == 'B') {
+        if (msx_has_ab_signature_at(data, probeLimit, offset)) {
             return offset;
         }
     }
+
+    // Some ROM dumps include a short wrapper ahead of the actual MSX image.
+    // When the canonical 8k-aligned probe fails, do a bytewise fallback scan
+    // but only accept headers whose vectors still look like a real cartridge.
+    for (size_t offset = 0; offset + 16 <= probeLimit; ++offset) {
+        if (msx_is_plausible_header_at(data, probeLimit, offset)) {
+            return offset;
+        }
+    }
+
     return size;
 }
 
@@ -514,10 +556,12 @@ bool msx_media_analyze_rom(MsxRomImage* image, const uint8_t* romData, size_t ro
     image->headerOffset = msx_find_header_offset(romData, romLen);
     image->hasAbHeader = image->headerOffset < romLen;
 
-    if (image->hasAbHeader && image->headerOffset + 6 <= romLen) {
+    if (image->hasAbHeader && image->headerOffset + 10 <= romLen) {
         const size_t offset = image->headerOffset;
-        image->entryPoint = static_cast<uint16_t>(romData[offset + 2] | (static_cast<uint16_t>(romData[offset + 3]) << 8));
-        image->initAddress = static_cast<uint16_t>(romData[offset + 4] | (static_cast<uint16_t>(romData[offset + 5]) << 8));
+        // MSX cartridge headers store the startup vector in INIT at +2.
+        const uint16_t init = static_cast<uint16_t>(romData[offset + 2] | (static_cast<uint16_t>(romData[offset + 3]) << 8));
+        image->entryPoint = init;
+        image->initAddress = init;
     }
 
     if (romLen <= 0x4000) {
@@ -528,7 +572,19 @@ bool msx_media_analyze_rom(MsxRomImage* image, const uint8_t* romData, size_t ro
     }
     else {
         image->cartridgeType = msx_detect_mapper_heuristic(romData, romLen);
+        // If heuristic cannot determine the mapper type, fall back to Konami —
+        // the most common MSX mapper for >32KB cartridges.
+        if (image->cartridgeType == MsxCartridgeType::Unknown) {
+            image->cartridgeType = MsxCartridgeType::Konami;
+        }
     }
+
+    MSX_BIOS_LOG("[MSX][ROM] analyze size=%u header=%s offset=%u init=%04X type=%s\n",
+                 static_cast<unsigned>(romLen),
+                 image->hasAbHeader ? "yes" : "no",
+                 image->hasAbHeader ? static_cast<unsigned>(image->headerOffset) : 0u,
+                 static_cast<unsigned>(image->initAddress),
+                 msx_media_cartridge_type_label(image->cartridgeType));
 
     return image->sizeSupported;
 }

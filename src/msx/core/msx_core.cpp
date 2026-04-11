@@ -7,7 +7,11 @@
 #include "msx_disk.h"
 
 #ifndef MSX_CORE_LOG_ENABLED
-#define MSX_CORE_LOG_ENABLED 0
+#define MSX_CORE_LOG_ENABLED 1
+#endif
+
+#ifndef MSX_CORE_TRACE_ENABLED
+#define MSX_CORE_TRACE_ENABLED 0
 #endif
 
 #if MSX_CORE_LOG_ENABLED
@@ -19,13 +23,36 @@
 namespace {
 
 constexpr int kMsxFrameCycles60Hz = 59659;
-constexpr uint8_t kMsxBootSlotBios = 0xD0;
+// BIOS-only boot starts with all pages on primary slot 0.
+// Cartridge-assisted boot needs the cart visible at 4000h-BFFFh while page 0
+// stays on BIOS and page 3 stays on expanded RAM.
+constexpr uint8_t kMsxBootSlotBios = 0x00;
 constexpr uint8_t kMsxBootSlotCart = 0xD4;
-constexpr uint8_t kMsxBootSlotDisk = 0xF8;
+constexpr uint8_t kMsxBootSecondaryBios = 0x00;
+constexpr uint8_t kMsxBootSecondaryCart = 0xA0;
+// Disk-sector boot needs DiskROM visible in page1 and RAM in pages 2-3.
+constexpr uint8_t kMsxBootSlotDisk = 0xFC;
+constexpr uint8_t kMsxBootSecondaryDisk = 0xA4;
 constexpr uint16_t kMsxDefaultStack = 0xF380;
 constexpr uint16_t kMsxDiskBootAddress = 0xC000;
 constexpr uint32_t kMsxStatusRefreshPeriod = 8u;
 constexpr size_t kMsxCartRamSizeMsx1 = 0x8000u;
+constexpr uint8_t kMsxSlotIdMainRam = 0x8Bu;   // expanded slot 3-2
+constexpr uint8_t kMsxSlotIdDiskRom = 0x87u;   // expanded slot 3-1
+constexpr uint8_t kMsxSlotIdCartridge = 0x01u; // primary slot 1
+constexpr uint8_t kMsxInputCfgJoy = 0x01u;
+constexpr uint8_t kMsxInputCfgKeyboard = 0x02u;
+constexpr uint8_t kMsxInputCfgVaus = 0x04u;
+constexpr uint16_t kMsxAddrExptbl = 0xFCC1u;
+constexpr uint16_t kMsxAddrSlttbl = 0xFCC5u;
+constexpr uint16_t kMsxAddrSltatr = 0xFCCCu;  // slot attribute table (60 bytes)
+constexpr uint16_t kMsxAddrSltwrk = 0xFD09u;  // slot work area (128 bytes)
+constexpr uint16_t kMsxAddrDrvInv = 0xFB21u;
+constexpr uint16_t kMsxAddrRamAd0 = 0xF341u;
+constexpr uint16_t kMsxAddrMaster = 0xF348u;
+constexpr uint16_t kMsxAddrCartInitLo = 0xF7C5u;
+constexpr uint16_t kMsxAddrCartInitHi = 0xF7C6u;
+constexpr uint16_t kMsxAddrCartInitSlot = 0xF7C7u;
 
 void msx_core_set_status(MsxCoreState* state, const char* format, ...)
 {
@@ -125,20 +152,12 @@ uint16_t msx_core_select_boot_pc(const MsxCartState* cart, bool* directBoot)
         return 0x0000u;
     }
 
-    if (cart->entryPoint >= 0x4000u && cart->entryPoint < 0xC000u) {
-        if (directBoot) {
-            *directBoot = true;
-        }
-        return cart->entryPoint;
+    // Standard "AB" cartridge headers should boot through the BIOS with the
+    // cartridge visible at 4000h-BFFFh. Jumping directly into the header
+    // routine skips BIOS machine setup and breaks games such as Bomberman.
+    if (directBoot) {
+        *directBoot = true;
     }
-
-    if (cart->initAddress >= 0x4000u && cart->initAddress < 0xC000u) {
-        if (directBoot) {
-            *directBoot = true;
-        }
-        return cart->initAddress;
-    }
-
     return 0x0000u;
 }
 
@@ -148,6 +167,7 @@ void msx_core_attach_runtime_devices(MsxCoreState* state)
         return;
     }
 
+    state->memory.diskPatch = msx_disk_bios_patch_handler;
     msx_memory_attach_vdp(&state->memory, &state->vdp);
     if (state->audioHookReady) {
         msx_memory_attach_psg(&state->memory, &state->psg);
@@ -157,12 +177,156 @@ void msx_core_attach_runtime_devices(MsxCoreState* state)
     }
 }
 
+uint8_t msx_core_ram_segment_for_page(const MsxMemoryState* memory, uint8_t pageIndex)
+{
+    if (!memory || memory->ramSegmentCount == 0u) {
+        return 0u;
+    }
+
+    if (memory->mapperEnabled && memory->ramSegmentCount > 4u) {
+        return static_cast<uint8_t>(memory->mapperRegisters[pageIndex & 0x03u] % memory->ramSegmentCount);
+    }
+
+    return static_cast<uint8_t>(pageIndex % memory->ramSegmentCount);
+}
+
+uint8_t* msx_core_raw_ram_bank_ptr(MsxMemoryState* memory, uint8_t pageIndex, uint8_t subPage)
+{
+    if (!memory || (pageIndex >= 4u) || (subPage >= 2u) || (memory->ramSegmentCount == 0u)) {
+        return nullptr;
+    }
+
+    const uint8_t segment = msx_core_ram_segment_for_page(memory, pageIndex);
+    const uint8_t bankIndex = static_cast<uint8_t>(segment * 2u + subPage);
+    if ((segment >= memory->ramSegmentCount) ||
+        (bankIndex >= memory->ramBankCount) ||
+        (bankIndex >= 16u)) {
+        return nullptr;
+    }
+
+    return memory->ramBanks[bankIndex];
+}
+
+void msx_core_raw_page3_write8(MsxMemoryState* memory, uint16_t address, uint8_t value)
+{
+    if (!memory || !memory->ready || ((address >> 14) != 3u)) {
+        return;
+    }
+
+    uint8_t* const bankPtr = msx_core_raw_ram_bank_ptr(
+        memory,
+        3u,
+        static_cast<uint8_t>((address >> 13) & 0x01u)
+    );
+    if (!bankPtr) {
+        return;
+    }
+
+    bankPtr[address & 0x1FFFu] = value;
+}
+
+void msx_core_seed_slot_work_area(MsxCoreState* state, uint8_t secondarySlotReg)
+{
+    if (!state || !state->memory.ready) {
+        return;
+    }
+
+    MsxMemoryState* const memory = &state->memory;
+    const bool hasDiskRom = (memory->diskRom != nullptr) && (memory->diskRomSize != 0u);
+    const bool hasCartInit = memory->cart.ready &&
+                             memory->cart.directBootCandidate &&
+                             (memory->cart.initAddress >= 0x4000u) &&
+                             (memory->cart.initAddress < 0xC000u);
+
+    msx_core_raw_page3_write8(memory, static_cast<uint16_t>(kMsxAddrExptbl + 0u), 0x00u);
+    msx_core_raw_page3_write8(memory, static_cast<uint16_t>(kMsxAddrExptbl + 1u), 0x00u);
+    msx_core_raw_page3_write8(memory, static_cast<uint16_t>(kMsxAddrExptbl + 2u), 0x00u);
+    msx_core_raw_page3_write8(memory, static_cast<uint16_t>(kMsxAddrExptbl + 3u), 0x80u);
+
+    msx_core_raw_page3_write8(memory, static_cast<uint16_t>(kMsxAddrSlttbl + 0u), 0x00u);
+    msx_core_raw_page3_write8(memory, static_cast<uint16_t>(kMsxAddrSlttbl + 1u), 0x00u);
+    msx_core_raw_page3_write8(memory, static_cast<uint16_t>(kMsxAddrSlttbl + 2u), 0x00u);
+    msx_core_raw_page3_write8(memory, static_cast<uint16_t>(kMsxAddrSlttbl + 3u), secondarySlotReg);
+
+    for (uint16_t i = 0u; i < 4u; ++i) {
+        msx_core_raw_page3_write8(memory, static_cast<uint16_t>(kMsxAddrRamAd0 + i), kMsxSlotIdMainRam);
+    }
+
+    msx_core_raw_page3_write8(memory, kMsxAddrMaster, hasDiskRom ? kMsxSlotIdDiskRom : 0x00u);
+
+    for (uint16_t i = 0u; i < 4u; ++i) {
+        const bool primaryInterface = hasDiskRom && (i == 0u);
+        msx_core_raw_page3_write8(memory,
+                                  static_cast<uint16_t>(kMsxAddrDrvInv + (i * 2u)),
+                                  primaryInterface ? kMsxSlotIdDiskRom : 0x00u);
+        msx_core_raw_page3_write8(memory,
+                                  static_cast<uint16_t>(kMsxAddrDrvInv + (i * 2u) + 1u),
+                                  primaryInterface ? 0x01u : 0x00u);
+    }
+
+    // Zero SLTATR and SLTWRK so heap garbage doesn't cause the BIOS extension ROM
+    // scan to misread slot attributes and issue spurious CALLFs into empty slots.
+    for (uint16_t i = 0u; i < 60u; ++i) {
+        msx_core_raw_page3_write8(memory, static_cast<uint16_t>(kMsxAddrSltatr + i), 0x00u);
+    }
+    for (uint16_t i = 0u; i < 128u; ++i) {
+        msx_core_raw_page3_write8(memory, static_cast<uint16_t>(kMsxAddrSltwrk + i), 0x00u);
+    }
+
+    if (hasCartInit) {
+        msx_core_raw_page3_write8(memory,
+                                  kMsxAddrCartInitLo,
+                                  static_cast<uint8_t>(memory->cart.initAddress & 0x00FFu));
+        msx_core_raw_page3_write8(memory,
+                                  kMsxAddrCartInitHi,
+                                  static_cast<uint8_t>(memory->cart.initAddress >> 8));
+        msx_core_raw_page3_write8(memory, kMsxAddrCartInitSlot, kMsxSlotIdCartridge);
+    } else {
+        msx_core_raw_page3_write8(memory, kMsxAddrCartInitSlot, 0x00u);
+    }
+    memory->cartBootWorkareaFallbackArmed = hasCartInit;
+    memory->cartBootMappingRestoreArmed = hasCartInit;
+
+    MSX_CORE_LOG("[MSX] slot workarea: EXPTBL=%02X/%02X/%02X/%02X SLTTBL=%02X/%02X/%02X/%02X RAMAD=%02X MASTER=%02X CART=%02X INIT=%04X SLOT=%02X\n",
+                 static_cast<unsigned>(0x00u),
+                 static_cast<unsigned>(0x00u),
+                 static_cast<unsigned>(0x00u),
+                 static_cast<unsigned>(0x80u),
+                 static_cast<unsigned>(0x00u),
+                 static_cast<unsigned>(0x00u),
+                 static_cast<unsigned>(0x00u),
+                 static_cast<unsigned>(secondarySlotReg),
+                 static_cast<unsigned>(kMsxSlotIdMainRam),
+                 static_cast<unsigned>(hasDiskRom ? kMsxSlotIdDiskRom : 0x00u),
+                 static_cast<unsigned>(hasCartInit ? kMsxSlotIdCartridge : 0x00u),
+                 static_cast<unsigned>(hasCartInit ? memory->cart.initAddress : 0x0000u),
+                 static_cast<unsigned>(hasCartInit ? kMsxSlotIdCartridge : 0x00u));
+}
+
+void msx_core_apply_boot_mapping(MsxCoreState* state,
+                                 uint8_t slotRegister,
+                                 uint8_t secondarySlotReg)
+{
+    if (!state) {
+        return;
+    }
+
+    state->memory.slotRegister = slotRegister;
+    std::memset(state->memory.secondarySlotRegs, 0, sizeof(state->memory.secondarySlotRegs));
+    state->memory.secondarySlotRegs[3] = secondarySlotReg;
+    state->memory.lastPortA8 = slotRegister;
+    msx_memory_refresh_maps(&state->memory);
+    msx_core_seed_slot_work_area(state, secondarySlotReg);
+
+    MSX_CORE_LOG("[MSX] boot map: A8=%02X FFFF=%02X\n",
+                 static_cast<unsigned>(slotRegister),
+                 static_cast<unsigned>(secondarySlotReg));
+}
+
 void msx_core_finish_no_cart_init(MsxCoreState* state)
 {
     msx_core_attach_runtime_devices(state);
-    state->memory.slotRegister = kMsxBootSlotBios;
-    state->memory.lastPortA8 = kMsxBootSlotBios;
-    msx_memory_refresh_maps(&state->memory);
+    msx_core_apply_boot_mapping(state, kMsxBootSlotBios, kMsxBootSecondaryBios);
 
     state->bootPc = 0x0000u;
     state->directBoot = false;
@@ -188,16 +352,47 @@ bool msx_core_try_boot_disk_sector(MsxCoreState* state)
         return false;
     }
 
-    const uint8_t jump = sector[0];
-    if (jump != 0xEBu && jump != 0xE9u && jump != 0xC3u) {
-        std::printf("[MSX] disk boot: sector 0 is not executable (opcode=%02X)\n",
-                    static_cast<unsigned>(jump));
+    const uint16_t bytesPerSector =
+        static_cast<uint16_t>(sector[0x0Bu] | (static_cast<uint16_t>(sector[0x0Cu]) << 8));
+    const uint16_t totalSectors =
+        static_cast<uint16_t>(sector[0x13u] | (static_cast<uint16_t>(sector[0x14u]) << 8));
+    const uint16_t sectorsPerFat =
+        static_cast<uint16_t>(sector[0x16u] | (static_cast<uint16_t>(sector[0x17u]) << 8));
+    const uint16_t signature =
+        static_cast<uint16_t>(sector[0x1FEu] | (static_cast<uint16_t>(sector[0x1FFu]) << 8));
+    std::printf("[MSX] disk boot: jump=%02X %02X %02X bps=%u spc=%u media=%02X total=%u spf=%u sig=%04X\n",
+                static_cast<unsigned>(sector[0x00u]),
+                static_cast<unsigned>(sector[0x01u]),
+                static_cast<unsigned>(sector[0x02u]),
+                static_cast<unsigned>(bytesPerSector),
+                static_cast<unsigned>(sector[0x0Du]),
+                static_cast<unsigned>(sector[0x15u]),
+                static_cast<unsigned>(totalSectors),
+                static_cast<unsigned>(sectorsPerFat),
+                static_cast<unsigned>(signature));
+
+    const bool placeholderLoop =
+        (sector[0x00u] == 0xEBu) &&
+        (sector[0x01u] == 0xFEu);
+    if (placeholderLoop) {
+        std::printf("[MSX] disk boot: sector 0 is a placeholder loop (%02X %02X %02X), using BIOS/DISK ROM path\n",
+                    static_cast<unsigned>(sector[0x00u]),
+                    static_cast<unsigned>(sector[0x01u]),
+                    static_cast<unsigned>(sector[0x02u]));
         return false;
     }
 
-    state->memory.slotRegister = kMsxBootSlotDisk;
-    state->memory.lastPortA8 = kMsxBootSlotDisk;
-    msx_memory_refresh_maps(&state->memory);
+    const uint8_t jump = sector[0];
+    if (jump != 0xEBu && jump != 0xE9u && jump != 0xC3u) {
+        std::printf("[MSX] disk boot: sector 0 is not executable (opcode=%02X bytes=%02X %02X %02X)\n",
+                    static_cast<unsigned>(jump),
+                    static_cast<unsigned>(sector[0x00u]),
+                    static_cast<unsigned>(sector[0x01u]),
+                    static_cast<unsigned>(sector[0x02u]));
+        return false;
+    }
+
+    msx_core_apply_boot_mapping(state, kMsxBootSlotDisk, kMsxBootSecondaryDisk);
 
     for (uint16_t i = 0; i < static_cast<uint16_t>(kMsxDskSectorSize); ++i) {
         msx_memory_write8(&state->memory, static_cast<uint16_t>(kMsxDiskBootAddress + i), sector[i]);
@@ -268,7 +463,6 @@ bool msx_core_init(MsxCoreState* state,
         return false;
     }
 
-    std::printf("[MSX] core init: bios ok\n");
     std::printf("[MSX] core init: cart begin\n");
     if (!msx_cart_init(&state->cart, rom)) {
         std::printf("[MSX] core init failed at cart init\n");
@@ -302,9 +496,9 @@ bool msx_core_init(MsxCoreState* state,
     msx_core_attach_runtime_devices(state);
 
     state->bootPc = msx_core_select_boot_pc(&state->cart, &state->directBoot);
-    state->memory.slotRegister = state->directBoot ? kMsxBootSlotCart : kMsxBootSlotBios;
-    state->memory.lastPortA8 = state->memory.slotRegister;
-    msx_memory_refresh_maps(&state->memory);
+    msx_core_apply_boot_mapping(state,
+                                state->directBoot ? kMsxBootSlotCart : kMsxBootSlotBios,
+                                state->directBoot ? kMsxBootSecondaryCart : kMsxBootSecondaryBios);
 
     msx_cpu_init(&state->cpu);
     msx_cpu_reset(&state->cpu, state->bootPc, kMsxDefaultStack);
@@ -339,7 +533,134 @@ void msx_core_handle_input(MsxCoreState* state, const MsxInputState* input)
         return;
     }
 
-    msx_memory_set_keyboard_matrix(&state->memory, &input->keyboardMatrix);
+    uint8_t joy = 0xFFu;
+    if (input->up)    { joy &= ~0x01u; }
+    if (input->down)  { joy &= ~0x02u; }
+    if (input->left)  { joy &= ~0x04u; }
+    if (input->right) { joy &= ~0x08u; }
+    if (input->fire1) { joy &= ~0x10u; }
+    if (input->fire2) { joy &= ~0x20u; }
+
+    uint8_t configFlags = 0u;
+    if (input->joystickEnabled) {
+        configFlags |= kMsxInputCfgJoy;
+    }
+    if (input->keyboardEnabled) {
+        configFlags |= kMsxInputCfgKeyboard;
+    }
+    if (input->vausEnabled) {
+        configFlags |= kMsxInputCfgVaus;
+    }
+
+    MsxKeyboardMatrix keyboardMatrix = input->keyboardMatrix;
+    if (!input->keyboardEnabled) {
+        msx_keyboard_matrix_clear(&keyboardMatrix);
+    }
+
+    uint8_t psgPortA = 0xFFu;
+    uint8_t psgPortB = 0xFFu;
+    if (input->joystickEnabled) {
+        if (input->vausEnabled) {
+            psgPortB = joy;
+        } else {
+            psgPortA = joy;
+        }
+    }
+
+    const bool joyChanged = !state->lastInputCaptured || (state->lastInputJoy != joy);
+    const bool configChanged =
+        !state->lastInputCaptured || (state->lastInputConfigFlags != configFlags);
+    const bool keyboardChanged =
+        !state->lastInputCaptured ||
+        (std::memcmp(state->lastInputKeyboardMatrix.rows,
+                     keyboardMatrix.rows,
+                     sizeof(keyboardMatrix.rows)) != 0);
+
+    static uint16_t s_inputLogCount = 0u;
+    if ((joyChanged || configChanged || keyboardChanged) && s_inputLogCount < 160u) {
+        char pressed[8] = "------";
+        if (input->up) { pressed[0] = 'U'; }
+        if (input->down) { pressed[1] = 'D'; }
+        if (input->left) { pressed[2] = 'L'; }
+        if (input->right) { pressed[3] = 'R'; }
+        if (input->fire1) { pressed[4] = 'A'; }
+        if (input->fire2) { pressed[5] = 'B'; }
+
+        char config[4] = "---";
+        if (input->joystickEnabled) {
+            config[0] = 'J';
+        }
+        if (input->keyboardEnabled) {
+            config[1] = 'K';
+        }
+        if (input->vausEnabled) {
+            config[2] = 'V';
+        }
+
+        char rowSummary[96];
+        size_t used = 0u;
+        bool anyRow = false;
+        rowSummary[0] = '\0';
+        for (uint8_t row = 0u; row < kMsxKeyboardRowCount; ++row) {
+            const uint8_t rowValue = keyboardMatrix.rows[row];
+            if (rowValue == 0xFFu) {
+                continue;
+            }
+
+            anyRow = true;
+            const int written = std::snprintf(rowSummary + used,
+                                              sizeof(rowSummary) - used,
+                                              "%s%u:%02X",
+                                              (used != 0u) ? " " : "",
+                                              static_cast<unsigned>(row),
+                                              static_cast<unsigned>(rowValue));
+            if (written <= 0) {
+                break;
+            }
+            const size_t advance = static_cast<size_t>(written);
+            if (advance >= (sizeof(rowSummary) - used)) {
+                used = sizeof(rowSummary) - 1u;
+                break;
+            }
+            used += advance;
+        }
+        if (!anyRow) {
+            std::snprintf(rowSummary, sizeof(rowSummary), "idle");
+        }
+
+#if MSX_CORE_TRACE_ENABLED
+        std::printf("[MSX][INPUT] cfg=%s joy=%02X psg=%02X/%02X keys=%s rows=%s #%u\n",
+                    config,
+                    static_cast<unsigned>(joy),
+                    static_cast<unsigned>(psgPortA),
+                    static_cast<unsigned>(psgPortB),
+                    pressed,
+                    rowSummary,
+                    static_cast<unsigned>(s_inputLogCount));
+        ++s_inputLogCount;
+#endif
+    }
+
+    state->lastInputJoy = joy;
+    state->lastInputConfigFlags = configFlags;
+    state->lastInputJoystickMode = input->joystickMode;
+    state->lastInputKeyboardMatrix = keyboardMatrix;
+    state->lastInputCaptured = true;
+
+    msx_memory_set_keyboard_matrix(&state->memory, &keyboardMatrix);
+
+    if (state->audioHookReady) {
+        msx_psg_set_vaus_enabled(&state->psg, input->vausEnabled);
+        if (input->vausEnabled) {
+            msx_psg_set_vaus_input(&state->psg,
+                                   input->left,
+                                   input->right,
+                                   input->fire1 || input->fire2 || input->start);
+        } else {
+            msx_psg_set_vaus_input(&state->psg, false, false, false);
+        }
+        msx_psg_set_joysticks(&state->psg, psgPortA, psgPortB);
+    }
 }
 
 void msx_core_step_frame(MsxCoreState* state)
@@ -349,11 +670,44 @@ void msx_core_step_frame(MsxCoreState* state)
     }
 
     const bool irqEnabled = msx_vdp_begin_frame(&state->vdp);
-    if (irqEnabled || state->cpu.halted) {
+    if (irqEnabled) {
         msx_cpu_request_irq(&state->cpu);
     }
 
+    const MsxCpuRunState prevRunState = state->cpu.runState;
     state->lastFrameCycles = static_cast<uint32_t>(msx_cpu_run_cycles(&state->cpu, &state->memory, kMsxFrameCycles60Hz));
+
+    // Log the first time the CPU enters a non-running state, and every 60 frames while stuck.
+    const MsxCpuRunState curRunState = state->cpu.runState;
+#if MSX_CORE_TRACE_ENABLED
+    if (curRunState != MsxCpuRunState::Running) {
+        if (prevRunState != curRunState || (state->frameCounter % 60u) == 0u) {
+            std::printf("[MSX][CPU] state=%s pc=%04X op=%02X frame=%lu cycles=%lu\n",
+                        msx_cpu_run_state_label(curRunState),
+                        static_cast<unsigned>(state->cpu.pc),
+                        static_cast<unsigned>(state->cpu.lastOpcode),
+                        static_cast<unsigned long>(state->frameCounter),
+                        static_cast<unsigned long>(state->lastFrameCycles));
+        }
+    } else if (state->frameCounter < 5u || (state->frameCounter % 60u) == 0u) {
+        std::printf("[MSX][CPU] RUNNING pc=%04X vdp=%s irq=%d frame=%lu\n",
+                    static_cast<unsigned>(state->cpu.pc),
+                    msx_vdp_mode_label(state->vdp.mode),
+                    static_cast<int>(irqEnabled),
+                    static_cast<unsigned long>(state->frameCounter));
+    }
+
+    if (state->frameCounter == 5u || state->frameCounter == 60u || state->frameCounter == 120u) {
+        std::printf("[MSX][VDP] DUMP frame=%lu slot=0x%02X  R0=%02X R1=%02X R2=%02X R3=%02X R4=%02X R5=%02X R6=%02X R7=%02X\n",
+                    static_cast<unsigned long>(state->frameCounter),
+                    static_cast<unsigned>(state->memory.slotRegister),
+                    state->vdp.regs[0], state->vdp.regs[1],
+                    state->vdp.regs[2], state->vdp.regs[3],
+                    state->vdp.regs[4], state->vdp.regs[5],
+                    state->vdp.regs[6], state->vdp.regs[7]);
+    }
+#endif
+
     msx_vdp_render(&state->vdp);
     msx_vdp_get_display_frame(&state->vdp, &state->displayFrame);
     state->frameCounter++;
@@ -404,8 +758,9 @@ void msx_core_attach_disk_rom(MsxCoreState* state,
 
     state->memory.diskRom = diskRomData;
     state->memory.diskRomSize = diskRomSize;
-    state->memory.diskPatch = diskRomData ? msx_disk_bios_patch_handler : nullptr;
+    state->memory.diskPatch = msx_disk_bios_patch_handler;
     msx_memory_refresh_maps(&state->memory);
+    msx_core_seed_slot_work_area(state, state->memory.secondarySlotRegs[3]);
 
     std::printf("[MSX] core attach_disk_rom: %s size=%u\n",
                 diskRomData ? "attached" : "none",
@@ -506,13 +861,19 @@ bool msx_core_init_disk(MsxCoreState* state,
     msx_core_init_audio(state, audioSampleRate);
     state->memory.diskRom = diskRomData;
     state->memory.diskRomSize = diskRomSize;
-    state->memory.diskPatch = diskRomData ? msx_disk_bios_patch_handler : nullptr;
+    state->memory.diskPatch = msx_disk_bios_patch_handler;
     msx_disk_init(&state->disk, dskData, dskSize);
     state->memory.disk = &state->disk;
+    std::printf("[MSX] core init_disk: diskRom=%s diskSize=%u inferredSides=%u\n",
+                diskRomData ? "yes" : "no",
+                static_cast<unsigned>(dskSize),
+                static_cast<unsigned>(state->disk.sides));
 
     msx_core_finish_no_cart_init(state);
     if (diskRomData) {
-        msx_core_try_boot_disk_sector(state);
+        if (!msx_core_try_boot_disk_sector(state)) {
+            std::printf("[MSX] disk boot: staying on BIOS entry path\n");
+        }
     }
     msx_core_set_status(state,
                         "DISK %s %s",

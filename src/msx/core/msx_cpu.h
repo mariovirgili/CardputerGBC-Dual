@@ -34,7 +34,7 @@ struct MsxCpuState {
     uint32_t totalCycles;
     bool iff1;
     bool iff2;
-    bool eiDelay;   // true for one instruction after EI before IFF1 becomes active
+    uint8_t eiDelay; // 0=off, 1=enable after current step, 2=skip one instruction after EI
     bool halted;
     bool irqPending;
     MsxCpuRunState runState;

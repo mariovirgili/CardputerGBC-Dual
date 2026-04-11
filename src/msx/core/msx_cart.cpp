@@ -1,6 +1,11 @@
 #include "msx_cart.h"
 
+#include <cstdio>
 #include <cstring>
+
+#ifndef MSX_CART_LOG_ENABLED
+#define MSX_CART_LOG_ENABLED 0
+#endif
 
 namespace {
 
@@ -41,6 +46,7 @@ bool msx_cart_init(MsxCartState* state, const MsxRomImage* image)
     std::memset(state, 0, sizeof(*state));
     state->rom = image->data;
     state->size = image->size;
+    state->headerOffset = image->headerOffset;
     state->type = image->cartridgeType;
     state->bankCount8K = image->bankCount8K;
     state->entryPoint = image->entryPoint;
@@ -76,6 +82,21 @@ void msx_cart_reset(MsxCartState* state)
             state->windowBanks[2] = msx_normalize_bank(state, 2);
             state->windowBanks[3] = msx_normalize_bank(state, 3);
             break;
+        case MsxCartridgeType::Konami:
+            // fMSX uses SetMegaROM(Slot, 0, 1, ROMMask, 1) — page 2 (8000-9FFF)
+            // gets the last bank so games can boot from 8000h code.
+            state->windowBanks[0] = 0u;
+            state->windowBanks[1] = msx_normalize_bank(state, 1u);
+            state->windowBanks[2] = msx_normalize_bank(state, state->bankCount8K > 0u ? static_cast<uint8_t>(state->bankCount8K - 1u) : 0u);
+            state->windowBanks[3] = msx_normalize_bank(state, 1u);
+            break;
+        case MsxCartridgeType::KonamiScc:
+            // fMSX uses SetMegaROM(Slot, 0, 1, 2, 3)
+            state->windowBanks[0] = msx_normalize_bank(state, 0u);
+            state->windowBanks[1] = msx_normalize_bank(state, 1u);
+            state->windowBanks[2] = msx_normalize_bank(state, 2u);
+            state->windowBanks[3] = msx_normalize_bank(state, 3u);
+            break;
         default:
             state->windowBanks[0] = msx_normalize_bank(state, 0);
             state->windowBanks[1] = msx_normalize_bank(state, 1);
@@ -102,6 +123,13 @@ void msx_cart_write(MsxCartState* state, uint16_t address, uint8_t value)
         return;
     }
 
+    const uint8_t oldBanks[4] = {
+        state->windowBanks[0],
+        state->windowBanks[1],
+        state->windowBanks[2],
+        state->windowBanks[3]
+    };
+
     switch (state->type) {
         case MsxCartridgeType::Ascii8:
             if (address >= 0x6000 && address < 0x8000) {
@@ -123,14 +151,13 @@ void msx_cart_write(MsxCartState* state, uint16_t address, uint8_t value)
 
         case MsxCartridgeType::Konami:
             if (address >= 0x6000 && address < 0x6800) {
-                state->windowBanks[0] = msx_normalize_bank(state, value);
-            }
-            else if (address >= 0x8000 && address < 0x8800) {
                 state->windowBanks[1] = msx_normalize_bank(state, value);
             }
-            else if (address >= 0xA000 && address < 0xA800) {
+            else if (address >= 0x8000 && address < 0x8800) {
                 state->windowBanks[2] = msx_normalize_bank(state, value);
-                state->windowBanks[3] = msx_normalize_bank(state, static_cast<uint8_t>(value + 1u));
+            }
+            else if (address >= 0xA000 && address < 0xA800) {
+                state->windowBanks[3] = msx_normalize_bank(state, value);
             }
             break;
 
@@ -151,5 +178,30 @@ void msx_cart_write(MsxCartState* state, uint16_t address, uint8_t value)
 
         default:
             break;
+    }
+
+    if ((oldBanks[0] != state->windowBanks[0]) ||
+        (oldBanks[1] != state->windowBanks[1]) ||
+        (oldBanks[2] != state->windowBanks[2]) ||
+        (oldBanks[3] != state->windowBanks[3])) {
+#if MSX_CART_LOG_ENABLED
+        static uint16_t s_cartBankLogCount = 0u;
+        if (s_cartBankLogCount < 128u) {
+            std::printf("[MSX][CART] %u WR %04X <- %02X banks %u/%u/%u/%u -> %u/%u/%u/%u #%u\n",
+                        static_cast<unsigned>(state->type),
+                        static_cast<unsigned>(address),
+                        static_cast<unsigned>(value),
+                        static_cast<unsigned>(oldBanks[0]),
+                        static_cast<unsigned>(oldBanks[1]),
+                        static_cast<unsigned>(oldBanks[2]),
+                        static_cast<unsigned>(oldBanks[3]),
+                        static_cast<unsigned>(state->windowBanks[0]),
+                        static_cast<unsigned>(state->windowBanks[1]),
+                        static_cast<unsigned>(state->windowBanks[2]),
+                        static_cast<unsigned>(state->windowBanks[3]),
+                        static_cast<unsigned>(s_cartBankLogCount));
+            ++s_cartBankLogCount;
+        }
+#endif
     }
 }

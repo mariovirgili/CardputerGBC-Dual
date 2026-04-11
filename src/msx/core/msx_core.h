@@ -32,9 +32,14 @@ struct MsxCoreState {
     uint8_t lastStatusMode;
     uint8_t lastStatusRunState;
     uint8_t lastStatusUnsupportedOpcode;
+    uint8_t lastInputJoy;
+    uint8_t lastInputConfigFlags;
+    bool lastInputJoystickMode;
+    bool lastInputCaptured;
     char statusText[64];
     char romName[96];
     MsxDisplayFrame displayFrame;
+    MsxKeyboardMatrix lastInputKeyboardMatrix;
     MsxBiosState bios;
     MsxCartState cart;
     MsxDiskState disk;

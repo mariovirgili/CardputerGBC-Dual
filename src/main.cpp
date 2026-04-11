@@ -12,6 +12,7 @@
 #include <string.h>
 #include "msx/run_msx.h"
 #include "msx/msx_config.h"
+#include "msx/msx_display.h"
 #include "last_game.h"
 #include "esp_system.h"
 #include "esp_task_wdt.h"
@@ -51,7 +52,10 @@ static void showExternalRomSelectorTft()
   const int badgeH = 30;
   const int gapX = 8;
   const int gapY = 10;
-  const int startX = 12;
+  const int totalBadgeCount = static_cast<int>(sizeof(badges) / sizeof(badges[0]));
+  const int usedCols = totalBadgeCount < cols ? totalBadgeCount : cols;
+  const int rowWidth = usedCols * badgeW + (usedCols - 1) * gapX;
+  const int startX = (320 - rowWidth) / 2;
   const int startY = 82;
 
   for (int i = 0; i < (int)(sizeof(badges) / sizeof(badges[0])); ++i) {
@@ -539,6 +543,7 @@ void setup() {
         share::emuControlKeyLabels(emuProfile),
         "HOLD GO = CFG"
       );
+      emu_set_aux_screen_locked(false);
       lastUpdate = millis();
       continue;
     }
@@ -553,10 +558,10 @@ void setup() {
       switch (state) {
         case 0: display.topBar("PRESS ANY KEY TO START", false, false); break;
         case 1: display.topBar("KEY \\ SCREEN MODE",       false, false); break;
-        case 2: display.topBar("GO OR HOLD ESC TO QUIT",   false, false); break;
+        case 2: display.topBar("IN GAME: GO = QUIT",       false, false); break;
         case 3: display.topBar("FN + ARROWS FOR ZOOM",     false, false); break;
         case 4: display.topBar("- + SOUND [ ] BRIGHT",     false, false); break;
-        case 5: display.topBar("HOLD GO FOR CONFIG",       false, false); break;
+        case 5: display.topBar("IN GAME: HOLD GO = MENU",  false, false); break;
       }
     }
     delay(1);

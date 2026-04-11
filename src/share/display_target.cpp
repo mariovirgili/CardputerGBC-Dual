@@ -17,8 +17,13 @@ static constexpr int kRomMsxDisk = 2;
 
 bool emu_has_external_display_support(int romType)
 {
-    (void)romType;
-    return false;
+    switch (romType) {
+        case kRomMsx:
+        case kRomMsxDisk:
+            return true;
+        default:
+            return false;
+    }
 }
 
 static const char* romTypeToKey(int romType)
@@ -51,8 +56,15 @@ void emu_save_display_target(int romType, emu_display_target_t target)
 
 emu_color_depth_t emu_recommended_color_depth(int romType)
 {
-    (void)romType;
-    return EMU_COLOR_16BIT;
+    switch (romType) {
+        case kRomMsx:
+        case kRomMsxDisk:
+            // MSX1 uses a tiny fixed palette and MSX2 tops out at 9-bit RGB,
+            // so RGB444 is enough and cheaper to push on the external TFT.
+            return EMU_COLOR_12BIT;
+        default:
+            return EMU_COLOR_16BIT;
+    }
 }
 
 static constexpr const char* kNvsColorNs = "color_dep";

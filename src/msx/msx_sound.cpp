@@ -2,94 +2,114 @@
 
 #include <Arduino.h>
 #include <M5Cardputer.h>
+#include <esp_heap_caps.h>
 
 #include <cstring>
 
-#if MSX_AUDIO_ENABLED
-#include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
+#ifndef MSX_AUDIO_TRACE_ENABLED
+#define MSX_AUDIO_TRACE_ENABLED 0
 #endif
 
 namespace {
 
 #if MSX_AUDIO_ENABLED
-constexpr int kChannel = 3;
+constexpr int kChannel = 0;
 constexpr size_t kMaxFrameSamples = 1024;
-constexpr size_t kQueueBlocks = 4;
-constexpr TickType_t kIdleDelayTicks = pdMS_TO_TICKS(2);
-
-struct MsxAudioQueue {
-    int16_t blocks[kQueueBlocks][kMaxFrameSamples];
-    uint16_t sizes[kQueueBlocks];
-    uint8_t readIndex;
-    uint8_t writeIndex;
-    uint8_t count;
-};
-
+constexpr int kOutputGain = 2;
 static MsxAudioHookState s_audioState = {};
-static MsxAudioQueue s_audioQueue = {};
 static int16_t s_mixBuffer[kMaxFrameSamples] = {};
-static TaskHandle_t s_audioTask = nullptr;
-static portMUX_TYPE s_audioMux = portMUX_INITIALIZER_UNLOCKED;
+static int16_t* s_playBuffers[2] = {nullptr, nullptr};
+static uint8_t s_playFlip = 0u;
 
-static void msx_audio_task(void* arg)
+static bool msx_sound_prepare_buffers(void)
 {
-    (void)arg;
-
-    int16_t local[kMaxFrameSamples];
-
-    while (s_audioState.running) {
-        uint16_t sampleCount = 0;
-
-        portENTER_CRITICAL(&s_audioMux);
-        if (s_audioQueue.count > 0) {
-            const uint8_t index = s_audioQueue.readIndex;
-            sampleCount = s_audioQueue.sizes[index];
-            if (sampleCount > kMaxFrameSamples) {
-                sampleCount = static_cast<uint16_t>(kMaxFrameSamples);
-            }
-            if (sampleCount > 0) {
-                std::memcpy(local, s_audioQueue.blocks[index], static_cast<size_t>(sampleCount) * sizeof(int16_t));
-            }
-            s_audioQueue.readIndex = static_cast<uint8_t>((s_audioQueue.readIndex + 1u) % kQueueBlocks);
-            s_audioQueue.count--;
-            s_audioState.queuedBlocks = s_audioQueue.count;
-        }
-        portEXIT_CRITICAL(&s_audioMux);
-
-        if (sampleCount == 0) {
-            vTaskDelay(kIdleDelayTicks);
+    for (size_t i = 0; i < 2u; ++i) {
+        if (s_playBuffers[i]) {
             continue;
         }
 
-        while (s_audioState.running && M5Cardputer.Speaker.isPlaying(kChannel) >= 2) {
-            vTaskDelay(kIdleDelayTicks);
+        s_playBuffers[i] = static_cast<int16_t*>(heap_caps_malloc(
+            kMaxFrameSamples * sizeof(int16_t),
+            MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA | MALLOC_CAP_8BIT
+        ));
+        if (!s_playBuffers[i]) {
+            s_playBuffers[i] = static_cast<int16_t*>(heap_caps_malloc(
+                kMaxFrameSamples * sizeof(int16_t),
+                MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT
+            ));
         }
-
-        if (!s_audioState.running) {
-            break;
+        if (!s_playBuffers[i]) {
+            return false;
         }
-
-        (void)M5Cardputer.Speaker.playRaw(
-            local,
-            static_cast<size_t>(sampleCount),
-            s_audioState.sampleRate,
-            false,
-            1,
-            kChannel,
-            false
-        );
-        s_audioState.streamSeen = true;
     }
 
-    s_audioTask = nullptr;
-    vTaskDelete(nullptr);
+    return true;
+}
+
+static void msx_sound_release_buffers(void)
+{
+    for (size_t i = 0; i < 2u; ++i) {
+        if (s_playBuffers[i]) {
+            heap_caps_free(s_playBuffers[i]);
+            s_playBuffers[i] = nullptr;
+        }
+    }
 }
 
 static void msx_sound_reset_state(bool compiledIn)
 {
     std::memset(&s_audioState, 0, sizeof(s_audioState));
     s_audioState.compiledIn = compiledIn;
+}
+
+static void msx_sound_update_queue_depth(void)
+{
+    s_audioState.queuedBlocks = s_audioState.enabled
+        ? static_cast<uint8_t>(M5Cardputer.Speaker.isPlaying(kChannel))
+        : 0u;
+}
+
+static void msx_sound_queue_block(const int16_t* samples, size_t sampleCount)
+{
+    if (!samples || sampleCount == 0u || !s_audioState.enabled || s_audioState.paused) {
+        return;
+    }
+
+    (void)M5Cardputer.Speaker.playRaw(
+        samples,
+        sampleCount,
+        s_audioState.sampleRate,
+        false,
+        1,
+        kChannel,
+        false
+    );
+    s_audioState.streamSeen = true;
+}
+
+static uint16_t msx_sound_copy_with_gain(int16_t* dst, const int16_t* src, size_t count)
+{
+    if (!dst || !src || count == 0u) {
+        return 0u;
+    }
+
+    uint16_t peak = 0u;
+    for (size_t i = 0; i < count; ++i) {
+        int32_t sample = static_cast<int32_t>(src[i]) * kOutputGain;
+        if (sample > 32767) {
+            sample = 32767;
+        } else if (sample < -32768) {
+            sample = -32768;
+        }
+
+        dst[i] = static_cast<int16_t>(sample);
+        const uint16_t magnitude = static_cast<uint16_t>(sample < 0 ? -sample : sample);
+        if (magnitude > peak) {
+            peak = magnitude;
+        }
+    }
+
+    return peak;
 }
 #endif
 
@@ -106,6 +126,11 @@ bool msx_sound_init(uint32_t sampleRate, uint8_t channels)
     msx_sound_reset_state(true);
 
     if (sampleRate == 0 || channels == 0) {
+        return false;
+    }
+
+    if (!msx_sound_prepare_buffers()) {
+        msx_sound_shutdown();
         return false;
     }
 
@@ -129,30 +154,18 @@ bool msx_sound_init(uint32_t sampleRate, uint8_t channels)
         M5Cardputer.Speaker.begin();
     }
 
+    M5Cardputer.Speaker.setVolume(80);
     M5Cardputer.Speaker.stop(kChannel);
-    std::memset(&s_audioQueue, 0, sizeof(s_audioQueue));
     std::memset(s_mixBuffer, 0, sizeof(s_mixBuffer));
+    for (size_t i = 0; i < 2u; ++i) {
+        std::memset(s_playBuffers[i], 0, kMaxFrameSamples * sizeof(int16_t));
+    }
+    s_playFlip = 0u;
 
     s_audioState.enabled = true;
     s_audioState.running = true;
-
-    BaseType_t ok = xTaskCreatePinnedToCore(
-        msx_audio_task,
-        "msx_audio",
-        3072,
-        nullptr,
-        5,
-        &s_audioTask,
-        0
-    );
-
-    if (ok != pdPASS) {
-        s_audioState.enabled = false;
-        s_audioState.running = false;
-        s_audioTask = nullptr;
-        return false;
-    }
-
+    s_audioState.paused = false;
+    s_audioState.queuedBlocks = 0u;
     return true;
 #endif
 }
@@ -167,13 +180,10 @@ void msx_sound_shutdown(void)
     }
 
     s_audioState.running = false;
-    if (s_audioTask != nullptr) {
-        vTaskDelay(kIdleDelayTicks);
-    }
-
     M5Cardputer.Speaker.stop(kChannel);
-    std::memset(&s_audioQueue, 0, sizeof(s_audioQueue));
     std::memset(s_mixBuffer, 0, sizeof(s_mixBuffer));
+    msx_sound_release_buffers();
+    s_playFlip = 0u;
     msx_sound_reset_state(true);
 #endif
 }
@@ -189,7 +199,10 @@ int16_t* msx_sound_begin_mix(size_t* capacity)
     if (capacity) {
         *capacity = s_audioState.enabled ? s_audioState.frameSamples : 0u;
     }
-    if (!s_audioState.enabled) {
+    if (!s_audioState.enabled || s_audioState.paused) {
+        if (capacity) {
+            *capacity = 0u;
+        }
         return nullptr;
     }
 
@@ -223,7 +236,7 @@ void msx_sound_submit(const int16_t* samples, size_t sampleCount)
     (void)samples;
     (void)sampleCount;
 #else
-    if (!s_audioState.enabled || !samples || sampleCount == 0) {
+    if (!s_audioState.enabled || s_audioState.paused || !samples || sampleCount == 0) {
         return;
     }
 
@@ -231,21 +244,78 @@ void msx_sound_submit(const int16_t* samples, size_t sampleCount)
         sampleCount = kMaxFrameSamples;
     }
 
-    portENTER_CRITICAL(&s_audioMux);
-    if (s_audioQueue.count >= kQueueBlocks) {
+    const size_t queued = M5Cardputer.Speaker.isPlaying(kChannel);
+    if (queued >= 2u) {
         s_audioState.droppedFrames++;
-        portEXIT_CRITICAL(&s_audioMux);
+        s_audioState.queuedBlocks = static_cast<uint8_t>(queued);
         return;
     }
 
-    const uint8_t index = s_audioQueue.writeIndex;
-    std::memcpy(s_audioQueue.blocks[index], samples, sampleCount * sizeof(int16_t));
-    s_audioQueue.sizes[index] = static_cast<uint16_t>(sampleCount);
-    s_audioQueue.writeIndex = static_cast<uint8_t>((s_audioQueue.writeIndex + 1u) % kQueueBlocks);
-    s_audioQueue.count++;
-    s_audioState.queuedBlocks = s_audioQueue.count;
-    s_audioState.submittedFrames++;
-    portEXIT_CRITICAL(&s_audioMux);
+    auto copy_and_queue = [&](size_t count, size_t queuedBefore) {
+        if (!s_playBuffers[s_playFlip]) {
+            return;
+        }
+
+        const uint16_t peak = msx_sound_copy_with_gain(s_playBuffers[s_playFlip], samples, count);
+#if MSX_AUDIO_TRACE_ENABLED
+        static uint16_t s_audioPeakLogCount = 0u;
+        static uint16_t s_lastLoggedPeak = 0xFFFFu;
+        if (s_audioPeakLogCount < 64u &&
+            (peak != s_lastLoggedPeak || peak == 0u || queuedBefore == 0u)) {
+            std::printf("[MSX][AUDIO] submit n=%u peak=%u queued=%u gain=%u #%u\n",
+                        static_cast<unsigned>(count),
+                        static_cast<unsigned>(peak),
+                        static_cast<unsigned>(queuedBefore),
+                        static_cast<unsigned>(kOutputGain),
+                        static_cast<unsigned>(s_audioPeakLogCount));
+            s_lastLoggedPeak = peak;
+            ++s_audioPeakLogCount;
+        }
+#else
+        (void)peak;
+        (void)queuedBefore;
+#endif
+
+        msx_sound_queue_block(s_playBuffers[s_playFlip], count);
+        s_playFlip ^= 0x01u;
+        s_audioState.submittedFrames++;
+    };
+
+    // Prime the hardware queue only on a fresh stream start. Repeating the same
+    // block on every underrun makes audio sound artificially slowed down.
+    const bool needInitialPrime = (queued == 0u) && !s_audioState.streamSeen;
+    copy_and_queue(sampleCount, queued);
+    if (needInitialPrime) {
+        copy_and_queue(sampleCount, 1u);
+    }
+
+    msx_sound_update_queue_depth();
+#endif
+}
+
+void msx_sound_set_paused(bool paused)
+{
+#if !MSX_AUDIO_ENABLED
+    (void)paused;
+#else
+    if (!s_audioState.compiledIn || !s_audioState.enabled) {
+        return;
+    }
+
+    if (s_audioState.paused == paused) {
+        return;
+    }
+
+    s_audioState.paused = paused;
+    if (!paused) {
+        s_audioState.queuedBlocks = 0u;
+        s_audioState.streamSeen = false;
+        return;
+    }
+
+    M5Cardputer.Speaker.stop(kChannel);
+    s_audioState.queuedBlocks = 0u;
+    s_audioState.streamSeen = false;
 #endif
 }
 

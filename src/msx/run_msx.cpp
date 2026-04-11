@@ -20,12 +20,13 @@
 #include "msx_input.h"
 #include "msx_media.h"
 #include "msx_sound.h"
+#include "share/display_target.h"
 #include "share/emu_controls.h"
 #include "share/game_save.h"
 #include "share/utils.h"
 
 #ifndef MSX_RUN_LOG_ENABLED
-#define MSX_RUN_LOG_ENABLED 0
+#define MSX_RUN_LOG_ENABLED 1
 #endif
 
 #if MSX_RUN_LOG_ENABLED
@@ -35,6 +36,28 @@
 #endif
 
 namespace {
+
+struct MsxViewModeOverrideGuard {
+    MsxViewModeOverrideGuard()
+    {
+        msx_config_clear_view_mode_override();
+    }
+
+    ~MsxViewModeOverrideGuard()
+    {
+        msx_config_clear_view_mode_override();
+    }
+
+    void configureForTarget(bool useExternal) const
+    {
+        if (useExternal) {
+            msx_config_set_view_mode_override(MsxInternalViewMode::PixelPerfect);
+            return;
+        }
+
+        msx_config_clear_view_mode_override();
+    }
+};
 
 struct MsxBiosReferenceEntry {
     const char* name;
@@ -428,26 +451,26 @@ uint8_t* msx_load_bios_file(const char* filename, size_t expectedSize, size_t* o
 
 void run_msx(const uint8_t* romData, size_t romLen, const char* romName)
 {
+    const bool useExternal = (g_emu_display_target == EMU_DISPLAY_EXTERNAL);
+    MsxViewModeOverrideGuard viewModeGuard;
     {
         CardputerView display;
         display.initialize();
-        display.topBar("MSX ON INTERNAL LCD", false, false);
+        display.topBar(useExternal ? "MSX ON EXTERNAL TFT" : "MSX ON INTERNAL LCD", false, false);
         display.showControlBindings(
             share::emuControlActionLabels(share::EmuProfile::MSX),
             share::emuControlKeyLabels(share::EmuProfile::MSX),
-            "GO / HOLD ESC = QUIT"
+            "GO = QUIT  HOLD GO = MENU"
         );
     }
 
     msx_config_load_internal_view_mode();
+    viewModeGuard.configureForTarget(useExternal);
     const MsxMachineMode configuredMode = msx_config_load_machine_mode();
     msx_config_load_bios_path();
     msx_config_load_msx1_bios_path();
     msx_config_load_msx2_bios_path();
     msx_config_load_msx2_subrom_path();
-
-    msx_display_init();
-    msx_input_init();
 
     MsxRomImage rom = {};
     if (!msx_media_analyze_rom(&rom, romData, romLen)) {
@@ -469,13 +492,21 @@ void run_msx(const uint8_t* romData, size_t romLen, const char* romName)
     if (!msx_media_load_bios_bundle(&bios, &biosSearch)) {
         printf("[MSX] BIOS load failed: %s\n", bios.message);
         msx_show_bios_reference_help(configuredMode, &bios);
-    msx_media_release_bios_bundle(&bios);
+        msx_media_release_bios_bundle(&bios);
         msx_display_shutdown();
         msx_request_quit_to_launcher();
         return;
     }
 
     printf("[MSX] BIOS bundle ready: %s\n", msx_media_bios_target_label(bios.target));
+
+    msx_display_init();
+    msx_input_init();
+
+    if (!useExternal && !emu_is_aux_screen_locked()) {
+        msx_display_show_external_info(romName);
+        emu_set_aux_screen_locked(true);
+    }
 
 #if MSX_AUDIO_ENABLED
     const uint32_t coreAudioSampleRate = kMsxSkeletonSampleRate;
@@ -490,7 +521,7 @@ void run_msx(const uint8_t* romData, size_t romLen, const char* romName)
         printf("[MSX] core init failed\n");
         msx_show_launch_error("MSX START ERROR", "Core init failed", "Check ROM and BIOS set");
         msx_sound_shutdown();
-    msx_media_release_bios_bundle(&bios);
+        msx_media_release_bios_bundle(&bios);
         msx_display_shutdown();
         msx_request_quit_to_launcher();
         return;
@@ -529,19 +560,23 @@ void run_msx(const uint8_t* romData, size_t romLen, const char* romName)
             break;
         }
 
-        if (input.toggleViewRequested) {
-            msx_config_toggle_internal_view_mode();
+        if (input.toggleViewRequested && !useExternal) {
+            msx_config_toggle_active_view_mode();
         }
 
-        size_t audioMixCapacity = 0;
-        int16_t* audioMix = msx_sound_begin_mix(&audioMixCapacity);
-        (void)audioMix;
-        (void)audioMixCapacity;
-
+        const bool menuPaused = input.menuVisible;
+        msx_sound_set_paused(menuPaused);
         msx_core_handle_input(&core, &input);
-        msx_core_step_frame(&core);
-        const size_t audioSampleCount = msx_core_drain_audio(&core, audioMix, audioMixCapacity);
-        msx_sound_end_mix(audioSampleCount);
+
+        if (menuPaused) {
+            msx_core_drain_audio(&core, nullptr, 0u);
+        } else {
+            size_t audioMixCapacity = 0;
+            int16_t* audioMix = msx_sound_begin_mix(&audioMixCapacity);
+            msx_core_step_frame(&core);
+            const size_t audioSampleCount = msx_core_drain_audio(&core, audioMix, audioMixCapacity);
+            msx_sound_end_mix(audioSampleCount);
+        }
 
         char cartLine[48];
         char machineLine[48];
@@ -576,6 +611,8 @@ void run_msx(const uint8_t* romData, size_t romLen, const char* romName)
 
         if (!audioState.compiledIn) {
             std::snprintf(audioLine, sizeof(audioLine), "AUDIO: build OFF");
+        } else if (menuPaused) {
+            std::snprintf(audioLine, sizeof(audioLine), "AUDIO: paused");
         } else if (!audioState.enabled) {
             std::snprintf(audioLine, sizeof(audioLine), "AUDIO: init OFF");
         } else if (audioState.streamSeen) {
@@ -649,26 +686,30 @@ void run_msx(const uint8_t* romData, size_t romLen, const char* romName)
 
 void run_msx_disk(const uint8_t* dskData, size_t dskLen, const char* dskName)
 {
+    std::printf("[MSX] launch dsk: name=%s size=%u\n",
+                dskName && dskName[0] != '\0' ? dskName : "(unnamed)",
+                static_cast<unsigned>(dskLen));
+
+    const bool useExternal = (g_emu_display_target == EMU_DISPLAY_EXTERNAL);
+    MsxViewModeOverrideGuard viewModeGuard;
     {
         CardputerView display;
         display.initialize();
-        display.topBar("MSX DISK", false, false);
+        display.topBar(useExternal ? "MSX DISK EXT TFT" : "MSX DISK", false, false);
         display.showControlBindings(
             share::emuControlActionLabels(share::EmuProfile::MSX),
             share::emuControlKeyLabels(share::EmuProfile::MSX),
-            "GO / HOLD ESC = QUIT"
+            "GO = QUIT  HOLD GO = MENU"
         );
     }
 
     msx_config_load_internal_view_mode();
+    viewModeGuard.configureForTarget(useExternal);
     const MsxMachineMode configuredMode = msx_config_load_machine_mode();
     msx_config_load_bios_path();
     msx_config_load_msx1_bios_path();
     msx_config_load_msx2_bios_path();
     msx_config_load_msx2_subrom_path();
-
-    msx_display_init();
-    msx_input_init();
 
     MsxBiosSearchConfig biosSearch = {};
     biosSearch.requestedMode    = configuredMode;
@@ -701,6 +742,14 @@ void run_msx_disk(const uint8_t* dskData, size_t dskLen, const char* dskName)
         msx_disk_apply_rom_patches(diskRomData, diskRomSize);
     } else {
         printf("[MSX] DISK.ROM not found; disk boot will fall back to BIOS only\n");
+    }
+
+    msx_display_init();
+    msx_input_init();
+
+    if (!useExternal && !emu_is_aux_screen_locked()) {
+        msx_display_show_external_info(dskName);
+        emu_set_aux_screen_locked(true);
     }
 
     printf("[MSX] core init_disk begin\n");
@@ -737,6 +786,8 @@ void run_msx_disk(const uint8_t* dskData, size_t dskLen, const char* dskName)
     const uint32_t frameUs = static_cast<uint32_t>(std::lround(1000000.0 / kMsxSkeletonFps));
     uint64_t nextFrameUs = esp_timer_get_time();
     bool quitRequested = false;
+    uint32_t frameCount = 0;
+    uint32_t lastLogMs = millis();
 
     while (!quitRequested) {
         MsxInputState input = {};
@@ -746,19 +797,22 @@ void run_msx_disk(const uint8_t* dskData, size_t dskLen, const char* dskName)
             break;
         }
 
-        if (input.toggleViewRequested) {
-            msx_config_toggle_internal_view_mode();
+        if (input.toggleViewRequested && !useExternal) {
+            msx_config_toggle_active_view_mode();
         }
 
-        size_t audioMixCapacity = 0;
-        int16_t* audioMix = msx_sound_begin_mix(&audioMixCapacity);
-        (void)audioMix;
-        (void)audioMixCapacity;
-
+        const bool menuPaused = input.menuVisible;
+        msx_sound_set_paused(menuPaused);
         msx_core_handle_input(&core, &input);
-        msx_core_step_frame(&core);
-        const size_t audioSampleCount = msx_core_drain_audio(&core, audioMix, audioMixCapacity);
-        msx_sound_end_mix(audioSampleCount);
+        if (menuPaused) {
+            msx_core_drain_audio(&core, nullptr, 0u);
+        } else {
+            size_t audioMixCapacity = 0;
+            int16_t* audioMix = msx_sound_begin_mix(&audioMixCapacity);
+            msx_core_step_frame(&core);
+            const size_t audioSampleCount = msx_core_drain_audio(&core, audioMix, audioMixCapacity);
+            msx_sound_end_mix(audioSampleCount);
+        }
 
         char modeLine[48];
         char machineLine[48];
@@ -789,6 +843,8 @@ void run_msx_disk(const uint8_t* dskData, size_t dskLen, const char* dskName)
 
         if (!audioState.compiledIn) {
             std::snprintf(audioLine, sizeof(audioLine), "AUDIO: build OFF");
+        } else if (menuPaused) {
+            std::snprintf(audioLine, sizeof(audioLine), "AUDIO: paused");
         } else if (!audioState.enabled) {
             std::snprintf(audioLine, sizeof(audioLine), "AUDIO: init OFF");
         } else if (audioState.streamSeen) {
@@ -810,6 +866,22 @@ void run_msx_disk(const uint8_t* dskData, size_t dskLen, const char* dskName)
         status.frameCounter = core.frameCounter;
 
         msx_display_submit_frame(&core.displayFrame, &status);
+
+        frameCount++;
+        const uint32_t nowMs = millis();
+        if (MSX_RUN_LOG_ENABLED && (nowMs - lastLogMs >= 1000)) {
+            const float fps = (frameCount * 1000.0f) / static_cast<float>(nowMs - lastLogMs);
+            MSX_RUN_LOG("[MSX] FPS %.1f | HEAP %u | CPU %s | PC %04X | VDP %s | MACHINE %s | AUDIOQ %u | DISK\n",
+                        fps,
+                        esp_get_free_heap_size(),
+                        msx_cpu_run_state_label(core.cpu.runState),
+                        core.cpu.pc,
+                        msx_vdp_mode_label(core.vdp.mode),
+                        msx_media_bios_target_label(core.biosTarget),
+                        static_cast<unsigned>(audioState.queuedBlocks));
+            frameCount = 0;
+            lastLogMs = nowMs;
+        }
 
         nextFrameUs += frameUs;
         const int64_t nowUs   = static_cast<int64_t>(esp_timer_get_time());
@@ -846,26 +918,26 @@ void run_msx_disk(const uint8_t* dskData, size_t dskLen, const char* dskName)
 
 void run_msx_basic(const char* name)
 {
+    const bool useExternal = (g_emu_display_target == EMU_DISPLAY_EXTERNAL);
+    MsxViewModeOverrideGuard viewModeGuard;
     {
         CardputerView display;
         display.initialize();
-        display.topBar("MSX BASIC", false, false);
+        display.topBar(useExternal ? "MSX BASIC EXT TFT" : "MSX BASIC", false, false);
         display.showControlBindings(
             share::emuControlActionLabels(share::EmuProfile::MSX),
             share::emuControlKeyLabels(share::EmuProfile::MSX),
-            "GO / HOLD ESC = QUIT"
+            "GO = QUIT  HOLD GO = MENU"
         );
     }
 
     msx_config_load_internal_view_mode();
+    viewModeGuard.configureForTarget(useExternal);
     const MsxMachineMode configuredMode = msx_config_load_machine_mode();
     msx_config_load_bios_path();
     msx_config_load_msx1_bios_path();
     msx_config_load_msx2_bios_path();
     msx_config_load_msx2_subrom_path();
-
-    msx_display_init();
-    msx_input_init();
 
     MsxBiosSearchConfig biosSearch = {};
     biosSearch.requestedMode    = configuredMode;
@@ -885,6 +957,14 @@ void run_msx_basic(const char* name)
     }
 
     printf("[MSX] BIOS bundle ready: %s\n", msx_media_bios_target_label(bios.target));
+
+    msx_display_init();
+    msx_input_init();
+
+    if (!useExternal && !emu_is_aux_screen_locked()) {
+        msx_display_show_external_info(name);
+        emu_set_aux_screen_locked(true);
+    }
 
 #if MSX_AUDIO_ENABLED
     const uint32_t coreAudioSampleRate = kMsxSkeletonSampleRate;
@@ -918,6 +998,8 @@ void run_msx_basic(const char* name)
     const uint32_t frameUs = static_cast<uint32_t>(std::lround(1000000.0 / kMsxSkeletonFps));
     uint64_t nextFrameUs = esp_timer_get_time();
     bool quitRequested = false;
+    uint32_t frameCount = 0;
+    uint32_t lastLogMs = millis();
 
     while (!quitRequested) {
         MsxInputState input = {};
@@ -927,19 +1009,22 @@ void run_msx_basic(const char* name)
             break;
         }
 
-        if (input.toggleViewRequested) {
-            msx_config_toggle_internal_view_mode();
+        if (input.toggleViewRequested && !useExternal) {
+            msx_config_toggle_active_view_mode();
         }
 
-        size_t audioMixCapacity = 0;
-        int16_t* audioMix = msx_sound_begin_mix(&audioMixCapacity);
-        (void)audioMix;
-        (void)audioMixCapacity;
-
+        const bool menuPaused = input.menuVisible;
+        msx_sound_set_paused(menuPaused);
         msx_core_handle_input(&core, &input);
-        msx_core_step_frame(&core);
-        const size_t audioSampleCount = msx_core_drain_audio(&core, audioMix, audioMixCapacity);
-        msx_sound_end_mix(audioSampleCount);
+        if (menuPaused) {
+            msx_core_drain_audio(&core, nullptr, 0u);
+        } else {
+            size_t audioMixCapacity = 0;
+            int16_t* audioMix = msx_sound_begin_mix(&audioMixCapacity);
+            msx_core_step_frame(&core);
+            const size_t audioSampleCount = msx_core_drain_audio(&core, audioMix, audioMixCapacity);
+            msx_sound_end_mix(audioSampleCount);
+        }
 
         char machineLine[48];
         char biosLine[64];
@@ -968,6 +1053,8 @@ void run_msx_basic(const char* name)
         const MsxAudioHookState& audioState = msx_sound_get_state();
         if (!audioState.compiledIn) {
             status.audioLine = "AUDIO: build OFF";
+        } else if (menuPaused) {
+            status.audioLine = "AUDIO: paused";
         } else if (!audioState.enabled) {
             status.audioLine = "AUDIO: init OFF";
         } else if (audioState.streamSeen) {
@@ -989,6 +1076,22 @@ void run_msx_basic(const char* name)
         status.frameCounter = core.frameCounter;
 
         msx_display_submit_frame(&core.displayFrame, &status);
+
+        frameCount++;
+        const uint32_t nowMs = millis();
+        if (MSX_RUN_LOG_ENABLED && (nowMs - lastLogMs >= 1000)) {
+            const float fps = (frameCount * 1000.0f) / static_cast<float>(nowMs - lastLogMs);
+            MSX_RUN_LOG("[MSX] FPS %.1f | HEAP %u | CPU %s | PC %04X | VDP %s | MACHINE %s | AUDIOQ %u | BASIC\n",
+                        fps,
+                        esp_get_free_heap_size(),
+                        msx_cpu_run_state_label(core.cpu.runState),
+                        core.cpu.pc,
+                        msx_vdp_mode_label(core.vdp.mode),
+                        msx_media_bios_target_label(core.biosTarget),
+                        static_cast<unsigned>(audioState.queuedBlocks));
+            frameCount = 0;
+            lastLogMs = nowMs;
+        }
 
         nextFrameUs += frameUs;
         const int64_t nowUs = static_cast<int64_t>(esp_timer_get_time());

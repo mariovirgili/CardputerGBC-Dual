@@ -37,6 +37,7 @@ struct MsxMemoryState {
     const uint8_t* readMap[8];
     uint8_t* writeMap[8];
     uint8_t slotRegister;
+    uint8_t secondarySlotRegs[4];  // SSLReg[primary slot], read/written via 0xFFFF using page3 slot
     uint8_t ppiPortC;
     uint8_t lastPort98;
     uint8_t lastPort99;
@@ -48,6 +49,8 @@ struct MsxMemoryState {
     uint8_t lastPortAA;
     uint32_t ioWriteCount;
     bool mapperEnabled;
+    bool cartBootWorkareaFallbackArmed;
+    bool cartBootMappingRestoreArmed;
     bool ready;
 };
 
@@ -62,6 +65,11 @@ void msx_memory_set_keyboard_matrix(MsxMemoryState* state, const MsxKeyboardMatr
 void msx_memory_shutdown(MsxMemoryState* state);
 void msx_memory_reset(MsxMemoryState* state);
 void msx_memory_refresh_maps(MsxMemoryState* state);
+bool msx_memory_use_raw_page3_window(uint16_t address);
+bool msx_memory_is_open_bus_fetch(const MsxMemoryState* state, uint16_t address);
+bool msx_memory_try_cart_header_mirror_read(const MsxMemoryState* state,
+                                            uint16_t address,
+                                            uint8_t* value);
 uint8_t msx_memory_read8(const MsxMemoryState* state, uint16_t address);
 uint16_t msx_memory_read16(const MsxMemoryState* state, uint16_t address);
 void msx_memory_write8(MsxMemoryState* state, uint16_t address, uint8_t value);
