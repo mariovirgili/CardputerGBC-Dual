@@ -489,22 +489,28 @@ void setup() {
       emu_color_depth_t savedDepth = emu_load_color_depth((int)ext);
       emu_color_depth_t recommended = emu_recommended_color_depth((int)ext);
 
-      std::string opt16 = "16-bit 65K colors";
-      std::string opt12 = "12-bit 4K colors";
-      if (recommended == EMU_COLOR_16BIT) opt16 += " (recommended)";
-      else                                 opt12 += " (recommended)";
+      std::string recommendedLabel =
+        (recommended == EMU_COLOR_12BIT)
+          ? "12-bit 4K colors (recommended)"
+          : "16-bit 65K colors (recommended)";
+      std::string alternateLabel =
+        (recommended == EMU_COLOR_12BIT)
+          ? "16-bit 65K colors"
+          : "12-bit 4K colors";
 
       VerticalSelector depthSelector(display, input);
-      std::vector<std::string> depthOptions = {opt16, opt12};
+      std::vector<std::string> depthOptions = {recommendedLabel, alternateLabel};
       display.topBar("COLOR DEPTH", false, false);
 
-      int depthInitial = (savedDepth == EMU_COLOR_12BIT) ? 1 : 0;
+      int depthInitial = 0;
       int dsel = depthSelector.select("Color depth", depthOptions,
                     false, false, {}, {}, false, true, true, depthInitial);
       if (dsel < 0) {
         dsel = depthInitial;
       }
-      emu_color_depth_t chosenDepth = (dsel == 1) ? EMU_COLOR_12BIT : EMU_COLOR_16BIT;
+      emu_color_depth_t chosenDepth = (dsel == 0)
+        ? recommended
+        : (recommended == EMU_COLOR_12BIT ? EMU_COLOR_16BIT : EMU_COLOR_12BIT);
 
       g_emu_color_depth = chosenDepth;
       if (chosenDepth != savedDepth) {

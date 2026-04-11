@@ -259,6 +259,26 @@ inline uint8_t msx_cpu_raw_page3_read8(const MsxMemoryState* memory, uint16_t ad
     return bankPtr[address & 0x1FFFu];
 }
 
+inline bool msx_cpu_raw_page3_write8(MsxMemoryState* memory, uint16_t address, uint8_t value)
+{
+    if (!memory || ((address >> 14) != 3u) || (memory->ramSegmentCount == 0u)) {
+        return false;
+    }
+
+    const uint8_t segment = msx_cpu_ram_segment_for_page(memory, 3u);
+    const uint8_t subPage = static_cast<uint8_t>((address >> 13) & 0x01u);
+    const uint8_t bankIndex = static_cast<uint8_t>(segment * 2u + subPage);
+    if ((segment >= memory->ramSegmentCount) ||
+        (bankIndex >= memory->ramBankCount) ||
+        (bankIndex >= 16u) ||
+        !memory->ramBanks[bankIndex]) {
+        return false;
+    }
+
+    memory->ramBanks[bankIndex][address & 0x1FFFu] = value;
+    return true;
+}
+
 void msx_cpu_log_context(const MsxCpuState* state, const MsxMemoryState* memory, uint16_t pc)
 {
     if (!state || !memory || !msx_cpu_trace_context_pc(pc)) {
@@ -415,9 +435,33 @@ inline uint8_t msx_cpu_mem_read8(const MsxMemoryState* memory, uint16_t address)
 
     const uint8_t bank = static_cast<uint8_t>(address >> 13);
 
-    // Match fMSX RdZ80/WrZ80 fast path split: addresses in xx1111111xxx1xxx
-    // may have special semantics (secondary slot register, mapped DiskROM I/O).
-    if (((address & 0x3F88u) == 0x3F88u) || (bank >= 6u)) {
+    // Page 3 contains the BIOS work area and stack. Only a very small subset
+    // of addresses there really need the slow path; the rest can still read
+    // directly from the mapped 8K bank pointers.
+    if (bank >= 6u) {
+        if ((address == 0xFFFFu) || (address == 0xF7C5u) || (address == 0xF7C6u)) {
+            const uint8_t value = msx_memory_read8(memory, address);
+            msx_cpu_log_ram_access("RD", memory, address, value);
+            return value;
+        }
+
+        if (msx_memory_use_raw_page3_window(address)) {
+            bool valid = false;
+            const uint8_t value = msx_cpu_raw_page3_read8(memory, address, &valid);
+            if (valid) {
+                msx_cpu_log_ram_access("RD", memory, address, value);
+                return value;
+            }
+        }
+
+        const uint8_t value = memory->readMap[bank][address & 0x1FFFu];
+        msx_cpu_log_ram_access("RD", memory, address, value);
+        return value;
+    }
+
+    // Match fMSX RdZ80/WrZ80 fast path split for the truly special mirrored
+    // addresses used by extension ROM / DiskROM glue.
+    if ((address & 0x3F88u) == 0x3F88u) {
         const uint8_t value = msx_memory_read8(memory, address);
         msx_cpu_log_ram_access("RD", memory, address, value);
         return value;
@@ -495,7 +539,33 @@ inline void msx_cpu_mem_write8(MsxMemoryState* memory, uint16_t address, uint8_t
 {
     const uint8_t bank = static_cast<uint8_t>(address >> 13);
 
-    if (((address & 0x3F88u) == 0x3F88u) || (bank >= 6u)) {
+    if (bank >= 6u) {
+        if (address == 0xFFFFu) {
+            msx_memory_write8(memory, address, value);
+            msx_cpu_log_ram_access("WR", memory, address, value);
+            return;
+        }
+
+        if (msx_memory_use_raw_page3_window(address) &&
+            msx_cpu_raw_page3_write8(memory, address, value)) {
+            msx_cpu_log_ram_access("WR", memory, address, value);
+            return;
+        }
+
+        const uint16_t offset = static_cast<uint16_t>(address & 0x1FFFu);
+        uint8_t* const writePage = memory->writeMap[bank];
+        if (writePage) {
+            writePage[offset] = value;
+            msx_cpu_log_ram_access("WR", memory, address, value);
+            return;
+        }
+
+        msx_memory_write8(memory, address, value);
+        msx_cpu_log_ram_access("WR", memory, address, value);
+        return;
+    }
+
+    if ((address & 0x3F88u) == 0x3F88u) {
         msx_memory_write8(memory, address, value);
         msx_cpu_log_ram_access("WR", memory, address, value);
         return;
@@ -2088,14 +2158,25 @@ int msx_cpu_run_cycles(MsxCpuState* state, MsxMemoryState* memory, int cycleBudg
         return 0;
     }
 
+    constexpr uint32_t kPsgBatchCycles = 128u;
     int usedCycles = 0;
+    uint32_t pendingPsgCycles = 0u;
+    auto flushPsg = [&]() {
+        if (memory->psg && pendingPsgCycles != 0u) {
+            msx_psg_run_cycles(memory->psg, pendingPsgCycles);
+            pendingPsgCycles = 0u;
+        }
+    };
     while (usedCycles < cycleBudget) {
         if (state->irqPending && state->iff1) {
             const int irqCycles = msx_cpu_service_irq(state, memory);
             usedCycles += irqCycles;
             state->totalCycles += static_cast<uint32_t>(irqCycles);
-            if (memory->psg) {
-                msx_psg_run_cycles(memory->psg, static_cast<uint32_t>(irqCycles));
+            if (irqCycles > 0) {
+                pendingPsgCycles += static_cast<uint32_t>(irqCycles);
+                if (pendingPsgCycles >= kPsgBatchCycles) {
+                    flushPsg();
+                }
             }
             continue;
         }
@@ -2105,8 +2186,8 @@ int msx_cpu_run_cycles(MsxCpuState* state, MsxMemoryState* memory, int cycleBudg
             const int burn = cycleBudget - usedCycles;
             usedCycles += burn;
             state->totalCycles += static_cast<uint32_t>(burn);
-            if (memory->psg) {
-                msx_psg_run_cycles(memory->psg, static_cast<uint32_t>(burn));
+            if (burn > 0) {
+                pendingPsgCycles += static_cast<uint32_t>(burn);
             }
             break;
         }
@@ -2128,11 +2209,13 @@ int msx_cpu_run_cycles(MsxCpuState* state, MsxMemoryState* memory, int cycleBudg
 
         usedCycles += stepCycles;
         state->totalCycles += static_cast<uint32_t>(stepCycles);
-        if (memory->psg) {
-            msx_psg_run_cycles(memory->psg, static_cast<uint32_t>(stepCycles));
+        pendingPsgCycles += static_cast<uint32_t>(stepCycles);
+        if (pendingPsgCycles >= kPsgBatchCycles) {
+            flushPsg();
         }
     }
 
+    flushPsg();
     return usedCycles;
 }
 
