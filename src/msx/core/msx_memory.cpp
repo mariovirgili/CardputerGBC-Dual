@@ -14,12 +14,16 @@
 #define MSX_MEMORY_TRACE_ENABLED 0
 #endif
 
+extern uint8_t g_msx1Vram[0x4000];
+extern uint8_t g_msx_disk_rom_static[16384];
+extern bool g_msx_disk_rom_static_used;
+
 namespace {
 
 constexpr size_t kMsxPageSize8K = 0x2000;
 constexpr size_t kMsxPageSize16K = 0x4000;
 constexpr size_t kMsxRamSizeMsx1 = 0x10000;
-constexpr size_t kMsxRamSizeMsx2 = 0x20000;
+constexpr size_t kMsxRamSizeMsx2 = 0x10000;
 constexpr uint8_t kMsxMaxRamSegments = static_cast<uint8_t>(kMsxRamSizeMsx2 / kMsxPageSize16K);
 constexpr uint8_t kMsxMaxRamBanks = static_cast<uint8_t>(kMsxRamSizeMsx2 / kMsxPageSize8K);
 constexpr uint8_t kMsxDefaultSlotRegister = 0x00;  // all pages → slot0 (BIOS); BIOS probe sets final value
@@ -323,8 +327,11 @@ void msx_memory_release_ram_banks(MsxMemoryState* state)
     }
 
     for (uint8_t i = 0; i < kMsxMaxRamBanks; ++i) {
-        if (state->ramBanks[i] && !msx_memory_is_static_bank(state->ramBanks[i])) {
-            heap_caps_free(state->ramBanks[i]);
+        uint8_t* ptr = state->ramBanks[i];
+        if (ptr && !msx_memory_is_static_bank(ptr) &&
+            ptr != g_msx1Vram && ptr != g_msx1Vram + kMsxPageSize8K &&
+            ptr != g_msx_disk_rom_static && ptr != g_msx_disk_rom_static + kMsxPageSize8K) {
+            heap_caps_free(ptr);
         }
         state->ramBanks[i] = nullptr;
     }
@@ -337,15 +344,26 @@ bool msx_memory_allocate_ram_banks(MsxMemoryState* state)
     }
 
     uint8_t firstDynamicIndex = 0u;
-    if (state->machineMode != MsxMachineMode::MSX2) {
-        const uint8_t staticBankCount = (state->ramBankCount >= kMsxStaticBankCountMsx1)
-                                            ? kMsxStaticBankCountMsx1
-                                            : state->ramBankCount;
-        for (uint8_t i = 0; i < staticBankCount; ++i) {
-            state->ramBanks[i] = s_msx1StaticRamBanks[i];
-            std::memset(state->ramBanks[i], kMsxNoramByte, kMsxPageSize8K);
+    const uint8_t staticBankCount = (state->ramBankCount >= kMsxStaticBankCountMsx1)
+                                        ? kMsxStaticBankCountMsx1
+                                        : state->ramBankCount;
+    for (uint8_t i = 0; i < staticBankCount; ++i) {
+        state->ramBanks[i] = s_msx1StaticRamBanks[i];
+        std::memset(state->ramBanks[i], kMsxNoramByte, kMsxPageSize8K);
+    }
+    firstDynamicIndex = staticBankCount;
+
+    if (state->machineMode == MsxMachineMode::MSX2) {
+        if (firstDynamicIndex + 2 <= state->ramBankCount) {
+            state->ramBanks[firstDynamicIndex] = g_msx1Vram;
+            state->ramBanks[firstDynamicIndex + 1] = g_msx1Vram + kMsxPageSize8K;
+            firstDynamicIndex += 2;
         }
-        firstDynamicIndex = staticBankCount;
+        if (!g_msx_disk_rom_static_used && firstDynamicIndex + 2 <= state->ramBankCount) {
+            state->ramBanks[firstDynamicIndex] = g_msx_disk_rom_static;
+            state->ramBanks[firstDynamicIndex + 1] = g_msx_disk_rom_static + kMsxPageSize8K;
+            firstDynamicIndex += 2;
+        }
     }
 
     for (uint8_t i = firstDynamicIndex; i < state->ramBankCount; ++i) {
@@ -906,4 +924,3 @@ void msx_memory_out(MsxMemoryState* state, uint8_t port, uint8_t value)
             break;
     }
 }
-

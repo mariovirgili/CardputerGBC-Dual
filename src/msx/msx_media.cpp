@@ -605,16 +605,13 @@ bool msx_media_load_bios_bundle(MsxBiosBundle* bundle, const MsxBiosSearchConfig
         return msx_load_for_target(bundle, MsxBiosTarget::MSX2, config);
     }
 
-    if (msx_load_for_target(bundle, MsxBiosTarget::MSX1, config)) {
+    // Auto mode: Try MSX2 first!
+    if (msx_load_for_target(bundle, MsxBiosTarget::MSX2, config)) {
         return true;
     }
 
-    if (bundle->mainRom.status == MsxImageLoadStatus::Incompatible ||
-        bundle->subRom.status == MsxImageLoadStatus::Incompatible) {
-        return false;
-    }
-
-    return msx_load_for_target(bundle, MsxBiosTarget::MSX2, config);
+    // Fallback to MSX1 if MSX2 BIOS is missing
+    return msx_load_for_target(bundle, MsxBiosTarget::MSX1, config);
 }
 
 void msx_media_release_bios_bundle(MsxBiosBundle* bundle)
@@ -674,6 +671,3 @@ MsxMachineMode msx_media_target_to_machine_mode(MsxBiosTarget target)
             return MsxMachineMode::Auto;
     }
 }
-
-
-

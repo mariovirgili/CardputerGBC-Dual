@@ -5,16 +5,24 @@
 #include <cstdio>
 #include <cstring>
 
+#include <esp_timer.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
+
 #include "../msx_display.h"
 
 #ifndef MSX_VDP_TRACE_ENABLED
 #define MSX_VDP_TRACE_ENABLED 0
 #endif
 
+static void msx_vdp_render_internal(MsxVdpState* state);
+
+alignas(4) uint8_t g_msx1Vram[0x4000];
+
 namespace {
 
 constexpr size_t kMsx1VramSize = 0x4000;
-constexpr size_t kMsx2VramSize = 0x10000;
+constexpr size_t kMsx2VramSize = 0x20000;
 constexpr unsigned kMsxFrameWidth = 256;
 constexpr unsigned kMsxFrameHeightMsx1 = 192;
 constexpr unsigned kMsxFrameHeightMsx2 = 212;
@@ -40,12 +48,42 @@ constexpr uint8_t kMsxVdpStatusInit[10] = {
 // The Cardputer runs only one MSX core instance at a time, so a single
 // shared indexed frame buffer avoids large heap allocations and fragmentation
 // during VDP startup.
-static uint8_t s_msxFrameBuffer[kMsxFramePixels];
-static uint8_t s_msx1Vram[kMsx1VramSize];
-static uint8_t s_msxSpriteOccupancy[kMsxFrameWidth];
-static uint8_t s_msxColorSpriteLine[kMsxSpriteColorLineWidth];
+alignas(4) static uint8_t s_msxFrameBuffer[kMsxFramePixels];
+alignas(4) static uint8_t s_msxSpriteOccupancy[kMsxFrameWidth];
+alignas(4) static uint8_t s_msxColorSpriteLine[kMsxSpriteColorLineWidth];
 static uint32_t s_msxPatternNibbleExpand[256][16];
 static bool s_msxPatternNibbleExpandReady = false;
+
+// Mutex to protect VDP state between Z80 Core (1) and VDP Task (0)
+static SemaphoreHandle_t s_vdpMutex = nullptr;
+static QueueHandle_t s_vdpQueue = nullptr;
+static TaskHandle_t s_vdpTaskHandle = nullptr;
+
+enum class VdpTaskCmd {
+    RenderFrame,
+    ExecuteEngine,
+    Shutdown
+};
+struct VdpTaskMsg {
+    VdpTaskCmd cmd;
+    uint8_t engineOpcode;
+    uint8_t screenMode;
+    uint8_t color;
+    uint8_t arg;
+    uint16_t sx;
+    uint16_t sy;
+    uint16_t dx;
+    uint16_t dy;
+    uint16_t nx;
+    uint16_t ny;
+};
+
+// Profiling statistics
+static uint32_t s_vdpStatFrames = 0;
+static uint32_t s_vdpStatRenderUs = 0;
+static uint32_t s_vdpStatEngineUs = 0;
+static uint32_t s_vdpStatEngineCmds = 0;
+static uint32_t s_vdpStatDropped = 0;
 
 struct MsxVdpTableMasks {
     uint8_t r2;
@@ -530,7 +568,9 @@ void msx_vdp_write_reg10(MsxVdpState* state, uint8_t lowReg, uint16_t value)
 void msx_vdp_command_finish(MsxVdpState* state)
 {
     state->command.transfer = MsxVdpTransferCommand::None;
+    if (s_vdpMutex) xSemaphoreTakeRecursive(s_vdpMutex, portMAX_DELAY);
     state->status[2] &= static_cast<uint8_t>(~0x01u);
+    if (s_vdpMutex) xSemaphoreGiveRecursive(s_vdpMutex);
 }
 
 void msx_vdp_command_prepare_transfer(MsxVdpState* state, MsxVdpTransferCommand transfer, uint8_t screenMode, uint8_t opcode)
@@ -550,20 +590,23 @@ void msx_vdp_command_prepare_transfer(MsxVdpState* state, MsxVdpTransferCommand 
     command.dx = msx_vdp_read_reg10(state, 36u);
     command.dy = msx_vdp_read_reg10(state, 38u);
     command.ny = nyRaw == 0u ? 1024u : nyRaw;
-    command.ty = (state->regs[45] & 0x08u) != 0u ? -1 : 1;
     command.mx = ppl;
-    if (byteTransfer) {
-        const uint16_t nxBytes = nxRaw == 0u ? 1024u : nxRaw;
-        command.tx = (state->regs[45] & 0x04u) != 0u ? -static_cast<int16_t>(ppb) : static_cast<int16_t>(ppb);
-        command.nx = static_cast<uint16_t>(nxBytes / ppb);
+
+    if (transfer == MsxVdpTransferCommand::Hmmc) {
+        command.ty = 1;
+        command.tx = static_cast<int16_t>(ppb);
+        command.nx = static_cast<uint16_t>((nxRaw == 0u ? 1024u : nxRaw) / ppb);
     } else {
+        command.ty = (state->regs[45] & 0x08u) != 0u ? -1 : 1;
         command.tx = (state->regs[45] & 0x04u) != 0u ? -1 : 1;
         command.nx = nxRaw == 0u ? 1024u : nxRaw;
     }
     command.asx = command.sx;
     command.adx = command.dx;
     command.anx = command.nx;
+    if (s_vdpMutex) xSemaphoreTakeRecursive(s_vdpMutex, portMAX_DELAY);
     state->status[2] |= 0x01u;
+    if (s_vdpMutex) xSemaphoreGiveRecursive(s_vdpMutex);
 }
 
 void msx_vdp_command_continue(MsxVdpState* state)
@@ -576,9 +619,11 @@ void msx_vdp_command_continue(MsxVdpState* state)
     switch (command.transfer) {
         case MsxVdpTransferCommand::Lmcm: {
             const uint8_t value = msx_vdp_command_point(state, command.screenMode, command.asx, command.sy);
+            if (s_vdpMutex) xSemaphoreTakeRecursive(s_vdpMutex, portMAX_DELAY);
             state->regs[44] = value;
             state->status[7] = value;
             state->status[2] |= 0x80u;
+            if (s_vdpMutex) xSemaphoreGiveRecursive(s_vdpMutex);
             if (--command.anx == 0u || ((command.asx = static_cast<uint16_t>(command.asx + command.tx)) & command.mx) != 0u) {
                 if (--command.ny == 0u || (command.sy = static_cast<uint16_t>(command.sy + command.ty)) == 0xFFFFu) {
                     msx_vdp_write_reg10(state, 42u, command.ny);
@@ -593,10 +638,14 @@ void msx_vdp_command_continue(MsxVdpState* state)
         }
         case MsxVdpTransferCommand::Lmmc: {
             const uint8_t value = static_cast<uint8_t>(state->regs[44] & msx_vdp_command_mask(command.screenMode));
+            if (s_vdpMutex) xSemaphoreTakeRecursive(s_vdpMutex, portMAX_DELAY);
             state->regs[44] = value;
             state->status[7] = value;
+            if (s_vdpMutex) xSemaphoreGiveRecursive(s_vdpMutex);
             msx_vdp_command_pset(state, command.screenMode, command.adx, command.dy, value, command.logicOp);
+            if (s_vdpMutex) xSemaphoreTakeRecursive(s_vdpMutex, portMAX_DELAY);
             state->status[2] |= 0x80u;
+            if (s_vdpMutex) xSemaphoreGiveRecursive(s_vdpMutex);
             if (--command.anx == 0u || ((command.adx = static_cast<uint16_t>(command.adx + command.tx)) & command.mx) != 0u) {
                 if (--command.ny == 0u || (command.dy = static_cast<uint16_t>(command.dy + command.ty)) == 0xFFFFu) {
                     msx_vdp_write_reg10(state, 42u, command.ny);
@@ -612,10 +661,12 @@ void msx_vdp_command_continue(MsxVdpState* state)
         case MsxVdpTransferCommand::Hmmc: {
             const uint32_t addr = msx_vdp_command_addr(command.screenMode, command.adx, command.dy) & state->vramMask;
             const uint8_t value = state->regs[44];
+            if (s_vdpMutex) xSemaphoreTakeRecursive(s_vdpMutex, portMAX_DELAY);
             state->vram[addr] = value;
             state->status[7] = value;
             state->dirty = true;
             state->status[2] |= 0x80u;
+            if (s_vdpMutex) xSemaphoreGiveRecursive(s_vdpMutex);
             if (--command.anx == 0u || ((command.adx = static_cast<uint16_t>(command.adx + command.tx)) & command.mx) != 0u) {
                 if (--command.ny == 0u || (command.dy = static_cast<uint16_t>(command.dy + command.ty)) == 0xFFFFu) {
                     msx_vdp_write_reg10(state, 42u, command.ny);
@@ -657,55 +708,63 @@ void msx_vdp_command_write(MsxVdpState* state, uint8_t value)
     msx_vdp_command_continue(state);
 }
 
-void msx_vdp_command_execute(MsxVdpState* state, uint8_t opcode)
+static void msx_vdp_command_execute_internal(MsxVdpState* state, const VdpTaskMsg* msg)
 {
     if (!state || !msx_vdp_is_msx2(state)) {
         return;
     }
 
-    const int sm = msx_vdp_command_mode_index(state);
     state->command.transfer = MsxVdpTransferCommand::None;
-    state->status[2] &= static_cast<uint8_t>(~0x81u);
-    if (sm < 0) {
+    if (s_vdpMutex) xSemaphoreTakeRecursive(s_vdpMutex, portMAX_DELAY);
+    state->status[2] &= static_cast<uint8_t>(~0x80u); // Preserve CE bit so CPU knows it's busy!
+    if (s_vdpMutex) xSemaphoreGiveRecursive(s_vdpMutex);
+    if (msg->screenMode == 0xFF) {
         return;
     }
 
-    const uint8_t screenMode = static_cast<uint8_t>(sm);
-    const uint8_t command = static_cast<uint8_t>(opcode >> 4);
-    const uint8_t logicOp = static_cast<uint8_t>(opcode & 0x0Fu);
+    const uint8_t screenMode = msg->screenMode;
+    const uint8_t command = static_cast<uint8_t>(msg->engineOpcode >> 4);
+    const uint8_t logicOp = static_cast<uint8_t>(msg->engineOpcode & 0x0Fu);
     const uint8_t colorMask = msx_vdp_command_mask(screenMode);
-    uint16_t sx = msx_vdp_read_reg10(state, 32u);
-    uint16_t sy = msx_vdp_read_reg10(state, 34u);
-    uint16_t dx = msx_vdp_read_reg10(state, 36u);
-    uint16_t dy = msx_vdp_read_reg10(state, 38u);
-    uint16_t nx = msx_vdp_read_reg10(state, 40u);
-    uint16_t ny = msx_vdp_read_reg10(state, 42u);
-    const int txDot = (state->regs[45] & 0x04u) != 0u ? -1 : 1;
-    const int ty = (state->regs[45] & 0x08u) != 0u ? -1 : 1;
-    const bool searchNotEqual = (state->regs[45] & 0x02u) != 0u;
-    const bool lineYMajor = (state->regs[45] & 0x01u) != 0u;
+    uint16_t sx = msg->sx, sy = msg->sy, dx = msg->dx, dy = msg->dy;
+    uint16_t nx = msg->nx, ny = msg->ny;
+    uint8_t color = msg->color;
+    int txDot = (msg->arg & 0x04u) != 0u ? -1 : 1;
+    int ty = (msg->arg & 0x08u) != 0u ? -1 : 1;
+    const bool searchNotEqual = (msg->arg & 0x02u) != 0u;
+    const bool lineYMajor = (msg->arg & 0x01u) != 0u;
     const uint16_t ppl = msx_vdp_command_ppl(screenMode);
     const uint16_t ppb = msx_vdp_command_ppb(screenMode);
 
+    if (command == 0xA || command == 0xB || command == 0xF) {
+        txDot = 1;
+        ty = 1;
+    } else if (command == 0xE) {
+        txDot = 1;
+    }
+
     if ((command & 0x0Cu) != 0x0Cu && command != 0u) {
-        state->regs[44] = static_cast<uint8_t>(state->regs[44] & colorMask);
-        state->status[7] = state->regs[44];
+        color = static_cast<uint8_t>(color & colorMask);
     }
 
     switch (command) {
         case 0x0:
             return;
         case 0x4: {
+            if (s_vdpMutex) xSemaphoreTakeRecursive(s_vdpMutex, portMAX_DELAY);
             const uint8_t value = msx_vdp_command_point(state, screenMode, sx, sy);
-            state->regs[44] = value;
+            state->regs[44] = color = value;
             state->status[7] = value;
+            if (s_vdpMutex) xSemaphoreGiveRecursive(s_vdpMutex);
             return;
         }
         case 0x5:
-            msx_vdp_command_pset(state, screenMode, dx, dy, state->regs[44], logicOp);
+            if (s_vdpMutex) xSemaphoreTakeRecursive(s_vdpMutex, portMAX_DELAY);
+            msx_vdp_command_pset(state, screenMode, dx, dy, color, logicOp);
+            if (s_vdpMutex) xSemaphoreGiveRecursive(s_vdpMutex);
             return;
         case 0x6: {
-            const uint8_t color = static_cast<uint8_t>(state->regs[44] & colorMask);
+            if (s_vdpMutex) xSemaphoreTakeRecursive(s_vdpMutex, portMAX_DELAY);
             int x = sx;
             state->status[2] &= static_cast<uint8_t>(~0x10u);
             for (;;) {
@@ -721,9 +780,11 @@ void msx_vdp_command_execute(MsxVdpState* state, uint8_t opcode)
             }
             state->status[8] = static_cast<uint8_t>(x & 0xFFu);
             state->status[9] = static_cast<uint8_t>(((x >> 8) & 0x01u) | 0xFEu);
+            if (s_vdpMutex) xSemaphoreGiveRecursive(s_vdpMutex);
             return;
         }
         case 0x7: {
+            if (s_vdpMutex) xSemaphoreTakeRecursive(s_vdpMutex, portMAX_DELAY);
             const int major = nx == 0u ? 1024 : nx;
             const int minor = ny == 0u ? 1024 : ny;
             int acc = ((major - 1) >> 1);
@@ -733,7 +794,7 @@ void msx_vdp_command_execute(MsxVdpState* state, uint8_t opcode)
 
             if (!lineYMajor) {
                 while (count++ != major && (x & ppl) == 0) {
-                    msx_vdp_command_pset(state, screenMode, x, y, state->regs[44], logicOp);
+                    msx_vdp_command_pset(state, screenMode, x, y, color, logicOp);
                     x += txDot;
                     if ((acc -= minor) < 0) {
                         acc += major;
@@ -743,7 +804,7 @@ void msx_vdp_command_execute(MsxVdpState* state, uint8_t opcode)
                 }
             } else {
                 while (count++ != major && (x & ppl) == 0) {
-                    msx_vdp_command_pset(state, screenMode, x, y, state->regs[44], logicOp);
+                    msx_vdp_command_pset(state, screenMode, x, y, color, logicOp);
                     y += ty;
                     if ((acc -= minor) < 0) {
                         acc += major;
@@ -754,152 +815,135 @@ void msx_vdp_command_execute(MsxVdpState* state, uint8_t opcode)
             }
 
             msx_vdp_write_reg10(state, 38u, static_cast<uint16_t>(y));
+            if (s_vdpMutex) xSemaphoreGiveRecursive(s_vdpMutex);
             return;
         }
-        case 0x8: {
-            if (nx == 0u) nx = 1024u;
+        case 0x8:
+        case 0xC: {
+            const uint16_t nx_fixed = nx == 0u ? 1024u : nx;
             if (ny == 0u) ny = 1024u;
-            uint16_t startX = dx;
+            
+            bool isFastFill = (command == 0xC) || (logicOp == 0);
+            bool isAligned = (nx_fixed % ppb == 0) && 
+                ((txDot > 0 && (dx % ppb == 0)) || (txDot < 0 && (dx % ppb == ppb - 1)));
+            
+            uint8_t fastFillVal = color;
+            if (isFastFill && ppb == 2) fastFillVal = static_cast<uint8_t>((fastFillVal & 0x0F) | (fastFillVal << 4));
+            else if (isFastFill && ppb == 4) fastFillVal = static_cast<uint8_t>((fastFillVal & 0x03) * 0x55);
+
             for (uint16_t row = 0; row < ny; ++row) {
-                uint16_t x = startX;
-                for (uint16_t col = 0; col < nx; ++col) {
-                    msx_vdp_command_pset(state, screenMode, x, dy, state->regs[44], logicOp);
-                    x = static_cast<uint16_t>(x + txDot);
-                    if ((x & ppl) != 0) {
-                        break;
+                if (s_vdpMutex) xSemaphoreTakeRecursive(s_vdpMutex, portMAX_DELAY);
+                
+                bool useMemset = false;
+                if (isFastFill && isAligned && dx < ppl) {
+                    uint16_t copyBytes = nx_fixed / ppb;
+                    uint16_t leftX = (txDot > 0) ? dx : static_cast<uint16_t>(dx - nx_fixed + 1);
+                    if (leftX < ppl) {
+                        if (leftX / ppb + copyBytes > ppl / ppb) copyBytes = (ppl - leftX) / ppb;
+                        if (copyBytes > 0) {
+                            uint32_t addr = msx_vdp_command_addr(screenMode, leftX, dy) & state->vramMask;
+                            std::memset(&state->vram[addr], fastFillVal, copyBytes);
+                            state->dirty = true;
+                            useMemset = true;
+                        }
                     }
                 }
-                dy = static_cast<uint16_t>(dy + ty);
-                if (dy == 0xFFFFu) {
-                    break;
+
+                if (!useMemset) {
+                    uint16_t x = dx;
+                    for (uint16_t col = 0; col < nx_fixed; ++col) {
+                        msx_vdp_command_pset(state, screenMode, x, dy, color, command == 0xC ? 0 : logicOp);
+                        x = static_cast<uint16_t>(x + txDot);
+                        if ((x & ppl) != 0) break;
+                    }
                 }
+                
+                dy = static_cast<uint16_t>(dy + ty);
+                if (s_vdpMutex) xSemaphoreGiveRecursive(s_vdpMutex);
+                taskYIELD();
+                if (dy == 0xFFFFu) break;
             }
+            if (s_vdpMutex) xSemaphoreTakeRecursive(s_vdpMutex, portMAX_DELAY);
             msx_vdp_write_reg10(state, 42u, 0u);
             msx_vdp_write_reg10(state, 38u, dy);
+            if (s_vdpMutex) xSemaphoreGiveRecursive(s_vdpMutex);
             return;
         }
-        case 0x9: {
-            if (nx == 0u) nx = 1024u;
+        case 0x9:
+        case 0xD:
+        case 0xE: {
+            const uint16_t nx_fixed = nx == 0u ? 1024u : nx;
             if (ny == 0u) ny = 1024u;
-            const uint16_t srcStartX = sx;
-            const uint16_t dstStartX = dx;
+            
+            bool isFastCopy = (command == 0xD) || (command == 0xE) || (logicOp == 0);
+            bool isAligned = (nx_fixed % ppb == 0) &&
+                ((txDot > 0 && (sx % ppb == 0) && (dx % ppb == 0)) || 
+                 (txDot < 0 && (sx % ppb == ppb - 1) && (dx % ppb == ppb - 1)));
+
             for (uint16_t row = 0; row < ny; ++row) {
-                uint16_t srcX = srcStartX;
-                uint16_t dstX = dstStartX;
-                for (uint16_t col = 0; col < nx; ++col) {
-                    const uint8_t pixel = msx_vdp_command_point(state, screenMode, srcX, sy);
-                    msx_vdp_command_pset(state, screenMode, dstX, dy, pixel, logicOp);
-                    srcX = static_cast<uint16_t>(srcX + txDot);
-                    dstX = static_cast<uint16_t>(dstX + txDot);
-                    if ((srcX & ppl) != 0 || (dstX & ppl) != 0) {
-                        break;
+                if (s_vdpMutex) xSemaphoreTakeRecursive(s_vdpMutex, portMAX_DELAY);
+                
+                bool useMemmove = false;
+                if (isFastCopy && isAligned && sx < ppl && dx < ppl) {
+                    uint16_t copyBytes = nx_fixed / ppb;
+                    uint16_t srcLeftX = (txDot > 0) ? sx : static_cast<uint16_t>(sx - nx_fixed + 1);
+                    uint16_t dstLeftX = (txDot > 0) ? dx : static_cast<uint16_t>(dx - nx_fixed + 1);
+                    
+                    if (srcLeftX < ppl && dstLeftX < ppl) {
+                        if (srcLeftX / ppb + copyBytes > ppl / ppb) copyBytes = (ppl - srcLeftX) / ppb;
+                        if (dstLeftX / ppb + copyBytes > ppl / ppb) copyBytes = (ppl - dstLeftX) / ppb;
+                        if (copyBytes > 0) {
+                            uint32_t srcAddr = msx_vdp_command_addr(screenMode, srcLeftX, sy) & state->vramMask;
+                            uint32_t dstAddr = msx_vdp_command_addr(screenMode, dstLeftX, dy) & state->vramMask;
+                            
+                            if (txDot > 0 && dstAddr > srcAddr && dstAddr < srcAddr + copyBytes) {
+                                for (uint16_t i = 0; i < copyBytes; ++i) state->vram[dstAddr + i] = state->vram[srcAddr + i];
+                            } else if (txDot < 0 && dstAddr < srcAddr && dstAddr + copyBytes > srcAddr) {
+                                for (int i = copyBytes - 1; i >= 0; --i) state->vram[dstAddr + i] = state->vram[srcAddr + i];
+                            } else {
+                                std::memmove(&state->vram[dstAddr], &state->vram[srcAddr], copyBytes);
+                            }
+                            state->dirty = true;
+                            useMemmove = true;
+                        }
                     }
                 }
+                
+                if (!useMemmove) {
+                    uint16_t srcX = sx;
+                    uint16_t dstX = dx;
+                    for (uint16_t col = 0; col < nx_fixed; ++col) {
+                        const uint8_t pixel = msx_vdp_command_point(state, screenMode, srcX, sy);
+                        msx_vdp_command_pset(state, screenMode, dstX, dy, pixel, (command == 0xD || command == 0xE) ? 0 : logicOp);
+                        srcX = static_cast<uint16_t>(srcX + txDot);
+                        dstX = static_cast<uint16_t>(dstX + txDot);
+                        if ((srcX & ppl) != 0 || (dstX & ppl) != 0) break;
+                    }
+                }
+                
                 sy = static_cast<uint16_t>(sy + ty);
                 dy = static_cast<uint16_t>(dy + ty);
-                if (sy == 0xFFFFu || dy == 0xFFFFu) {
-                    break;
-                }
+                if (s_vdpMutex) xSemaphoreGiveRecursive(s_vdpMutex);
+                taskYIELD();
+                if (sy == 0xFFFFu || dy == 0xFFFFu) break;
             }
+            if (s_vdpMutex) xSemaphoreTakeRecursive(s_vdpMutex, portMAX_DELAY);
             msx_vdp_write_reg10(state, 42u, 0u);
             msx_vdp_write_reg10(state, 34u, sy);
             msx_vdp_write_reg10(state, 38u, dy);
+            if (s_vdpMutex) xSemaphoreGiveRecursive(s_vdpMutex);
             return;
         }
         case 0xA:
-            msx_vdp_command_prepare_transfer(state, MsxVdpTransferCommand::Lmcm, screenMode, opcode);
+            msx_vdp_command_prepare_transfer(state, MsxVdpTransferCommand::Lmcm, screenMode, msg->engineOpcode);
             msx_vdp_command_continue(state);
             return;
         case 0xB:
-            msx_vdp_command_prepare_transfer(state, MsxVdpTransferCommand::Lmmc, screenMode, opcode);
+            msx_vdp_command_prepare_transfer(state, MsxVdpTransferCommand::Lmmc, screenMode, msg->engineOpcode);
             msx_vdp_command_continue(state);
             return;
-        case 0xC: {
-            const uint16_t nxBytes = nx == 0u ? 1024u : nx;
-            if (ny == 0u) ny = 1024u;
-            const int tx = (state->regs[45] & 0x04u) != 0u ? -static_cast<int>(ppb) : static_cast<int>(ppb);
-            const uint16_t startX = dx;
-            for (uint16_t row = 0; row < ny; ++row) {
-                uint16_t x = startX;
-                for (uint16_t col = 0; col < static_cast<uint16_t>(nxBytes / ppb); ++col) {
-                    const uint32_t addr = msx_vdp_command_addr(screenMode, x, dy) & state->vramMask;
-                    state->vram[addr] = state->regs[44];
-                    state->dirty = true;
-                    x = static_cast<uint16_t>(x + tx);
-                    if ((x & ppl) != 0) {
-                        break;
-                    }
-                }
-                dy = static_cast<uint16_t>(dy + ty);
-                if (dy == 0xFFFFu) {
-                    break;
-                }
-            }
-            msx_vdp_write_reg10(state, 42u, 0u);
-            msx_vdp_write_reg10(state, 38u, dy);
-            return;
-        }
-        case 0xD: {
-            const uint16_t nxBytes = nx == 0u ? 1024u : nx;
-            if (ny == 0u) ny = 1024u;
-            const int tx = (state->regs[45] & 0x04u) != 0u ? -static_cast<int>(ppb) : static_cast<int>(ppb);
-            const uint16_t srcStartX = sx;
-            const uint16_t dstStartX = dx;
-            for (uint16_t row = 0; row < ny; ++row) {
-                uint16_t srcX = srcStartX;
-                uint16_t dstX = dstStartX;
-                for (uint16_t col = 0; col < static_cast<uint16_t>(nxBytes / ppb); ++col) {
-                    const uint32_t srcAddr = msx_vdp_command_addr(screenMode, srcX, sy) & state->vramMask;
-                    const uint32_t dstAddr = msx_vdp_command_addr(screenMode, dstX, dy) & state->vramMask;
-                    state->vram[dstAddr] = state->vram[srcAddr];
-                    state->dirty = true;
-                    srcX = static_cast<uint16_t>(srcX + tx);
-                    dstX = static_cast<uint16_t>(dstX + tx);
-                    if ((srcX & ppl) != 0 || (dstX & ppl) != 0) {
-                        break;
-                    }
-                }
-                sy = static_cast<uint16_t>(sy + ty);
-                dy = static_cast<uint16_t>(dy + ty);
-                if (sy == 0xFFFFu || dy == 0xFFFFu) {
-                    break;
-                }
-            }
-            msx_vdp_write_reg10(state, 42u, 0u);
-            msx_vdp_write_reg10(state, 34u, sy);
-            msx_vdp_write_reg10(state, 38u, dy);
-            return;
-        }
-        case 0xE: {
-            const uint16_t nxBytes = nx == 0u ? 1024u : nx;
-            if (ny == 0u) ny = 1024u;
-            const int tx = (state->regs[45] & 0x04u) != 0u ? -static_cast<int>(ppb) : static_cast<int>(ppb);
-            const uint16_t startX = dx;
-            for (uint16_t row = 0; row < ny; ++row) {
-                uint16_t x = startX;
-                for (uint16_t col = 0; col < static_cast<uint16_t>(nxBytes / ppb); ++col) {
-                    const uint32_t srcAddr = msx_vdp_command_addr(screenMode, x, sy) & state->vramMask;
-                    const uint32_t dstAddr = msx_vdp_command_addr(screenMode, x, dy) & state->vramMask;
-                    state->vram[dstAddr] = state->vram[srcAddr];
-                    state->dirty = true;
-                    x = static_cast<uint16_t>(x + tx);
-                    if ((x & ppl) != 0) {
-                        break;
-                    }
-                }
-                sy = static_cast<uint16_t>(sy + ty);
-                dy = static_cast<uint16_t>(dy + ty);
-                if (sy == 0xFFFFu || dy == 0xFFFFu) {
-                    break;
-                }
-            }
-            msx_vdp_write_reg10(state, 42u, 0u);
-            msx_vdp_write_reg10(state, 34u, sy);
-            msx_vdp_write_reg10(state, 38u, dy);
-            return;
-        }
         case 0xF:
-            msx_vdp_command_prepare_transfer(state, MsxVdpTransferCommand::Hmmc, screenMode, opcode);
+            msx_vdp_command_prepare_transfer(state, MsxVdpTransferCommand::Hmmc, screenMode, msg->engineOpcode);
             msx_vdp_command_continue(state);
             return;
         default:
@@ -907,6 +951,52 @@ void msx_vdp_command_execute(MsxVdpState* state, uint8_t opcode)
     }
 }
 
+void msx_vdp_command_execute(MsxVdpState* state, uint8_t opcode)
+{
+    if (!state || !msx_vdp_is_msx2(state)) {
+        return;
+    }
+
+    // Only queue heavy block/VRAM copy operations to the background task.
+    // CPU-interactive transfers (like HMMC, LMMC) must be executed synchronously.
+    uint8_t command = opcode >> 4;
+    bool isAsync = (command == 0x7 || command == 0x8 || command == 0x9 || 
+                    command == 0xC || command == 0xD || command == 0xE);
+    
+    VdpTaskMsg msg;
+    msg.cmd = VdpTaskCmd::ExecuteEngine;
+    msg.engineOpcode = opcode;
+    int sm = msx_vdp_command_mode_index(state);
+    msg.screenMode = sm >= 0 ? static_cast<uint8_t>(sm) : 0xFF;
+    msg.sx = msx_vdp_read_reg10(state, 32u);
+    msg.sy = msx_vdp_read_reg10(state, 34u);
+    msg.dx = msx_vdp_read_reg10(state, 36u);
+    msg.dy = msx_vdp_read_reg10(state, 38u);
+    msg.nx = msx_vdp_read_reg10(state, 40u);
+    msg.ny = msx_vdp_read_reg10(state, 42u);
+    msg.color = state->regs[44];
+    msg.arg = state->regs[45];
+
+    if (s_vdpQueue && isAsync) {
+        if (s_vdpMutex) xSemaphoreTakeRecursive(s_vdpMutex, portMAX_DELAY);
+        state->status[2] |= 0x01u;
+        if (s_vdpMutex) xSemaphoreGiveRecursive(s_vdpMutex);
+        if (xQueueSend(s_vdpQueue, &msg, 0) != pdTRUE) {
+            s_vdpStatDropped++;
+            msx_vdp_command_execute_internal(state, &msg); // Fallback to avoid lost commands
+            if (s_vdpMutex) xSemaphoreTakeRecursive(s_vdpMutex, portMAX_DELAY);
+            state->status[2] &= static_cast<uint8_t>(~0x01u); // CE Clear
+            if (s_vdpMutex) xSemaphoreGiveRecursive(s_vdpMutex);
+        }
+    } else {
+        msx_vdp_command_execute_internal(state, &msg);
+        if (command != 0xA && command != 0xB && command != 0xF) {
+            if (s_vdpMutex) xSemaphoreTakeRecursive(s_vdpMutex, portMAX_DELAY);
+            state->status[2] &= static_cast<uint8_t>(~0x01u); // CE Clear
+            if (s_vdpMutex) xSemaphoreGiveRecursive(s_vdpMutex);
+        }
+    }
+}
 void msx_vdp_write_register(MsxVdpState* state, uint8_t reg, uint8_t value)
 {
     if (!state || reg >= sizeof(state->regs)) {
@@ -1749,6 +1839,47 @@ void msx_vdp_advance_address(MsxVdpState* state)
     }
 }
 
+static void msx_vdp_task_func(void* arg) {
+    MsxVdpState* state = static_cast<MsxVdpState*>(arg);
+    VdpTaskMsg msg;
+    while (true) {
+        if (xQueueReceive(s_vdpQueue, &msg, portMAX_DELAY) == pdTRUE) {
+            if (msg.cmd == VdpTaskCmd::Shutdown) {
+                break;
+            } else if (msg.cmd == VdpTaskCmd::RenderFrame) {
+                int64_t t0 = esp_timer_get_time();
+                msx_vdp_render_internal(state);
+                int64_t t1 = esp_timer_get_time();
+                
+                s_vdpStatRenderUs += static_cast<uint32_t>(t1 - t0);
+                s_vdpStatFrames++;
+                if (s_vdpStatFrames >= 60) {
+                    std::printf("[MSX][VDP-CORE0] 60fps | RenderAvg: %u us | CmdAvg: %u us (n=%u) | Drops: %u\n",
+                                static_cast<unsigned>(s_vdpStatRenderUs / 60u),
+                                static_cast<unsigned>(s_vdpStatEngineCmds ? s_vdpStatEngineUs / s_vdpStatEngineCmds : 0u),
+                                static_cast<unsigned>(s_vdpStatEngineCmds),
+                                static_cast<unsigned>(s_vdpStatDropped));
+                    s_vdpStatFrames = 0;
+                    s_vdpStatRenderUs = 0;
+                    s_vdpStatEngineUs = 0;
+                    s_vdpStatEngineCmds = 0;
+                    s_vdpStatDropped = 0;
+                }
+            } else if (msg.cmd == VdpTaskCmd::ExecuteEngine) {
+                int64_t t0 = esp_timer_get_time();
+                msx_vdp_command_execute_internal(state, &msg);
+                int64_t t1 = esp_timer_get_time();
+                s_vdpStatEngineUs += static_cast<uint32_t>(t1 - t0);
+                s_vdpStatEngineCmds++;
+                
+                if (s_vdpMutex) xSemaphoreTakeRecursive(s_vdpMutex, portMAX_DELAY);
+                state->status[2] &= static_cast<uint8_t>(~0x01u);
+                if (s_vdpMutex) xSemaphoreGiveRecursive(s_vdpMutex);
+            }
+        }
+    }
+    vTaskDelete(NULL);
+}
 } // namespace
 
 bool msx_vdp_init(MsxVdpState* state, MsxMachineMode machineMode)
@@ -1756,6 +1887,12 @@ bool msx_vdp_init(MsxVdpState* state, MsxMachineMode machineMode)
     if (!state) {
         return false;
     }
+
+    s_vdpStatFrames = 0;
+    s_vdpStatRenderUs = 0;
+    s_vdpStatEngineUs = 0;
+    s_vdpStatEngineCmds = 0;
+    s_vdpStatDropped = 0;
 
     msx_vdp_init_pattern_expand_table();
 
@@ -1765,10 +1902,23 @@ bool msx_vdp_init(MsxVdpState* state, MsxMachineMode machineMode)
     state->vramMask = static_cast<uint32_t>(state->vramSize - 1u);
     state->ownsVram = false;
 
+    if (s_vdpMutex == nullptr) {
+        s_vdpMutex = xSemaphoreCreateRecursiveMutex();
+    }
+
     if (machineMode == MsxMachineMode::MSX2) {
-        // MSX2 still uses heap-backed VRAM because the 64 KB image is too large to keep
-        // permanently in static RAM on Cardputer ADV.
-        state->vram = static_cast<uint8_t*>(heap_caps_malloc(state->vramSize, MALLOC_CAP_INTERNAL));
+        state->vram = static_cast<uint8_t*>(heap_caps_malloc(state->vramSize, MALLOC_CAP_SPIRAM));
+        if (!state->vram) {
+            state->vram = static_cast<uint8_t*>(heap_caps_malloc(state->vramSize, MALLOC_CAP_INTERNAL));
+        }
+        if (!state->vram) {
+            state->vramSize = 0x10000; // Fallback to 64KB VRAM to prevent crash if no memory
+            state->vramMask = static_cast<uint32_t>(state->vramSize - 1u);
+            state->vram = static_cast<uint8_t*>(heap_caps_malloc(state->vramSize, MALLOC_CAP_INTERNAL));
+        }
+        if (!state->vram) {
+            state->vram = static_cast<uint8_t*>(malloc(state->vramSize));
+        }
         if (!state->vram) {
             std::printf("[MSX] vdp init: vram alloc failed size=%u freeInternal=%u largestInternal=%u\n",
                         static_cast<unsigned>(state->vramSize),
@@ -1778,8 +1928,15 @@ bool msx_vdp_init(MsxVdpState* state, MsxMachineMode machineMode)
             return false;
         }
         state->ownsVram = true;
+
+        if (!s_vdpQueue) {
+            s_vdpQueue = xQueueCreate(32, sizeof(VdpTaskMsg));
+        }
+        if (!s_vdpTaskHandle) {
+            xTaskCreatePinnedToCore(msx_vdp_task_func, "MSX_VDP", 4096, state, 5, &s_vdpTaskHandle, 0);
+        }
     } else {
-        state->vram = s_msx1Vram;
+        state->vram = g_msx1Vram;
     }
 
     state->frameBuffer = s_msxFrameBuffer;
@@ -1794,11 +1951,22 @@ void msx_vdp_shutdown(MsxVdpState* state)
         return;
     }
 
-
     if (state->ownsVram && state->vram) {
         heap_caps_free(state->vram);
     }
 
+    if (s_vdpTaskHandle) {
+        VdpTaskMsg msg = { VdpTaskCmd::Shutdown, 0 };
+        xQueueSend(s_vdpQueue, &msg, portMAX_DELAY);
+        vTaskDelay(pdMS_TO_TICKS(50));
+        s_vdpTaskHandle = nullptr;
+        vQueueDelete(s_vdpQueue);
+        s_vdpQueue = nullptr;
+    }
+    if (s_vdpMutex) {
+        vSemaphoreDelete(s_vdpMutex);
+        s_vdpMutex = nullptr;
+    }
     std::memset(state, 0, sizeof(*state));
 }
 
@@ -1807,6 +1975,8 @@ void msx_vdp_reset(MsxVdpState* state)
     if (!state || !state->vram || !state->frameBuffer) {
         return;
     }
+
+    if (s_vdpMutex) xSemaphoreTakeRecursive(s_vdpMutex, portMAX_DELAY);
 
     std::memset(state->vram, 0x00, state->vramSize);
     std::memcpy(state->regs, kMsxVdpRegsInit, sizeof(state->regs));
@@ -1830,6 +2000,8 @@ void msx_vdp_reset(MsxVdpState* state)
     }
     msx_vdp_init_palette(state);
     msx_vdp_update_mode_geometry(state);
+
+    if (s_vdpMutex) xSemaphoreGiveRecursive(s_vdpMutex);
 }
 
 bool msx_vdp_begin_frame(MsxVdpState* state)
@@ -1838,28 +2010,25 @@ bool msx_vdp_begin_frame(MsxVdpState* state)
         return false;
     }
 
+    if (s_vdpMutex) xSemaphoreTakeRecursive(s_vdpMutex, portMAX_DELAY);
+
     state->status[0] |= 0x80u;
     state->status[2] = 0x5Cu;
     state->frameCounter++;
+    bool irq = (state->regs[1] & 0x20u) != 0u;
+    if (s_vdpMutex) xSemaphoreGiveRecursive(s_vdpMutex);
     return (state->regs[1] & 0x20u) != 0u;
 }
 
-void msx_vdp_render(MsxVdpState* state)
+static void msx_vdp_render_internal(MsxVdpState* state)
 {
-    if (!state || !state->frameBuffer) {
-        return;
-    }
-
-    if (!state->dirty && state->frameReady) {
-        return;
-    }
+    state->dirty = false; // Mark clean early so concurrent writes set it to true again
 
     msx_vdp_update_mode_geometry(state);
     msx_vdp_reset_sprite_status(state);
 
     if (!msx_vdp_display_enabled(state)) {
         msx_vdp_clear_active_frame(state, msx_vdp_resolve_color(state, 0));
-        state->dirty = false;
         state->frameReady = true;
         return;
     }
@@ -1909,8 +2078,23 @@ void msx_vdp_render(MsxVdpState* state)
             break;
     }
 
-    state->dirty = false;
     state->frameReady = true;
+}
+
+void msx_vdp_render(MsxVdpState* state)
+{
+    if (!state || !state->frameBuffer) {
+        return;
+    }
+
+    if (s_vdpQueue && msx_vdp_is_msx2(state)) {
+        VdpTaskMsg msg = { VdpTaskCmd::RenderFrame, 0 };
+        if (xQueueSend(s_vdpQueue, &msg, 0) != pdTRUE) {
+            s_vdpStatDropped++;
+        }
+    } else {
+        msx_vdp_render_internal(state);
+    }
 }
 
 uint8_t msx_vdp_in_data(MsxVdpState* state)
@@ -1919,10 +2103,13 @@ uint8_t msx_vdp_in_data(MsxVdpState* state)
         return 0xFFu;
     }
 
+    if (s_vdpMutex) xSemaphoreTakeRecursive(s_vdpMutex, portMAX_DELAY);
+
     const uint8_t value = state->readBuffer;
     state->readBuffer = msx_vdp_read_vram_fast(state->vram, state->vramMask, state->address);
     msx_vdp_advance_address(state);
     state->controlPending = false;
+    if (s_vdpMutex) xSemaphoreGiveRecursive(s_vdpMutex);
     return value;
 }
 
@@ -1931,6 +2118,8 @@ uint8_t msx_vdp_in_status(MsxVdpState* state)
     if (!state) {
         return 0xFFu;
     }
+
+    if (s_vdpMutex) xSemaphoreTakeRecursive(s_vdpMutex, portMAX_DELAY);
 
     uint8_t index = 0u;
     if (msx_vdp_is_msx2(state)) {
@@ -1948,6 +2137,7 @@ uint8_t msx_vdp_in_status(MsxVdpState* state)
     } else if (index == 7u && msx_vdp_is_msx2(state)) {
         state->status[7] = state->regs[44] = msx_vdp_command_read(state);
     }
+    if (s_vdpMutex) xSemaphoreGiveRecursive(s_vdpMutex);
     return value;
 }
 
@@ -1957,10 +2147,13 @@ void msx_vdp_out_data(MsxVdpState* state, uint8_t value)
         return;
     }
 
+    if (s_vdpMutex) xSemaphoreTakeRecursive(s_vdpMutex, portMAX_DELAY);
+
     msx_vdp_write_vram(state, state->address, value);
     msx_vdp_advance_address(state);
     state->readBuffer = value;
     state->controlPending = false;
+    if (s_vdpMutex) xSemaphoreGiveRecursive(s_vdpMutex);
 }
 
 void msx_vdp_out_control(MsxVdpState* state, uint8_t value)
@@ -1969,9 +2162,12 @@ void msx_vdp_out_control(MsxVdpState* state, uint8_t value)
         return;
     }
 
+    if (s_vdpMutex) xSemaphoreTakeRecursive(s_vdpMutex, portMAX_DELAY);
+
     if (!state->controlPending) {
         state->latchedControl = value;
         state->controlPending = true;
+        if (s_vdpMutex) xSemaphoreGiveRecursive(s_vdpMutex);
         return;
     }
 
@@ -1983,16 +2179,19 @@ void msx_vdp_out_control(MsxVdpState* state, uint8_t value)
         state->address = msx_vdp_compose_address(state, low14);
         state->readBuffer = msx_vdp_read_vram_fast(state->vram, state->vramMask, state->address);
         msx_vdp_advance_address(state);
+        if (s_vdpMutex) xSemaphoreGiveRecursive(s_vdpMutex);
         return;
     }
 
     if (command == 1u) {
         state->address = msx_vdp_compose_address(state, low14);
+        if (s_vdpMutex) xSemaphoreGiveRecursive(s_vdpMutex);
         return;
     }
 
     const uint8_t reg = msx_vdp_is_msx2(state) ? static_cast<uint8_t>(value & 0x3Fu) : static_cast<uint8_t>(value & 0x07u);
     msx_vdp_write_register(state, reg, state->latchedControl);
+    if (s_vdpMutex) xSemaphoreGiveRecursive(s_vdpMutex);
 }
 
 void msx_vdp_out_palette(MsxVdpState* state, uint8_t value)
@@ -2001,10 +2200,13 @@ void msx_vdp_out_palette(MsxVdpState* state, uint8_t value)
         return;
     }
 
+    if (s_vdpMutex) xSemaphoreTakeRecursive(s_vdpMutex, portMAX_DELAY);
+
     const uint8_t index = static_cast<uint8_t>(state->regs[16] & 0x0Fu);
     if (!state->palettePending) {
         state->paletteLatch = value;
         state->palettePending = true;
+        if (s_vdpMutex) xSemaphoreGiveRecursive(s_vdpMutex);
         return;
     }
 
@@ -2014,6 +2216,7 @@ void msx_vdp_out_palette(MsxVdpState* state, uint8_t value)
     state->regs[16] = static_cast<uint8_t>((index + 1u) & 0x0Fu);
     state->palettePending = false;
     state->dirty = true;
+    if (s_vdpMutex) xSemaphoreGiveRecursive(s_vdpMutex);
 }
 
 void msx_vdp_out_indirect(MsxVdpState* state, uint8_t value)
@@ -2021,6 +2224,8 @@ void msx_vdp_out_indirect(MsxVdpState* state, uint8_t value)
     if (!state || !msx_vdp_is_msx2(state)) {
         return;
     }
+
+    if (s_vdpMutex) xSemaphoreTakeRecursive(s_vdpMutex, portMAX_DELAY);
 
     uint8_t reg = static_cast<uint8_t>(state->regs[17] & 0x3Fu);
     if (reg != 17u && reg < sizeof(state->regs)) {
@@ -2031,6 +2236,7 @@ void msx_vdp_out_indirect(MsxVdpState* state, uint8_t value)
         const uint8_t nextReg = static_cast<uint8_t>((reg + 1u) & 0x3Fu);
         state->regs[17] = static_cast<uint8_t>((state->regs[17] & 0x80u) | nextReg);
     }
+    if (s_vdpMutex) xSemaphoreGiveRecursive(s_vdpMutex);
 }
 
 void msx_vdp_get_display_frame(const MsxVdpState* state, MsxDisplayFrame* frame)

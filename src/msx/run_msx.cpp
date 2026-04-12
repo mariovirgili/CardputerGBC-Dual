@@ -35,6 +35,9 @@
 #define MSX_RUN_LOG(...) do { } while (0)
 #endif
 
+uint8_t g_msx_disk_rom_static[16384];
+bool g_msx_disk_rom_static_used = false;
+
 namespace {
 
 struct MsxViewModeOverrideGuard {
@@ -92,9 +95,6 @@ constexpr MsxBiosReferenceEntry kMsxBiosReferences[] = {
     {"MSXDOS2.ROM",  "6418d091cd6907bbcf940324339e43bb"},
     {"FMPAC.ROM",    "6f69cc8b5ed761b03afd78000dfb0e19"},
 };
-
-static uint8_t s_msx_disk_rom_static[16384];
-static bool s_msx_disk_rom_static_used = false;
 
 const char* msx_sd_open_path(const char* path)
 {
@@ -319,9 +319,9 @@ void msx_show_bios_reference_help(MsxMachineMode configuredMode, const MsxBiosBu
             break;
         case MsxMachineMode::Auto:
         default:
-            introLines[4] = "AUTO tries MSX1 first";
-            introLines[5] = "Fallback: MSX2.ROM + MSX2EXT.ROM";
-            introLines[6] = "Need: MSX.ROM";
+            introLines[4] = "AUTO tries MSX2 first";
+            introLines[5] = "Fallback: MSX.ROM";
+            introLines[6] = "Need: MSX2.ROM + MSX2EXT.ROM";
             break;
     }
 
@@ -401,16 +401,19 @@ uint8_t* msx_load_bios_file(const char* filename, size_t expectedSize, size_t* o
             continue;
         }
 
-        uint8_t* buf = static_cast<uint8_t*>(heap_caps_malloc(fileSize, MALLOC_CAP_8BIT));
+        uint8_t* buf = static_cast<uint8_t*>(heap_caps_malloc(fileSize, MALLOC_CAP_SPIRAM));
+        if (!buf) {
+            buf = static_cast<uint8_t*>(heap_caps_malloc(fileSize, MALLOC_CAP_8BIT));
+        }
         if (!buf) {
             buf = static_cast<uint8_t*>(heap_caps_malloc(fileSize, MALLOC_CAP_INTERNAL));
         }
         if (!buf) {
             buf = static_cast<uint8_t*>(heap_caps_malloc(fileSize, MALLOC_CAP_DEFAULT));
         }
-        if (!buf && std::strcmp(filename, "DISK.ROM") == 0 && fileSize == 16384 && !s_msx_disk_rom_static_used) {
-            buf = s_msx_disk_rom_static;
-            s_msx_disk_rom_static_used = true;
+        if (!buf && std::strcmp(filename, "DISK.ROM") == 0 && fileSize == 16384 && !g_msx_disk_rom_static_used) {
+            buf = g_msx_disk_rom_static;
+            g_msx_disk_rom_static_used = true;
             std::printf("[MSX] %s: using static fallback buffer (%u B)\n", openPath, static_cast<unsigned>(fileSize));
         }
         if (!buf) {
@@ -451,7 +454,11 @@ uint8_t* msx_load_bios_file(const char* filename, size_t expectedSize, size_t* o
 
 void run_msx(const uint8_t* romData, size_t romLen, const char* romName)
 {
-    const bool useExternal = (g_emu_display_target == EMU_DISPLAY_EXTERNAL);
+    const MsxMachineMode configuredMode = msx_config_load_machine_mode();
+    bool useExternal = (g_emu_display_target == EMU_DISPLAY_EXTERNAL);
+    if (configuredMode == MsxMachineMode::MSX2) {
+        useExternal = false;
+    }
     MsxViewModeOverrideGuard viewModeGuard;
     {
         CardputerView display;
@@ -466,7 +473,6 @@ void run_msx(const uint8_t* romData, size_t romLen, const char* romName)
 
     msx_config_load_internal_view_mode();
     viewModeGuard.configureForTarget(useExternal);
-    const MsxMachineMode configuredMode = msx_config_load_machine_mode();
     msx_config_load_bios_path();
     msx_config_load_msx1_bios_path();
     msx_config_load_msx2_bios_path();
@@ -690,7 +696,11 @@ void run_msx_disk(const uint8_t* dskData, size_t dskLen, const char* dskName)
                 dskName && dskName[0] != '\0' ? dskName : "(unnamed)",
                 static_cast<unsigned>(dskLen));
 
-    const bool useExternal = (g_emu_display_target == EMU_DISPLAY_EXTERNAL);
+    const MsxMachineMode configuredMode = msx_config_load_machine_mode();
+    bool useExternal = (g_emu_display_target == EMU_DISPLAY_EXTERNAL);
+    if (configuredMode == MsxMachineMode::MSX2) {
+        useExternal = false;
+    }
     MsxViewModeOverrideGuard viewModeGuard;
     {
         CardputerView display;
@@ -705,7 +715,6 @@ void run_msx_disk(const uint8_t* dskData, size_t dskLen, const char* dskName)
 
     msx_config_load_internal_view_mode();
     viewModeGuard.configureForTarget(useExternal);
-    const MsxMachineMode configuredMode = msx_config_load_machine_mode();
     msx_config_load_bios_path();
     msx_config_load_msx1_bios_path();
     msx_config_load_msx2_bios_path();
@@ -762,10 +771,10 @@ void run_msx_disk(const uint8_t* dskData, size_t dskLen, const char* dskName)
         printf("[MSX] core init_disk failed\n");
         msx_show_launch_error("MSX DISK ERROR", "Core init failed", "Check BIOS on SD");
         msx_sound_shutdown();
-        if (diskRomData && diskRomData != s_msx_disk_rom_static) {
+        if (diskRomData && diskRomData != g_msx_disk_rom_static) {
             heap_caps_free(diskRomData);
         }
-        s_msx_disk_rom_static_used = false;
+        g_msx_disk_rom_static_used = false;
         msx_media_release_bios_bundle(&bios);
         msx_display_shutdown();
         msx_request_quit_to_launcher();
@@ -901,10 +910,10 @@ void run_msx_disk(const uint8_t* dskData, size_t dskLen, const char* dskName)
     }
 
     msx_core_shutdown(&core);
-    if (diskRomData && diskRomData != s_msx_disk_rom_static) {
+    if (diskRomData && diskRomData != g_msx_disk_rom_static) {
         heap_caps_free(diskRomData);
     }
-    s_msx_disk_rom_static_used = false;
+    g_msx_disk_rom_static_used = false;
     msx_sound_shutdown();
     msx_media_release_bios_bundle(&bios);
     msx_display_shutdown();
@@ -918,7 +927,11 @@ void run_msx_disk(const uint8_t* dskData, size_t dskLen, const char* dskName)
 
 void run_msx_basic(const char* name)
 {
-    const bool useExternal = (g_emu_display_target == EMU_DISPLAY_EXTERNAL);
+    const MsxMachineMode configuredMode = msx_config_load_machine_mode();
+    bool useExternal = (g_emu_display_target == EMU_DISPLAY_EXTERNAL);
+    if (configuredMode == MsxMachineMode::MSX2) {
+        useExternal = false;
+    }
     MsxViewModeOverrideGuard viewModeGuard;
     {
         CardputerView display;
@@ -933,7 +946,6 @@ void run_msx_basic(const char* name)
 
     msx_config_load_internal_view_mode();
     viewModeGuard.configureForTarget(useExternal);
-    const MsxMachineMode configuredMode = msx_config_load_machine_mode();
     msx_config_load_bios_path();
     msx_config_load_msx1_bios_path();
     msx_config_load_msx2_bios_path();

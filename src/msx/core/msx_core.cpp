@@ -471,27 +471,28 @@ bool msx_core_init(MsxCoreState* state,
     }
 
     std::printf("[MSX] core init: cart ok\n");
-    std::printf("[MSX] core init: memory begin\n");
-    const size_t requestedRamSize =
-        (state->machineMode == MsxMachineMode::MSX1) ? kMsxCartRamSizeMsx1 : 0u;
-    if (!msx_memory_init(&state->memory, state->machineMode, &state->bios, &state->cart, requestedRamSize)) {
-        std::printf("[MSX] core init failed at memory init\n");
-        msx_bios_shutdown(&state->bios);
-        std::memset(&state->cart, 0, sizeof(state->cart));
-        return false;
-    }
-
-    std::printf("[MSX] core init: memory ok\n");
     std::printf("[MSX] core init: vdp begin\n");
     if (!msx_vdp_init(&state->vdp, state->machineMode)) {
         std::printf("[MSX] core init failed at vdp init\n");
-        msx_memory_shutdown(&state->memory);
         msx_bios_shutdown(&state->bios);
         std::memset(&state->cart, 0, sizeof(state->cart));
         return false;
     }
 
     std::printf("[MSX] core init: vdp ok\n");
+
+    std::printf("[MSX] core init: memory begin\n");
+    const size_t requestedRamSize =
+        (state->machineMode == MsxMachineMode::MSX1) ? kMsxCartRamSizeMsx1 : 0u;
+    if (!msx_memory_init(&state->memory, state->machineMode, &state->bios, &state->cart, requestedRamSize)) {
+        std::printf("[MSX] core init failed at memory init\n");
+        msx_vdp_shutdown(&state->vdp);
+        msx_bios_shutdown(&state->bios);
+        std::memset(&state->cart, 0, sizeof(state->cart));
+        return false;
+    }
+
+    std::printf("[MSX] core init: memory ok\n");
     msx_core_init_audio(state, audioSampleRate);
     msx_core_attach_runtime_devices(state);
 
@@ -792,17 +793,17 @@ bool msx_core_init_basic(MsxCoreState* state,
 
     std::memset(&state->cart, 0, sizeof(state->cart));
 
-    std::printf("[MSX] core init_basic: memory begin\n");
-    if (!msx_memory_init(&state->memory, state->machineMode, &state->bios, &state->cart, 0u)) {
-        std::printf("[MSX] core init_basic failed at memory init\n");
+    std::printf("[MSX] core init_basic: vdp begin\n");
+    if (!msx_vdp_init(&state->vdp, state->machineMode)) {
+        std::printf("[MSX] core init_basic failed at vdp init\n");
         msx_bios_shutdown(&state->bios);
         return false;
     }
 
-    std::printf("[MSX] core init_basic: vdp begin\n");
-    if (!msx_vdp_init(&state->vdp, state->machineMode)) {
-        std::printf("[MSX] core init_basic failed at vdp init\n");
-        msx_memory_shutdown(&state->memory);
+    std::printf("[MSX] core init_basic: memory begin\n");
+    if (!msx_memory_init(&state->memory, state->machineMode, &state->bios, &state->cart, 0u)) {
+        std::printf("[MSX] core init_basic failed at memory init\n");
+        msx_vdp_shutdown(&state->vdp);
         msx_bios_shutdown(&state->bios);
         return false;
     }
@@ -843,17 +844,17 @@ bool msx_core_init_disk(MsxCoreState* state,
 
     std::memset(&state->cart, 0, sizeof(state->cart));
 
-    std::printf("[MSX] core init_disk: memory begin\n");
-    if (!msx_memory_init(&state->memory, state->machineMode, &state->bios, &state->cart, 0u)) {
-        std::printf("[MSX] core init_disk failed at memory init\n");
+    std::printf("[MSX] core init_disk: vdp begin\n");
+    if (!msx_vdp_init(&state->vdp, state->machineMode)) {
+        std::printf("[MSX] core init_disk failed at vdp init\n");
         msx_bios_shutdown(&state->bios);
         return false;
     }
 
-    std::printf("[MSX] core init_disk: vdp begin\n");
-    if (!msx_vdp_init(&state->vdp, state->machineMode)) {
-        std::printf("[MSX] core init_disk failed at vdp init\n");
-        msx_memory_shutdown(&state->memory);
+    std::printf("[MSX] core init_disk: memory begin\n");
+    if (!msx_memory_init(&state->memory, state->machineMode, &state->bios, &state->cart, 0u)) {
+        std::printf("[MSX] core init_disk failed at memory init\n");
+        msx_vdp_shutdown(&state->vdp);
         msx_bios_shutdown(&state->bios);
         return false;
     }
@@ -885,4 +886,3 @@ bool msx_core_init_disk(MsxCoreState* state,
                 static_cast<unsigned>(state->disk.sides));
     return true;
 }
-
