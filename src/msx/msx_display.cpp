@@ -17,6 +17,9 @@
 #include <cctype>
 #include <string>
 
+extern uint8_t msx_input_get_state_slot(void);
+extern uint8_t msx_input_get_scroll_index(void);
+
 static constexpr uint32_t kPlaceholderRedrawMs = 150;
 static constexpr uint32_t kDisplayDiagIntervalMs = 2000;
 static constexpr int kExternalDisplayW = 320;
@@ -26,6 +29,8 @@ static uint32_t s_lastDisplayDiagMs = 0;
 static MsxInternalViewMode s_lastViewMode = MsxInternalViewMode::Wide;
 static MsxInputOverlayState s_lastMenuOverlay = {};
 static bool s_lastMenuVisible = false;
+static uint8_t s_lastScrollIndex = 0;
+static uint8_t s_lastStateSlot = 0;
 static constexpr uint8_t kRuntimeMenuRowCount = 5u;
 static constexpr int kRuntimeMenuBoxW = 168;
 static constexpr int kRuntimeMenuBoxH = 104;
@@ -281,6 +286,12 @@ static const char* msx_display_runtime_menu_label(uint8_t index)
         case 3u:
             return "VIEW";
         case 4u:
+            return "STATE SLOT";
+        case 5u:
+            return "SAVE STATE";
+        case 6u:
+            return "LOAD STATE";
+        case 7u:
             return "CLOSE";
         default:
             return "";
@@ -289,6 +300,7 @@ static const char* msx_display_runtime_menu_label(uint8_t index)
 
 static const char* msx_display_runtime_menu_value(const MsxInputOverlayState& overlay, uint8_t index)
 {
+    static char slotStr[8];
     switch (index) {
         case 0u:
             return overlay.joystickEnabled ? "ON" : "OFF";
@@ -298,6 +310,9 @@ static const char* msx_display_runtime_menu_value(const MsxInputOverlayState& ov
             return overlay.vausEnabled ? "ON" : "OFF";
         case 3u:
             return msx_display_game_on_external() ? "1:1" : msx_config_get_active_view_mode_label();
+        case 4u:
+            std::snprintf(slotStr, sizeof(slotStr), "< %u >", static_cast<unsigned>(msx_input_get_state_slot()));
+            return slotStr;
         default:
             return nullptr;
     }
@@ -348,14 +363,16 @@ static void msx_display_draw_runtime_menu_shell(void)
 
 static void msx_display_draw_runtime_menu_row_state(const MsxInputOverlayState& overlay, uint8_t index, bool selected)
 {
-    if (index >= kRuntimeMenuRowCount) {
+    const uint8_t scrollIndex = msx_input_get_scroll_index();
+    const int displayIndex = static_cast<int>(index) - static_cast<int>(scrollIndex);
+    if (displayIndex < 0 || displayIndex >= kRuntimeMenuRowCount) {
         return;
     }
 
     const int boxX = msx_display_runtime_menu_box_x();
     const int innerX = boxX + kRuntimeMenuInnerPad;
     const int valueX = boxX + kRuntimeMenuBoxW - 44;
-    const int y = msx_display_runtime_menu_first_row_y() + static_cast<int>(index) * kRuntimeMenuRowH;
+    const int y = msx_display_runtime_menu_first_row_y() + displayIndex * kRuntimeMenuRowH;
     const int rowX = innerX - 4;
     const int rowY = y - 2;
     const int rowW = kRuntimeMenuBoxW - 16;
@@ -410,7 +427,7 @@ static void msx_display_draw_runtime_menu(const MsxInputOverlayState& overlay)
 
     msx_display_draw_runtime_menu_shell();
     for (uint8_t i = 0; i < kRuntimeMenuRowCount; ++i) {
-        msx_display_draw_runtime_menu_row(overlay, i);
+        msx_display_draw_runtime_menu_row(overlay, msx_input_get_scroll_index() + i);
     }
 }
 
@@ -431,6 +448,7 @@ void msx_display_init(void)
     s_lastPlaceholderMs = 0;
     s_lastDisplayDiagMs = 0;
     s_lastViewMode = msx_config_get_active_view_mode();
+    s_lastStateSlot = msx_input_get_state_slot();
     s_lastMenuOverlay = {};
     s_lastMenuVisible = false;
     msx_video_init();
@@ -459,10 +477,12 @@ void msx_display_submit_frame(const MsxDisplayFrame* frame, const MsxDisplayStat
     }
 
     const MsxInternalViewMode currentViewMode = msx_config_get_active_view_mode();
+    const uint8_t currentStateSlot = msx_input_get_state_slot();
     if (overlay.menuVisible) {
         msx_video_lock();
         msx_video_set_runtime_menu_active(true);
-        if (!s_lastMenuVisible) {
+        const uint8_t scrollIndex = msx_input_get_scroll_index();
+        if (!s_lastMenuVisible || scrollIndex != s_lastScrollIndex) {
             msx_display_draw_runtime_menu(overlay);
         } else {
             if (overlay.selectedIndex != s_lastMenuOverlay.selectedIndex) {
@@ -482,11 +502,16 @@ void msx_display_submit_frame(const MsxDisplayFrame* frame, const MsxDisplayStat
             if (currentViewMode != s_lastViewMode) {
                 msx_display_draw_runtime_menu_row(overlay, 3u);
             }
+            if (currentStateSlot != s_lastStateSlot) {
+                msx_display_draw_runtime_menu_row(overlay, 4u);
+            }
         }
 
         s_lastViewMode = currentViewMode;
+        s_lastStateSlot = currentStateSlot;
         s_lastMenuOverlay = overlay;
         s_lastMenuVisible = true;
+        s_lastScrollIndex = scrollIndex;
         msx_video_unlock();
         return;
     }

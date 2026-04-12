@@ -19,6 +19,9 @@
 #include "msx_display.h"
 #include "msx_input.h"
 #include "msx_media.h"
+#include "msx_video.h"
+#include <M5Cardputer.h>
+#include <TFT_eSPI.h>
 #include "msx_sound.h"
 #include "share/display_target.h"
 #include "share/emu_controls.h"
@@ -26,7 +29,7 @@
 #include "share/utils.h"
 
 #ifndef MSX_RUN_LOG_ENABLED
-#define MSX_RUN_LOG_ENABLED 1
+#define MSX_RUN_LOG_ENABLED 0
 #endif
 
 #if MSX_RUN_LOG_ENABLED
@@ -34,6 +37,12 @@
 #else
 #define MSX_RUN_LOG(...) do { } while (0)
 #endif
+
+extern uint8_t msx_input_get_state_slot(void);
+extern bool msx_input_get_save_requested(void);
+extern bool msx_input_get_load_requested(void);
+bool msx_core_save_state(MsxCoreState* state, const char* path);
+bool msx_core_load_state(MsxCoreState* state, const char* path);
 
 namespace {
 
@@ -422,6 +431,57 @@ uint8_t* msx_load_bios_file(const char* filename, size_t expectedSize, size_t* o
     return nullptr;
 }
 
+static String msx_get_savestate_path(const char* romName, uint8_t slot) {
+    String name(romName);
+    int dot = name.lastIndexOf('/');
+    if (dot >= 0) name = name.substring(dot + 1);
+    dot = name.lastIndexOf('\\');
+    if (dot >= 0) name = name.substring(dot + 1);
+    dot = name.lastIndexOf('.');
+    if (dot > 0) name = name.substring(0, dot);
+    
+    String cleanName = "";
+    for (int i = 0; i < name.length(); i++) {
+        char c = name[i];
+        if (c == '(' || c == '[' || c == '{') break;
+        if (isalnum(c)) cleanName += c;
+    }
+    if (cleanName.length() == 0) cleanName = "default";
+    if (cleanName.length() > 8) cleanName = cleanName.substring(0, 8);
+
+    if (!SD.exists("/msx")) {
+        bool ok = SD.mkdir("/msx");
+        std::printf("[MSX][STATE] mkdir /msx %s\n", ok ? "OK" : "FAIL");
+    }
+    if (!SD.exists("/msx/states")) {
+        bool ok = SD.mkdir("/msx/states");
+        std::printf("[MSX][STATE] mkdir /msx/states %s\n", ok ? "OK" : "FAIL");
+    }
+    
+    String path = "/msx/states/" + cleanName;
+    if (!SD.exists(path)) {
+        bool ok = SD.mkdir(path);
+        std::printf("[MSX][STATE] mkdir %s %s\n", path.c_str(), ok ? "OK" : "FAIL");
+    }
+
+    return path + "/Slot" + String(slot) + ".sav";
+}
+
+static void msx_draw_osd_message(const char* msg, bool useExternal) {
+    if (useExternal) {
+        auto& tft = msx_video_external_tft();
+        tft.fillRoundRect(80, 105, 160, 30, 4, TFT_BLACK);
+        tft.drawRoundRect(80, 105, 160, 30, 4, PRIMARY_COLOR);
+        tft.setTextColor(TFT_WHITE, TFT_BLACK);
+        tft.drawCentreString(msg, 160, 113, 2);
+    } else {
+        M5Cardputer.Display.fillRoundRect(60, 57, 120, 20, 4, TFT_BLACK);
+        M5Cardputer.Display.drawRoundRect(60, 57, 120, 20, 4, PRIMARY_COLOR);
+        M5Cardputer.Display.setTextColor(TFT_WHITE, TFT_BLACK);
+        M5Cardputer.Display.drawCenterString(msg, 120, 62, &fonts::Font0);
+    }
+}
+
 } // namespace
 
 void run_msx(const uint8_t* romData, size_t romLen, const char* romName)
@@ -533,6 +593,41 @@ void run_msx(const uint8_t* romData, size_t romLen, const char* romName)
 
         if (input.toggleViewRequested && !useExternal) {
             msx_config_toggle_active_view_mode();
+        }
+
+        if (msx_input_get_save_requested()) {
+            msx_draw_osd_message("SAVING STATE...", useExternal);
+            String path = msx_get_savestate_path(romName, msx_input_get_state_slot());
+            if (msx_core_save_state(&core, path.c_str())) {
+                msx_draw_osd_message("STATE SAVED", useExternal);
+            } else {
+                String fallbackPath = "/msx_slot" + String(msx_input_get_state_slot()) + ".sav";
+                std::printf("[MSX][STATE] Fallback path: %s\n", fallbackPath.c_str());
+                if (msx_core_save_state(&core, fallbackPath.c_str())) {
+                    msx_draw_osd_message("SAVED TO ROOT", useExternal);
+                } else {
+                    msx_draw_osd_message("SAVE FAILED", useExternal);
+                }
+            }
+            delay(500);
+            msx_video_request_full_redraw();
+        }
+
+        if (msx_input_get_load_requested()) {
+            msx_draw_osd_message("LOADING STATE...", useExternal);
+            String path = msx_get_savestate_path(romName, msx_input_get_state_slot());
+            if (msx_core_load_state(&core, path.c_str())) {
+                msx_draw_osd_message("STATE LOADED", useExternal);
+            } else {
+                String fallbackPath = "/msx_slot" + String(msx_input_get_state_slot()) + ".sav";
+                if (msx_core_load_state(&core, fallbackPath.c_str())) {
+                    msx_draw_osd_message("LOADED FROM ROOT", useExternal);
+                } else {
+                    msx_draw_osd_message("LOAD FAILED", useExternal);
+                }
+            }
+            delay(500);
+            msx_video_request_full_redraw();
         }
 
         const bool menuPaused = input.menuVisible;
@@ -760,6 +855,41 @@ void run_msx_disk(const uint8_t* dskData, size_t dskLen, const char* dskName)
             msx_config_toggle_active_view_mode();
         }
 
+        if (msx_input_get_save_requested()) {
+            msx_draw_osd_message("SAVING STATE...", useExternal);
+            String path = msx_get_savestate_path(dskName, msx_input_get_state_slot());
+            if (msx_core_save_state(&core, path.c_str())) {
+                msx_draw_osd_message("STATE SAVED", useExternal);
+            } else {
+                String fallbackPath = "/msx_slot" + String(msx_input_get_state_slot()) + ".sav";
+                std::printf("[MSX][STATE] Fallback path: %s\n", fallbackPath.c_str());
+                if (msx_core_save_state(&core, fallbackPath.c_str())) {
+                    msx_draw_osd_message("SAVED TO ROOT", useExternal);
+                } else {
+                    msx_draw_osd_message("SAVE FAILED", useExternal);
+                }
+            }
+            delay(500);
+            msx_video_request_full_redraw();
+        }
+
+        if (msx_input_get_load_requested()) {
+            msx_draw_osd_message("LOADING STATE...", useExternal);
+            String path = msx_get_savestate_path(dskName, msx_input_get_state_slot());
+            if (msx_core_load_state(&core, path.c_str())) {
+                msx_draw_osd_message("STATE LOADED", useExternal);
+            } else {
+                String fallbackPath = "/msx_slot" + String(msx_input_get_state_slot()) + ".sav";
+                if (msx_core_load_state(&core, fallbackPath.c_str())) {
+                    msx_draw_osd_message("LOADED FROM ROOT", useExternal);
+                } else {
+                    msx_draw_osd_message("LOAD FAILED", useExternal);
+                }
+            }
+            delay(500);
+            msx_video_request_full_redraw();
+        }
+
         const bool menuPaused = input.menuVisible;
         msx_sound_set_paused(menuPaused);
         msx_core_handle_input(&core, &input);
@@ -959,6 +1089,41 @@ void run_msx_basic(const char* name)
 
         if (input.toggleViewRequested && !useExternal) {
             msx_config_toggle_active_view_mode();
+        }
+
+        if (msx_input_get_save_requested()) {
+            msx_draw_osd_message("SAVING STATE...", useExternal);
+            String path = msx_get_savestate_path(name, msx_input_get_state_slot());
+            if (msx_core_save_state(&core, path.c_str())) {
+                msx_draw_osd_message("STATE SAVED", useExternal);
+            } else {
+                String fallbackPath = "/msx_slot" + String(msx_input_get_state_slot()) + ".sav";
+                std::printf("[MSX][STATE] Fallback path: %s\n", fallbackPath.c_str());
+                if (msx_core_save_state(&core, fallbackPath.c_str())) {
+                    msx_draw_osd_message("SAVED TO ROOT", useExternal);
+                } else {
+                    msx_draw_osd_message("SAVE FAILED", useExternal);
+                }
+            }
+            delay(500);
+            msx_video_request_full_redraw();
+        }
+
+        if (msx_input_get_load_requested()) {
+            msx_draw_osd_message("LOADING STATE...", useExternal);
+            String path = msx_get_savestate_path(name, msx_input_get_state_slot());
+            if (msx_core_load_state(&core, path.c_str())) {
+                msx_draw_osd_message("STATE LOADED", useExternal);
+            } else {
+                String fallbackPath = "/msx_slot" + String(msx_input_get_state_slot()) + ".sav";
+                if (msx_core_load_state(&core, fallbackPath.c_str())) {
+                    msx_draw_osd_message("LOADED FROM ROOT", useExternal);
+                } else {
+                    msx_draw_osd_message("LOAD FAILED", useExternal);
+                }
+            }
+            delay(500);
+            msx_video_request_full_redraw();
         }
 
         const bool menuPaused = input.menuVisible;

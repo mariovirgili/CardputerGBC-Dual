@@ -43,6 +43,9 @@ struct MsxRuntimeOptions {
     bool joystickEnabled;
     bool keyboardEnabled;
     bool vausEnabled;
+    uint8_t stateSlot;
+    bool saveRequested;
+    bool loadRequested;
 };
 
 enum class MsxRuntimeMenuItem : uint8_t {
@@ -50,6 +53,9 @@ enum class MsxRuntimeMenuItem : uint8_t {
     Keyboard,
     Vaus,
     View,
+    StateSlot,
+    SaveState,
+    LoadState,
     Close,
     Count,
 };
@@ -57,14 +63,17 @@ enum class MsxRuntimeMenuItem : uint8_t {
 struct MsxRuntimeMenuState {
     bool visible;
     MsxRuntimeMenuItem selected;
+    uint8_t scroll;
     bool prevHeld;
     bool nextHeld;
     bool acceptHeld;
     bool backHeld;
+    bool leftHeld;
+    bool rightHeld;
 };
 
-static MsxRuntimeOptions s_runtimeOptions = {false, true, false};
-static MsxRuntimeMenuState s_runtimeMenu = {false, MsxRuntimeMenuItem::Joystick, false, false, false, false};
+static MsxRuntimeOptions s_runtimeOptions = {false, true, false, 0, false, false};
+static MsxRuntimeMenuState s_runtimeMenu = {false, MsxRuntimeMenuItem::Joystick, 0, false, false, false, false, false, false};
 
 static bool msx_view_toggle_allowed(void)
 {
@@ -119,6 +128,8 @@ static void msx_reset_menu_latches(void)
     s_runtimeMenu.nextHeld = false;
     s_runtimeMenu.acceptHeld = false;
     s_runtimeMenu.backHeld = false;
+    s_runtimeMenu.leftHeld = false;
+    s_runtimeMenu.rightHeld = false;
 }
 
 static bool msx_menu_edge(bool pressed, bool* held)
@@ -144,6 +155,21 @@ static void msx_runtime_menu_move(int delta)
     int selected = static_cast<int>(s_runtimeMenu.selected);
     selected = (selected + delta + count) % count;
     s_runtimeMenu.selected = static_cast<MsxRuntimeMenuItem>(selected);
+
+    if (selected < s_runtimeMenu.scroll) {
+        s_runtimeMenu.scroll = selected;
+    } else if (selected >= s_runtimeMenu.scroll + 5) {
+        s_runtimeMenu.scroll = selected - 4;
+    }
+}
+
+static void msx_runtime_menu_adjust(int delta)
+{
+    if (s_runtimeMenu.selected == MsxRuntimeMenuItem::StateSlot) {
+        int slot = s_runtimeOptions.stateSlot;
+        slot = (slot + delta + 10) % 10;
+        s_runtimeOptions.stateSlot = static_cast<uint8_t>(slot);
+    }
 }
 
 static void msx_runtime_log_options(void)
@@ -172,6 +198,17 @@ static void msx_runtime_menu_accept(void)
             if (msx_view_toggle_allowed()) {
                 msx_config_toggle_active_view_mode();
             }
+            break;
+        case MsxRuntimeMenuItem::StateSlot:
+            msx_runtime_menu_adjust(1);
+            break;
+        case MsxRuntimeMenuItem::SaveState:
+            s_runtimeOptions.saveRequested = true;
+            s_runtimeMenu.visible = false;
+            break;
+        case MsxRuntimeMenuItem::LoadState:
+            s_runtimeOptions.loadRequested = true;
+            s_runtimeMenu.visible = false;
             break;
         case MsxRuntimeMenuItem::Close:
             s_runtimeMenu.visible = false;
@@ -560,10 +597,8 @@ static bool msx_menu_prev_pressed(const Keyboard_Class::KeysState& keys,
                                   uint32_t padState)
 {
     return M5Cardputer.Keyboard.isKeyPressed(KEY_ARROW_UP) ||
-           M5Cardputer.Keyboard.isKeyPressed(KEY_ARROW_LEFT) ||
            msx_binding_pressed(bindings.up) ||
-           msx_binding_pressed(bindings.left) ||
-           ((padState & (share::PAD_UP | share::PAD_LEFT)) != 0u) ||
+           ((padState & share::PAD_UP) != 0u) ||
            keys.tab;
 }
 
@@ -572,10 +607,26 @@ static bool msx_menu_next_pressed(const Keyboard_Class::KeysState& keys,
                                   uint32_t padState)
 {
     return M5Cardputer.Keyboard.isKeyPressed(KEY_ARROW_DOWN) ||
-           M5Cardputer.Keyboard.isKeyPressed(KEY_ARROW_RIGHT) ||
            msx_binding_pressed(bindings.down) ||
+           ((padState & share::PAD_DOWN) != 0u);
+}
+
+static bool msx_menu_left_pressed(const Keyboard_Class::KeysState& keys,
+                                  const MsxInputBindingCache& bindings,
+                                  uint32_t padState)
+{
+    return M5Cardputer.Keyboard.isKeyPressed(KEY_ARROW_LEFT) ||
+           msx_binding_pressed(bindings.left) ||
+           ((padState & share::PAD_LEFT) != 0u);
+}
+
+static bool msx_menu_right_pressed(const Keyboard_Class::KeysState& keys,
+                                   const MsxInputBindingCache& bindings,
+                                   uint32_t padState)
+{
+    return M5Cardputer.Keyboard.isKeyPressed(KEY_ARROW_RIGHT) ||
            msx_binding_pressed(bindings.right) ||
-           ((padState & (share::PAD_DOWN | share::PAD_RIGHT)) != 0u);
+           ((padState & share::PAD_RIGHT) != 0u);
 }
 
 static bool msx_menu_accept_pressed(const Keyboard_Class::KeysState& keys,
@@ -622,6 +673,12 @@ static void msx_poll_runtime_menu(const Keyboard_Class::KeysState& keys,
     if (msx_menu_edge(msx_menu_next_pressed(keys, bindings, padState), &s_runtimeMenu.nextHeld)) {
         msx_runtime_menu_move(1);
     }
+    if (msx_menu_edge(msx_menu_left_pressed(keys, bindings, padState), &s_runtimeMenu.leftHeld)) {
+        msx_runtime_menu_adjust(-1);
+    }
+    if (msx_menu_edge(msx_menu_right_pressed(keys, bindings, padState), &s_runtimeMenu.rightHeld)) {
+        msx_runtime_menu_adjust(1);
+    }
     if (msx_menu_edge(msx_menu_back_pressed(keys, bindings, padState), &s_runtimeMenu.backHeld)) {
         s_runtimeMenu.visible = false;
         msx_reset_menu_latches();
@@ -636,8 +693,8 @@ void msx_input_init(void)
     s_goLongHandled = false;
     s_suppressGoClick = false;
     s_suppressGoUntilMs = 0;
-    s_runtimeOptions = {false, true, false};
-    s_runtimeMenu = {false, MsxRuntimeMenuItem::Joystick, false, false, false, false};
+    s_runtimeOptions = {false, true, false, 0, false, false};
+    s_runtimeMenu = {false, MsxRuntimeMenuItem::Joystick, 0, false, false, false, false, false, false};
 }
 
 void msx_input_poll(MsxInputState* state)
@@ -768,4 +825,24 @@ void msx_input_get_overlay_state(MsxInputOverlayState* state)
     state->keyboardEnabled = s_runtimeOptions.keyboardEnabled;
     state->vausEnabled = s_runtimeOptions.vausEnabled;
     state->selectedIndex = static_cast<uint8_t>(s_runtimeMenu.selected);
+}
+
+uint8_t msx_input_get_state_slot(void) {
+    return s_runtimeOptions.stateSlot;
+}
+
+uint8_t msx_input_get_scroll_index(void) {
+    return s_runtimeMenu.scroll;
+}
+
+bool msx_input_get_save_requested(void) {
+    bool r = s_runtimeOptions.saveRequested;
+    s_runtimeOptions.saveRequested = false;
+    return r;
+}
+
+bool msx_input_get_load_requested(void) {
+    bool r = s_runtimeOptions.loadRequested;
+    s_runtimeOptions.loadRequested = false;
+    return r;
 }

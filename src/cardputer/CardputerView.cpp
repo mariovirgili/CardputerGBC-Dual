@@ -9,21 +9,25 @@ M5GFX* CardputerView::Display = nullptr;
 void CardputerView::initialize() {
     Display = &M5Cardputer.Display;
 
-    // Boost M5GFX SPI
-    auto* panel = Display->panel();
-    if (panel) {
-        auto* bus = (lgfx::Bus_SPI*)panel->bus();
-        if (bus) {
-            auto bcfg = bus->config();
-            bcfg.freq_write  = 80000000;  // 80 MHz
-            bcfg.freq_read   = 20000000;  // read, not critical
-            bcfg.dma_channel = 1;         // DMA
-            bus->config(bcfg);
-        }
+    static bool spiConfigured = false;
+    if (!spiConfigured) {
+        // Boost M5GFX SPI
+        auto* panel = Display->panel();
+        if (panel) {
+            auto* bus = (lgfx::Bus_SPI*)panel->bus();
+            if (bus) {
+                auto bcfg = bus->config();
+                bcfg.freq_write  = 80000000;  // 80 MHz
+                bcfg.freq_read   = 20000000;  // read, not critical
+                bcfg.dma_channel = 1;         // DMA
+                bus->config(bcfg);
+            }
 
-        auto pcfg = panel->config();
-        pcfg.bus_shared = false;
-        panel->config(pcfg);
+            auto pcfg = panel->config();
+            pcfg.bus_shared = true;
+            panel->config(pcfg);
+        }
+        spiConfigured = true;
     }
 
     Display->setRotation(1);
@@ -1286,5 +1290,3 @@ void CardputerView::displaySnesInfo() {
     Display->setCursor(82, 115);
     Display->printf("OK to start");
 }
-
-

@@ -3,6 +3,7 @@
 #include <cstdarg>
 #include <cstdio>
 #include <cstring>
+#include <SD.h>
 
 #include "msx_disk.h"
 
@@ -886,3 +887,114 @@ bool msx_core_init_disk(MsxCoreState* state,
     return true;
 }
 
+bool msx_core_save_state(MsxCoreState* state, const char* path)
+{
+    if (!state) return false;
+
+    std::printf("[MSX][STATE] Saving state to %s\n", path);
+    File f = SD.open(path, FILE_WRITE);
+    if (!f) {
+        std::printf("[MSX][STATE] Error: could not open file for writing\n");
+        return false;
+    }
+
+    uint32_t magic = 0x4D535853; // "MSXS"
+    f.write((uint8_t*)&magic, 4);
+
+    f.write((uint8_t*)&state->cpu, sizeof(MsxCpuState));
+    f.write((uint8_t*)&state->vdp, sizeof(MsxVdpState));
+    f.write((uint8_t*)&state->psg, sizeof(MsxPsgState));
+    f.write((uint8_t*)&state->memory, sizeof(MsxMemoryState));
+    f.write((uint8_t*)&state->cart, sizeof(MsxCartState));
+    f.write((uint8_t*)&state->disk, sizeof(MsxDiskState));
+
+    if (state->vdp.vramSize > 0) {
+        f.write(state->vdp.vram, state->vdp.vramSize);
+    }
+
+    for (uint8_t i = 0; i < state->memory.ramBankCount; ++i) {
+        if (state->memory.ramBanks[i]) {
+            f.write(state->memory.ramBanks[i], 8192);
+        }
+    }
+
+    f.close();
+    std::printf("[MSX][STATE] Save completed successfully\n");
+    return true;
+}
+
+bool msx_core_load_state(MsxCoreState* state, const char* path)
+{
+    if (!state) return false;
+
+    std::printf("[MSX][STATE] Loading state from %s\n", path);
+    File f = SD.open(path, FILE_READ);
+    if (!f) {
+        std::printf("[MSX][STATE] Error: could not open file for reading\n");
+        return false;
+    }
+
+    uint32_t magic = 0;
+    f.read((uint8_t*)&magic, 4);
+    if (magic != 0x4D535853) {
+        std::printf("[MSX][STATE] Error: invalid magic signature %08X\n", static_cast<unsigned>(magic));
+        f.close();
+        return false;
+    }
+
+    // Save hardware mapping pointers before overwriting the memory state blocks
+    uint8_t* vramPtr = state->vdp.vram;
+    uint8_t* fbPtr = state->vdp.frameBuffer;
+    int16_t* ringPtr = state->psg.ring;
+    uint8_t* banks[16];
+    for (int i = 0; i < 16; i++) banks[i] = state->memory.ramBanks[i];
+    const uint8_t* diskRom = state->memory.diskRom;
+    MsxDiskState* disk = state->memory.disk;
+    void* patch = (void*)state->memory.diskPatch;
+    MsxVdpState* vdp = state->memory.vdp;
+    MsxPsgState* psg = state->memory.psg;
+    const uint8_t* biosMain = state->memory.bios.mainRom;
+    const uint8_t* biosSub = state->memory.bios.subRom;
+    const uint8_t* cartRom = state->memory.cart.rom;
+    const uint8_t* diskDsk = state->disk.dskData;
+
+    f.read((uint8_t*)&state->cpu, sizeof(MsxCpuState));
+    f.read((uint8_t*)&state->vdp, sizeof(MsxVdpState));
+    f.read((uint8_t*)&state->psg, sizeof(MsxPsgState));
+    f.read((uint8_t*)&state->memory, sizeof(MsxMemoryState));
+    f.read((uint8_t*)&state->cart, sizeof(MsxCartState));
+    f.read((uint8_t*)&state->disk, sizeof(MsxDiskState));
+
+    // Restore pointers
+    state->vdp.vram = vramPtr;
+    state->vdp.frameBuffer = fbPtr;
+    state->psg.ring = ringPtr;
+    for (int i = 0; i < 16; i++) state->memory.ramBanks[i] = banks[i];
+    state->memory.diskRom = diskRom;
+    state->memory.disk = disk;
+    state->memory.diskPatch = (void(*)(MsxCpuState*, MsxMemoryState*, uint16_t))patch;
+    state->memory.vdp = vdp;
+    state->memory.psg = psg;
+    state->memory.bios.mainRom = biosMain;
+    state->memory.bios.subRom = biosSub;
+    state->memory.cart.rom = cartRom;
+    state->cart.rom = cartRom;
+    state->disk.dskData = diskDsk;
+
+    if (state->vdp.vramSize > 0) {
+        f.read(state->vdp.vram, state->vdp.vramSize);
+    }
+
+    for (uint8_t i = 0; i < state->memory.ramBankCount; ++i) {
+        if (state->memory.ramBanks[i]) {
+            f.read(state->memory.ramBanks[i], 8192);
+        }
+    }
+
+    f.close();
+
+    state->vdp.dirty = true;
+    msx_memory_refresh_maps(&state->memory);
+    std::printf("[MSX][STATE] Load completed successfully\n");
+    return true;
+}
