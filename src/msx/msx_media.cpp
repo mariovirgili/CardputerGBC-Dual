@@ -27,10 +27,6 @@ constexpr size_t kMsxMainBiosMaxSize = 0x10000;
 constexpr size_t kMsxSubRomExactSize = 0x4000;
 constexpr const char* kMsx1BiosName = "MSX.ROM";
 constexpr const char* kMsx1BiosMd5 = "364a1a579fe5cb8dba54519bcfcdac0d";
-constexpr const char* kMsx2BiosName = "MSX2.ROM";
-constexpr const char* kMsx2BiosMd5 = "ec3a01c91f24fbddcbcab0ad301bc9ef";
-constexpr const char* kMsx2ExtBiosName = "MSX2EXT.ROM";
-constexpr const char* kMsx2ExtBiosMd5 = "2183c2aff17cf4297bdb496de78c2e8a";
 
 bool msx_is_cart_exec_address(uint16_t address)
 {
@@ -465,75 +461,34 @@ bool msx_load_for_target(MsxBiosBundle* bundle, MsxBiosTarget target, const MsxB
     }
 
     msx_media_release_bios_bundle(bundle);
-    bundle->target = target;
-    bundle->subRomRequired = (target == MsxBiosTarget::MSX2);
+    bundle->target = MsxBiosTarget::MSX1;
+    bundle->subRomRequired = false;
 
     CandidateList mainCandidates = {};
-    CandidateList subCandidates = {};
     char detailMessage[128] = {0};
 
-    MSX_BIOS_LOG("[MSX][BIOS] begin target=%s requested-mode=%u\n",
-                 target == MsxBiosTarget::MSX2 ? "MSX2" :
-                 target == MsxBiosTarget::MSX1 ? "MSX1" : "NONE",
+    MSX_BIOS_LOG("[MSX][BIOS] begin target=MSX1 requested-mode=%u\n",
                  static_cast<unsigned>(config->requestedMode));
 
-    if (target == MsxBiosTarget::MSX1) {
-        msx_append_candidate(&mainCandidates, config->msx1BiosPath, kMsx1BiosName, kMsx1BiosMd5);
-        msx_append_candidate(&mainCandidates, config->genericBiosPath, kMsx1BiosName, kMsx1BiosMd5);
-        msx_append_candidate(&mainCandidates, "/sd/bios/msx/MSX.ROM", kMsx1BiosName, kMsx1BiosMd5);
-        msx_append_candidate(&mainCandidates, "/sd/msx/MSX.ROM", kMsx1BiosName, kMsx1BiosMd5);
+    msx_append_candidate(&mainCandidates, config->msx1BiosPath, kMsx1BiosName, kMsx1BiosMd5);
+    msx_append_candidate(&mainCandidates, config->genericBiosPath, kMsx1BiosName, kMsx1BiosMd5);
+    msx_append_candidate(&mainCandidates, "/sd/bios/msx/MSX.ROM", kMsx1BiosName, kMsx1BiosMd5);
+    msx_append_candidate(&mainCandidates, "/sd/msx/MSX.ROM", kMsx1BiosName, kMsx1BiosMd5);
 
-        const bool ok = msx_try_candidates(&bundle->mainRom,
-                                           mainCandidates,
-                                           msx_is_valid_main_bios_size,
-                                           "MSX.ROM not found",
-                                           detailMessage,
-                                           sizeof(detailMessage));
-        if (ok) {
-            bundle->compatible = true;
-            msx_set_message(bundle, "MSX1 BIOS loaded");
-            return true;
-        }
-
-        msx_set_message(bundle, detailMessage[0] != '\0' ? detailMessage : "MSX.ROM not found");
-        return false;
+    const bool ok = msx_try_candidates(&bundle->mainRom,
+                                       mainCandidates,
+                                       msx_is_valid_main_bios_size,
+                                       "MSX.ROM not found",
+                                       detailMessage,
+                                       sizeof(detailMessage));
+    if (ok) {
+        bundle->compatible = true;
+        msx_set_message(bundle, "MSX1 BIOS loaded");
+        return true;
     }
 
-    msx_append_candidate(&mainCandidates, config->msx2BiosPath, kMsx2BiosName, kMsx2BiosMd5);
-    msx_append_candidate(&mainCandidates, config->genericBiosPath, kMsx2BiosName, kMsx2BiosMd5);
-    msx_append_candidate(&mainCandidates, "/sd/bios/msx/MSX2.ROM", kMsx2BiosName, kMsx2BiosMd5);
-    msx_append_candidate(&mainCandidates, "/sd/msx/MSX2.ROM", kMsx2BiosName, kMsx2BiosMd5);
-
-    const bool mainOk = msx_try_candidates(&bundle->mainRom,
-                                           mainCandidates,
-                                           msx_is_valid_main_bios_size,
-                                           "MSX2.ROM not found",
-                                           detailMessage,
-                                           sizeof(detailMessage));
-    if (!mainOk) {
-        msx_set_message(bundle, detailMessage[0] != '\0' ? detailMessage : "MSX2.ROM not found");
-        return false;
-    }
-
-    detailMessage[0] = '\0';
-    msx_append_candidate(&subCandidates, config->msx2SubRomPath, kMsx2ExtBiosName, kMsx2ExtBiosMd5);
-    msx_append_candidate(&subCandidates, "/sd/bios/msx/MSX2EXT.ROM", kMsx2ExtBiosName, kMsx2ExtBiosMd5);
-    msx_append_candidate(&subCandidates, "/sd/msx/MSX2EXT.ROM", kMsx2ExtBiosName, kMsx2ExtBiosMd5);
-
-    const bool subOk = msx_try_candidates(&bundle->subRom,
-                                          subCandidates,
-                                          msx_is_valid_subrom_size,
-                                          "MSX2EXT.ROM not found",
-                                          detailMessage,
-                                          sizeof(detailMessage));
-    if (!subOk) {
-        msx_set_message(bundle, detailMessage[0] != '\0' ? detailMessage : "MSX2EXT.ROM not found");
-        return false;
-    }
-
-    bundle->compatible = true;
-    msx_set_message(bundle, "MSX2 BIOS set loaded");
-    return true;
+    msx_set_message(bundle, detailMessage[0] != '\0' ? detailMessage : "MSX.ROM not found");
+    return false;
 }
 
 } // namespace
@@ -597,24 +552,7 @@ bool msx_media_load_bios_bundle(MsxBiosBundle* bundle, const MsxBiosSearchConfig
 
     msx_media_release_bios_bundle(bundle);
 
-    if (config->requestedMode == MsxMachineMode::MSX1) {
-        return msx_load_for_target(bundle, MsxBiosTarget::MSX1, config);
-    }
-
-    if (config->requestedMode == MsxMachineMode::MSX2) {
-        return msx_load_for_target(bundle, MsxBiosTarget::MSX2, config);
-    }
-
-    if (msx_load_for_target(bundle, MsxBiosTarget::MSX1, config)) {
-        return true;
-    }
-
-    if (bundle->mainRom.status == MsxImageLoadStatus::Incompatible ||
-        bundle->subRom.status == MsxImageLoadStatus::Incompatible) {
-        return false;
-    }
-
-    return msx_load_for_target(bundle, MsxBiosTarget::MSX2, config);
+    return msx_load_for_target(bundle, MsxBiosTarget::MSX1, config);
 }
 
 void msx_media_release_bios_bundle(MsxBiosBundle* bundle)
@@ -653,27 +591,10 @@ const char* msx_media_cartridge_type_label(MsxCartridgeType type)
 
 const char* msx_media_bios_target_label(MsxBiosTarget target)
 {
-    switch (target) {
-        case MsxBiosTarget::MSX1:
-            return "MSX1";
-        case MsxBiosTarget::MSX2:
-            return "MSX2";
-        default:
-            return "NONE";
-    }
+    return "MSX1";
 }
 
 MsxMachineMode msx_media_target_to_machine_mode(MsxBiosTarget target)
 {
-    switch (target) {
-        case MsxBiosTarget::MSX1:
-            return MsxMachineMode::MSX1;
-        case MsxBiosTarget::MSX2:
-            return MsxMachineMode::MSX2;
-        default:
-            return MsxMachineMode::Auto;
-    }
+    return MsxMachineMode::MSX1;
 }
-
-
-

@@ -29,15 +29,24 @@ static bool s_lastMenuVisible = false;
 static constexpr uint8_t kRuntimeMenuRowCount = 5u;
 static constexpr int kRuntimeMenuBoxW = 168;
 static constexpr int kRuntimeMenuBoxH = 104;
-static constexpr int kRuntimeMenuBoxY = 42;
 static constexpr int kRuntimeMenuInnerPad = 8;
-static constexpr int kRuntimeMenuFirstRowY = kRuntimeMenuBoxY + 22;
 static constexpr int kRuntimeMenuRowH = 13;
 static constexpr int kRuntimeMenuSelectionRadius = 3;
+static constexpr int kRuntimeMenuShadowOffset = 4;
 
 static bool msx_display_game_on_external(void)
 {
     return g_emu_display_target == EMU_DISPLAY_EXTERNAL;
+}
+
+static int msx_display_runtime_menu_box_y(void)
+{
+    return msx_display_game_on_external() ? 42 : 22;
+}
+
+static int msx_display_runtime_menu_first_row_y(void)
+{
+    return msx_display_runtime_menu_box_y() + 22;
 }
 
 static void msx_display_prepare_external_tft(void)
@@ -247,7 +256,7 @@ static void msx_display_draw_placeholder(const MsxDisplayStatus* status)
     msx_display_draw_line(status && status->romName ? status->romName : "No ROM name", 36, TEXT_COLOR, 2);
     msx_display_draw_line(status && status->coreLine ? status->coreLine : "CORE: waiting for VDP", 54, TEXT_COLOR, 2);
     msx_display_draw_line(status && status->cartLine ? status->cartLine : "CART: not loaded", 70, TEXT_COLOR, 2);
-    msx_display_draw_line(status && status->machineLine ? status->machineLine : "MACHINE: AUTO", 86, TEXT_COLOR, 2);
+    msx_display_draw_line(status && status->machineLine ? status->machineLine : "MACHINE: MSX1", 86, TEXT_COLOR, 2);
     msx_display_draw_line(status && status->biosLine ? status->biosLine : "BIOS: not loaded", 102, TEXT_COLOR, 1);
     msx_display_draw_line(status && status->audioLine ? status->audioLine : "AUDIO: hook ready", 116, TEXT_COLOR, 1);
 
@@ -302,36 +311,39 @@ static int msx_display_runtime_menu_box_x(void)
 static void msx_display_draw_runtime_menu_shell(void)
 {
     const int boxX = msx_display_runtime_menu_box_x();
+    const int boxY = msx_display_runtime_menu_box_y();
     const int innerX = boxX + kRuntimeMenuInnerPad;
 
     if (msx_display_game_on_external()) {
         msx_display_prepare_external_tft();
         auto& tft = msx_display_external_tft();
-        tft.fillRoundRect(boxX, kRuntimeMenuBoxY, kRuntimeMenuBoxW, kRuntimeMenuBoxH, DEFAULT_ROUND_RECT, TFT_BLACK);
-        tft.drawRoundRect(boxX, kRuntimeMenuBoxY, kRuntimeMenuBoxW, kRuntimeMenuBoxH, DEFAULT_ROUND_RECT, PRIMARY_COLOR);
-        tft.drawRoundRect(boxX + 2, kRuntimeMenuBoxY + 2, kRuntimeMenuBoxW - 4, kRuntimeMenuBoxH - 4, DEFAULT_ROUND_RECT, RECT_COLOR_DARK);
+        tft.fillRoundRect(boxX + kRuntimeMenuShadowOffset, boxY + kRuntimeMenuShadowOffset, kRuntimeMenuBoxW, kRuntimeMenuBoxH, DEFAULT_ROUND_RECT, TFT_BLACK);
+        tft.fillRoundRect(boxX, boxY, kRuntimeMenuBoxW, kRuntimeMenuBoxH, DEFAULT_ROUND_RECT, TFT_BLACK);
+        tft.drawRoundRect(boxX, boxY, kRuntimeMenuBoxW, kRuntimeMenuBoxH, DEFAULT_ROUND_RECT, PRIMARY_COLOR);
+        tft.drawRoundRect(boxX + 2, boxY + 2, kRuntimeMenuBoxW - 4, kRuntimeMenuBoxH - 4, DEFAULT_ROUND_RECT, RECT_COLOR_DARK);
         tft.setTextDatum(TL_DATUM);
         tft.setTextColor(PRIMARY_COLOR, TFT_BLACK);
-        tft.drawString("MSX MENU", innerX, kRuntimeMenuBoxY + 6, 2);
+        tft.drawString("MSX MENU", innerX, boxY + 6, 2);
         tft.setTextColor(TEXT_COLOR, TFT_BLACK);
         tft.drawString(msx_display_game_on_external() ? "EXT TFT fixed 1:1" : "\\ quick view  GO toggle",
-                       innerX, kRuntimeMenuBoxY + kRuntimeMenuBoxH - 19, 1);
-        tft.drawString("Hold GO closes menu", innerX, kRuntimeMenuBoxY + kRuntimeMenuBoxH - 10, 1);
+                       innerX, boxY + kRuntimeMenuBoxH - 19, 1);
+        tft.drawString("Hold GO closes menu", innerX, boxY + kRuntimeMenuBoxH - 10, 1);
         return;
     }
 
     auto& display = M5Cardputer.Display;
-    display.fillRoundRect(boxX, kRuntimeMenuBoxY, kRuntimeMenuBoxW, kRuntimeMenuBoxH, DEFAULT_ROUND_RECT, TFT_BLACK);
-    display.drawRoundRect(boxX, kRuntimeMenuBoxY, kRuntimeMenuBoxW, kRuntimeMenuBoxH, DEFAULT_ROUND_RECT, PRIMARY_COLOR);
-    display.drawRoundRect(boxX + 2, kRuntimeMenuBoxY + 2, kRuntimeMenuBoxW - 4, kRuntimeMenuBoxH - 4, DEFAULT_ROUND_RECT, RECT_COLOR_DARK);
+    display.fillRoundRect(boxX + kRuntimeMenuShadowOffset, boxY + kRuntimeMenuShadowOffset, kRuntimeMenuBoxW, kRuntimeMenuBoxH, DEFAULT_ROUND_RECT, TFT_BLACK);
+    display.fillRoundRect(boxX, boxY, kRuntimeMenuBoxW, kRuntimeMenuBoxH, DEFAULT_ROUND_RECT, TFT_BLACK);
+    display.drawRoundRect(boxX, boxY, kRuntimeMenuBoxW, kRuntimeMenuBoxH, DEFAULT_ROUND_RECT, PRIMARY_COLOR);
+    display.drawRoundRect(boxX + 2, boxY + 2, kRuntimeMenuBoxW - 4, kRuntimeMenuBoxH - 4, DEFAULT_ROUND_RECT, RECT_COLOR_DARK);
     display.setTextDatum(top_left);
     display.setFont(&fonts::Font2);
     display.setTextColor(PRIMARY_COLOR, TFT_BLACK);
-    display.drawString("MSX MENU", innerX, kRuntimeMenuBoxY + 6);
+    display.drawString("MSX MENU", innerX, boxY + 6);
     display.setFont(&fonts::Font0);
     display.setTextColor(TEXT_COLOR, TFT_BLACK);
-    display.drawString("\\ quick view  GO toggle", innerX, kRuntimeMenuBoxY + kRuntimeMenuBoxH - 19);
-    display.drawString("Hold GO closes menu", innerX, kRuntimeMenuBoxY + kRuntimeMenuBoxH - 10);
+    display.drawString("\\ quick view  GO toggle", innerX, boxY + kRuntimeMenuBoxH - 19);
+    display.drawString("Hold GO closes menu", innerX, boxY + kRuntimeMenuBoxH - 10);
 }
 
 static void msx_display_draw_runtime_menu_row_state(const MsxInputOverlayState& overlay, uint8_t index, bool selected)
@@ -343,7 +355,7 @@ static void msx_display_draw_runtime_menu_row_state(const MsxInputOverlayState& 
     const int boxX = msx_display_runtime_menu_box_x();
     const int innerX = boxX + kRuntimeMenuInnerPad;
     const int valueX = boxX + kRuntimeMenuBoxW - 44;
-    const int y = kRuntimeMenuFirstRowY + static_cast<int>(index) * kRuntimeMenuRowH;
+    const int y = msx_display_runtime_menu_first_row_y() + static_cast<int>(index) * kRuntimeMenuRowH;
     const int rowX = innerX - 4;
     const int rowY = y - 2;
     const int rowW = kRuntimeMenuBoxW - 16;
@@ -449,6 +461,7 @@ void msx_display_submit_frame(const MsxDisplayFrame* frame, const MsxDisplayStat
     const MsxInternalViewMode currentViewMode = msx_config_get_active_view_mode();
     if (overlay.menuVisible) {
         msx_video_lock();
+        msx_video_set_runtime_menu_active(true);
         if (!s_lastMenuVisible) {
             msx_display_draw_runtime_menu(overlay);
         } else {
@@ -483,8 +496,11 @@ void msx_display_submit_frame(const MsxDisplayFrame* frame, const MsxDisplayStat
         if (msx_display_game_on_external()) {
             msx_video_finish_external_ui();
         }
+        msx_video_set_runtime_menu_active(false);
         s_lastPlaceholderMs = 0;
         msx_video_unlock();
+
+        msx_video_request_full_redraw();
     }
     s_lastMenuVisible = false;
 
@@ -526,7 +542,7 @@ void msx_display_show_external_info(const char* romTitle)
     tft.drawCentreString(title.c_str(), kExternalDisplayW / 2, 16, titleFont);
 
     tft.setTextColor(TFT_YELLOW, TFT_BLACK);
-    tft.drawCentreString("MSX / MSX2", kExternalDisplayW / 2, 46, 2);
+    tft.drawCentreString("MSX", kExternalDisplayW / 2, 46, 2);
 
     tft.setTextColor(TFT_GREEN, TFT_BLACK);
     tft.drawCentreString("VIDEO ON INTERNAL LCD", kExternalDisplayW / 2, 64, 2);

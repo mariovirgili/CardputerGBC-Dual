@@ -66,6 +66,7 @@ static bool s_extTftRgb444Configured = false;
 static bool s_extTftColorModeKnown = false;
 static bool s_extTftClockLogged = false;
 static bool s_externalUiActive = false;
+static bool s_runtimeMenuActive = false;
 
 static uint32_t s_spiPushFrames = 0;
 static uint32_t s_spiPushUs = 0;
@@ -657,9 +658,20 @@ TFT_eSPI& msx_video_external_tft(void)
     return s_extTft;
 }
 
+void msx_video_set_runtime_menu_active(bool active)
+{
+    s_runtimeMenuActive = active;
+}
+
 bool msx_video_present_frame(const MsxDisplayFrame* frame)
 {
     msx_video_lock();
+
+    if (s_runtimeMenuActive) {
+        msx_video_unlock();
+        return false;
+    }
+
     if (msx_video_game_on_external()) {
         if (s_externalUiActive) {
             s_externalUiActive = false;
@@ -684,4 +696,11 @@ bool msx_video_present_frame(const MsxDisplayFrame* frame)
 
     msx_video_unlock();
     return result;
+}
+
+void msx_video_request_full_redraw(void)
+{
+    msx_video_lock();
+    msx_video_reset_layout_cache();
+    msx_video_unlock();
 }

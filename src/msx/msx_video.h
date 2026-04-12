@@ -11,3 +11,5 @@ bool msx_video_present_frame(const MsxDisplayFrame* frame);
 void msx_video_prepare_external_ui(void);
 void msx_video_finish_external_ui(void);
 TFT_eSPI& msx_video_external_tft(void);
+void msx_video_set_runtime_menu_active(bool active);
+void msx_video_request_full_redraw(void);

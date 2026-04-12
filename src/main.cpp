@@ -33,8 +33,7 @@ static void showExternalRomSelectorTft()
   };
 
   static const ExternalRomBadge badges[] = {
-    {"MSX",  PRIMARY_COLOR},
-    {"MSX2", PRIMARY_COLOR},
+    {"MSX",  PRIMARY_COLOR}
   };
 
   TFT_eSPI extTft;
@@ -149,62 +148,6 @@ static StartupBootAction getStartupBootAction(CardputerView& display)
 
     delay(10);
   }
-}
-
-static void selectMsxLaunchSystem(CardputerView& display, CardputerInput& input, RomType romType)
-{
-  if (romType != ROM_TYPE_MSX && romType != ROM_TYPE_MSX_DISK) {
-    return;
-  }
-
-  const MsxMachineMode savedMode = msx_config_load_machine_mode();
-  VerticalSelector selector(display, input);
-  const std::vector<std::string> options = {
-    "Auto (MSX1 first)",
-    "MSX1",
-    "MSX2",
-  };
-
-  int initialIndex = 0;
-  switch (savedMode) {
-    case MsxMachineMode::MSX1:
-      initialIndex = 1;
-      break;
-    case MsxMachineMode::MSX2:
-      initialIndex = 2;
-      break;
-    case MsxMachineMode::Auto:
-    default:
-      initialIndex = 0;
-      break;
-  }
-
-  display.topBar("SELECT MSX SYSTEM", false, false);
-  const int selected = selector.select("Launch system",
-                                       options,
-                                       false,
-                                       false,
-                                       {},
-                                       {},
-                                       false,
-                                       true,
-                                       true,
-                                       initialIndex);
-
-  int resolvedIndex = selected;
-  if (resolvedIndex < 0) {
-    resolvedIndex = initialIndex;
-  }
-
-  MsxMachineMode launchMode = MsxMachineMode::Auto;
-  if (resolvedIndex == 1) {
-    launchMode = MsxMachineMode::MSX1;
-  } else if (resolvedIndex == 2) {
-    launchMode = MsxMachineMode::MSX2;
-  }
-
-  msx_config_set_machine_mode(launchMode, false);
-  printf("[MSX] launch mode selected: %s\n", msx_config_machine_mode_label(launchMode));
 }
 
 static void restartForPendingLaunch(CardputerView& display,
@@ -399,8 +342,8 @@ void setup() {
 
   const RomType ext = getRomType(romPath);
   if (!pendingLaunch.valid() && selectedFromBrowser && ext != ROM_TYPE_UNKNOWN) {
-    selectMsxLaunchSystem(display, input, ext);
-    restartForPendingLaunch(display, sd, romPath, static_cast<int>(msx_config_get_machine_mode()));
+    msx_config_set_machine_mode(MsxMachineMode::MSX1, false);
+    restartForPendingLaunch(display, sd, romPath, static_cast<int>(MsxMachineMode::MSX1));
   }
 
   printf("Selected ROM: %s\n", romPath.c_str());
@@ -602,9 +545,3 @@ void setup() {
 void loop() {
   /* run_emulator is blocking */
 }
-
-
-
-
-
-
