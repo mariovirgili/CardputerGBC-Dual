@@ -18,6 +18,9 @@ constexpr int16_t kMsxPsgVolumeTable[16] = {
     724, 1024, 1448, 2048, 2896, 4096, 5792, 8192,
 };
 
+static int32_t s_dcFilterX = 0;
+static int32_t s_dcFilterY = 0;
+
 uint16_t msx_psg_clamp_vaus_position(int value)
 {
     if (value < static_cast<int>(kMsxVausMin)) {
@@ -266,6 +269,13 @@ int16_t msx_psg_render_sample(MsxPsgState* state)
 
     mix /= 2;
 
+    // Applica un filtro DSP Passa-Alto (DC Blocker) per eliminare i crepitii statici
+    // Formula: y[n] = x[n] - x[n-1] + R * y[n-1] (con R =~ 0.99)
+    int32_t dcFiltered = mix - s_dcFilterX + (s_dcFilterY * 8110) / 8192;
+    s_dcFilterX = mix;
+    s_dcFilterY = dcFiltered;
+    mix = dcFiltered;
+
     if (mix > 32767) {
         mix = 32767;
     } else if (mix < -32768) {
@@ -302,6 +312,9 @@ void msx_psg_reset(MsxPsgState* state)
     const uint32_t sampleRate = state->sampleRate;
     const uint32_t cpuClockHz = state->cpuClockHz == 0u ? kMsxCpuClockHz : state->cpuClockHz;
     const uint32_t psgClockHz = state->psgClockHz == 0u ? kMsxPsgClockHz : state->psgClockHz;
+
+    s_dcFilterX = 0;
+    s_dcFilterY = 0;
 
     std::memset(state, 0, sizeof(*state));
     state->sampleRate = sampleRate;

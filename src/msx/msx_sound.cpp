@@ -248,6 +248,13 @@ void msx_sound_submit(const int16_t* samples, size_t sampleCount)
     if (queued >= 2u) {
         s_audioState.droppedFrames++;
         s_audioState.queuedBlocks = static_cast<uint8_t>(queued);
+
+        static uint32_t s_lastDropLog = 0;
+        if (millis() - s_lastDropLog > 1000) {
+            std::printf("[MSX][AUDIO] WARNING: I2S buffer overrun! Frame dropped. (Total drops: %lu)\n", 
+                        static_cast<unsigned long>(s_audioState.droppedFrames));
+            s_lastDropLog = millis();
+        }
         return;
     }
 
@@ -328,5 +335,3 @@ const MsxAudioHookState& msx_sound_get_state(void)
     return s_audioState;
 #endif
 }
-
-
