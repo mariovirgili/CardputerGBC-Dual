@@ -5,11 +5,19 @@
 #include <cstdio>
 #include <cstring>
 
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
+#include <freertos/semphr.h>
+#include <esp_timer.h>
+
 #include "../msx_display.h"
+#include "../msx_video.h"
 
 #ifndef MSX_VDP_TRACE_ENABLED
 #define MSX_VDP_TRACE_ENABLED 0
 #endif
+
+static void msx_vdp_render_internal(MsxVdpState* state);
 
 namespace {
 
@@ -42,6 +50,7 @@ constexpr uint8_t kMsxVdpStatusInit[10] = {
 // during VDP startup.
 static uint8_t s_msxFrameBuffer[kMsxFramePixels];
 static uint8_t s_msx1Vram[kMsx1VramSize];
+alignas(4) static uint8_t s_msx1VramB[kMsx1VramSize];
 static uint8_t s_msxSpriteOccupancy[kMsxFrameWidth];
 static uint8_t s_msxColorSpriteLine[kMsxSpriteColorLineWidth];
 static uint32_t s_msxPatternNibbleExpand[256][16];
@@ -61,9 +70,48 @@ struct MsxVdpTableMasks {
 
 bool msx_vdp_register_affects_output(uint8_t reg);
 
+static TaskHandle_t s_vdpRenderTask = nullptr;
+static SemaphoreHandle_t s_vdpRenderSem = nullptr;
+static MsxVdpState s_vdpStateSnapshot;
+static MsxVdpState* s_vdpOriginalState = nullptr;
+static bool s_vdpTaskRunning = false;
+
+static uint32_t s_vdpStatFrames = 0;
+static uint32_t s_vdpStatRenderUs = 0;
+static uint32_t s_vdpStatCopyUs = 0;
+static uint32_t s_vdpStatDrops = 0;
+
+static void msx_vdp_render_task(void* arg) {
+    while (s_vdpTaskRunning) {
+        if (xSemaphoreTake(s_vdpRenderSem, portMAX_DELAY) == pdTRUE) {
+            if (!s_vdpTaskRunning) break;
+            int64_t t0 = esp_timer_get_time();
+            msx_vdp_render_internal(&s_vdpStateSnapshot);
+            int64_t t1 = esp_timer_get_time();
+            s_vdpStatRenderUs += static_cast<uint32_t>(t1 - t0);
+            s_vdpStatFrames++;
+            if (s_vdpStatFrames >= 60) {
+                std::printf("[MSX][VDP-CORE0] 60fps | RenderAvg: %u us | CopyAvg: %u us | Drops: %u\n",
+                            static_cast<unsigned>(s_vdpStatRenderUs / 60u),
+                            static_cast<unsigned>(s_vdpStatCopyUs / 60u),
+                            static_cast<unsigned>(s_vdpStatDrops));
+                s_vdpStatFrames = 0;
+                s_vdpStatRenderUs = 0;
+                s_vdpStatCopyUs = 0;
+                s_vdpStatDrops = 0;
+            }
+            
+            MsxDisplayFrame frame = {};
+            msx_vdp_get_display_frame(&s_vdpStateSnapshot, &frame);
+            msx_video_present_frame(&frame);
+        }
+    }
+    vTaskDelete(nullptr);
+}
+
 constexpr uint16_t msx_rgb565(uint8_t r, uint8_t g, uint8_t b)
 {
-    return static_cast<uint16_t>(((r & 0xF8u) << 8) | ((g & 0xFCu) << 3) | (b >> 3));
+    return static_cast<uint16_t>((r & 0xF8u) | (g >> 5) | ((g & 0x1Cu) << 11) | ((b & 0xF8u) << 5));
 }
 
 bool msx_vdp_is_msx2(const MsxVdpState* state)
@@ -969,6 +1017,9 @@ void msx_vdp_record_sprite_index(MsxVdpState* state, uint8_t index)
     }
 
     state->status[0] = static_cast<uint8_t>((state->status[0] & ~0x1Fu) | (index & 0x1Fu));
+    if (state == &s_vdpStateSnapshot && s_vdpOriginalState) {
+        s_vdpOriginalState->status[0] = static_cast<uint8_t>((s_vdpOriginalState->status[0] & ~0x1Fu) | (index & 0x1Fu));
+    }
 }
 
 void msx_vdp_record_sprite_overflow(MsxVdpState* state, uint8_t index)
@@ -979,12 +1030,18 @@ void msx_vdp_record_sprite_overflow(MsxVdpState* state, uint8_t index)
 
     msx_vdp_record_sprite_index(state, index);
     state->status[0] |= 0x40u;
+    if (state == &s_vdpStateSnapshot && s_vdpOriginalState) {
+        s_vdpOriginalState->status[0] |= 0x40u;
+    }
 }
 
 inline void msx_vdp_record_sprite_collision(MsxVdpState* state)
 {
     if (state) {
         state->status[0] |= 0x20u;
+        if (state == &s_vdpStateSnapshot && s_vdpOriginalState) {
+            s_vdpOriginalState->status[0] |= 0x20u;
+        }
     }
 }
 
@@ -1780,6 +1837,14 @@ bool msx_vdp_init(MsxVdpState* state, MsxMachineMode machineMode)
         state->ownsVram = true;
     } else {
         state->vram = s_msx1Vram;
+
+        if (!s_vdpRenderSem) {
+            s_vdpRenderSem = xSemaphoreCreateBinary();
+        }
+        if (!s_vdpRenderTask) {
+            s_vdpTaskRunning = true;
+            xTaskCreatePinnedToCore(msx_vdp_render_task, "MSX_VDP", 4096, nullptr, 2, &s_vdpRenderTask, 0);
+        }
     }
 
     state->frameBuffer = s_msxFrameBuffer;
@@ -1794,6 +1859,16 @@ void msx_vdp_shutdown(MsxVdpState* state)
         return;
     }
 
+    if (s_vdpRenderTask) {
+        s_vdpTaskRunning = false;
+        xSemaphoreGive(s_vdpRenderSem);
+        vTaskDelay(pdMS_TO_TICKS(50));
+        s_vdpRenderTask = nullptr;
+    }
+    if (s_vdpRenderSem) {
+        vSemaphoreDelete(s_vdpRenderSem);
+        s_vdpRenderSem = nullptr;
+    }
 
     if (state->ownsVram && state->vram) {
         heap_caps_free(state->vram);
@@ -1844,23 +1919,10 @@ bool msx_vdp_begin_frame(MsxVdpState* state)
     return (state->regs[1] & 0x20u) != 0u;
 }
 
-void msx_vdp_render(MsxVdpState* state)
+static void msx_vdp_render_internal(MsxVdpState* state)
 {
-    if (!state || !state->frameBuffer) {
-        return;
-    }
-
-    if (!state->dirty && state->frameReady) {
-        return;
-    }
-
-    msx_vdp_update_mode_geometry(state);
-    msx_vdp_reset_sprite_status(state);
-
     if (!msx_vdp_display_enabled(state)) {
         msx_vdp_clear_active_frame(state, msx_vdp_resolve_color(state, 0));
-        state->dirty = false;
-        state->frameReady = true;
         return;
     }
 
@@ -1908,9 +1970,44 @@ void msx_vdp_render(MsxVdpState* state)
             msx_vdp_clear_active_frame(state, msx_vdp_resolve_color(state, 0));
             break;
     }
+}
 
-    state->dirty = false;
-    state->frameReady = true;
+void msx_vdp_render(MsxVdpState* state)
+{
+    if (!state || !state->frameBuffer) {
+        return;
+    }
+
+    if (!state->dirty && state->frameReady) {
+        return;
+    }
+
+    msx_vdp_update_mode_geometry(state);
+    msx_vdp_reset_sprite_status(state);
+
+    if (s_vdpRenderSem && state->machineMode == MsxMachineMode::MSX1) {
+        int64_t t0 = esp_timer_get_time();
+        std::memcpy(s_msx1VramB, state->vram, kMsx1VramSize);
+        std::memcpy(&s_vdpStateSnapshot, state, sizeof(MsxVdpState));
+        int64_t t1 = esp_timer_get_time();
+        s_vdpStatCopyUs += static_cast<uint32_t>(t1 - t0);
+
+        s_vdpStateSnapshot.vram = s_msx1VramB;
+        s_vdpOriginalState = state;
+        state->dirty = false;
+        state->frameReady = true;
+        if (xSemaphoreGive(s_vdpRenderSem) != pdTRUE) {
+            s_vdpStatDrops++;
+        }
+    } else {
+        msx_vdp_render_internal(state);
+        state->dirty = false;
+        state->frameReady = true;
+
+        MsxDisplayFrame frame = {};
+        msx_vdp_get_display_frame(state, &frame);
+        msx_video_present_frame(&frame);
+    }
 }
 
 uint8_t msx_vdp_in_data(MsxVdpState* state)

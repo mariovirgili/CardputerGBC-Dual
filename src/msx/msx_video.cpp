@@ -6,6 +6,9 @@
 
 #include <cstdio>
 #include <cstring>
+#include <esp_timer.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
 
 #include "../share/display_target.h"
 #include "../tft_setup.h"
@@ -64,6 +67,10 @@ static bool s_extTftColorModeKnown = false;
 static bool s_extTftClockLogged = false;
 static bool s_externalUiActive = false;
 
+static uint32_t s_spiPushFrames = 0;
+static uint32_t s_spiPushUs = 0;
+static SemaphoreHandle_t s_videoMutex = nullptr;
+
 bool msx_video_game_on_external(void)
 {
     return g_emu_display_target == EMU_DISPLAY_EXTERNAL;
@@ -113,7 +120,7 @@ void msx_video_prepare_external_tft(void)
 
 constexpr uint16_t msx_rgb565(uint8_t r, uint8_t g, uint8_t b)
 {
-    return static_cast<uint16_t>(((r & 0xF8u) << 8) | ((g & 0xFCu) << 3) | (b >> 3));
+    return static_cast<uint16_t>((r & 0xF8u) | (g >> 5) | ((g & 0x1Cu) << 11) | ((b & 0xF8u) << 5));
 }
 
 void msx_video_init_palette(void)
@@ -293,17 +300,16 @@ bool msx_video_prepare_buffers(const MsxVideoPlan& plan, bool layoutChanged)
             static_cast<size_t>(neededLineWidth) * kBatchLines * sizeof(uint16_t),
             MALLOC_CAP_DMA | MALLOC_CAP_8BIT
         ));
-        if (!s_lineBuf) {
-            s_lineBuf = static_cast<uint16_t*>(malloc(static_cast<size_t>(neededLineWidth) * kBatchLines * sizeof(uint16_t)));
-        }
+        if (!s_lineBuf) s_lineBuf = static_cast<uint16_t*>(malloc(static_cast<size_t>(neededLineWidth) * kBatchLines * sizeof(uint16_t)));
         s_lineCap = s_lineBuf ? neededLineWidth : 0;
     }
 
     if (msx_video_use_external_rgb444()) {
-        const int neededBytes = ((neededLineWidth + 1) / 2) * 3;
+        const int neededBytes = ((neededLineWidth * kBatchLines + 1) / 2) * 3;
         if (neededBytes > s_lineBuf12Cap) {
             free(s_lineBuf12);
-            s_lineBuf12 = static_cast<uint8_t*>(malloc(static_cast<size_t>(neededBytes)));
+            s_lineBuf12 = static_cast<uint8_t*>(heap_caps_malloc(static_cast<size_t>(neededBytes), MALLOC_CAP_DMA | MALLOC_CAP_8BIT));
+            if (!s_lineBuf12) s_lineBuf12 = static_cast<uint8_t*>(malloc(static_cast<size_t>(neededBytes)));
             s_lineBuf12Cap = s_lineBuf12 ? neededBytes : 0;
         }
     }
@@ -346,28 +352,31 @@ bool msx_video_prepare_buffers(const MsxVideoPlan& plan, bool layoutChanged)
     return true;
 }
 
-void msx_video_pack_rgb444_line(const uint16_t* src, int pixelCount)
+void msx_video_pack_rgb444_line(const uint16_t* src, int pixelCount, uint8_t* dst)
 {
-    if (!src || !s_lineBuf12 || pixelCount <= 0) {
+    if (!src || !dst || pixelCount <= 0) {
         return;
     }
 
     const int pairs = pixelCount / 2;
     for (int p = 0; p < pairs; ++p) {
-        const uint16_t c1 = src[p * 2];
-        const uint16_t c2 = src[p * 2 + 1];
+        const uint16_t raw1 = src[p * 2];
+        const uint16_t raw2 = src[p * 2 + 1];
+        const uint16_t c1 = static_cast<uint16_t>((raw1 >> 8) | (raw1 << 8));
+        const uint16_t c2 = static_cast<uint16_t>((raw2 >> 8) | (raw2 << 8));
         const int j = p * 3;
-        s_lineBuf12[j]     = static_cast<uint8_t>(((c1 >> 8) & 0xF0) | ((c1 >> 7) & 0x0F));
-        s_lineBuf12[j + 1] = static_cast<uint8_t>(((c1 << 3) & 0xF0) | ((c2 >> 12) & 0x0F));
-        s_lineBuf12[j + 2] = static_cast<uint8_t>(((c2 >> 3) & 0xF0) | ((c2 >> 1) & 0x0F));
+        dst[j]     = static_cast<uint8_t>(((c1 >> 8) & 0xF0) | ((c1 >> 7) & 0x0F));
+        dst[j + 1] = static_cast<uint8_t>(((c1 << 3) & 0xF0) | ((c2 >> 12) & 0x0F));
+        dst[j + 2] = static_cast<uint8_t>(((c2 >> 3) & 0xF0) | ((c2 >> 1) & 0x0F));
     }
 
     if (pixelCount & 1) {
-        const uint16_t c = src[pixelCount - 1];
+        const uint16_t raw = src[pixelCount - 1];
+        const uint16_t c = static_cast<uint16_t>((raw >> 8) | (raw << 8));
         const int j = pairs * 3;
-        s_lineBuf12[j]     = static_cast<uint8_t>(((c >> 8) & 0xF0) | ((c >> 7) & 0x0F));
-        s_lineBuf12[j + 1] = static_cast<uint8_t>((c << 3) & 0xF0);
-        s_lineBuf12[j + 2] = 0u;
+        dst[j]     = static_cast<uint8_t>(((c >> 8) & 0xF0) | ((c >> 7) & 0x0F));
+        dst[j + 1] = static_cast<uint8_t>((c << 3) & 0xF0);
+        dst[j + 2] = 0u;
     }
 }
 
@@ -401,14 +410,18 @@ void msx_video_draw_crop_frame(const MsxDisplayFrame* frame, const MsxVideoPlan&
     if (msx_video_game_on_external()) {
         msx_video_begin_active_write(plan);
         if (useRgb444) {
-            for (int y = 0; y < plan.dstH; ++y) {
-                const uint8_t* src = frame->indexed8
-                    + static_cast<size_t>(plan.srcY0 + y) * frame->pitchBytes
-                    + static_cast<size_t>(plan.srcX0);
-                msx_video_expand_indexed_line(src, s_lineBuf, plan.dstW, palette, frame->paletteEntryCount);
-                msx_video_pack_rgb444_line(s_lineBuf, plan.dstW);
-                const int byteCount = ((plan.dstW + 1) / 2) * 3;
-                s_extTft.pushColors(reinterpret_cast<uint16_t*>(s_lineBuf12), (byteCount + 1) / 2, false);
+            for (int y = 0; y < plan.dstH; y += kBatchLines) {
+                const int batch = (y + kBatchLines <= plan.dstH) ? kBatchLines : (plan.dstH - y);
+                for (int row = 0; row < batch; ++row) {
+                    const uint8_t* src = frame->indexed8
+                        + static_cast<size_t>(plan.srcY0 + y + row) * frame->pitchBytes
+                        + static_cast<size_t>(plan.srcX0);
+                    uint16_t* dst = s_lineBuf + static_cast<size_t>(row) * plan.dstW;
+                    msx_video_expand_indexed_line(src, dst, plan.dstW, palette, frame->paletteEntryCount);
+                }
+                msx_video_pack_rgb444_line(s_lineBuf, plan.dstW * batch, s_lineBuf12);
+                const int bytesPerLine = ((plan.dstW + 1) / 2) * 3;
+                s_extTft.pushColors(reinterpret_cast<uint16_t*>(s_lineBuf12), (bytesPerLine * batch + 1) / 2, false);
             }
         } else {
             for (int y = 0; y < plan.dstH; y += kBatchLines) {
@@ -420,7 +433,7 @@ void msx_video_draw_crop_frame(const MsxDisplayFrame* frame, const MsxVideoPlan&
                     uint16_t* dst = s_lineBuf + static_cast<size_t>(row) * plan.dstW;
                     msx_video_expand_indexed_line(src, dst, plan.dstW, palette, frame->paletteEntryCount);
                 }
-                s_extTft.pushColors(s_lineBuf, plan.dstW * batch, true);
+                s_extTft.pushColors(s_lineBuf, plan.dstW * batch, false);
             }
         }
         msx_video_end_active_write();
@@ -438,6 +451,7 @@ void msx_video_draw_crop_frame(const MsxDisplayFrame* frame, const MsxVideoPlan&
             msx_video_expand_indexed_line(src, dst, plan.dstW, palette, frame->paletteEntryCount);
         }
         M5Cardputer.Display.pushPixels(s_lineBuf, plan.dstW * batch);
+        taskYIELD();
     }
     msx_video_end_active_write();
 }
@@ -451,15 +465,18 @@ void msx_video_draw_scaled_frame(const MsxDisplayFrame* frame, const MsxVideoPla
     if (msx_video_game_on_external()) {
         msx_video_begin_active_write(plan);
         if (useRgb444) {
-            for (int y = 0; y < plan.dstH; ++y) {
-                const uint8_t* src = frame->indexed8 + static_cast<size_t>(s_ymap[y]) * frame->pitchBytes;
-                uint16_t* dst = s_lineBuf;
-                for (int x = 0; x < plan.dstW; ++x) {
-                    dst[x] = palette[src[s_xmap[x]]];
+            for (int y = 0; y < plan.dstH; y += kBatchLines) {
+                const int batch = (y + kBatchLines <= plan.dstH) ? kBatchLines : (plan.dstH - y);
+                for (int row = 0; row < batch; ++row) {
+                    const uint8_t* src = frame->indexed8 + static_cast<size_t>(s_ymap[y + row]) * frame->pitchBytes;
+                    uint16_t* dst = s_lineBuf + static_cast<size_t>(row) * plan.dstW;
+                    for (int x = 0; x < plan.dstW; ++x) {
+                        dst[x] = palette[src[s_xmap[x]]];
+                    }
                 }
-                msx_video_pack_rgb444_line(dst, plan.dstW);
-                const int byteCount = ((plan.dstW + 1) / 2) * 3;
-                s_extTft.pushColors(reinterpret_cast<uint16_t*>(s_lineBuf12), (byteCount + 1) / 2, false);
+                msx_video_pack_rgb444_line(s_lineBuf, plan.dstW * batch, s_lineBuf12);
+                const int bytesPerLine = ((plan.dstW + 1) / 2) * 3;
+                s_extTft.pushColors(reinterpret_cast<uint16_t*>(s_lineBuf12), (bytesPerLine * batch + 1) / 2, false);
             }
         } else {
             for (int y = 0; y < plan.dstH; y += kBatchLines) {
@@ -471,7 +488,7 @@ void msx_video_draw_scaled_frame(const MsxDisplayFrame* frame, const MsxVideoPla
                         dst[x] = palette[src[s_xmap[x]]];
                     }
                 }
-                s_extTft.pushColors(s_lineBuf, plan.dstW * batch, true);
+                s_extTft.pushColors(s_lineBuf, plan.dstW * batch, false);
             }
         }
         msx_video_end_active_write();
@@ -489,6 +506,7 @@ void msx_video_draw_scaled_frame(const MsxDisplayFrame* frame, const MsxVideoPla
             }
         }
         M5Cardputer.Display.pushPixels(s_lineBuf, plan.dstW * batch);
+        taskYIELD();
     }
     msx_video_end_active_write();
 }
@@ -540,11 +558,10 @@ bool msx_video_render_frame_now(const MsxDisplayFrame* frame)
 
 void msx_video_init(void)
 {
-    msx_video_init_palette();
-    if (!s_swapBytesConfigured && !msx_video_game_on_external()) {
-        M5Cardputer.Display.setSwapBytes(true);
-        s_swapBytesConfigured = true;
+    if (!s_videoMutex) {
+        s_videoMutex = xSemaphoreCreateMutex();
     }
+    msx_video_init_palette();
     if (msx_video_game_on_external()) {
         msx_video_prepare_external_tft();
     }
@@ -574,6 +591,16 @@ void msx_video_shutdown(void)
     s_extTftColorModeKnown = false;
     s_externalUiActive = false;
     msx_video_reset_layout_cache();
+}
+
+void msx_video_lock(void)
+{
+    if (s_videoMutex) xSemaphoreTake(s_videoMutex, portMAX_DELAY);
+}
+
+void msx_video_unlock(void)
+{
+    if (s_videoMutex) xSemaphoreGive(s_videoMutex);
 }
 
 void msx_video_prepare_external_ui(void)
@@ -632,6 +659,7 @@ TFT_eSPI& msx_video_external_tft(void)
 
 bool msx_video_present_frame(const MsxDisplayFrame* frame)
 {
+    msx_video_lock();
     if (msx_video_game_on_external()) {
         if (s_externalUiActive) {
             s_externalUiActive = false;
@@ -639,5 +667,21 @@ bool msx_video_present_frame(const MsxDisplayFrame* frame)
         }
     }
 
-    return msx_video_render_frame_now(frame);
+    int64_t t0 = esp_timer_get_time();
+    bool result = msx_video_render_frame_now(frame);
+    int64_t t1 = esp_timer_get_time();
+
+    if (result) {
+        s_spiPushUs += static_cast<uint32_t>(t1 - t0);
+        s_spiPushFrames++;
+        if (s_spiPushFrames >= 60) {
+            std::printf("[MSX][VIDEO-PUSH] 60fps | SPI Push Avg: %u us\n",
+                        static_cast<unsigned>(s_spiPushUs / 60u));
+            s_spiPushFrames = 0;
+            s_spiPushUs = 0;
+        }
+    }
+
+    msx_video_unlock();
+    return result;
 }

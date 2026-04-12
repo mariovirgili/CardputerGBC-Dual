@@ -448,6 +448,7 @@ void msx_display_submit_frame(const MsxDisplayFrame* frame, const MsxDisplayStat
 
     const MsxInternalViewMode currentViewMode = msx_config_get_active_view_mode();
     if (overlay.menuVisible) {
+        msx_video_lock();
         if (!s_lastMenuVisible) {
             msx_display_draw_runtime_menu(overlay);
         } else {
@@ -473,18 +474,21 @@ void msx_display_submit_frame(const MsxDisplayFrame* frame, const MsxDisplayStat
         s_lastViewMode = currentViewMode;
         s_lastMenuOverlay = overlay;
         s_lastMenuVisible = true;
+        msx_video_unlock();
         return;
     }
 
     if (s_lastMenuVisible) {
+        msx_video_lock();
         if (msx_display_game_on_external()) {
             msx_video_finish_external_ui();
         }
         s_lastPlaceholderMs = 0;
+        msx_video_unlock();
     }
     s_lastMenuVisible = false;
 
-    if (frame && frame->indexed8 && msx_video_present_frame(frame)) {
+    if (frame && frame->indexed8) {
         return;
     }
 
@@ -499,11 +503,15 @@ void msx_display_submit_frame(const MsxDisplayFrame* frame, const MsxDisplayStat
 
     s_lastPlaceholderMs = nowMs;
     s_lastViewMode = currentViewMode;
+    
+    msx_video_lock();
     msx_display_draw_placeholder(status);
+    msx_video_unlock();
 }
 
 void msx_display_show_external_info(const char* romTitle)
 {
+    msx_video_lock();
     msx_display_prepare_external_tft();
     auto& tft = msx_display_external_tft();
     tft.fillScreen(TFT_BLACK);
@@ -548,6 +556,5 @@ void msx_display_show_external_info(const char* romTitle)
     tft.drawCentreString("GO = QUIT   HOLD GO = MENU", kExternalDisplayW / 2, 198, 1);
     tft.drawCentreString("\\ = VIEW", kExternalDisplayW / 2, 210, 1);
     tft.drawCentreString("FN+ARROWS = ZOOM", kExternalDisplayW / 2, 222, 1);
+    msx_video_unlock();
 }
-
-
