@@ -1114,6 +1114,9 @@ void CardputerView::showValidExt(const std::vector<std::string>& exts) {
         if (renderedRows >= 3) break;
 
         int rowWidth = 0;
+        int prefixW = (renderedRows == 0) ? Display->textWidth("MSX: ") : 0;
+        rowWidth += prefixW;
+
         for (size_t i = 0; i < row.size(); ++i) {
             rowWidth += row[i].w;
             if (i + 1 < row.size()) rowWidth += colGap;
@@ -1127,6 +1130,15 @@ void CardputerView::showValidExt(const std::vector<std::string>& exts) {
 
         // Stop si dépasse — mais maintenant on a largement la place
         if (cursorY + lineH > boxY + boxH - 18) break;
+
+        if (renderedRows == 0) {
+            int textH = Display->fontHeight();
+            int textY = cursorY + (lineH - textH) / 2 + textH - 4;
+            Display->setTextColor(TEXT_COLOR);
+            Display->setCursor(x, textY);
+            Display->printf("MSX: ");
+            x += prefixW;
+        }
 
         // Dessin badges
         for (size_t i = 0; i < row.size(); ++i) {
