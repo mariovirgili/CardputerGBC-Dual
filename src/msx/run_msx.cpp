@@ -534,11 +534,6 @@ void run_msx(const uint8_t* romData, size_t romLen, const char* romName)
     msx_display_init();
     msx_input_init();
 
-    if (!useExternal && !emu_is_aux_screen_locked()) {
-        msx_display_show_external_info(romName);
-        emu_set_aux_screen_locked(true);
-    }
-
 #if MSX_AUDIO_ENABLED
     const uint32_t coreAudioSampleRate = kMsxSkeletonSampleRate;
 #else
@@ -599,11 +594,13 @@ void run_msx(const uint8_t* romData, size_t romLen, const char* romName)
             msx_draw_osd_message("SAVING STATE...", useExternal);
             String path = msx_get_savestate_path(romName, msx_input_get_state_slot());
             if (msx_core_save_state(&core, path.c_str())) {
+                M5Cardputer.Speaker.tone(3000, 100);
                 msx_draw_osd_message("STATE SAVED", useExternal);
             } else {
                 String fallbackPath = "/msx_slot" + String(msx_input_get_state_slot()) + ".sav";
                 std::printf("[MSX][STATE] Fallback path: %s\n", fallbackPath.c_str());
                 if (msx_core_save_state(&core, fallbackPath.c_str())) {
+                    M5Cardputer.Speaker.tone(3000, 100);
                     msx_draw_osd_message("SAVED TO ROOT", useExternal);
                 } else {
                     msx_draw_osd_message("SAVE FAILED", useExternal);
@@ -617,10 +614,12 @@ void run_msx(const uint8_t* romData, size_t romLen, const char* romName)
             msx_draw_osd_message("LOADING STATE...", useExternal);
             String path = msx_get_savestate_path(romName, msx_input_get_state_slot());
             if (msx_core_load_state(&core, path.c_str())) {
+                M5Cardputer.Speaker.tone(3000, 100);
                 msx_draw_osd_message("STATE LOADED", useExternal);
             } else {
                 String fallbackPath = "/msx_slot" + String(msx_input_get_state_slot()) + ".sav";
                 if (msx_core_load_state(&core, fallbackPath.c_str())) {
+                    M5Cardputer.Speaker.tone(3000, 100);
                     msx_draw_osd_message("LOADED FROM ROOT", useExternal);
                 } else {
                     msx_draw_osd_message("LOAD FAILED", useExternal);
@@ -801,11 +800,6 @@ void run_msx_disk(const uint8_t* dskData, size_t dskLen, const char* dskName)
     msx_display_init();
     msx_input_init();
 
-    if (!useExternal && !emu_is_aux_screen_locked()) {
-        msx_display_show_external_info(dskName);
-        emu_set_aux_screen_locked(true);
-    }
-
     printf("[MSX] core init_disk begin\n");
     MsxCoreState core = {};
     if (!msx_core_init_disk(&core, &bios,
@@ -859,11 +853,13 @@ void run_msx_disk(const uint8_t* dskData, size_t dskLen, const char* dskName)
             msx_draw_osd_message("SAVING STATE...", useExternal);
             String path = msx_get_savestate_path(dskName, msx_input_get_state_slot());
             if (msx_core_save_state(&core, path.c_str())) {
+                M5Cardputer.Speaker.tone(3000, 100);
                 msx_draw_osd_message("STATE SAVED", useExternal);
             } else {
                 String fallbackPath = "/msx_slot" + String(msx_input_get_state_slot()) + ".sav";
                 std::printf("[MSX][STATE] Fallback path: %s\n", fallbackPath.c_str());
                 if (msx_core_save_state(&core, fallbackPath.c_str())) {
+                    M5Cardputer.Speaker.tone(3000, 100);
                     msx_draw_osd_message("SAVED TO ROOT", useExternal);
                 } else {
                     msx_draw_osd_message("SAVE FAILED", useExternal);
@@ -877,10 +873,12 @@ void run_msx_disk(const uint8_t* dskData, size_t dskLen, const char* dskName)
             msx_draw_osd_message("LOADING STATE...", useExternal);
             String path = msx_get_savestate_path(dskName, msx_input_get_state_slot());
             if (msx_core_load_state(&core, path.c_str())) {
+                M5Cardputer.Speaker.tone(3000, 100);
                 msx_draw_osd_message("STATE LOADED", useExternal);
             } else {
                 String fallbackPath = "/msx_slot" + String(msx_input_get_state_slot()) + ".sav";
                 if (msx_core_load_state(&core, fallbackPath.c_str())) {
+                    M5Cardputer.Speaker.tone(3000, 100);
                     msx_draw_osd_message("LOADED FROM ROOT", useExternal);
                 } else {
                     msx_draw_osd_message("LOAD FAILED", useExternal);
@@ -1039,11 +1037,6 @@ void run_msx_basic(const char* name)
     msx_display_init();
     msx_input_init();
 
-    if (!useExternal && !emu_is_aux_screen_locked()) {
-        msx_display_show_external_info(name);
-        emu_set_aux_screen_locked(true);
-    }
-
 #if MSX_AUDIO_ENABLED
     const uint32_t coreAudioSampleRate = kMsxSkeletonSampleRate;
 #else
@@ -1095,11 +1088,13 @@ void run_msx_basic(const char* name)
             msx_draw_osd_message("SAVING STATE...", useExternal);
             String path = msx_get_savestate_path(name, msx_input_get_state_slot());
             if (msx_core_save_state(&core, path.c_str())) {
+                M5Cardputer.Speaker.tone(3000, 100);
                 msx_draw_osd_message("STATE SAVED", useExternal);
             } else {
                 String fallbackPath = "/msx_slot" + String(msx_input_get_state_slot()) + ".sav";
                 std::printf("[MSX][STATE] Fallback path: %s\n", fallbackPath.c_str());
                 if (msx_core_save_state(&core, fallbackPath.c_str())) {
+                    M5Cardputer.Speaker.tone(3000, 100);
                     msx_draw_osd_message("SAVED TO ROOT", useExternal);
                 } else {
                     msx_draw_osd_message("SAVE FAILED", useExternal);
@@ -1113,10 +1108,12 @@ void run_msx_basic(const char* name)
             msx_draw_osd_message("LOADING STATE...", useExternal);
             String path = msx_get_savestate_path(name, msx_input_get_state_slot());
             if (msx_core_load_state(&core, path.c_str())) {
+                M5Cardputer.Speaker.tone(3000, 100);
                 msx_draw_osd_message("STATE LOADED", useExternal);
             } else {
                 String fallbackPath = "/msx_slot" + String(msx_input_get_state_slot()) + ".sav";
                 if (msx_core_load_state(&core, fallbackPath.c_str())) {
+                    M5Cardputer.Speaker.tone(3000, 100);
                     msx_draw_osd_message("LOADED FROM ROOT", useExternal);
                 } else {
                     msx_draw_osd_message("LOAD FAILED", useExternal);

@@ -9,6 +9,9 @@
 #include "../share/input.h"
 #include "msx_config.h"
 #include "core/msx_keyboard.h"
+#include "../cardputer/CardputerView.h"
+#include "../cardputer/ConfirmationSelector.h"
+#include "msx_video.h"
 
 #include <algorithm>
 #include <cctype>
@@ -62,7 +65,7 @@ enum class MsxRuntimeMenuItem : uint8_t {
 
 struct MsxRuntimeMenuState {
     bool visible;
-    MsxRuntimeMenuItem selected;
+    uint8_t selectedIndex;
     uint8_t scroll;
     bool prevHeld;
     bool nextHeld;
@@ -73,11 +76,31 @@ struct MsxRuntimeMenuState {
 };
 
 static MsxRuntimeOptions s_runtimeOptions = {false, true, false, 0, false, false};
-static MsxRuntimeMenuState s_runtimeMenu = {false, MsxRuntimeMenuItem::Joystick, 0, false, false, false, false, false, false};
+static MsxRuntimeMenuState s_runtimeMenu = {false, 0, 0, false, false, false, false, false, false};
 
 static bool msx_view_toggle_allowed(void)
 {
     return g_emu_display_target != EMU_DISPLAY_EXTERNAL;
+}
+
+static uint8_t msx_get_menu_item_count(void)
+{
+    return msx_view_toggle_allowed() ? 8 : 5;
+}
+
+static MsxRuntimeMenuItem msx_get_menu_item(uint8_t index)
+{
+    if (!msx_view_toggle_allowed()) {
+        switch (index) {
+            case 0: return MsxRuntimeMenuItem::Joystick;
+            case 1: return MsxRuntimeMenuItem::Keyboard;
+            case 2: return MsxRuntimeMenuItem::Vaus;
+            case 3: return MsxRuntimeMenuItem::View;
+            case 4: return MsxRuntimeMenuItem::Close;
+            default: return MsxRuntimeMenuItem::Close;
+        }
+    }
+    return static_cast<MsxRuntimeMenuItem>(index);
 }
 
 static inline bool msx_key_pressed(char key)
@@ -151,10 +174,10 @@ static void msx_toggle_runtime_menu(void)
 
 static void msx_runtime_menu_move(int delta)
 {
-    const int count = static_cast<int>(MsxRuntimeMenuItem::Count);
-    int selected = static_cast<int>(s_runtimeMenu.selected);
+    const int count = msx_get_menu_item_count();
+    int selected = s_runtimeMenu.selectedIndex;
     selected = (selected + delta + count) % count;
-    s_runtimeMenu.selected = static_cast<MsxRuntimeMenuItem>(selected);
+    s_runtimeMenu.selectedIndex = static_cast<uint8_t>(selected);
 
     if (selected < s_runtimeMenu.scroll) {
         s_runtimeMenu.scroll = selected;
@@ -165,7 +188,7 @@ static void msx_runtime_menu_move(int delta)
 
 static void msx_runtime_menu_adjust(int delta)
 {
-    if (s_runtimeMenu.selected == MsxRuntimeMenuItem::StateSlot) {
+    if (msx_get_menu_item(s_runtimeMenu.selectedIndex) == MsxRuntimeMenuItem::StateSlot) {
         int slot = s_runtimeOptions.stateSlot;
         slot = (slot + delta + 10) % 10;
         s_runtimeOptions.stateSlot = static_cast<uint8_t>(slot);
@@ -184,7 +207,7 @@ static void msx_runtime_log_options(void)
 
 static void msx_runtime_menu_accept(void)
 {
-    switch (s_runtimeMenu.selected) {
+    switch (msx_get_menu_item(s_runtimeMenu.selectedIndex)) {
         case MsxRuntimeMenuItem::Joystick:
             s_runtimeOptions.joystickEnabled = !s_runtimeOptions.joystickEnabled;
             break;
@@ -207,9 +230,21 @@ static void msx_runtime_menu_accept(void)
             s_runtimeMenu.visible = false;
             break;
         case MsxRuntimeMenuItem::LoadState:
-            s_runtimeOptions.loadRequested = true;
-            s_runtimeMenu.visible = false;
-            break;
+            {
+                CardputerView view;
+                CardputerInput cinput;
+                ConfirmationSelector confirm(view, cinput);
+                char confirmTitle[32];
+                std::snprintf(confirmTitle, sizeof(confirmTitle), "LOAD STATE <%u>", static_cast<unsigned>(s_runtimeOptions.stateSlot));
+                bool sure = confirm.select(confirmTitle, "Are you sure?");
+                s_runtimeMenu.visible = false;
+                if (sure) {
+                    s_runtimeOptions.loadRequested = true;
+                }
+                msx_video_request_full_redraw();
+                M5Cardputer.Display.fillScreen(TFT_BLACK);
+                break;
+            }
         case MsxRuntimeMenuItem::Close:
             s_runtimeMenu.visible = false;
             break;
@@ -694,7 +729,7 @@ void msx_input_init(void)
     s_suppressGoClick = false;
     s_suppressGoUntilMs = 0;
     s_runtimeOptions = {false, true, false, 0, false, false};
-    s_runtimeMenu = {false, MsxRuntimeMenuItem::Joystick, 0, false, false, false, false, false, false};
+    s_runtimeMenu = {false, 0, 0, false, false, false, false, false, false};
 }
 
 void msx_input_poll(MsxInputState* state)
@@ -711,6 +746,21 @@ void msx_input_poll(MsxInputState* state)
     MsxInputBindingCache bindings = {};
     msx_load_binding_cache(&bindings);
     msx_apply_system_keys(keys);
+
+    static bool s_fnSLHandled = false;
+    if (keys.fn && (msx_key_pressed('s') || msx_key_pressed('l'))) {
+        if (!s_fnSLHandled) {
+            s_fnSLHandled = true;
+            if (msx_key_pressed('s')) {
+                s_runtimeOptions.saveRequested = true;
+            }
+            if (msx_key_pressed('l')) {
+                s_runtimeOptions.loadRequested = true;
+            }
+        }
+    } else {
+        s_fnSLHandled = false;
+    }
 
     uint32_t padState = 0u;
     if (bindings.hasI2cPad) {
@@ -824,7 +874,7 @@ void msx_input_get_overlay_state(MsxInputOverlayState* state)
     state->joystickEnabled = s_runtimeOptions.joystickEnabled;
     state->keyboardEnabled = s_runtimeOptions.keyboardEnabled;
     state->vausEnabled = s_runtimeOptions.vausEnabled;
-    state->selectedIndex = static_cast<uint8_t>(s_runtimeMenu.selected);
+    state->selectedIndex = s_runtimeMenu.selectedIndex;
 }
 
 uint8_t msx_input_get_state_slot(void) {

@@ -16,6 +16,7 @@
 #include <cstdio>
 #include <cctype>
 #include <string>
+#include <cmath>
 
 extern uint8_t msx_input_get_state_slot(void);
 extern uint8_t msx_input_get_scroll_index(void);
@@ -91,102 +92,6 @@ static int msx_display_external_font_from_legacy_id(uint8_t font)
         default:
             return 1;
     }
-}
-
-static std::string msx_display_truncate(const char* text, size_t maxChars)
-{
-    if (!text) {
-        return {};
-    }
-
-    std::string value(text);
-    if (value.size() <= maxChars) {
-        return value;
-    }
-
-    if (maxChars <= 3u) {
-        return value.substr(0u, maxChars);
-    }
-
-    return value.substr(0u, maxChars - 3u) + "...";
-}
-
-static bool msx_display_has_suffix_ignore_case(const std::string& value, const char* suffix)
-{
-    if (!suffix) {
-        return false;
-    }
-
-    const size_t suffixLen = std::strlen(suffix);
-    if (value.size() < suffixLen) {
-        return false;
-    }
-
-    const size_t start = value.size() - suffixLen;
-    for (size_t i = 0; i < suffixLen; ++i) {
-        const char lhs = static_cast<char>(std::tolower(static_cast<unsigned char>(value[start + i])));
-        const char rhs = static_cast<char>(std::tolower(static_cast<unsigned char>(suffix[i])));
-        if (lhs != rhs) {
-            return false;
-        }
-    }
-
-    return true;
-}
-
-static std::string msx_display_clean_title(const char* romTitle)
-{
-    if (!romTitle || romTitle[0] == '\0') {
-        return "MSX";
-    }
-
-    std::string title(romTitle);
-    const size_t slashPos = title.find_last_of("/\\");
-    if (slashPos != std::string::npos) {
-        title.erase(0u, slashPos + 1u);
-    }
-
-    if (msx_display_has_suffix_ignore_case(title, ".rom") ||
-        msx_display_has_suffix_ignore_case(title, ".dsk")) {
-        title.erase(title.size() - 4u);
-    }
-
-    if (title.empty()) {
-        return "MSX";
-    }
-
-    return title;
-}
-
-static std::string msx_display_fit_external_title(const std::string& title, uint8_t* fontOut)
-{
-    if (!fontOut) {
-        return title;
-    }
-
-    static constexpr uint8_t kCandidateFonts[] = {4u, 2u, 1u};
-    static constexpr int kMaxTitleWidth = kExternalDisplayW - 28;
-    auto& tft = msx_display_external_tft();
-
-    for (uint8_t font : kCandidateFonts) {
-        if (tft.textWidth(title.c_str(), font) <= kMaxTitleWidth) {
-            *fontOut = font;
-            return title;
-        }
-    }
-
-    std::string fitted = title;
-    while (!fitted.empty()) {
-        const std::string candidate = fitted + "...";
-        if (tft.textWidth(candidate.c_str(), 1) <= kMaxTitleWidth) {
-            *fontOut = 1u;
-            return candidate;
-        }
-        fitted.pop_back();
-    }
-
-    *fontOut = 1u;
-    return "MSX";
 }
 
 static const lgfx::IFont* msx_display_font_from_legacy_id(uint8_t font)
@@ -276,32 +181,35 @@ static void msx_display_draw_placeholder(const MsxDisplayStatus* status)
 
 static const char* msx_display_runtime_menu_label(uint8_t index)
 {
-    switch (index) {
-        case 0u:
-            return "JOY";
-        case 1u:
-            return "KEYBOARD";
-        case 2u:
-            return "VAUS";
-        case 3u:
-            return "VIEW";
-        case 4u:
-            return "STATE SLOT";
-        case 5u:
-            return "SAVE STATE";
-        case 6u:
-            return "LOAD STATE";
-        case 7u:
-            return "CLOSE";
-        default:
-            return "";
+    if (msx_display_game_on_external()) {
+        switch (index) {
+            case 0u: return "JOY";
+            case 1u: return "KEYBOARD";
+            case 2u: return "VAUS";
+            case 3u: return "VIEW";
+            case 4u: return "CLOSE";
+            default: return "";
+        }
+    } else {
+        switch (index) {
+            case 0u: return "JOY";
+            case 1u: return "KEYBOARD";
+            case 2u: return "VAUS";
+            case 3u: return "VIEW";
+            case 4u: return "STATE SLOT";
+            case 5u: return "SAVE STATE";
+            case 6u: return "LOAD STATE";
+            case 7u: return "CLOSE";
+            default: return "";
+        }
     }
 }
 
 static const char* msx_display_runtime_menu_value(const MsxInputOverlayState& overlay, uint8_t index)
 {
     static char slotStr[8];
-    switch (index) {
+    uint8_t mappedIndex = msx_display_game_on_external() ? (index == 4 ? 7 : index) : index;
+    switch (mappedIndex) {
         case 0u:
             return overlay.joystickEnabled ? "ON" : "OFF";
         case 1u:
@@ -431,18 +339,6 @@ static void msx_display_draw_runtime_menu(const MsxInputOverlayState& overlay)
     }
 }
 
-static void msx_display_draw_key_badge(int x, int y, const std::string& key)
-{
-    const int badgeW = 34;
-    const int badgeH = 18;
-
-    auto& tft = msx_display_external_tft();
-    tft.fillRoundRect(x, y, badgeW, badgeH, 4, TFT_DARKGREY);
-    tft.setTextColor(TFT_WHITE, TFT_DARKGREY);
-    tft.drawCentreString(key.c_str(), x + badgeW / 2, y + 1, 2);
-    tft.drawRoundRect(x, y, badgeW, badgeH, 4, TFT_YELLOW);
-}
-
 void msx_display_init(void)
 {
     s_lastPlaceholderMs = 0;
@@ -482,6 +378,7 @@ void msx_display_submit_frame(const MsxDisplayFrame* frame, const MsxDisplayStat
         msx_video_lock();
         msx_video_set_runtime_menu_active(true);
         const uint8_t scrollIndex = msx_input_get_scroll_index();
+        
         if (!s_lastMenuVisible || scrollIndex != s_lastScrollIndex) {
             msx_display_draw_runtime_menu(overlay);
         } else {
@@ -502,7 +399,7 @@ void msx_display_submit_frame(const MsxDisplayFrame* frame, const MsxDisplayStat
             if (currentViewMode != s_lastViewMode) {
                 msx_display_draw_runtime_menu_row(overlay, 3u);
             }
-            if (currentStateSlot != s_lastStateSlot) {
+            if (currentStateSlot != s_lastStateSlot && !msx_display_game_on_external()) {
                 msx_display_draw_runtime_menu_row(overlay, 4u);
             }
         }
@@ -547,55 +444,5 @@ void msx_display_submit_frame(const MsxDisplayFrame* frame, const MsxDisplayStat
     
     msx_video_lock();
     msx_display_draw_placeholder(status);
-    msx_video_unlock();
-}
-
-void msx_display_show_external_info(const char* romTitle)
-{
-    msx_video_lock();
-    msx_display_prepare_external_tft();
-    auto& tft = msx_display_external_tft();
-    tft.fillScreen(TFT_BLACK);
-    tft.setTextWrap(false);
-
-    tft.drawRoundRect(8, 8, kExternalDisplayW - 16, kExternalDisplayH - 16, 8, TFT_DARKGREY);
-
-    uint8_t titleFont = 4u;
-    const std::string cleanedTitle = msx_display_clean_title(romTitle);
-    const std::string title = msx_display_fit_external_title(cleanedTitle, &titleFont);
-    tft.setTextColor(TFT_CYAN, TFT_BLACK);
-    tft.drawCentreString(title.c_str(), kExternalDisplayW / 2, 16, titleFont);
-
-    tft.setTextColor(TFT_YELLOW, TFT_BLACK);
-    tft.drawCentreString("MSX", kExternalDisplayW / 2, 46, 2);
-
-    tft.setTextColor(TFT_GREEN, TFT_BLACK);
-    tft.drawCentreString("VIDEO ON INTERNAL LCD", kExternalDisplayW / 2, 64, 2);
-
-    tft.drawRoundRect(12, 86, kExternalDisplayW - 24, 98, 6, TFT_DARKGREY);
-    tft.setTextColor(TFT_WHITE, TFT_BLACK);
-    tft.drawCentreString("CONTROLS", kExternalDisplayW / 2, 92, 2);
-
-    const auto actions = share::emuControlActionLabels(share::EmuProfile::MSX);
-    const auto keys = share::emuControlKeyLabels(share::EmuProfile::MSX);
-    const size_t count = (actions.size() < keys.size()) ? actions.size() : keys.size();
-    const size_t rowsPerCol = 4u;
-
-    for (size_t i = 0; i < count; ++i) {
-        const int col = static_cast<int>(i / rowsPerCol);
-        const int row = static_cast<int>(i % rowsPerCol);
-        const int baseX = 24 + col * 146;
-        const int baseY = 112 + row * 16;
-
-        tft.setTextColor(TFT_WHITE, TFT_BLACK);
-        tft.drawString(actions[i].c_str(), baseX, baseY, 2);
-        msx_display_draw_key_badge(baseX + 88, baseY - 3, keys[i]);
-    }
-
-    tft.drawFastHLine(18, 190, kExternalDisplayW - 36, TFT_DARKGREY);
-    tft.setTextColor(TFT_ORANGE, TFT_BLACK);
-    tft.drawCentreString("GO = QUIT   HOLD GO = MENU", kExternalDisplayW / 2, 198, 1);
-    tft.drawCentreString("\\ = VIEW", kExternalDisplayW / 2, 210, 1);
-    tft.drawCentreString("FN+ARROWS = ZOOM", kExternalDisplayW / 2, 222, 1);
     msx_video_unlock();
 }
