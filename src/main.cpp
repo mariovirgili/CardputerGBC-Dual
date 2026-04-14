@@ -13,6 +13,7 @@
 #include "msx/run_msx.h"
 #include "msx/msx_config.h"
 #include "msx/msx_display.h"
+#include "coleco/run_coleco.h"
 #include "last_game.h"
 #include "esp_system.h"
 #include "esp_task_wdt.h"
@@ -534,6 +535,10 @@ void setup() {
   else if (ext == ROM_TYPE_MSX_DISK) {
       // MSX disk image (.dsk) â€” ROM partition holds the DSK data via XIP
       run_msx_disk(get_rom_ptr(), get_rom_size(), romName.c_str());
+  }
+  else if (ext == ROM_TYPE_COLECO) {
+      // ColecoVision cartridge ROM
+      run_coleco(get_rom_ptr(), get_rom_size(), romName.c_str(), sd);
   }
   else {
       display.topBar("ERROR", false, false);

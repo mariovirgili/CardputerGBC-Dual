@@ -13,6 +13,8 @@
 #include <Arduino.h>
 #include <M5Cardputer.h>
 
+#define DEBUG_GENESIS_BLACK_SCREEN 1 // Imposta a 0 per disabilitare i log dettagliati
+
 static uint32_t frame_count = 0;
 static uint64_t last_fps_log_time = 0;
 static volatile int g_target_fps = 60;
@@ -71,6 +73,12 @@ static void run_one_frame() {
   const bool skipZ80 = s_skipZ80Next;   // snapshot
   s_skipZ80Next = false;
 
+#if DEBUG_GENESIS_BLACK_SCREEN
+  static int debug_frame_count = 0;
+  bool log_this_frame = (debug_frame_count++ % 60 == 0); // Logga 1 frame ogni 60 (1 al secondo) per evitare spam
+  int lines_rendered = 0;
+#endif
+
   // Reset sound state
   #ifndef GENESIS_NO_SOUND
     ym2612_clock  = 0;
@@ -86,6 +94,10 @@ static void run_one_frame() {
   const unsigned h = screen_height ? screen_height : 224u;
   const int lines_per_frame = (h >= 240u) ? 313 : 262;
   int hint_counter = gwenesis_vdp_regs[10];
+
+#if DEBUG_GENESIS_BLACK_SCREEN
+  if (log_this_frame) printf("[FRAME START] frame_id: %d, target_h: %u, drawFrame: %d, skipZ80: %d\n", debug_frame_count, h, drawFrame, skipZ80);
+#endif
   scan_line = 0;
 
   // Notify start of frame to display task
@@ -115,6 +127,9 @@ static void run_one_frame() {
     // VDP line rendering, if no frame skip and not the lines to skip
     if (drawFrame && (unsigned)scan_line < h && ((scan_line & 1) == g_field_ofs)) {
       gwenesis_vdp_render_line(scan_line);
+#if DEBUG_GENESIS_BLACK_SCREEN
+      lines_rendered++;
+#endif
     }
 
     // On these lines, the line counter interrupt is reloaded
@@ -154,6 +169,10 @@ static void run_one_frame() {
 
   m68k.cycles -= cpu_deadline; // reset cycle
 
+#if DEBUG_GENESIS_BLACK_SCREEN
+  if (log_this_frame) printf("[FRAME END] lines_rendered: %d, VDP Status: 0x%04X, Hint Pending: %d\n", lines_rendered, gwenesis_vdp_status, hint_pending);
+#endif
+
   // Notify end of frame to display task
   if (g_scanQ) {
     ScanMsg e = { MSG_END_FRAME, 0, (uint16_t)FB_W, (uint16_t)h, {0} };
@@ -174,6 +193,9 @@ static void run_one_frame() {
   const uint32_t elapsedUs = (uint32_t)(micros() - t_start);
   if (elapsedUs > kFrameBudgetUs) {
     s_skipZ80Next = true;  // we are late, skip Z80 next frame
+#if DEBUG_GENESIS_BLACK_SCREEN
+    if (log_this_frame) printf("[PERF WARN] Frame in ritardo! Tempo %u us (budget %u us). Salto rendering/Z80 nel prossimo frame.\n", elapsedUs, kFrameBudgetUs);
+#endif
   }
 
   // FPS logging every 2 seconds
@@ -245,6 +267,10 @@ extern "C" void run_genesis(const uint8_t* rom, size_t len, const char* romName)
 
   screen_width = REG12_MODE_H40 ? 320 : 256;
   screen_height = REG1_PAL ? 240 : 224;
+
+#if DEBUG_GENESIS_BLACK_SCREEN
+  printf("[VDP INIT] Screen configuration: %dx%d (REG12=0x%02X, REG1=0x%02X)\n", screen_width, screen_height, gwenesis_vdp_regs[12], gwenesis_vdp_regs[1]);
+#endif
   
   // Main emulation loop with frame pacing
   uint64_t next_frame_us = esp_timer_get_time();

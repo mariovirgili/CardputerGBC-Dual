@@ -287,6 +287,7 @@ bool writeDirectoryIndexFile(const std::string& indexPath,
 SdService::SdService() {}
 
 bool SdService::begin() {
+    printf("[SD] Initializing SD card...\n");
     SD.end();
     sdCardSPI.end();
     pinMode(SD_CS, OUTPUT);
@@ -306,22 +307,28 @@ bool SdService::begin() {
     for (uint32_t hz : speeds) {
         SD.end();
         delay(5);
+        printf("[SD] Trying %lu Hz... ", hz);
         if (SD.begin(SD_CS, sdCardSPI, hz, "/sd")) {
             File root = SD.open("/");
             if (root && root.isDirectory()) {
                 root.close();
                 sdCardMounted = true;
+                printf("OK (mounted at /sd)\n");
                 return true;
             }
 
             if (root) {
                 root.close();
             }
+            printf("FAIL (root not dir)\n");
+        } else {
+            printf("FAIL\n");
         }
     }
 
     sdCardMounted = false;
     SD.end();
+    printf("[SD] Mount failed at all speeds\n");
     return false;
 }
 

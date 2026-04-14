@@ -27,14 +27,14 @@
 #define CARDPUTER_ZOOM_PLUS    '/' // FN + arrow right
 #define CARDPUTER_ZOOM_MINUS   ',' // FN + arrow left
 
-#define CARDPUTER_VOL_UP_1          '='     // Volume +
+#define CARDPUTER_VOL_UP_1          ']'     // Volume +
 #define CARDPUTER_VOL_UP_2          ';'     // FN + arrow up
 
-#define CARDPUTER_VOL_DOWN_1        '-'     // Volume -
+#define CARDPUTER_VOL_DOWN_1        '['     // Volume -
 #define CARDPUTER_VOL_DOWN_2        '.'     // FN + arrow down
 
-#define CARDPUTER_BRIGHT_UP         ']'     // Bright +
-#define CARDPUTER_BRIGHT_DOWN       '['     // Bright -
+#define CARDPUTER_BRIGHT_UP         'n'     // Bright +
+#define CARDPUTER_BRIGHT_DOWN       'm'     // Bright -
 
 extern uint32_t lastPadState;
 
