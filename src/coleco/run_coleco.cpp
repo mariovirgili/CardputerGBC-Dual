@@ -196,10 +196,15 @@ void run_coleco(const uint8_t* romData, size_t romLen, const char* romName, SdSe
     // Identifichiamo il sistema in esecuzione: il BIOS Coleco pesa esattamente 8KB
     const bool isColeco = (bios.size == 8192);
 
+    bool prevToggleViewRequested = false;
+
     while (!quitRequested) {
         int64_t nowUs = esp_timer_get_time();
         if (nowUs > nextFrameTimeUs) {
             g_emu_skip_video = true;
+            if (nowUs > nextFrameTimeUs + targetFrameTimeUs * 2) {
+                nextFrameTimeUs = nowUs; // Avoid death spiral if severely lagged
+            }
         } else {
             g_emu_skip_video = false;
         }
@@ -231,19 +236,23 @@ void run_coleco(const uint8_t* romData, size_t romLen, const char* romName, SdSe
         if (inputState.fire2) joy_low &= ~0x40;
 
         memory.joyState[0] = (joy_high << 8) | joy_low;
+        memory.joyState[1] = 0xFFFF; // Giocatore 2 inattivo (tutti i tasti rilasciati)
 
         if (inputState.quitRequested) {
             quitRequested = true;
             break;
         }
 
-        if (inputState.toggleViewRequested) {
+        if (inputState.toggleViewRequested && !prevToggleViewRequested) {
             // handle zoom
             if (!useExternal) {
                 coleco_config_toggle_internal_view_mode();
-                coleco_display_init(); // re-init display parameters
+                coleco_video_request_full_redraw();
+                vdp.dirty = true;
             }
         }
+        
+        prevToggleViewRequested = inputState.toggleViewRequested;
 
         cycleBudget += CYCLES_PER_FRAME;
         
@@ -290,14 +299,7 @@ void run_coleco(const uint8_t* romData, size_t romLen, const char* romName, SdSe
         
         coleco_display_submit_frame(&displayFrame, &status);
         
-        if (!g_emu_skip_video) {
-            nextFrameTimeUs = esp_timer_get_time() + targetFrameTimeUs;
-        } else {
-            nextFrameTimeUs += targetFrameTimeUs;
-            if (esp_timer_get_time() > nextFrameTimeUs + targetFrameTimeUs) {
-                nextFrameTimeUs = esp_timer_get_time();
-            }
-        }
+        nextFrameTimeUs += targetFrameTimeUs;
 
         // Sync Audio
         Sync76489(&psg, 1);

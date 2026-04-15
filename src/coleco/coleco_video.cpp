@@ -25,7 +25,7 @@ constexpr int kExternalTargetW = 320;
 constexpr int kExternalTargetH = 240;
 constexpr int kWideAspectW = 4;
 constexpr int kWideAspectH = 3;
-constexpr int kBatchLines = 6;
+constexpr int kBatchLines = 15;
 
 struct ColecoVideoPlan {
     int srcX0;
@@ -292,23 +292,26 @@ bool coleco_video_layout_changed(const ColecoVideoPlan& plan, unsigned srcW, uns
 
 bool coleco_video_prepare_buffers(const ColecoVideoPlan& plan, bool layoutChanged)
 {
-    const int neededLineWidth = plan.dstW;
-    if (neededLineWidth <= 0 || plan.dstH <= 0) {
+    if (plan.dstW <= 0 || plan.dstH <= 0) {
         return false;
     }
 
-    if (neededLineWidth > s_lineCap) {
+    // Allocate for maximum possible dimensions to avoid fragmentation errors on switch
+    const int maxW = coleco_video_game_on_external() ? kExternalTargetW : kInternalTargetW;
+    const int maxH = coleco_video_game_on_external() ? kExternalTargetH : kInternalTargetH;
+
+    if (maxW > s_lineCap) {
         free(s_lineBuf);
         s_lineBuf = static_cast<uint16_t*>(heap_caps_malloc(
-            static_cast<size_t>(neededLineWidth) * kBatchLines * sizeof(uint16_t),
+            static_cast<size_t>(maxW) * kBatchLines * sizeof(uint16_t),
             MALLOC_CAP_DMA | MALLOC_CAP_8BIT
         ));
-        if (!s_lineBuf) s_lineBuf = static_cast<uint16_t*>(malloc(static_cast<size_t>(neededLineWidth) * kBatchLines * sizeof(uint16_t)));
-        s_lineCap = s_lineBuf ? neededLineWidth : 0;
+        if (!s_lineBuf) s_lineBuf = static_cast<uint16_t*>(malloc(static_cast<size_t>(maxW) * kBatchLines * sizeof(uint16_t)));
+        s_lineCap = s_lineBuf ? maxW : 0;
     }
 
     if (coleco_video_use_external_rgb444()) {
-        const int neededBytes = ((neededLineWidth * kBatchLines + 1) / 2) * 3;
+        const int neededBytes = ((maxW * kBatchLines + 1) / 2) * 3;
         if (neededBytes > s_lineBuf12Cap) {
             free(s_lineBuf12);
             s_lineBuf12 = static_cast<uint8_t*>(heap_caps_malloc(static_cast<size_t>(neededBytes), MALLOC_CAP_DMA | MALLOC_CAP_8BIT));
@@ -318,17 +321,17 @@ bool coleco_video_prepare_buffers(const ColecoVideoPlan& plan, bool layoutChange
     }
 
     if (!plan.cropOnly) {
-        if (plan.dstW > s_xmapCap) {
+        if (maxW > s_xmapCap) {
             free(s_xmap);
-            s_xmap = static_cast<int16_t*>(malloc(static_cast<size_t>(plan.dstW) * sizeof(int16_t)));
-            s_xmapCap = s_xmap ? plan.dstW : 0;
+            s_xmap = static_cast<int16_t*>(malloc(static_cast<size_t>(maxW) * sizeof(int16_t)));
+            s_xmapCap = s_xmap ? maxW : 0;
             layoutChanged = true;
         }
 
-        if (plan.dstH > s_ymapCap) {
+        if (maxH > s_ymapCap) {
             free(s_ymap);
-            s_ymap = static_cast<int16_t*>(malloc(static_cast<size_t>(plan.dstH) * sizeof(int16_t)));
-            s_ymapCap = s_ymap ? plan.dstH : 0;
+            s_ymap = static_cast<int16_t*>(malloc(static_cast<size_t>(maxH) * sizeof(int16_t)));
+            s_ymapCap = s_ymap ? maxH : 0;
             layoutChanged = true;
         }
     }

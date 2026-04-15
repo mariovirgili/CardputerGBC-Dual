@@ -16,14 +16,15 @@ namespace {
 constexpr int kChannel = 0;
 constexpr size_t kMaxFrameSamples = 1024;
 constexpr int kOutputGain = 2;
+constexpr size_t kNumPlayBuffers = 4;
 static ColecoAudioHookState s_audioState = {};
 static int16_t s_mixBuffer[kMaxFrameSamples] = {};
-static int16_t* s_playBuffers[2] = {nullptr, nullptr};
+static int16_t* s_playBuffers[kNumPlayBuffers] = {nullptr, nullptr, nullptr, nullptr};
 static uint8_t s_playFlip = 0u;
 
 static bool coleco_sound_prepare_buffers(void)
 {
-    for (size_t i = 0; i < 2u; ++i) {
+    for (size_t i = 0; i < kNumPlayBuffers; ++i) {
         if (s_playBuffers[i]) {
             continue;
         }
@@ -48,7 +49,7 @@ static bool coleco_sound_prepare_buffers(void)
 
 static void coleco_sound_release_buffers(void)
 {
-    for (size_t i = 0; i < 2u; ++i) {
+    for (size_t i = 0; i < kNumPlayBuffers; ++i) {
         if (s_playBuffers[i]) {
             heap_caps_free(s_playBuffers[i]);
             s_playBuffers[i] = nullptr;
@@ -157,7 +158,7 @@ bool coleco_sound_init(uint32_t sampleRate, uint8_t channels)
     M5Cardputer.Speaker.setVolume(80);
     M5Cardputer.Speaker.stop(kChannel);
     std::memset(s_mixBuffer, 0, sizeof(s_mixBuffer));
-    for (size_t i = 0; i < 2u; ++i) {
+    for (size_t i = 0; i < kNumPlayBuffers; ++i) {
         std::memset(s_playBuffers[i], 0, kMaxFrameSamples * sizeof(int16_t));
     }
     s_playFlip = 0u;
@@ -245,7 +246,7 @@ void coleco_sound_submit(const int16_t* samples, size_t sampleCount)
     }
 
     size_t queued;
-    while ((queued = M5Cardputer.Speaker.isPlaying(kChannel)) >= 2u) {
+    while ((queued = M5Cardputer.Speaker.isPlaying(kChannel)) >= 3u) {
         vTaskDelay(1);
         if (!s_audioState.enabled || s_audioState.paused) return;
     }
@@ -276,7 +277,7 @@ void coleco_sound_submit(const int16_t* samples, size_t sampleCount)
 #endif
 
         coleco_sound_queue_block(s_playBuffers[s_playFlip], count);
-        s_playFlip ^= 0x01u;
+        s_playFlip = (s_playFlip + 1) % kNumPlayBuffers;
         s_audioState.submittedFrames++;
     };
 

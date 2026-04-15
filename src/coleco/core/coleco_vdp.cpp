@@ -1933,6 +1933,8 @@ bool coleco_vdp_begin_frame(ColecoVdpState* state)
     return (state->regs[1] & 0x20u) != 0u;
 }
 
+extern bool g_emu_skip_video;
+
 static void coleco_vdp_render_internal(ColecoVdpState* state)
 {
     if (!coleco_vdp_display_enabled(state)) {
@@ -2014,13 +2016,17 @@ void coleco_vdp_render(ColecoVdpState* state)
             s_vdpStatDrops++;
         }
     } else {
-        coleco_vdp_render_internal(state);
+        if (!g_emu_skip_video) {
+            coleco_vdp_render_internal(state);
+        }
         state->dirty = false;
         state->frameReady = true;
 
-        ColecoDisplayFrame frame = {};
-        coleco_vdp_get_display_frame(state, &frame);
-        coleco_video_present_frame(&frame);
+        if (!g_emu_skip_video) {
+            ColecoDisplayFrame frame = {};
+            coleco_vdp_get_display_frame(state, &frame);
+            coleco_video_present_frame(&frame);
+        }
     }
 }
 
