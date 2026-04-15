@@ -39,6 +39,8 @@ struct PsgChannel {
 };
 static PsgChannel g_psg_ch[4];
 
+bool g_emu_skip_video = false;
+
 static void psg_sound_callback(int C, int F, int V) {
     // We handle PSG natively in run_coleco via coleco_sound_submit
     if (C >= 0 && C < 4) {
@@ -182,8 +184,8 @@ void run_coleco(const uint8_t* romData, size_t romLen, const char* romName, SdSe
         (unsigned long)esp_get_free_heap_size());
 
     bool quitRequested = false;
-    uint32_t lastFrameUs = (uint32_t)esp_timer_get_time();
-    const uint32_t frameTimeUs = 16667; // 60 Hz
+    int64_t targetFrameTimeUs = 16667; // 60 Hz
+    int64_t nextFrameTimeUs = esp_timer_get_time() + targetFrameTimeUs;
 
     int cycleBudget = 0;
     const int CYCLES_PER_FRAME = 3579545 / 60;
@@ -195,12 +197,12 @@ void run_coleco(const uint8_t* romData, size_t romLen, const char* romName, SdSe
     const bool isColeco = (bios.size == 8192);
 
     while (!quitRequested) {
-        uint32_t nowUs = (uint32_t)esp_timer_get_time();
-        if (nowUs - lastFrameUs < frameTimeUs) {
-            vTaskDelay(1);
-            continue;
+        int64_t nowUs = esp_timer_get_time();
+        if (nowUs > nextFrameTimeUs) {
+            g_emu_skip_video = true;
+        } else {
+            g_emu_skip_video = false;
         }
-        lastFrameUs = nowUs;
 
         ColecoInputState inputState;
         coleco_input_poll(&inputState);
@@ -288,6 +290,15 @@ void run_coleco(const uint8_t* romData, size_t romLen, const char* romName, SdSe
         
         coleco_display_submit_frame(&displayFrame, &status);
         
+        if (!g_emu_skip_video) {
+            nextFrameTimeUs = esp_timer_get_time() + targetFrameTimeUs;
+        } else {
+            nextFrameTimeUs += targetFrameTimeUs;
+            if (esp_timer_get_time() > nextFrameTimeUs + targetFrameTimeUs) {
+                nextFrameTimeUs = esp_timer_get_time();
+            }
+        }
+
         // Sync Audio
         Sync76489(&psg, 1);
         size_t capacity = 0;
@@ -297,15 +308,17 @@ void run_coleco(const uint8_t* romData, size_t romLen, const char* romName, SdSe
             int amplitude[4] = {0};
             for (int c = 0; c < 3; c++) {
                 if (g_psg_ch[c].vol > 0 && g_psg_ch[c].freq > 0) {
-                    phaseInc[c] = (111860.78125f / g_psg_ch[c].freq) / 44100.0f;
+                    // g_psg_ch[c].freq contiene L (131072 / N_raw), proporzionale alla frequenza
+                    phaseInc[c] = (111860.78125f * g_psg_ch[c].freq / 131072.0f) / 44100.0f;
                     amplitude[c] = g_psg_ch[c].vol * 30;
                 }
             }
             int noise_fb = g_psg_ch[3].freq;
-            if (g_psg_ch[3].vol > 0 && noise_fb > 0) {
+            if (g_psg_ch[3].vol > 0) {
                 int divider = 0x10 << (noise_fb & 3);
                 if ((noise_fb & 3) == 3) {
-                    divider = g_psg_ch[2].freq > 0 ? g_psg_ch[2].freq : 1024;
+                    // Il canale 2 ha freq = L. Dobbiamo ricavare il divisore grezzo originale (N_raw)
+                    divider = g_psg_ch[2].freq > 0 ? (131072 / g_psg_ch[2].freq) : 1024;
                 }
                 phaseInc[3] = (111860.78125f / divider) / 44100.0f;
                 amplitude[3] = g_psg_ch[3].vol * 30;

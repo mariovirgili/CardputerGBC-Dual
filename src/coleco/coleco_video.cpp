@@ -15,6 +15,8 @@
 #include "coleco_config.h"
 #include "coleco_display.h"
 
+extern bool g_emu_skip_video;
+
 namespace {
 
 constexpr int kInternalTargetW = 240;
@@ -423,6 +425,7 @@ void coleco_video_draw_crop_frame(const ColecoDisplayFrame* frame, const ColecoV
                 coleco_video_pack_rgb444_line(s_lineBuf, plan.dstW * batch, s_lineBuf12);
                 const int bytesPerLine = ((plan.dstW + 1) / 2) * 3;
                 s_extTft.pushColors(reinterpret_cast<uint16_t*>(s_lineBuf12), (bytesPerLine * batch + 1) / 2, false);
+                taskYIELD();
             }
         } else {
             for (int y = 0; y < plan.dstH; y += kBatchLines) {
@@ -435,6 +438,7 @@ void coleco_video_draw_crop_frame(const ColecoDisplayFrame* frame, const ColecoV
                     coleco_video_expand_indexed_line(src, dst, plan.dstW, palette, frame->paletteEntryCount);
                 }
                 s_extTft.pushColors(s_lineBuf, plan.dstW * batch, false);
+                taskYIELD();
             }
         }
         coleco_video_end_active_write();
@@ -478,6 +482,7 @@ void coleco_video_draw_scaled_frame(const ColecoDisplayFrame* frame, const Colec
                 coleco_video_pack_rgb444_line(s_lineBuf, plan.dstW * batch, s_lineBuf12);
                 const int bytesPerLine = ((plan.dstW + 1) / 2) * 3;
                 s_extTft.pushColors(reinterpret_cast<uint16_t*>(s_lineBuf12), (bytesPerLine * batch + 1) / 2, false);
+                taskYIELD();
             }
         } else {
             for (int y = 0; y < plan.dstH; y += kBatchLines) {
@@ -490,6 +495,7 @@ void coleco_video_draw_scaled_frame(const ColecoDisplayFrame* frame, const Colec
                     }
                 }
                 s_extTft.pushColors(s_lineBuf, plan.dstW * batch, false);
+                taskYIELD();
             }
         }
         coleco_video_end_active_write();
@@ -666,6 +672,11 @@ void coleco_video_set_runtime_menu_active(bool active)
 bool coleco_video_present_frame(const ColecoDisplayFrame* frame)
 {
     coleco_video_lock();
+
+    if (g_emu_skip_video) {
+        coleco_video_unlock();
+        return false;
+    }
 
     if (s_runtimeMenuActive) {
         coleco_video_unlock();

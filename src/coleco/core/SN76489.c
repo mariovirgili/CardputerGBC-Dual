@@ -59,15 +59,10 @@ void Write76489(SN76489 *D,unsigned char V)
   switch(V&0xF0)
   {
     case 0xE0:
-      J=V&0x03;
+      J=V&0x07;
       if(J==D->NoiseMode) return;
-      switch(J)
-      {
-        case 0: D->Freq[3]=20000;break;
-        case 1: D->Freq[3]=10000;break;
-        case 2: D->Freq[3]=5000;break;
-        case 3: D->Freq[3]=D->Freq[2];break;
-      }
+      D->Freq[3]=J;
+      D->NoiseMode=J;
       N=3;break;
     case 0x80: case 0xA0: case 0xC0:
       D->Buf=V;return;
@@ -83,9 +78,8 @@ void Write76489(SN76489 *D,unsigned char V)
       L=PSG_BASE/((V&0x3F)*16+(D->Buf&0x0F)+1);
       if(L>15000) L=0;
       if(L==D->Freq[N]) return;
-      if((N==2)&&(D->NoiseMode==3))
+      if((N==2)&&((D->NoiseMode&3)==3))
       {
-        D->Freq[3]=L;
         if(D->Sync) D->Changed|=0x08;
         else D->Sound(3,D->Freq[3],D->Volume[3]);
       }
