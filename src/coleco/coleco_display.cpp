@@ -162,7 +162,7 @@ static void coleco_display_draw_placeholder(const ColecoDisplayStatus* status)
         display.drawRoundRect(boxX + 2, boxY + 2, boxW - 4, boxH - 4, DEFAULT_ROUND_RECT, RECT_COLOR_DARK);
     }
 
-    coleco_display_draw_line("MSX VIDEO", 16, PRIMARY_COLOR, 4);
+    coleco_display_draw_line("COLECO VIDEO", 16, PRIMARY_COLOR, 4);
     coleco_display_draw_line(status && status->romName ? status->romName : "No ROM name", 36, TEXT_COLOR, 2);
     coleco_display_draw_line(status && status->coreLine ? status->coreLine : "CORE: waiting for VDP", 54, TEXT_COLOR, 2);
     coleco_display_draw_line(status && status->cartLine ? status->cartLine : "CART: not loaded", 70, TEXT_COLOR, 2);
@@ -246,7 +246,7 @@ static void coleco_display_draw_runtime_menu_shell(void)
         tft.drawRoundRect(boxX + 2, boxY + 2, kRuntimeMenuBoxW - 4, kRuntimeMenuBoxH - 4, DEFAULT_ROUND_RECT, RECT_COLOR_DARK);
         tft.setTextDatum(TL_DATUM);
         tft.setTextColor(PRIMARY_COLOR, TFT_BLACK);
-        tft.drawString("MSX MENU", innerX, boxY + 6, 2);
+        tft.drawString("COLECO MENU", innerX, boxY + 6, 2);
         tft.setTextColor(TEXT_COLOR, TFT_BLACK);
         tft.drawString(coleco_display_game_on_external() ? "EXT TFT fixed 1:1" : "\\ quick view  GO toggle",
                        innerX, boxY + kRuntimeMenuBoxH - 19, 1);
@@ -262,7 +262,7 @@ static void coleco_display_draw_runtime_menu_shell(void)
     display.setTextDatum(top_left);
     display.setFont(&fonts::Font2);
     display.setTextColor(PRIMARY_COLOR, TFT_BLACK);
-    display.drawString("MSX MENU", innerX, boxY + 6);
+    display.drawString("COLECO MENU", innerX, boxY + 6);
     display.setFont(&fonts::Font0);
     display.setTextColor(TEXT_COLOR, TFT_BLACK);
     display.drawString("\\ quick view  GO toggle", innerX, boxY + kRuntimeMenuBoxH - 19);
@@ -520,17 +520,6 @@ void coleco_display_show_external_info(const char* romTitle)
         const int row = (int)(i % rowsPerCol);
         const int baseX = 24 + col * 146;
         const int baseY = 112 + row * 16;
-
-        tft.setTextColor(TFT_WHITE, TFT_BLACK);
-        tft.drawString(actions[i].c_str(), baseX, baseY, 2);
-        coleco_draw_key_badge(tft, baseX + 88, baseY - 3, keys[i]);
-    }
-
-    tft.drawFastHLine(18, 190, kExternalDisplayW - 36, TFT_DARKGREY);
-    tft.setTextColor(TFT_ORANGE, TFT_BLACK);
-    tft.drawCentreString("GO / HOLD ESC = QUIT", kExternalDisplayW / 2, 198, 1);
-    tft.drawCentreString("\\ = SCREEN  FN+,/ = ZOOM", kExternalDisplayW / 2, 210, 1);
-}
 
         tft.setTextColor(TFT_WHITE, TFT_BLACK);
         tft.drawString(actions[i].c_str(), baseX, baseY, 2);

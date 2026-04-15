@@ -213,7 +213,7 @@ void run_coleco(const uint8_t* romData, size_t romLen, const char* romName, SdSe
         if (inputState.fire1) joy_high &= ~0x40;
 
         uint16_t joy_low = 0xFF; // Keypad None (0x0F) and Fire2 released
-        if (M5Cardputer.Keyboard.isKeyPressed('1')) joy_low = (joy_low & ~0x0F) | 1;
+        if (M5Cardputer.Keyboard.isKeyPressed('1') || inputState.start) joy_low = (joy_low & ~0x0F) | 1;
         else if (M5Cardputer.Keyboard.isKeyPressed('2')) joy_low = (joy_low & ~0x0F) | 2;
         else if (M5Cardputer.Keyboard.isKeyPressed('3')) joy_low = (joy_low & ~0x0F) | 3;
         else if (M5Cardputer.Keyboard.isKeyPressed('4')) joy_low = (joy_low & ~0x0F) | 4;
@@ -224,7 +224,7 @@ void run_coleco(const uint8_t* romData, size_t romLen, const char* romName, SdSe
         else if (M5Cardputer.Keyboard.isKeyPressed('9')) joy_low = (joy_low & ~0x0F) | 9;
         else if (M5Cardputer.Keyboard.isKeyPressed('0')) joy_low = (joy_low & ~0x0F) | 10;
         else if (M5Cardputer.Keyboard.isKeyPressed('-')) joy_low = (joy_low & ~0x0F) | 11;
-        else if (M5Cardputer.Keyboard.isKeyPressed('=')) joy_low = (joy_low & ~0x0F) | 12;
+        else if (M5Cardputer.Keyboard.isKeyPressed('=') || inputState.select) joy_low = (joy_low & ~0x0F) | 12;
 
         if (inputState.fire2) joy_low &= ~0x40;
 
@@ -250,10 +250,13 @@ void run_coleco(const uint8_t* romData, size_t romLen, const char* romName, SdSe
             cycleBudget -= executed;
             
             if (cycleBudget <= 0) {
-                if (isColeco) {
-                    cpu.nmiPending = true; // I giochi ColecoVision attendono il VBLANK via NMI
-                } else {
-                    cpu.irqPending = true; // I giochi MSX usano il normale IRQ
+                bool fire_int = coleco_vdp_begin_frame(&vdp);
+                if (fire_int) {
+                    if (isColeco) {
+                        cpu.nmiPending = true; // I giochi ColecoVision attendono il VBLANK via NMI
+                    } else {
+                        cpu.irqPending = true; // I giochi MSX usano il normale IRQ
+                    }
                 }
             }
         }
@@ -270,66 +273,74 @@ void run_coleco(const uint8_t* romData, size_t romLen, const char* romName, SdSe
         }
 
         // Render VDP
-        if (coleco_vdp_begin_frame(&vdp)) {
-            coleco_vdp_render(&vdp);
-            ColecoDisplayFrame displayFrame;
-            coleco_vdp_get_display_frame(&vdp, &displayFrame);
-            
-            ColecoDisplayStatus status;
-            status.romName = romName;
-            status.coreLine = "ColecoVision";
-            status.cartLine = "";
-            status.machineLine = "TMS9918";
-            status.biosLine = "coleco.rom";
-            status.audioLine = "SN76489";
-            status.frameCounter = vdp.frameCounter;
-            
-            coleco_display_submit_frame(&displayFrame, &status);
-        }
+        coleco_vdp_render(&vdp);
+        ColecoDisplayFrame displayFrame;
+        coleco_vdp_get_display_frame(&vdp, &displayFrame);
+        
+        ColecoDisplayStatus status;
+        status.romName = romName;
+        status.coreLine = "ColecoVision";
+        status.cartLine = "";
+        status.machineLine = "TMS9918";
+        status.biosLine = "coleco.rom";
+        status.audioLine = "SN76489";
+        status.frameCounter = vdp.frameCounter;
+        
+        coleco_display_submit_frame(&displayFrame, &status);
         
         // Sync Audio
         Sync76489(&psg, 1);
         size_t capacity = 0;
         int16_t* buf = coleco_sound_begin_mix(&capacity);
         if (buf && capacity > 0) {
+            float phaseInc[4] = {0};
+            int amplitude[4] = {0};
+            for (int c = 0; c < 3; c++) {
+                if (g_psg_ch[c].vol > 0 && g_psg_ch[c].freq > 0) {
+                    phaseInc[c] = (111860.78125f / g_psg_ch[c].freq) / 44100.0f;
+                    amplitude[c] = g_psg_ch[c].vol * 30;
+                }
+            }
+            int noise_fb = g_psg_ch[3].freq;
+            if (g_psg_ch[3].vol > 0 && noise_fb > 0) {
+                int divider = 0x10 << (noise_fb & 3);
+                if ((noise_fb & 3) == 3) {
+                    divider = g_psg_ch[2].freq > 0 ? g_psg_ch[2].freq : 1024;
+                }
+                phaseInc[3] = (111860.78125f / divider) / 44100.0f;
+                amplitude[3] = g_psg_ch[3].vol * 30;
+            }
+
             for(size_t i = 0; i < capacity; i++) {
                 int32_t mix = 0;
 
                 for (int c = 0; c < 3; c++) {
-                    if (g_psg_ch[c].vol > 0 && g_psg_ch[c].freq > 0) {
-                        float freqHz = g_psg_ch[c].freq;
-                        float phaseInc = freqHz / 44100.0f;
-                        
-                        g_psg_ch[c].phase += phaseInc;
+                    if (amplitude[c] > 0) {
+                        g_psg_ch[c].phase += phaseInc[c];
                         while (g_psg_ch[c].phase >= 1.0f) g_psg_ch[c].phase -= 1.0f;
                         
-                        int amplitude = g_psg_ch[c].vol * 30;
-                        if (g_psg_ch[c].phase < 0.5f) mix += amplitude;
-                        else mix -= amplitude;
+                        if (g_psg_ch[c].phase < 0.5f) mix += amplitude[c];
+                        else mix -= amplitude[c];
                     }
                 }
                 
                 // Noise channel (c = 3)
-                if (g_psg_ch[3].vol > 0 && g_psg_ch[3].freq > 0) {
-                    float freqHz = g_psg_ch[3].freq;
-                    float phaseInc = freqHz / 44100.0f;
-                    
-                    g_psg_ch[3].phase += phaseInc;
+                if (amplitude[3] > 0) {
+                    g_psg_ch[3].phase += phaseInc[3];
                     while (g_psg_ch[3].phase >= 1.0f) {
                         g_psg_ch[3].phase -= 1.0f;
                         uint16_t lfsr = g_psg_ch[3].lfsr;
                         if (lfsr == 0) lfsr = 0x8000;
-                        int bit = (lfsr & 1) ^ ((lfsr >> 3) & 1); // White noise
+                        int bit = (noise_fb & 4) ? ((lfsr & 1) ^ ((lfsr >> 3) & 1)) : (lfsr & 1); // White or Periodic
                         g_psg_ch[3].lfsr = (lfsr >> 1) | (bit << 14);
                     }
                     
-                    int amplitude = g_psg_ch[3].vol * 30;
-                    if (g_psg_ch[3].lfsr & 1) mix += amplitude;
-                    else mix -= amplitude;
+                    if (g_psg_ch[3].lfsr & 1) mix += amplitude[3];
+                    else mix -= amplitude[3];
                 }
                 
                 if (mix > 32767) mix = 32767;
-                if (mix < -32768) mix = -32768;
+                else if (mix < -32768) mix = -32768;
                 buf[i] = mix;
             }
             coleco_sound_end_mix(capacity);
