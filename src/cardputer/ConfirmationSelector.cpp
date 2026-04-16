@@ -4,10 +4,10 @@
 ConfirmationSelector::ConfirmationSelector(CardputerView& display, CardputerInput& input)
     : display(display), input(input) {}
 
-bool ConfirmationSelector::select(const std::string& title, const std::string& description) {
+bool ConfirmationSelector::select(const std::string& title, const std::string& description, int buttonTextY) {
     char key = KEY_NONE;
     display.topBar(title, false, false);
-    display.confirmationPrompt(description);
+    display.confirmationPrompt(description, buttonTextY);
     while (true) {
         key = input.handler();
         const char lowerKey = static_cast<char>(std::tolower(static_cast<unsigned char>(key)));

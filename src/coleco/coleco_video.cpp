@@ -25,7 +25,7 @@ constexpr int kExternalTargetW = 320;
 constexpr int kExternalTargetH = 240;
 constexpr int kWideAspectW = 4;
 constexpr int kWideAspectH = 3;
-constexpr int kBatchLines = 15;
+constexpr int kBatchLines = 6;
 
 struct ColecoVideoPlan {
     int srcX0;
@@ -103,7 +103,7 @@ void coleco_video_prepare_external_tft(void)
         s_extTftPrepared = true;
         s_extTftColorModeKnown = false;
         if (!s_extTftClockLogged) {
-            std::printf("[MSX][VIDEO] external SPI write=%u read=%u\n",
+            std::printf("[COLECO][VIDEO] external SPI write=%u read=%u\n",
                         static_cast<unsigned>(SPI_FREQUENCY),
                         static_cast<unsigned>(SPI_READ_FREQUENCY));
             s_extTftClockLogged = true;
@@ -165,6 +165,27 @@ void coleco_video_reset_layout_cache(void)
     s_lastRoiH = -1;
     s_lastXOff = -1;
     s_lastYOff = -1;
+}
+
+void coleco_video_release_scratch_buffers(void)
+{
+    free(s_lineBuf);
+    s_lineBuf = nullptr;
+    s_lineCap = 0;
+
+    free(s_lineBuf12);
+    s_lineBuf12 = nullptr;
+    s_lineBuf12Cap = 0;
+
+    free(s_xmap);
+    s_xmap = nullptr;
+    s_xmapCap = 0;
+
+    free(s_ymap);
+    s_ymap = nullptr;
+    s_ymapCap = 0;
+
+    coleco_video_reset_layout_cache();
 }
 
 void coleco_video_clear_target(void)
@@ -524,7 +545,7 @@ void coleco_video_draw_scaled_frame(const ColecoDisplayFrame* frame, const Colec
 bool coleco_video_render_frame_now(const ColecoDisplayFrame* frame)
 {
     if (!frame || !frame->indexed8 || frame->width == 0 || frame->height == 0 || frame->pitchBytes < frame->width) {
-        std::printf("[MSX][VIDEO] present_frame SKIP: frame=%p i8=%p w=%u h=%u pitch=%u\n",
+        std::printf("[COLECO][VIDEO] present_frame SKIP: frame=%p i8=%p w=%u h=%u pitch=%u\n",
                     static_cast<const void*>(frame),
                     frame ? static_cast<const void*>(frame->indexed8) : nullptr,
                     frame ? frame->width : 0u,
@@ -539,7 +560,7 @@ bool coleco_video_render_frame_now(const ColecoDisplayFrame* frame)
 
     if (!s_firstPresentLogged) {
         s_firstPresentLogged = true;
-        std::printf("[MSX][VIDEO] first present: w=%u h=%u pitch=%u dstW=%d dstH=%d xOff=%d yOff=%d crop=%d\n",
+        std::printf("[COLECO][VIDEO] first present: w=%u h=%u pitch=%u dstW=%d dstH=%d xOff=%d yOff=%d crop=%d\n",
                     frame->width, frame->height,
                     static_cast<unsigned>(frame->pitchBytes),
                     plan.dstW, plan.dstH, plan.xOff, plan.yOff,
@@ -547,7 +568,7 @@ bool coleco_video_render_frame_now(const ColecoDisplayFrame* frame)
     }
 
     if (!coleco_video_prepare_buffers(plan, layoutChanged)) {
-        std::printf("[MSX][VIDEO] prepare_buffers FAILED dstW=%d dstH=%d\n", plan.dstW, plan.dstH);
+        std::printf("[COLECO][VIDEO] prepare_buffers FAILED dstW=%d dstH=%d\n", plan.dstW, plan.dstH);
         return false;
     }
 
@@ -582,25 +603,9 @@ void coleco_video_init(void)
 
 void coleco_video_shutdown(void)
 {
-    free(s_lineBuf);
-    s_lineBuf = nullptr;
-    s_lineCap = 0;
-
-    free(s_lineBuf12);
-    s_lineBuf12 = nullptr;
-    s_lineBuf12Cap = 0;
-
-    free(s_xmap);
-    s_xmap = nullptr;
-    s_xmapCap = 0;
-
-    free(s_ymap);
-    s_ymap = nullptr;
-    s_ymapCap = 0;
-
+    coleco_video_release_scratch_buffers();
     s_extTftColorModeKnown = false;
     s_externalUiActive = false;
-    coleco_video_reset_layout_cache();
 }
 
 void coleco_video_lock(void)
@@ -625,7 +630,7 @@ void coleco_video_prepare_external_ui(void)
         s_extTft.setTextWrap(false);
         s_extTftPrepared = true;
         if (!s_extTftClockLogged) {
-            std::printf("[MSX][VIDEO] external SPI write=%u read=%u\n",
+            std::printf("[COLECO][VIDEO] external SPI write=%u read=%u\n",
                         static_cast<unsigned>(SPI_FREQUENCY),
                         static_cast<unsigned>(SPI_READ_FREQUENCY));
             s_extTftClockLogged = true;
@@ -648,9 +653,6 @@ void coleco_video_finish_external_ui(void)
         return;
     }
 
-    if (s_extTftPrepared) {
-        s_extTft.fillScreen(TFT_BLACK);
-    }
     s_externalUiActive = false;
     s_extTftColorModeKnown = false;
 }
@@ -670,6 +672,28 @@ TFT_eSPI& coleco_video_external_tft(void)
 void coleco_video_set_runtime_menu_active(bool active)
 {
     s_runtimeMenuActive = active;
+}
+
+void coleco_video_prepare_sd_access(void)
+{
+    coleco_video_lock();
+
+    if (s_extTftPrepared) {
+        s_extTft.endWrite();
+#if defined(TFT_CS) && (TFT_CS >= 0)
+        pinMode(TFT_CS, OUTPUT);
+        digitalWrite(TFT_CS, HIGH);
+#endif
+        s_extTftPrepared = false;
+        s_extTftColorModeKnown = false;
+        s_extTftRgb444Configured = false;
+        s_externalUiActive = false;
+    }
+
+    coleco_video_release_scratch_buffers();
+    s_firstPresentLogged = false;
+
+    coleco_video_unlock();
 }
 
 bool coleco_video_present_frame(const ColecoDisplayFrame* frame)
@@ -701,7 +725,7 @@ bool coleco_video_present_frame(const ColecoDisplayFrame* frame)
         s_spiPushUs += static_cast<uint32_t>(t1 - t0);
         s_spiPushFrames++;
         if (s_spiPushFrames >= 60) {
-            std::printf("[MSX][VIDEO-PUSH] 60fps | SPI Push Avg: %u us\n",
+            std::printf("[COLECO][VIDEO-PUSH] 60fps | SPI Push Avg: %u us\n",
                         static_cast<unsigned>(s_spiPushUs / 60u));
             s_spiPushFrames = 0;
             s_spiPushUs = 0;

@@ -34,3 +34,5 @@ void coleco_input_poll(ColecoInputState* state);
 void coleco_input_get_overlay_state(ColecoInputOverlayState* state);
 uint8_t coleco_input_get_scroll_index(void);
 uint8_t coleco_input_get_state_slot(void);
+bool coleco_input_get_save_requested(void);
+bool coleco_input_get_load_requested(void);

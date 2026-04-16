@@ -170,6 +170,8 @@ inline uint8_t coleco_vdp_read_vram_fast(const uint8_t* vram, uint32_t mask, uin
     return vram[address & mask];
 }
 
+} // namespace
+
 void coleco_vdp_apply_palette_entry(ColecoVdpState* state, uint8_t index)
 {
     if (!state || index >= 16u) {
@@ -183,6 +185,8 @@ void coleco_vdp_apply_palette_entry(ColecoVdpState* state, uint8_t index)
     const uint8_t green = coleco_vdp_expand3(static_cast<uint8_t>(raw2 & 0x07u));
     state->palette565[index] = coleco_rgb565(red, green, blue);
 }
+
+namespace {
 
 void coleco_vdp_init_palette(ColecoVdpState* state)
 {

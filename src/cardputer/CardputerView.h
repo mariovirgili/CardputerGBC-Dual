@@ -67,7 +67,7 @@ public:
     void subMessage(std::string message, int delayMs);
     void subMessage(std::string line1, std::string line2, int delayMs);
     void stringPrompt(std::string label, std::string value, bool backButton, size_t minLength);
-    void confirmationPrompt(std::string label);
+    void confirmationPrompt(std::string label, int buttonTextY = 95);
     void debug(const std::string& message);
     void drawVaultIcon(int x = 86, int y = 10, uint16_t color = PRIMARY_COLOR, size_t w=70, size_t h=50);
     void drawFileIcon(int x = 92, int y = 10);

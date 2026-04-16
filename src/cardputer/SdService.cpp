@@ -15,6 +15,14 @@ constexpr const char* kDirectoryIndexFileName = ".cardputer.idx";
 constexpr const char* kDirectoryIndexHeader = "CARDPUTER_ROM_IDX_V1";
 constexpr size_t kInitialScanReserve = 48;
 
+#if defined(CONFIG_IDF_TARGET_ESP32S2) || defined(CONFIG_IDF_TARGET_ESP32S3)
+constexpr uint8_t kSdSpiBus = FSPI;
+constexpr const char* kSdSpiBusName = "FSPI";
+#else
+constexpr uint8_t kSdSpiBus = HSPI;
+constexpr const char* kSdSpiBusName = "HSPI";
+#endif
+
 std::string getDirectoryIndexPath(const std::string& dirPath) {
     if (dirPath.empty() || dirPath == "/") {
         return std::string("/") + kDirectoryIndexFileName;
@@ -284,10 +292,12 @@ bool writeDirectoryIndexFile(const std::string& indexPath,
 
 } // namespace
 
-SdService::SdService() {}
+SdService::SdService()
+    : sdCardSPI(kSdSpiBus)
+{}
 
 bool SdService::begin() {
-    printf("[SD] Initializing SD card...\n");
+    printf("[SD] Initializing SD card on %s...\n", kSdSpiBusName);
     SD.end();
     sdCardSPI.end();
     pinMode(SD_CS, OUTPUT);

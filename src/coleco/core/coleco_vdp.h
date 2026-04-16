@@ -87,5 +87,4 @@ void coleco_vdp_out_indirect(ColecoVdpState* state, uint8_t value);
 void coleco_vdp_get_display_frame(const ColecoVdpState* state, ColecoDisplayFrame* frame);
 const char* coleco_vdp_mode_label(ColecoVdpMode mode);
 bool coleco_vdp_display_enabled(const ColecoVdpState* state);
-
-
+void coleco_vdp_apply_palette_entry(ColecoVdpState* state, uint8_t index);

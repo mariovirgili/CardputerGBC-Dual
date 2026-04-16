@@ -636,7 +636,7 @@ void CardputerView::stringPrompt(std::string label, std::string value, bool back
     Display->printf("OK");
 }
 
-void CardputerView::confirmationPrompt(std::string label) {
+void CardputerView::confirmationPrompt(std::string label, int buttonTextY) {
     // Clear
     clearMainView(5);
 
@@ -654,15 +654,13 @@ void CardputerView::confirmationPrompt(std::string label) {
     // < button
     Display->fillRoundRect(65, 85, 40, 20, DEFAULT_ROUND_RECT, RECT_COLOR_DARK);
     Display->drawRoundRect(65, 85, 40, 20, DEFAULT_ROUND_RECT, PRIMARY_COLOR);
-    Display->setCursor(81, 93);
-    Display->setCursor(81, 90);
+    Display->setCursor(81, buttonTextY);
     Display->printf("<");
     
     // ok button
     Display->setTextSize(1.5);
     Display->fillRoundRect(128, 85, 40, 20, DEFAULT_ROUND_RECT, PRIMARY_COLOR);
-    Display->setCursor(140, 93);
-    Display->setCursor(140, 90);
+    Display->setCursor(140, buttonTextY);
     Display->printf("OK");
     Display->setTextSize(TEXT_WIDE);
 }

@@ -236,7 +236,7 @@ static void msx_runtime_menu_accept(void)
                 ConfirmationSelector confirm(view, cinput);
                 char confirmTitle[32];
                 std::snprintf(confirmTitle, sizeof(confirmTitle), "LOAD STATE <%u>", static_cast<unsigned>(s_runtimeOptions.stateSlot));
-                bool sure = confirm.select(confirmTitle, "Are you sure?");
+                bool sure = confirm.select(confirmTitle, "Are you sure?", 89);
                 s_runtimeMenu.visible = false;
                 if (sure) {
                     s_runtimeOptions.loadRequested = true;

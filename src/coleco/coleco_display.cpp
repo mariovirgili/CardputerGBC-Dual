@@ -75,6 +75,11 @@ static int coleco_display_active_height(void)
     return coleco_display_game_on_external() ? kExternalDisplayH : M5Cardputer.Display.height();
 }
 
+static uint8_t coleco_display_runtime_menu_item_count(void)
+{
+    return coleco_display_game_on_external() ? 4u : 5u;
+}
+
 static int coleco_display_external_font_from_legacy_id(uint8_t font)
 {
     switch (font) {
@@ -183,23 +188,19 @@ static const char* coleco_display_runtime_menu_label(uint8_t index)
 {
     if (coleco_display_game_on_external()) {
         switch (index) {
-            case 0u: return "JOY";
-            case 1u: return "KEYBOARD";
-            case 2u: return "VAUS";
-            case 3u: return "VIEW";
-            case 4u: return "CLOSE";
+            case 0u: return "SELECT SLOT";
+            case 1u: return "SAVE SLOT";
+            case 2u: return "LOAD SLOT";
+            case 3u: return "CLOSE";
             default: return "";
         }
     } else {
         switch (index) {
-            case 0u: return "JOY";
-            case 1u: return "KEYBOARD";
-            case 2u: return "VAUS";
-            case 3u: return "VIEW";
-            case 4u: return "STATE SLOT";
-            case 5u: return "SAVE STATE";
-            case 6u: return "LOAD STATE";
-            case 7u: return "CLOSE";
+            case 0u: return "VIEW";
+            case 1u: return "SELECT SLOT";
+            case 2u: return "SAVE SLOT";
+            case 3u: return "LOAD SLOT";
+            case 4u: return "CLOSE";
             default: return "";
         }
     }
@@ -208,22 +209,19 @@ static const char* coleco_display_runtime_menu_label(uint8_t index)
 static const char* coleco_display_runtime_menu_value(const ColecoInputOverlayState& overlay, uint8_t index)
 {
     static char slotStr[8];
-    uint8_t mappedIndex = coleco_display_game_on_external() ? (index == 4 ? 7 : index) : index;
-    switch (mappedIndex) {
-        case 0u:
-            return overlay.joystickEnabled ? "ON" : "OFF";
-        case 1u:
-            return overlay.keyboardEnabled ? "ON" : "OFF";
-        case 2u:
-            return overlay.vausEnabled ? "ON" : "OFF";
-        case 3u:
-            return coleco_display_game_on_external() ? "1:1" : coleco_config_get_active_view_mode_label();
-        case 4u:
-            std::snprintf(slotStr, sizeof(slotStr), "< %u >", static_cast<unsigned>(coleco_input_get_state_slot()));
-            return slotStr;
-        default:
-            return nullptr;
+
+    if (!coleco_display_game_on_external() && index == 0u) {
+        return coleco_config_get_active_view_mode_label();
     }
+
+    if ((coleco_display_game_on_external() && index == 0u) ||
+        (!coleco_display_game_on_external() && index == 1u)) {
+        std::snprintf(slotStr, sizeof(slotStr), "< %u >", static_cast<unsigned>(coleco_input_get_state_slot()));
+        return slotStr;
+    }
+
+    (void)overlay;
+    return nullptr;
 }
 
 static int coleco_display_runtime_menu_box_x(void)
@@ -271,6 +269,10 @@ static void coleco_display_draw_runtime_menu_shell(void)
 
 static void coleco_display_draw_runtime_menu_row_state(const ColecoInputOverlayState& overlay, uint8_t index, bool selected)
 {
+    if (index >= coleco_display_runtime_menu_item_count()) {
+        return;
+    }
+
     const uint8_t scrollIndex = coleco_input_get_scroll_index();
     const int displayIndex = static_cast<int>(index) - static_cast<int>(scrollIndex);
     if (displayIndex < 0 || displayIndex >= kRuntimeMenuRowCount) {
@@ -334,8 +336,10 @@ static void coleco_display_draw_runtime_menu(const ColecoInputOverlayState& over
     }
 
     coleco_display_draw_runtime_menu_shell();
-    for (uint8_t i = 0; i < kRuntimeMenuRowCount; ++i) {
-        coleco_display_draw_runtime_menu_row(overlay, coleco_input_get_scroll_index() + i);
+    const uint8_t scrollIndex = coleco_input_get_scroll_index();
+    const uint8_t itemCount = coleco_display_runtime_menu_item_count();
+    for (uint8_t i = 0; i < kRuntimeMenuRowCount && (scrollIndex + i) < itemCount; ++i) {
+        coleco_display_draw_runtime_menu_row(overlay, scrollIndex + i);
     }
 }
 
@@ -363,7 +367,7 @@ void coleco_display_submit_frame(const ColecoDisplayFrame* frame, const ColecoDi
 
     if (s_lastDisplayDiagMs == 0 || (uint32_t)(nowMs - s_lastDisplayDiagMs) >= kDisplayDiagIntervalMs) {
         s_lastDisplayDiagMs = nowMs;
-        std::printf("[MSX][DISP] frame=%p indexed8=%p w=%u h=%u pitch=%u fc=%lu\n",
+        std::printf("[COLECO][DISP] frame=%p indexed8=%p w=%u h=%u pitch=%u fc=%lu\n",
                     static_cast<const void*>(frame),
                     frame ? static_cast<const void*>(frame->indexed8) : nullptr,
                     frame ? frame->width : 0u,
@@ -387,20 +391,11 @@ void coleco_display_submit_frame(const ColecoDisplayFrame* frame, const ColecoDi
                 coleco_display_draw_runtime_menu_row(overlay, overlay.selectedIndex);
             }
 
-            if (overlay.joystickEnabled != s_lastMenuOverlay.joystickEnabled) {
+            if (currentViewMode != s_lastViewMode && !coleco_display_game_on_external()) {
                 coleco_display_draw_runtime_menu_row(overlay, 0u);
             }
-            if (overlay.keyboardEnabled != s_lastMenuOverlay.keyboardEnabled) {
-                coleco_display_draw_runtime_menu_row(overlay, 1u);
-            }
-            if (overlay.vausEnabled != s_lastMenuOverlay.vausEnabled) {
-                coleco_display_draw_runtime_menu_row(overlay, 2u);
-            }
-            if (currentViewMode != s_lastViewMode) {
-                coleco_display_draw_runtime_menu_row(overlay, 3u);
-            }
-            if (currentStateSlot != s_lastStateSlot && !coleco_display_game_on_external()) {
-                coleco_display_draw_runtime_menu_row(overlay, 4u);
+            if (currentStateSlot != s_lastStateSlot) {
+                coleco_display_draw_runtime_menu_row(overlay, coleco_display_game_on_external() ? 0u : 1u);
             }
         }
 
@@ -530,4 +525,5 @@ void coleco_display_show_external_info(const char* romTitle)
     tft.setTextColor(TFT_ORANGE, TFT_BLACK);
     tft.drawCentreString("GO / HOLD ESC = QUIT", kExternalDisplayW / 2, 198, 1);
     tft.drawCentreString("\\ = SCREEN  FN+,/ = ZOOM", kExternalDisplayW / 2, 210, 1);
+    tft.drawCentreString("FN+S/L = SAVE/LOAD", kExternalDisplayW / 2, 222, 1);
 }

@@ -9,7 +9,7 @@
 class ConfirmationSelector {
 public:
     ConfirmationSelector(CardputerView& display, CardputerInput& input);
-    bool select(const std::string& title, const std::string& description);
+    bool select(const std::string& title, const std::string& description, int buttonTextY = 95);
 
 private:
     CardputerView& display;

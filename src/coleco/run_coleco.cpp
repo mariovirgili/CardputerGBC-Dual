@@ -4,6 +4,7 @@
 #include <esp_heap_caps.h>
 #include <Preferences.h>
 #include <SD.h>
+#include <cctype>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -40,6 +41,220 @@ struct PsgChannel {
 static PsgChannel g_psg_ch[4];
 
 bool g_emu_skip_video = false;
+
+extern uint8_t coleco_input_get_state_slot(void);
+extern bool coleco_input_get_save_requested(void);
+extern bool coleco_input_get_load_requested(void);
+
+static String coleco_get_savestate_path(const char* romName, uint8_t slot) {
+    String name(romName);
+    int dot = name.lastIndexOf('/');
+    if (dot >= 0) name = name.substring(dot + 1);
+    dot = name.lastIndexOf('\\');
+    if (dot >= 0) name = name.substring(dot + 1);
+    dot = name.lastIndexOf('.');
+    if (dot > 0) name = name.substring(0, dot);
+
+    String cleanName = "";
+    for (int i = 0; i < name.length(); i++) {
+        char c = name[i];
+        if (c == '(' || c == '[' || c == '{') break;
+        if (isalnum(c)) cleanName += c;
+    }
+    if (cleanName.length() == 0) cleanName = "default";
+    if (cleanName.length() > 8) cleanName = cleanName.substring(0, 8);
+
+    if (!SD.exists("/coleco")) {
+        bool ok = SD.mkdir("/coleco");
+        std::printf("[COLECO][STATE] mkdir /coleco %s\n", ok ? "OK" : "FAIL");
+    }
+    if (!SD.exists("/coleco/states")) {
+        bool ok = SD.mkdir("/coleco/states");
+        std::printf("[COLECO][STATE] mkdir /coleco/states %s\n", ok ? "OK" : "FAIL");
+    }
+
+    String path = "/coleco/states/" + cleanName;
+    if (!SD.exists(path)) {
+        bool ok = SD.mkdir(path);
+        std::printf("[COLECO][STATE] mkdir %s %s\n", path.c_str(), ok ? "OK" : "FAIL");
+    }
+
+    return path + "/Slot" + String(slot) + ".sav";
+}
+
+static void coleco_draw_osd_message(const char* msg, bool useExternal) {
+    if (useExternal) {
+        auto& tft = coleco_video_external_tft();
+        tft.fillRoundRect(80, 105, 160, 30, 4, TFT_BLACK);
+        tft.drawRoundRect(80, 105, 160, 30, 4, PRIMARY_COLOR);
+        tft.setTextColor(TFT_WHITE, TFT_BLACK);
+        tft.drawCentreString(msg, 160, 113, 2);
+    } else {
+        M5Cardputer.Display.fillRoundRect(60, 57, 120, 20, 4, TFT_BLACK);
+        M5Cardputer.Display.drawRoundRect(60, 57, 120, 20, 4, PRIMARY_COLOR);
+        M5Cardputer.Display.setTextColor(TFT_WHITE, TFT_BLACK);
+        M5Cardputer.Display.drawCenterString(msg, 120, 62, &fonts::Font0);
+    }
+}
+
+static bool coleco_write_exact(File& file, const void* data, size_t size) {
+    if (!data && size != 0) {
+        return false;
+    }
+    return file.write(static_cast<const uint8_t*>(data), size) == size;
+}
+
+static bool coleco_read_exact(File& file, void* data, size_t size) {
+    if (!data && size != 0) {
+        return false;
+    }
+    return file.read(static_cast<uint8_t*>(data), size) == size;
+}
+
+static bool coleco_sd_root_accessible(void) {
+    File root = SD.open("/");
+    const bool ok = root && root.isDirectory();
+    if (root) {
+        root.close();
+    }
+    return ok;
+}
+
+static bool coleco_prepare_sd_for_state(SdService& sd) {
+    coleco_video_prepare_sd_access();
+    delay(5);
+
+    const bool mounted = sd.getSdState();
+    std::printf("[COLECO][STATE] SD prep heap=%u largest=%u mounted=%s\n",
+                static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_8BIT)),
+                static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_8BIT)),
+                mounted ? "yes" : "no");
+
+    if (coleco_sd_root_accessible()) {
+        std::printf("[COLECO][STATE] SD ready (existing mount) heap=%u largest=%u\n",
+                    static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_8BIT)),
+                    static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_8BIT)));
+        return true;
+    }
+
+    if (mounted) {
+        std::printf("[COLECO][STATE] SD root probe failed; keeping existing mount state\n");
+        return false;
+    }
+
+    const bool ok = sd.begin();
+    std::printf("[COLECO][STATE] SD %s heap=%u largest=%u\n",
+                ok ? "ready" : "remount failed",
+                static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_8BIT)),
+                static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_8BIT)));
+    return ok;
+}
+
+static bool coleco_core_save_state(ColecoCpuState* cpu, ColecoMemoryState* mem, ColecoVdpState* vdp, SN76489* psg, const char* path) {
+    if (!cpu || !mem || !vdp || !psg || !path || path[0] == '\0') {
+        return false;
+    }
+
+    share::setGameIsSaving(true);
+    std::printf("[COLECO][STATE] Saving state to %s\n", path);
+
+    File f = SD.open(path, FILE_WRITE);
+    if (!f) {
+        std::printf("[COLECO][STATE] Error: could not open file for writing\n");
+        share::setGameIsSaving(false);
+        return false;
+    }
+
+    uint32_t magic = 0x4C4F4300; // 'COL\0'
+
+    bool ok = true;
+    ok = ok && coleco_write_exact(f, &magic, sizeof(magic));
+    ok = ok && coleco_write_exact(f, cpu, sizeof(ColecoCpuState));
+    ok = ok && coleco_write_exact(f, mem->ram, sizeof(mem->ram));
+    ok = ok && coleco_write_exact(f, &mem->joyMode, sizeof(mem->joyMode));
+    ok = ok && coleco_write_exact(f, vdp->regs, sizeof(vdp->regs));
+    ok = ok && coleco_write_exact(f, vdp->status, sizeof(vdp->status));
+    ok = ok && coleco_write_exact(f, &vdp->readBuffer, sizeof(vdp->readBuffer));
+    ok = ok && coleco_write_exact(f, vdp->paletteRaw, sizeof(vdp->paletteRaw));
+    ok = ok && coleco_write_exact(f, &vdp->address, sizeof(vdp->address));
+    ok = ok && coleco_write_exact(f, &vdp->latchedControl, sizeof(vdp->latchedControl));
+    ok = ok && coleco_write_exact(f, &vdp->paletteLatch, sizeof(vdp->paletteLatch));
+    ok = ok && coleco_write_exact(f, &vdp->palettePending, sizeof(vdp->palettePending));
+    ok = ok && coleco_write_exact(f, &vdp->controlPending, sizeof(vdp->controlPending));
+    ok = ok && coleco_write_exact(f, &vdp->frameCounter, sizeof(vdp->frameCounter));
+    ok = ok && coleco_write_exact(f, &vdp->mode, sizeof(vdp->mode));
+    ok = ok && coleco_write_exact(f, &vdp->command, sizeof(vdp->command));
+    ok = ok && coleco_write_exact(f, vdp->vram, vdp->vramSize);
+    ok = ok && coleco_write_exact(f, psg, sizeof(SN76489));
+    ok = ok && coleco_write_exact(f, g_psg_ch, sizeof(g_psg_ch));
+
+    f.flush();
+    f.close();
+    share::setGameIsSaving(false);
+
+    std::printf("[COLECO][STATE] Save %s\n", ok ? "completed successfully" : "failed while writing");
+    return ok;
+}
+
+static bool coleco_core_load_state(ColecoCpuState* cpu, ColecoMemoryState* mem, ColecoVdpState* vdp, SN76489* psg, const char* path) {
+    if (!cpu || !mem || !vdp || !psg || !path || path[0] == '\0') {
+        return false;
+    }
+
+    std::printf("[COLECO][STATE] Loading state from %s\n", path);
+    File f = SD.open(path, FILE_READ);
+    if (!f) {
+        std::printf("[COLECO][STATE] Error: could not open file for reading\n");
+        return false;
+    }
+
+    uint32_t magic = 0;
+    if (!coleco_read_exact(f, &magic, sizeof(magic))) {
+        std::printf("[COLECO][STATE] Error: could not read magic\n");
+        f.close();
+        return false;
+    }
+    if (magic != 0x4C4F4300) {
+        std::printf("[COLECO][STATE] Error: invalid magic signature %08X\n", static_cast<unsigned>(magic));
+        f.close();
+        return false;
+    }
+
+    bool ok = true;
+    ok = ok && coleco_read_exact(f, cpu, sizeof(ColecoCpuState));
+    ok = ok && coleco_read_exact(f, mem->ram, sizeof(mem->ram));
+    ok = ok && coleco_read_exact(f, &mem->joyMode, sizeof(mem->joyMode));
+    ok = ok && coleco_read_exact(f, vdp->regs, sizeof(vdp->regs));
+    ok = ok && coleco_read_exact(f, vdp->status, sizeof(vdp->status));
+    ok = ok && coleco_read_exact(f, &vdp->readBuffer, sizeof(vdp->readBuffer));
+    ok = ok && coleco_read_exact(f, vdp->paletteRaw, sizeof(vdp->paletteRaw));
+    ok = ok && coleco_read_exact(f, &vdp->address, sizeof(vdp->address));
+    ok = ok && coleco_read_exact(f, &vdp->latchedControl, sizeof(vdp->latchedControl));
+    ok = ok && coleco_read_exact(f, &vdp->paletteLatch, sizeof(vdp->paletteLatch));
+    ok = ok && coleco_read_exact(f, &vdp->palettePending, sizeof(vdp->palettePending));
+    ok = ok && coleco_read_exact(f, &vdp->controlPending, sizeof(vdp->controlPending));
+    ok = ok && coleco_read_exact(f, &vdp->frameCounter, sizeof(vdp->frameCounter));
+    ok = ok && coleco_read_exact(f, &vdp->mode, sizeof(vdp->mode));
+    ok = ok && coleco_read_exact(f, &vdp->command, sizeof(vdp->command));
+    ok = ok && coleco_read_exact(f, vdp->vram, vdp->vramSize);
+    void (*savedSound)(int,int,int) = psg->Sound;
+    ok = ok && coleco_read_exact(f, psg, sizeof(SN76489));
+    psg->Sound = savedSound; // Keep active function pointer intact
+    ok = ok && coleco_read_exact(f, g_psg_ch, sizeof(g_psg_ch));
+    f.close();
+
+    if (!ok) {
+        std::printf("[COLECO][STATE] Load failed while reading\n");
+        return false;
+    }
+
+    vdp->dirty = true;
+    for (uint8_t i = 0; i < 16u; ++i) {
+        coleco_vdp_apply_palette_entry(vdp, i);
+    }
+    std::printf("[COLECO][STATE] Load completed successfully\n");
+    return true;
+}
 
 static void psg_sound_callback(int C, int F, int V) {
     // We handle PSG natively in run_coleco via coleco_sound_submit
@@ -200,7 +415,8 @@ void run_coleco(const uint8_t* romData, size_t romLen, const char* romName, SdSe
 
     while (!quitRequested) {
         int64_t nowUs = esp_timer_get_time();
-        if (nowUs > nextFrameTimeUs) {
+        const int64_t frameLatenessUs = nowUs - nextFrameTimeUs;
+        if (frameLatenessUs > targetFrameTimeUs) {
             g_emu_skip_video = true;
             if (nowUs > nextFrameTimeUs + targetFrameTimeUs * 2) {
                 nextFrameTimeUs = nowUs; // Avoid death spiral if severely lagged
@@ -254,23 +470,87 @@ void run_coleco(const uint8_t* romData, size_t romLen, const char* romName, SdSe
         
         prevToggleViewRequested = inputState.toggleViewRequested;
 
-        cycleBudget += CYCLES_PER_FRAME;
-        
-        while (cycleBudget > 0) {
-            int executed = coleco_cpu_run_cycles(&cpu, &memory, 100);
-            cycleBudget -= executed;
-            
-            if (cycleBudget <= 0) {
-                bool fire_int = coleco_vdp_begin_frame(&vdp);
-                if (fire_int) {
-                    if (isColeco) {
-                        cpu.nmiPending = true; // I giochi ColecoVision attendono il VBLANK via NMI
-                    } else {
-                        cpu.irqPending = true; // I giochi MSX usano il normale IRQ
+        if (coleco_input_get_save_requested()) {
+            coleco_draw_osd_message("SAVING STATE...", useExternal);
+            bool saved = false;
+            bool savedToRoot = false;
+
+            if (coleco_prepare_sd_for_state(sd)) {
+                const uint8_t stateSlot = coleco_input_get_state_slot();
+                String path = coleco_get_savestate_path(romName, stateSlot);
+                if (coleco_core_save_state(&cpu, &memory, &vdp, &psg, path.c_str())) {
+                    saved = true;
+                } else {
+                    String fallbackPath = "/coleco_slot" + String(stateSlot) + ".sav";
+                    std::printf("[COLECO][STATE] Fallback path: %s\n", fallbackPath.c_str());
+                    if (coleco_core_save_state(&cpu, &memory, &vdp, &psg, fallbackPath.c_str())) {
+                        saved = true;
+                        savedToRoot = true;
                     }
                 }
             }
+
+            if (saved) {
+                M5Cardputer.Speaker.tone(3000, 100);
+                coleco_draw_osd_message(savedToRoot ? "SAVED TO ROOT" : "STATE SAVED", useExternal);
+            } else {
+                coleco_draw_osd_message("SAVE FAILED", useExternal);
+            }
+            delay(500);
+            coleco_video_request_full_redraw();
         }
+
+        if (coleco_input_get_load_requested()) {
+            coleco_draw_osd_message("LOADING STATE...", useExternal);
+            bool loaded = false;
+            bool loadedFromRoot = false;
+
+            if (coleco_prepare_sd_for_state(sd)) {
+                const uint8_t stateSlot = coleco_input_get_state_slot();
+                String path = coleco_get_savestate_path(romName, stateSlot);
+                if (coleco_core_load_state(&cpu, &memory, &vdp, &psg, path.c_str())) {
+                    loaded = true;
+                } else {
+                    String fallbackPath = "/coleco_slot" + String(stateSlot) + ".sav";
+                    if (coleco_core_load_state(&cpu, &memory, &vdp, &psg, fallbackPath.c_str())) {
+                        loaded = true;
+                        loadedFromRoot = true;
+                    }
+                }
+            }
+
+            if (loaded) {
+                M5Cardputer.Speaker.tone(3000, 100);
+                coleco_draw_osd_message(loadedFromRoot ? "LOADED FROM ROOT" : "STATE LOADED", useExternal);
+            } else {
+                coleco_draw_osd_message("LOAD FAILED", useExternal);
+            }
+            delay(500);
+            coleco_video_request_full_redraw();
+        }
+
+        const bool menuPaused = inputState.menuVisible;
+        coleco_sound_set_paused(menuPaused);
+
+        if (!menuPaused) {
+            cycleBudget += CYCLES_PER_FRAME;
+
+            while (cycleBudget > 0) {
+                int executed = coleco_cpu_run_cycles(&cpu, &memory, 100);
+                cycleBudget -= executed;
+
+                if (cycleBudget <= 0) {
+                    bool fire_int = coleco_vdp_begin_frame(&vdp);
+                    if (fire_int) {
+                        if (isColeco) {
+                            cpu.nmiPending = true; // I giochi ColecoVision attendono il VBLANK via NMI
+                        } else {
+                            cpu.irqPending = true; // I giochi MSX usano il normale IRQ
+                        }
+                    }
+                }
+            }
+        } // end if !menuPaused
 
         fpsFrameCount++;
         if (fpsFrameCount >= 60) {
@@ -359,6 +639,14 @@ void run_coleco(const uint8_t* romData, size_t romLen, const char* romName, SdSe
                 buf[i] = mix;
             }
             coleco_sound_end_mix(capacity);
+        }
+
+        int64_t loopEndUs = esp_timer_get_time();
+        int64_t lateness = loopEndUs - nextFrameTimeUs;
+        if (lateness < 0) {
+            share::sleep_until_us(nextFrameTimeUs);
+        } else {
+            taskYIELD();
         }
     }
 
