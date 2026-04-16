@@ -187,7 +187,10 @@ static const char* msx_display_runtime_menu_label(uint8_t index)
             case 1u: return "KEYBOARD";
             case 2u: return "VAUS";
             case 3u: return "VIEW";
-            case 4u: return "CLOSE";
+            case 4u: return "SELECT SLOT";
+            case 5u: return "SAVE SLOT";
+            case 6u: return "LOAD SLOT";
+            case 7u: return "CLOSE";
             default: return "";
         }
     } else {
@@ -208,8 +211,7 @@ static const char* msx_display_runtime_menu_label(uint8_t index)
 static const char* msx_display_runtime_menu_value(const MsxInputOverlayState& overlay, uint8_t index)
 {
     static char slotStr[8];
-    uint8_t mappedIndex = msx_display_game_on_external() ? (index == 4 ? 7 : index) : index;
-    switch (mappedIndex) {
+    switch (index) {
         case 0u:
             return overlay.joystickEnabled ? "ON" : "OFF";
         case 1u:
@@ -399,7 +401,7 @@ void msx_display_submit_frame(const MsxDisplayFrame* frame, const MsxDisplayStat
             if (currentViewMode != s_lastViewMode) {
                 msx_display_draw_runtime_menu_row(overlay, 3u);
             }
-            if (currentStateSlot != s_lastStateSlot && !msx_display_game_on_external()) {
+            if (currentStateSlot != s_lastStateSlot) {
                 msx_display_draw_runtime_menu_row(overlay, 4u);
             }
         }

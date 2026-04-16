@@ -85,7 +85,7 @@ static bool msx_view_toggle_allowed(void)
 
 static uint8_t msx_get_menu_item_count(void)
 {
-    return msx_view_toggle_allowed() ? 8 : 5;
+    return 8;
 }
 
 static MsxRuntimeMenuItem msx_get_menu_item(uint8_t index)
@@ -96,7 +96,10 @@ static MsxRuntimeMenuItem msx_get_menu_item(uint8_t index)
             case 1: return MsxRuntimeMenuItem::Keyboard;
             case 2: return MsxRuntimeMenuItem::Vaus;
             case 3: return MsxRuntimeMenuItem::View;
-            case 4: return MsxRuntimeMenuItem::Close;
+            case 4: return MsxRuntimeMenuItem::StateSlot;
+            case 5: return MsxRuntimeMenuItem::SaveState;
+            case 6: return MsxRuntimeMenuItem::LoadState;
+            case 7: return MsxRuntimeMenuItem::Close;
             default: return MsxRuntimeMenuItem::Close;
         }
     }

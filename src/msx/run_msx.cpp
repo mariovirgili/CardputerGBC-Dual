@@ -12,6 +12,7 @@
 
 #include "cardputer/CardputerInput.h"
 #include "cardputer/CardputerView.h"
+#include "cardputer/SdService.h"
 #include "core/msx_core.h"
 #include "core/msx_disk.h"
 #include "esp_timer.h"
@@ -469,11 +470,14 @@ static String msx_get_savestate_path(const char* romName, uint8_t slot) {
 
 static void msx_draw_osd_message(const char* msg, bool useExternal) {
     if (useExternal) {
+        msx_video_lock();
+        msx_video_prepare_external_ui();
         auto& tft = msx_video_external_tft();
         tft.fillRoundRect(80, 105, 160, 30, 4, TFT_BLACK);
         tft.drawRoundRect(80, 105, 160, 30, 4, PRIMARY_COLOR);
         tft.setTextColor(TFT_WHITE, TFT_BLACK);
         tft.drawCentreString(msg, 160, 113, 2);
+        msx_video_unlock();
     } else {
         M5Cardputer.Display.fillRoundRect(60, 57, 120, 20, 4, TFT_BLACK);
         M5Cardputer.Display.drawRoundRect(60, 57, 120, 20, 4, PRIMARY_COLOR);
@@ -482,9 +486,135 @@ static void msx_draw_osd_message(const char* msg, bool useExternal) {
     }
 }
 
+static void msx_begin_state_overlay(bool useExternal)
+{
+    (void)useExternal;
+    msx_video_lock();
+    msx_video_set_state_overlay_active(true);
+    msx_video_unlock();
+}
+
+static void msx_end_state_overlay(bool useExternal)
+{
+    msx_video_lock();
+    if (useExternal) {
+        msx_video_finish_external_ui();
+    }
+    msx_video_set_state_overlay_active(false);
+    msx_video_unlock();
+
+    msx_video_request_full_redraw();
+}
+
+static bool msx_sd_root_accessible(void)
+{
+    File root = SD.open("/");
+    const bool ok = root && root.isDirectory();
+    if (root) {
+        root.close();
+    }
+    return ok;
+}
+
+static bool msx_prepare_sd_for_state(SdService& sd)
+{
+    msx_video_prepare_sd_access();
+    delay(5);
+
+    const bool mounted = sd.getSdState();
+    std::printf("[MSX][STATE] SD prep heap=%u largest=%u mounted=%s\n",
+                static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_8BIT)),
+                static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_8BIT)),
+                mounted ? "yes" : "no");
+
+    if (msx_sd_root_accessible()) {
+        std::printf("[MSX][STATE] SD ready (existing mount) heap=%u largest=%u\n",
+                    static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_8BIT)),
+                    static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_8BIT)));
+        return true;
+    }
+
+    if (mounted) {
+        std::printf("[MSX][STATE] SD root probe failed; keeping existing mount state\n");
+        return false;
+    }
+
+    const bool ok = sd.begin();
+    std::printf("[MSX][STATE] SD %s heap=%u largest=%u\n",
+                ok ? "ready" : "remount failed",
+                static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_8BIT)),
+                static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_8BIT)));
+    return ok;
+}
+
+static void msx_handle_save_state(MsxCoreState* core, const char* stateName, bool useExternal, SdService& sd)
+{
+    msx_begin_state_overlay(useExternal);
+    msx_draw_osd_message("SAVING STATE...", useExternal);
+    bool saved = false;
+    bool savedToRoot = false;
+
+    if (msx_prepare_sd_for_state(sd)) {
+        const uint8_t stateSlot = msx_input_get_state_slot();
+        String path = msx_get_savestate_path(stateName, stateSlot);
+        if (msx_core_save_state(core, path.c_str())) {
+            saved = true;
+        } else {
+            String fallbackPath = "/msx_slot" + String(stateSlot) + ".sav";
+            std::printf("[MSX][STATE] Fallback path: %s\n", fallbackPath.c_str());
+            if (msx_core_save_state(core, fallbackPath.c_str())) {
+                saved = true;
+                savedToRoot = true;
+            }
+        }
+    }
+
+    if (saved) {
+        M5Cardputer.Speaker.tone(3000, 100);
+        msx_draw_osd_message(savedToRoot ? "SAVED TO ROOT" : "STATE SAVED", useExternal);
+    } else {
+        msx_draw_osd_message("SAVE FAILED", useExternal);
+    }
+
+    delay(500);
+    msx_end_state_overlay(useExternal);
+}
+
+static void msx_handle_load_state(MsxCoreState* core, const char* stateName, bool useExternal, SdService& sd)
+{
+    msx_begin_state_overlay(useExternal);
+    msx_draw_osd_message("LOADING STATE...", useExternal);
+    bool loaded = false;
+    bool loadedFromRoot = false;
+
+    if (msx_prepare_sd_for_state(sd)) {
+        const uint8_t stateSlot = msx_input_get_state_slot();
+        String path = msx_get_savestate_path(stateName, stateSlot);
+        if (msx_core_load_state(core, path.c_str())) {
+            loaded = true;
+        } else {
+            String fallbackPath = "/msx_slot" + String(stateSlot) + ".sav";
+            if (msx_core_load_state(core, fallbackPath.c_str())) {
+                loaded = true;
+                loadedFromRoot = true;
+            }
+        }
+    }
+
+    if (loaded) {
+        M5Cardputer.Speaker.tone(3000, 100);
+        msx_draw_osd_message(loadedFromRoot ? "LOADED FROM ROOT" : "STATE LOADED", useExternal);
+    } else {
+        msx_draw_osd_message("LOAD FAILED", useExternal);
+    }
+
+    delay(500);
+    msx_end_state_overlay(useExternal);
+}
+
 } // namespace
 
-void run_msx(const uint8_t* romData, size_t romLen, const char* romName)
+void run_msx(const uint8_t* romData, size_t romLen, const char* romName, SdService& sd)
 {
     const bool useExternal = (g_emu_display_target == EMU_DISPLAY_EXTERNAL);
     MsxViewModeOverrideGuard viewModeGuard;
@@ -591,42 +721,11 @@ void run_msx(const uint8_t* romData, size_t romLen, const char* romName)
         }
 
         if (msx_input_get_save_requested()) {
-            msx_draw_osd_message("SAVING STATE...", useExternal);
-            String path = msx_get_savestate_path(romName, msx_input_get_state_slot());
-            if (msx_core_save_state(&core, path.c_str())) {
-                M5Cardputer.Speaker.tone(3000, 100);
-                msx_draw_osd_message("STATE SAVED", useExternal);
-            } else {
-                String fallbackPath = "/msx_slot" + String(msx_input_get_state_slot()) + ".sav";
-                std::printf("[MSX][STATE] Fallback path: %s\n", fallbackPath.c_str());
-                if (msx_core_save_state(&core, fallbackPath.c_str())) {
-                    M5Cardputer.Speaker.tone(3000, 100);
-                    msx_draw_osd_message("SAVED TO ROOT", useExternal);
-                } else {
-                    msx_draw_osd_message("SAVE FAILED", useExternal);
-                }
-            }
-            delay(500);
-            msx_video_request_full_redraw();
+            msx_handle_save_state(&core, romName, useExternal, sd);
         }
 
         if (msx_input_get_load_requested()) {
-            msx_draw_osd_message("LOADING STATE...", useExternal);
-            String path = msx_get_savestate_path(romName, msx_input_get_state_slot());
-            if (msx_core_load_state(&core, path.c_str())) {
-                M5Cardputer.Speaker.tone(3000, 100);
-                msx_draw_osd_message("STATE LOADED", useExternal);
-            } else {
-                String fallbackPath = "/msx_slot" + String(msx_input_get_state_slot()) + ".sav";
-                if (msx_core_load_state(&core, fallbackPath.c_str())) {
-                    M5Cardputer.Speaker.tone(3000, 100);
-                    msx_draw_osd_message("LOADED FROM ROOT", useExternal);
-                } else {
-                    msx_draw_osd_message("LOAD FAILED", useExternal);
-                }
-            }
-            delay(500);
-            msx_video_request_full_redraw();
+            msx_handle_load_state(&core, romName, useExternal, sd);
         }
 
         const bool menuPaused = input.menuVisible;
@@ -741,7 +840,7 @@ void run_msx(const uint8_t* romData, size_t romLen, const char* romName)
 
 // ---------------------------------------------------------------------------
 
-void run_msx_disk(const uint8_t* dskData, size_t dskLen, const char* dskName)
+void run_msx_disk(const uint8_t* dskData, size_t dskLen, const char* dskName, SdService& sd)
 {
     std::printf("[MSX] launch dsk: name=%s size=%u\n",
                 dskName && dskName[0] != '\0' ? dskName : "(unnamed)",
@@ -850,42 +949,11 @@ void run_msx_disk(const uint8_t* dskData, size_t dskLen, const char* dskName)
         }
 
         if (msx_input_get_save_requested()) {
-            msx_draw_osd_message("SAVING STATE...", useExternal);
-            String path = msx_get_savestate_path(dskName, msx_input_get_state_slot());
-            if (msx_core_save_state(&core, path.c_str())) {
-                M5Cardputer.Speaker.tone(3000, 100);
-                msx_draw_osd_message("STATE SAVED", useExternal);
-            } else {
-                String fallbackPath = "/msx_slot" + String(msx_input_get_state_slot()) + ".sav";
-                std::printf("[MSX][STATE] Fallback path: %s\n", fallbackPath.c_str());
-                if (msx_core_save_state(&core, fallbackPath.c_str())) {
-                    M5Cardputer.Speaker.tone(3000, 100);
-                    msx_draw_osd_message("SAVED TO ROOT", useExternal);
-                } else {
-                    msx_draw_osd_message("SAVE FAILED", useExternal);
-                }
-            }
-            delay(500);
-            msx_video_request_full_redraw();
+            msx_handle_save_state(&core, dskName, useExternal, sd);
         }
 
         if (msx_input_get_load_requested()) {
-            msx_draw_osd_message("LOADING STATE...", useExternal);
-            String path = msx_get_savestate_path(dskName, msx_input_get_state_slot());
-            if (msx_core_load_state(&core, path.c_str())) {
-                M5Cardputer.Speaker.tone(3000, 100);
-                msx_draw_osd_message("STATE LOADED", useExternal);
-            } else {
-                String fallbackPath = "/msx_slot" + String(msx_input_get_state_slot()) + ".sav";
-                if (msx_core_load_state(&core, fallbackPath.c_str())) {
-                    M5Cardputer.Speaker.tone(3000, 100);
-                    msx_draw_osd_message("LOADED FROM ROOT", useExternal);
-                } else {
-                    msx_draw_osd_message("LOAD FAILED", useExternal);
-                }
-            }
-            delay(500);
-            msx_video_request_full_redraw();
+            msx_handle_load_state(&core, dskName, useExternal, sd);
         }
 
         const bool menuPaused = input.menuVisible;
@@ -996,7 +1064,7 @@ void run_msx_disk(const uint8_t* dskData, size_t dskLen, const char* dskName)
 
 // ---------------------------------------------------------------------------
 
-void run_msx_basic(const char* name)
+void run_msx_basic(const char* name, SdService& sd)
 {
     const bool useExternal = (g_emu_display_target == EMU_DISPLAY_EXTERNAL);
     MsxViewModeOverrideGuard viewModeGuard;
@@ -1085,42 +1153,11 @@ void run_msx_basic(const char* name)
         }
 
         if (msx_input_get_save_requested()) {
-            msx_draw_osd_message("SAVING STATE...", useExternal);
-            String path = msx_get_savestate_path(name, msx_input_get_state_slot());
-            if (msx_core_save_state(&core, path.c_str())) {
-                M5Cardputer.Speaker.tone(3000, 100);
-                msx_draw_osd_message("STATE SAVED", useExternal);
-            } else {
-                String fallbackPath = "/msx_slot" + String(msx_input_get_state_slot()) + ".sav";
-                std::printf("[MSX][STATE] Fallback path: %s\n", fallbackPath.c_str());
-                if (msx_core_save_state(&core, fallbackPath.c_str())) {
-                    M5Cardputer.Speaker.tone(3000, 100);
-                    msx_draw_osd_message("SAVED TO ROOT", useExternal);
-                } else {
-                    msx_draw_osd_message("SAVE FAILED", useExternal);
-                }
-            }
-            delay(500);
-            msx_video_request_full_redraw();
+            msx_handle_save_state(&core, name, useExternal, sd);
         }
 
         if (msx_input_get_load_requested()) {
-            msx_draw_osd_message("LOADING STATE...", useExternal);
-            String path = msx_get_savestate_path(name, msx_input_get_state_slot());
-            if (msx_core_load_state(&core, path.c_str())) {
-                M5Cardputer.Speaker.tone(3000, 100);
-                msx_draw_osd_message("STATE LOADED", useExternal);
-            } else {
-                String fallbackPath = "/msx_slot" + String(msx_input_get_state_slot()) + ".sav";
-                if (msx_core_load_state(&core, fallbackPath.c_str())) {
-                    M5Cardputer.Speaker.tone(3000, 100);
-                    msx_draw_osd_message("LOADED FROM ROOT", useExternal);
-                } else {
-                    msx_draw_osd_message("LOAD FAILED", useExternal);
-                }
-            }
-            delay(500);
-            msx_video_request_full_redraw();
+            msx_handle_load_state(&core, name, useExternal, sd);
         }
 
         const bool menuPaused = input.menuVisible;

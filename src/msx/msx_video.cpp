@@ -67,6 +67,7 @@ static bool s_extTftColorModeKnown = false;
 static bool s_extTftClockLogged = false;
 static bool s_externalUiActive = false;
 static bool s_runtimeMenuActive = false;
+static bool s_stateOverlayActive = false;
 
 static uint32_t s_spiPushFrames = 0;
 static uint32_t s_spiPushUs = 0;
@@ -163,6 +164,25 @@ void msx_video_reset_layout_cache(void)
     s_lastRoiH = -1;
     s_lastXOff = -1;
     s_lastYOff = -1;
+}
+
+void msx_video_release_scratch_buffers(void)
+{
+    free(s_lineBuf);
+    s_lineBuf = nullptr;
+    s_lineCap = 0;
+
+    free(s_lineBuf12);
+    s_lineBuf12 = nullptr;
+    s_lineBuf12Cap = 0;
+
+    free(s_xmap);
+    s_xmap = nullptr;
+    s_xmapCap = 0;
+
+    free(s_ymap);
+    s_ymap = nullptr;
+    s_ymapCap = 0;
 }
 
 void msx_video_clear_target(void)
@@ -573,24 +593,10 @@ void msx_video_init(void)
 
 void msx_video_shutdown(void)
 {
-    free(s_lineBuf);
-    s_lineBuf = nullptr;
-    s_lineCap = 0;
-
-    free(s_lineBuf12);
-    s_lineBuf12 = nullptr;
-    s_lineBuf12Cap = 0;
-
-    free(s_xmap);
-    s_xmap = nullptr;
-    s_xmapCap = 0;
-
-    free(s_ymap);
-    s_ymap = nullptr;
-    s_ymapCap = 0;
-
+    msx_video_release_scratch_buffers();
     s_extTftColorModeKnown = false;
     s_externalUiActive = false;
+    s_stateOverlayActive = false;
     msx_video_reset_layout_cache();
 }
 
@@ -639,9 +645,6 @@ void msx_video_finish_external_ui(void)
         return;
     }
 
-    if (s_extTftPrepared) {
-        s_extTft.fillScreen(TFT_BLACK);
-    }
     s_externalUiActive = false;
     s_extTftColorModeKnown = false;
 }
@@ -663,11 +666,38 @@ void msx_video_set_runtime_menu_active(bool active)
     s_runtimeMenuActive = active;
 }
 
+void msx_video_set_state_overlay_active(bool active)
+{
+    s_stateOverlayActive = active;
+}
+
+void msx_video_prepare_sd_access(void)
+{
+    msx_video_lock();
+
+    if (s_extTftPrepared) {
+        s_extTft.endWrite();
+#if defined(TFT_CS) && (TFT_CS >= 0)
+        pinMode(TFT_CS, OUTPUT);
+        digitalWrite(TFT_CS, HIGH);
+#endif
+        s_extTftPrepared = false;
+        s_extTftColorModeKnown = false;
+        s_extTftRgb444Configured = false;
+        s_externalUiActive = false;
+    }
+
+    msx_video_release_scratch_buffers();
+    s_firstPresentLogged = false;
+
+    msx_video_unlock();
+}
+
 bool msx_video_present_frame(const MsxDisplayFrame* frame)
 {
     msx_video_lock();
 
-    if (s_runtimeMenuActive) {
+    if (s_runtimeMenuActive || s_stateOverlayActive) {
         msx_video_unlock();
         return false;
     }

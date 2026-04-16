@@ -530,11 +530,11 @@ void setup() {
   // Run the emulator
   if (ext == ROM_TYPE_MSX) {
       // MSX cartridge ROM
-      run_msx(get_rom_ptr(), get_rom_size(), romName.c_str());
+      run_msx(get_rom_ptr(), get_rom_size(), romName.c_str(), sd);
   }
   else if (ext == ROM_TYPE_MSX_DISK) {
       // MSX disk image (.dsk) â€” ROM partition holds the DSK data via XIP
-      run_msx_disk(get_rom_ptr(), get_rom_size(), romName.c_str());
+      run_msx_disk(get_rom_ptr(), get_rom_size(), romName.c_str(), sd);
   }
   else if (ext == ROM_TYPE_COLECO) {
       // ColecoVision cartridge ROM
