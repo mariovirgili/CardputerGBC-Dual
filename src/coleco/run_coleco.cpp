@@ -506,9 +506,9 @@ void run_coleco(const uint8_t* romData, size_t romLen, const char* romName, SdSe
         else if (M5Cardputer.Keyboard.isKeyPressed('7')) joy_low = (joy_low & ~0x0F) | 7;
         else if (M5Cardputer.Keyboard.isKeyPressed('8')) joy_low = (joy_low & ~0x0F) | 8;
         else if (M5Cardputer.Keyboard.isKeyPressed('9')) joy_low = (joy_low & ~0x0F) | 9;
-        else if (M5Cardputer.Keyboard.isKeyPressed('0')) joy_low = (joy_low & ~0x0F) | 10;
-        else if (M5Cardputer.Keyboard.isKeyPressed('-')) joy_low = (joy_low & ~0x0F) | 11;
-        else if (M5Cardputer.Keyboard.isKeyPressed('=') || inputState.select) joy_low = (joy_low & ~0x0F) | 12;
+        else if (M5Cardputer.Keyboard.isKeyPressed('0')) joy_low = (joy_low & ~0x0F) | 0;
+        else if (M5Cardputer.Keyboard.isKeyPressed('-')) joy_low = (joy_low & ~0x0F) | 10;
+        else if (M5Cardputer.Keyboard.isKeyPressed('=') || inputState.select) joy_low = (joy_low & ~0x0F) | 11;
 
         if (inputState.fire2) joy_low &= ~0x40;
 

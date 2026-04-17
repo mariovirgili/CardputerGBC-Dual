@@ -17,6 +17,7 @@ struct MsxInputState {
     bool joystickMode;
     bool joystickEnabled;
     bool keyboardEnabled;
+    bool basicKeyboardEnabled;
     bool vausEnabled;
     bool menuVisible;
     bool quitRequested;
@@ -27,10 +28,19 @@ struct MsxInputOverlayState {
     bool menuVisible;
     bool joystickEnabled;
     bool keyboardEnabled;
+    bool basicKeyboardEnabled;
     bool vausEnabled;
+    bool casChangeAvailable;
     uint8_t selectedIndex;
 };
 
 void msx_input_init(void);
+void msx_input_set_basic_keyboard_enabled(bool enabled);
+void msx_input_set_cas_change_available(bool available);
 void msx_input_poll(MsxInputState* state);
 void msx_input_get_overlay_state(MsxInputOverlayState* state);
+uint8_t msx_input_get_state_slot(void);
+uint8_t msx_input_get_scroll_index(void);
+bool msx_input_get_save_requested(void);
+bool msx_input_get_load_requested(void);
+bool msx_input_get_change_cas_requested(void);

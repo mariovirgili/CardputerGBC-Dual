@@ -887,6 +887,85 @@ bool msx_core_init_disk(MsxCoreState* state,
     return true;
 }
 
+bool msx_core_init_cas(MsxCoreState* state,
+                       const MsxBiosBundle* bios,
+                       const uint8_t* casData, size_t casSize,
+                       const char* name,
+                       uint32_t audioSampleRate)
+{
+    if (!state || !bios || !bios->compatible) {
+        std::printf("[MSX] core init_cas failed: invalid bios\n");
+        return false;
+    }
+
+    std::memset(state, 0, sizeof(*state));
+    state->biosTarget = bios->target;
+    state->machineMode = msx_media_target_to_machine_mode(bios->target);
+    state->videoHookReady = true;
+    std::snprintf(state->romName, sizeof(state->romName),
+                  "%s", (name && name[0] != '\0') ? name : "MSX CAS");
+
+    std::printf("[MSX] core init_cas: bios begin\n");
+    if (!msx_bios_init(&state->bios, bios)) {
+        std::printf("[MSX] core init_cas failed at bios init\n");
+        return false;
+    }
+
+    std::memset(&state->cart, 0, sizeof(state->cart));
+
+    std::printf("[MSX] core init_cas: memory begin\n");
+    if (!msx_memory_init(&state->memory, state->machineMode, &state->bios, &state->cart, 0u)) {
+        std::printf("[MSX] core init_cas failed at memory init\n");
+        msx_bios_shutdown(&state->bios);
+        return false;
+    }
+
+    std::printf("[MSX] core init_cas: vdp begin\n");
+    if (!msx_vdp_init(&state->vdp, state->machineMode)) {
+        std::printf("[MSX] core init_cas failed at vdp init\n");
+        msx_memory_shutdown(&state->memory);
+        msx_bios_shutdown(&state->bios);
+        return false;
+    }
+
+    msx_cas_init(&state->cas, casData, casSize);
+    state->memory.cas = &state->cas;
+    std::printf("[MSX] core init_cas: cas size=%u ready=%s\n",
+                static_cast<unsigned>(casSize),
+                state->cas.ready ? "yes" : "no");
+
+    msx_core_init_audio(state, audioSampleRate);
+    msx_core_finish_no_cart_init(state);
+    msx_core_set_status(state,
+                        "CAS %s",
+                        msx_media_bios_target_label(state->biosTarget));
+    std::printf("[MSX] core init_cas ok\n");
+    return true;
+}
+
+bool msx_core_change_cas(MsxCoreState* state,
+                         const uint8_t* casData, size_t casSize,
+                         const char* name)
+{
+    if (!state || !state->initialized) {
+        std::printf("[MSX] core change_cas failed: core not initialized\n");
+        return false;
+    }
+
+    msx_cas_init(&state->cas, casData, casSize);
+    state->memory.cas = &state->cas;
+    std::snprintf(state->romName, sizeof(state->romName),
+                  "%s", (name && name[0] != '\0') ? name : "MSX CAS");
+    msx_core_set_status(state,
+                        "CAS %s",
+                        state->cas.ready ? "changed" : "not ready");
+    std::printf("[MSX] core change_cas: name=%s size=%u ready=%s\n",
+                state->romName,
+                static_cast<unsigned>(casSize),
+                state->cas.ready ? "yes" : "no");
+    return state->cas.ready;
+}
+
 bool msx_core_save_state(MsxCoreState* state, const char* path)
 {
     if (!state) return false;
@@ -957,6 +1036,7 @@ bool msx_core_load_state(MsxCoreState* state, const char* path)
     const uint8_t* biosSub = state->memory.bios.subRom;
     const uint8_t* cartRom = state->memory.cart.rom;
     const uint8_t* diskDsk = state->disk.dskData;
+    MsxCasState casState = state->cas;
 
     f.read((uint8_t*)&state->cpu, sizeof(MsxCpuState));
     f.read((uint8_t*)&state->vdp, sizeof(MsxVdpState));
@@ -980,6 +1060,8 @@ bool msx_core_load_state(MsxCoreState* state, const char* path)
     state->memory.cart.rom = cartRom;
     state->cart.rom = cartRom;
     state->disk.dskData = diskDsk;
+    state->cas = casState;
+    state->memory.cas = &state->cas;
 
     if (state->vdp.vramSize > 0) {
         f.read(state->vdp.vram, state->vdp.vramSize);

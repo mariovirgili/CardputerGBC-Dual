@@ -69,3 +69,21 @@ struct MsxMemoryState;
 void    msx_disk_bios_patch_handler(struct MsxCpuState* cpu,
                                     struct MsxMemoryState* memory,
                                     uint16_t patchAddress);
+
+// ---------------------------------------------------------------------------
+// CAS cassette tape support
+// ---------------------------------------------------------------------------
+
+// Standard MSX cassette block header signature (8 bytes).
+extern const uint8_t kMsxCasHeader[8];
+
+// State for a loaded CAS image (read-only; data is XIP-mapped or in RAM).
+struct MsxCasState {
+    const uint8_t* casData;   // pointer to CAS file bytes (may be nullptr)
+    size_t         casSize;   // total size in bytes
+    size_t         casPos;    // current read position
+    bool           ready;     // initialised with valid data
+};
+
+// Initialise the CAS state from a raw data pointer (does not copy).
+void msx_cas_init(MsxCasState* state, const uint8_t* data, size_t size);

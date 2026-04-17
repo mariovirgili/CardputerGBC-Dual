@@ -1038,7 +1038,7 @@ uint16_t CardputerView::colorForExt(const std::string& extRaw) const {
     if (ext == ".lnx") return LYNX_COLOR;
     if (ext == ".a26") return LYNX_COLOR;
     if (ext == ".a78") return LYNX_COLOR;
-    if (ext == ".rom" || ext == ".dsk") return PRIMARY_COLOR;
+    if (ext == ".rom" || ext == ".dsk" || ext == ".cas") return PRIMARY_COLOR;
     if (ext == ".col") return COLECO_COLOR;
     if (ext == ".sfc" || ext == ".smc") return SNES_COLOR;
 
@@ -1083,7 +1083,7 @@ void CardputerView::showValidExt(const std::vector<std::string>& exts) {
         return false;
     };
 
-    const bool showSystemRows = hasExt(".col") && (hasExt(".rom") || hasExt(".dsk"));
+    const bool showSystemRows = hasExt(".col") && (hasExt(".rom") || hasExt(".dsk") || hasExt(".cas"));
     if (showSystemRows) {
         struct SystemRow {
             const char* label;
@@ -1094,6 +1094,7 @@ void CardputerView::showValidExt(const std::vector<std::string>& exts) {
         std::vector<std::string> msxExts;
         if (hasExt(".rom")) msxExts.push_back(".ROM");
         if (hasExt(".dsk")) msxExts.push_back(".DSK");
+        if (hasExt(".cas")) msxExts.push_back(".CAS");
         if (!msxExts.empty()) {
             systemRows.push_back({"MSX:", msxExts});
         }

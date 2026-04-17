@@ -43,6 +43,7 @@ struct MsxCoreState {
     MsxBiosState bios;
     MsxCartState cart;
     MsxDiskState disk;
+    MsxCasState cas;
     MsxMemoryState memory;
     MsxVdpState vdp;
     MsxPsgState psg;
@@ -66,6 +67,18 @@ bool msx_core_init_disk(MsxCoreState* state,
                         const uint8_t* dskData, size_t dskSize,
                         const char* name,
                         uint32_t audioSampleRate);
+
+// Launch MSX BASIC with a CAS cassette tape image attached.
+// casData/casSize point to the raw CAS file (XIP-mapped or in RAM).
+bool msx_core_init_cas(MsxCoreState* state,
+                       const MsxBiosBundle* bios,
+                       const uint8_t* casData, size_t casSize,
+                       const char* name,
+                       uint32_t audioSampleRate);
+
+bool msx_core_change_cas(MsxCoreState* state,
+                         const uint8_t* casData, size_t casSize,
+                         const char* name);
 
 void msx_core_attach_disk_rom(MsxCoreState* state,
                               const uint8_t* diskRomData,

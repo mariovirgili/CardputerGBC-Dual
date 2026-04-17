@@ -7,15 +7,21 @@
 #include <SD.h>
 
 #include <cmath>
+#include <cctype>
 #include <cstdio>
 #include <cstring>
+#include <string>
+#include <utility>
+#include <vector>
 
 #include "cardputer/CardputerInput.h"
 #include "cardputer/CardputerView.h"
 #include "cardputer/SdService.h"
+#include "cardputer/VerticalSelector.h"
 #include "core/msx_core.h"
 #include "core/msx_disk.h"
 #include "esp_timer.h"
+#include "last_game.h"
 #include "msx_config.h"
 #include "msx_display.h"
 #include "msx_input.h"
@@ -28,6 +34,8 @@
 #include "share/emu_controls.h"
 #include "share/game_save.h"
 #include "share/utils.h"
+#include "vfs/rom_flash_io.h"
+#include "vfs/rom_xip.h"
 
 #ifndef MSX_RUN_LOG_ENABLED
 #define MSX_RUN_LOG_ENABLED 0
@@ -42,6 +50,7 @@
 extern uint8_t msx_input_get_state_slot(void);
 extern bool msx_input_get_save_requested(void);
 extern bool msx_input_get_load_requested(void);
+extern bool msx_input_get_change_cas_requested(void);
 bool msx_core_save_state(MsxCoreState* state, const char* path);
 bool msx_core_load_state(MsxCoreState* state, const char* path);
 
@@ -127,6 +136,158 @@ const char* msx_file_label(const char* path)
     }
 
     return base ? base + 1 : path;
+}
+
+static bool msx_path_has_cas_ext(const std::string& path)
+{
+    const size_t dot = path.find_last_of('.');
+    if (dot == std::string::npos || dot + 1 >= path.size()) {
+        return false;
+    }
+
+    std::string ext = path.substr(dot + 1);
+    for (char& ch : ext) {
+        ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+    }
+    return ext == "cas";
+}
+
+static std::string msx_join_browser_path(const std::string& folder, const std::string& entry)
+{
+    if (folder.empty() || folder == "/") {
+        return "/" + entry;
+    }
+    if (folder.back() == '/') {
+        return folder + entry;
+    }
+    return folder + "/" + entry;
+}
+
+static std::string msx_sd_open_string(const std::string& path)
+{
+    return msx_sd_open_path(path.c_str());
+}
+
+static std::string msx_cas_display_path_from_browser_path(const std::string& browserPath)
+{
+    if (browserPath.rfind("/sd/", 0) == 0 || browserPath == "/sd") {
+        return browserPath;
+    }
+    return "/sd" + normalizeRomFolderPath(browserPath);
+}
+
+static std::string msx_initial_cas_display_path(const char* casName)
+{
+    const std::string savedPath = getLastGamePathFromNvs();
+    if (!savedPath.empty() && msx_path_has_cas_ext(savedPath)) {
+        const char* savedLabel = msx_file_label(savedPath.c_str());
+        if (!casName || std::strcmp(savedLabel, casName) == 0) {
+            return savedPath;
+        }
+    }
+
+    return casName ? std::string(casName) : std::string();
+}
+
+static std::string msx_cas_title_without_extension(const char* casName)
+{
+    std::string title = msx_file_label(casName);
+    if (title.size() >= 4u) {
+        std::string ext = title.substr(title.size() - 4u);
+        for (char& ch : ext) {
+            ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+        }
+        if (ext == ".cas") {
+            title.resize(title.size() - 4u);
+        }
+    }
+    return title.empty() ? std::string("MSX CAS") : title;
+}
+
+static void msx_trim_spaces_in_place(std::string& value)
+{
+    while (!value.empty() &&
+           std::isspace(static_cast<unsigned char>(value.front()))) {
+        value.erase(value.begin());
+    }
+    while (!value.empty() &&
+           std::isspace(static_cast<unsigned char>(value.back()))) {
+        value.pop_back();
+    }
+}
+
+static std::string msx_fit_title_line_no_ellipsis(const std::string& text, int maxWidth)
+{
+    std::string fitted = text;
+    auto& display = M5Cardputer.Display;
+    while (!fitted.empty() && display.textWidth(fitted.c_str()) > maxWidth) {
+        fitted.pop_back();
+    }
+    msx_trim_spaces_in_place(fitted);
+    return fitted;
+}
+
+static std::pair<std::string, std::string> msx_split_title_two_lines_no_ellipsis(const std::string& title,
+                                                                                 int maxWidth)
+{
+    auto& display = M5Cardputer.Display;
+    if (display.textWidth(title.c_str()) <= maxWidth) {
+        return {title, std::string()};
+    }
+
+    size_t split = std::string::npos;
+    for (size_t i = 1; i < title.size(); ++i) {
+        if (!std::isspace(static_cast<unsigned char>(title[i]))) {
+            continue;
+        }
+        const std::string candidate = title.substr(0, i);
+        if (display.textWidth(candidate.c_str()) <= maxWidth) {
+            split = i;
+        } else {
+            break;
+        }
+    }
+
+    std::string line1;
+    std::string line2;
+    if (split != std::string::npos) {
+        line1 = title.substr(0, split);
+        line2 = title.substr(split + 1);
+    } else {
+        line1 = msx_fit_title_line_no_ellipsis(title, maxWidth);
+        line2 = title.substr(line1.size());
+    }
+
+    msx_trim_spaces_in_place(line1);
+    msx_trim_spaces_in_place(line2);
+    line2 = msx_fit_title_line_no_ellipsis(line2, maxWidth);
+    return {line1, line2};
+}
+
+static void msx_draw_cas_help_title_two_lines(const std::string& title)
+{
+    auto& display = M5Cardputer.Display;
+    display.fillRect(0, 0, display.width(), TOP_BAR_HEIGHT, BACKGROUND_COLOR);
+    display.setFont(&fonts::Font0);
+    display.setTextSize(TEXT_SMALL);
+    display.setTextColor(TEXT_COLOR, BACKGROUND_COLOR);
+    display.setTextDatum(top_left);
+
+    const int maxWidth = display.width() - 8;
+    const auto lines = msx_split_title_two_lines_no_ellipsis(title, maxWidth);
+    const int centerX = display.width() / 2;
+
+    if (lines.second.empty()) {
+        const int x = (display.width() - display.textWidth(lines.first.c_str())) / 2;
+        display.drawString(lines.first.c_str(), x, 11);
+        return;
+    }
+
+    const int x1 = (display.width() - display.textWidth(lines.first.c_str())) / 2;
+    const int x2 = (display.width() - display.textWidth(lines.second.c_str())) / 2;
+    display.drawString(lines.first.c_str(), x1, 3);
+    display.drawString(lines.second.c_str(), x2, 16);
+    display.drawFastHLine(centerX - 12, 28, 24, PRIMARY_COLOR);
 }
 
 const MsxBiosImage* msx_find_problem_bios_image(const MsxBiosBundle* bios)
@@ -547,6 +708,189 @@ static bool msx_prepare_sd_for_state(SdService& sd)
     return ok;
 }
 
+static void msx_filter_cas_browser_elements(SdService& sd,
+                                            const std::string& folder,
+                                            std::vector<std::string>& elements)
+{
+    std::vector<std::string> filtered;
+    filtered.reserve(elements.size());
+    for (const std::string& name : elements) {
+        const std::string path = msx_join_browser_path(folder, name);
+        if (sd.isDirectory(path) || msx_path_has_cas_ext(name)) {
+            filtered.push_back(name);
+        }
+    }
+    elements.swap(filtered);
+}
+
+static bool msx_select_cas_file(SdService& sd,
+                                const std::string& currentCasPath,
+                                std::string* selectedDisplayPath,
+                                size_t* selectedSize)
+{
+    if (!selectedDisplayPath || !selectedSize) {
+        return false;
+    }
+
+    CardputerView display;
+    CardputerInput input;
+    VerticalSelector selector(display, input);
+    const std::vector<std::string> casExts = {".cas"};
+    const std::string normalizedCurrentPath = normalizeRomBrowserPath(currentCasPath);
+    const std::string originalFolder = extractRomFolder(normalizedCurrentPath);
+    const std::string originalName = msx_file_label(normalizedCurrentPath.c_str());
+    std::string currentFolder = originalFolder.empty() ? "/" : originalFolder;
+    std::string previousFolder;
+    std::vector<std::string> elements;
+
+    display.initialize();
+    input.flushInput(80);
+
+    while (true) {
+        if (currentFolder != previousFolder) {
+            display.topBar("CHANGE CAS", true, true);
+            display.subMessage("Loading tapes...", 0);
+            elements = sd.getCachedDirectoryElements(currentFolder, &casExts, 1024);
+            msx_filter_cas_browser_elements(sd, currentFolder, elements);
+            if (currentFolder != "/") {
+                elements.insert(elements.begin(), "..");
+            }
+            previousFolder = currentFolder;
+        }
+
+        if (elements.empty()) {
+            display.topBar("CHANGE CAS", true, false);
+            display.subMessage("No CAS files found", 1000);
+            input.flushInput(120);
+            return false;
+        }
+
+        int initialIndex = 0;
+        if (currentFolder == originalFolder) {
+            for (size_t i = 0; i < elements.size(); ++i) {
+                if (elements[i] == originalName) {
+                    initialIndex = static_cast<int>(i);
+                    break;
+                }
+            }
+        }
+
+        const int selected = selector.select(
+            currentFolder,
+            elements,
+            true,
+            true,
+            {},
+            {},
+            false,
+            false,
+            true,
+            initialIndex,
+            -1,
+            -1
+        );
+
+        if (selected < 0 || selected >= static_cast<int>(elements.size())) {
+            input.flushInput(120);
+            return false;
+        }
+
+        const std::string& entry = elements[static_cast<size_t>(selected)];
+        if (entry == "..") {
+            const std::string parent = sd.getParentDirectory(currentFolder);
+            currentFolder = parent.empty() ? "/" : parent;
+            previousFolder.clear();
+            continue;
+        }
+
+        const std::string browserPath = msx_join_browser_path(currentFolder, entry);
+        if (sd.isDirectory(browserPath)) {
+            currentFolder = browserPath;
+            previousFolder.clear();
+            continue;
+        }
+
+        if (!msx_path_has_cas_ext(browserPath)) {
+            display.subMessage("Select a .CAS file", 700);
+            input.flushInput(120);
+            continue;
+        }
+
+        display.topBar("CHANGE CAS", true, false);
+        display.subMessage("Preparing tape...", 0);
+        size_t casSize = 0;
+        if (!sd.getFileSize(browserPath, casSize) || casSize < 8u) {
+            display.subMessage("Invalid CAS file", 900);
+            input.flushInput(120);
+            continue;
+        }
+
+        *selectedDisplayPath = msx_cas_display_path_from_browser_path(browserPath);
+        *selectedSize = casSize;
+        input.flushInput(120);
+        return true;
+    }
+}
+
+static bool msx_handle_change_cas(MsxCoreState* core,
+                                  std::string& currentCasPath,
+                                  std::vector<uint8_t>& runtimeCasBuffer,
+                                  bool useExternal,
+                                  SdService& sd)
+{
+    msx_begin_state_overlay(useExternal);
+    msx_draw_osd_message("CHANGE CAS...", useExternal);
+
+    bool changed = false;
+    bool xipTouched = false;
+    std::string selectedPath;
+    size_t selectedSize = 0;
+
+    if (msx_prepare_sd_for_state(sd) &&
+        msx_select_cas_file(sd, currentCasPath, &selectedPath, &selectedSize)) {
+        const esp_partition_t* romPart = findRomPartition("spiffs");
+        if (!romPart) {
+            std::printf("[MSX][CAS] change failed: ROM partition not found\n");
+        } else if (selectedSize > romPart->size) {
+            std::printf("[MSX][CAS] change failed: file too large size=%u partition=%u\n",
+                        static_cast<unsigned>(selectedSize),
+                        static_cast<unsigned>(romPart->size));
+        } else {
+            msx_draw_osd_message("FLASHING CAS...", useExternal);
+            xipTouched = true;
+            xip_unmap();
+            size_t copiedSize = 0;
+            if (!copyFileToPartition(selectedPath.c_str(), romPart, &copiedSize, nullptr, nullptr)) {
+                std::printf("[MSX][CAS] change failed: copy to XIP partition failed path=%s\n",
+                            selectedPath.c_str());
+            } else if (xip_map_rom_partition("spiffs", copiedSize) != 0 || !get_rom_ptr()) {
+                std::printf("[MSX][CAS] change failed: XIP remap failed size=%u\n",
+                            static_cast<unsigned>(copiedSize));
+            } else {
+                runtimeCasBuffer.clear();
+                runtimeCasBuffer.shrink_to_fit();
+                const char* selectedName = msx_file_label(selectedPath.c_str());
+                changed = msx_core_change_cas(core,
+                                              get_rom_ptr(),
+                                              get_rom_size(),
+                                              selectedName);
+                if (changed) {
+                    currentCasPath = selectedPath;
+                }
+            }
+        }
+    }
+
+    if (!changed && xipTouched) {
+        (void)msx_core_change_cas(core, nullptr, 0, "MSX CAS");
+    }
+
+    msx_draw_osd_message(changed ? "CAS CHANGED" : "CAS UNCHANGED", useExternal);
+    delay(500);
+    msx_end_state_overlay(useExternal);
+    return changed;
+}
+
 static void msx_handle_save_state(MsxCoreState* core, const char* stateName, bool useExternal, SdService& sd)
 {
     msx_begin_state_overlay(useExternal);
@@ -663,6 +1007,7 @@ void run_msx(const uint8_t* romData, size_t romLen, const char* romName, SdServi
 
     msx_display_init();
     msx_input_init();
+    msx_input_set_basic_keyboard_enabled(false);
 
 #if MSX_AUDIO_ENABLED
     const uint32_t coreAudioSampleRate = kMsxSkeletonSampleRate;
@@ -898,6 +1243,7 @@ void run_msx_disk(const uint8_t* dskData, size_t dskLen, const char* dskName, Sd
 
     msx_display_init();
     msx_input_init();
+    msx_input_set_basic_keyboard_enabled(false);
 
     printf("[MSX] core init_disk begin\n");
     MsxCoreState core = {};
@@ -1104,6 +1450,7 @@ void run_msx_basic(const char* name, SdService& sd)
 
     msx_display_init();
     msx_input_init();
+    msx_input_set_basic_keyboard_enabled(true);
 
 #if MSX_AUDIO_ENABLED
     const uint32_t coreAudioSampleRate = kMsxSkeletonSampleRate;
@@ -1253,6 +1600,233 @@ void run_msx_basic(const char* name, SdService& sd)
     msx_core_shutdown(&core);
     msx_sound_shutdown();
 
+    msx_media_release_bios_bundle(&bios);
+    msx_display_shutdown();
+
+    if (quitRequested) {
+        msx_request_quit_to_launcher();
+    }
+}
+
+// ---------------------------------------------------------------------------
+
+void run_msx_cas(const uint8_t* casData, size_t casLen, const char* casName, SdService& sd)
+{
+    std::printf("[MSX] launch cas: name=%s size=%u\n",
+                casName && casName[0] != '\0' ? casName : "(unnamed)",
+                static_cast<unsigned>(casLen));
+
+    const bool useExternal = (g_emu_display_target == EMU_DISPLAY_EXTERNAL);
+    MsxViewModeOverrideGuard viewModeGuard;
+    {
+        CardputerView display;
+        display.initialize();
+        if (useExternal) {
+            display.showControlBindings(
+                share::emuControlActionLabels(share::EmuProfile::MSX),
+                share::emuControlKeyLabels(share::EmuProfile::MSX),
+                "GO = QUIT  HOLD GO = MENU"
+            );
+            msx_draw_cas_help_title_two_lines(msx_cas_title_without_extension(casName));
+        } else {
+            display.topBar("MSX CAS", false, false);
+            display.showControlBindings(
+                share::emuControlActionLabels(share::EmuProfile::MSX),
+                share::emuControlKeyLabels(share::EmuProfile::MSX),
+                "GO = QUIT  HOLD GO = MENU"
+            );
+        }
+    }
+
+    msx_config_load_internal_view_mode();
+    viewModeGuard.configureForTarget(useExternal);
+    const MsxMachineMode configuredMode = msx_config_load_machine_mode();
+    msx_config_load_bios_path();
+    msx_config_load_msx1_bios_path();
+
+    MsxBiosSearchConfig biosSearch = {};
+    biosSearch.requestedMode    = configuredMode;
+    biosSearch.genericBiosPath  = msx_config_get_bios_path();
+    biosSearch.msx1BiosPath     = msx_config_get_msx1_bios_path();
+
+    MsxBiosBundle bios = {};
+    if (!msx_media_load_bios_bundle(&bios, &biosSearch)) {
+        printf("[MSX] BIOS load failed: %s\n", bios.message);
+        msx_show_bios_reference_help(configuredMode, &bios);
+        msx_media_release_bios_bundle(&bios);
+        msx_display_shutdown();
+        msx_request_quit_to_launcher();
+        return;
+    }
+
+    printf("[MSX] BIOS bundle ready: %s\n", msx_media_bios_target_label(bios.target));
+
+    msx_display_init();
+    msx_input_init();
+    msx_input_set_basic_keyboard_enabled(true);
+    msx_input_set_cas_change_available(true);
+
+#if MSX_AUDIO_ENABLED
+    const uint32_t coreAudioSampleRate = kMsxSkeletonSampleRate;
+#else
+    const uint32_t coreAudioSampleRate = 0u;
+#endif
+
+    printf("[MSX] core init_cas begin\n");
+    MsxCoreState core = {};
+    if (!msx_core_init_cas(&core, &bios, casData, casLen, casName, coreAudioSampleRate)) {
+        printf("[MSX] core init_cas failed\n");
+        msx_show_launch_error("MSX CAS ERROR", "Core init failed", "Check BIOS on SD");
+        msx_sound_shutdown();
+        msx_media_release_bios_bundle(&bios);
+        msx_display_shutdown();
+        msx_request_quit_to_launcher();
+        return;
+    }
+
+    bool audioInitOk = false;
+#if MSX_AUDIO_ENABLED
+    printf("[MSX] audio init begin\n");
+    audioInitOk = msx_sound_init(kMsxSkeletonSampleRate, kMsxSkeletonChannels);
+    printf("[MSX] audio init %s\n", audioInitOk ? "ok" : "failed");
+#else
+    printf("[MSX] audio init skipped (build disabled)\n");
+#endif
+
+    printf("[MSX] entering CAS main loop\n");
+
+    std::string currentCasPath = msx_initial_cas_display_path(casName);
+    if (currentCasPath.empty()) {
+        currentCasPath = casName ? std::string(casName) : std::string("MSX CAS");
+    }
+    std::vector<uint8_t> runtimeCasBuffer;
+
+    const uint32_t frameUs = static_cast<uint32_t>(std::lround(1000000.0 / kMsxSkeletonFps));
+    uint64_t nextFrameUs = esp_timer_get_time();
+    bool quitRequested = false;
+    uint32_t frameCount = 0;
+    uint32_t lastLogMs = millis();
+
+    while (!quitRequested) {
+        MsxInputState input = {};
+        msx_input_poll(&input);
+        if (input.quitRequested) {
+            quitRequested = true;
+            break;
+        }
+
+        if (input.toggleViewRequested && !useExternal) {
+            msx_config_toggle_active_view_mode();
+        }
+
+        if (msx_input_get_change_cas_requested()) {
+            msx_sound_set_paused(true);
+            msx_handle_change_cas(&core, currentCasPath, runtimeCasBuffer, useExternal, sd);
+            nextFrameUs = esp_timer_get_time();
+            continue;
+        }
+
+        if (msx_input_get_save_requested()) {
+            msx_handle_save_state(&core, currentCasPath.c_str(), useExternal, sd);
+        }
+
+        if (msx_input_get_load_requested()) {
+            msx_handle_load_state(&core, currentCasPath.c_str(), useExternal, sd);
+        }
+
+        const bool menuPaused = input.menuVisible;
+        msx_sound_set_paused(menuPaused);
+        msx_core_handle_input(&core, &input);
+        if (menuPaused) {
+            msx_core_drain_audio(&core, nullptr, 0u);
+        } else {
+            size_t audioMixCapacity = 0;
+            int16_t* audioMix = msx_sound_begin_mix(&audioMixCapacity);
+            msx_core_step_frame(&core);
+            const size_t audioSampleCount = msx_core_drain_audio(&core, audioMix, audioMixCapacity);
+            msx_sound_end_mix(audioSampleCount);
+        }
+
+        char casLine[48];
+        char machineLine[48];
+        char biosLine[64];
+
+        std::snprintf(casLine, sizeof(casLine),
+                      "CAS: %s",
+                      core.cas.ready ? msx_file_label(currentCasPath.c_str()) : "(no tape)");
+        std::snprintf(machineLine, sizeof(machineLine),
+                      "MACHINE: %s -> %s",
+                      msx_config_machine_mode_label(configuredMode),
+                      msx_media_bios_target_label(core.biosTarget));
+        std::snprintf(biosLine, sizeof(biosLine),
+                      "BIOS: %s",
+                      msx_file_label(bios.mainRom.path));
+
+        const MsxAudioHookState& audioState = msx_sound_get_state();
+        static char casAudioLine[48];
+        if (!audioState.compiledIn) {
+            std::snprintf(casAudioLine, sizeof(casAudioLine), "AUDIO: build OFF");
+        } else if (menuPaused) {
+            std::snprintf(casAudioLine, sizeof(casAudioLine), "AUDIO: paused");
+        } else if (!audioState.enabled) {
+            std::snprintf(casAudioLine, sizeof(casAudioLine), "AUDIO: init OFF");
+        } else if (audioState.streamSeen) {
+            std::snprintf(casAudioLine, sizeof(casAudioLine),
+                          "AUDIO: %lu Hz Q%u",
+                          static_cast<unsigned long>(audioState.sampleRate),
+                          static_cast<unsigned>(audioState.queuedBlocks));
+        } else {
+            std::snprintf(casAudioLine, sizeof(casAudioLine),
+                          "AUDIO: ready %lu Hz",
+                          static_cast<unsigned long>(audioState.sampleRate));
+        }
+
+        MsxDisplayStatus status = {};
+        status.romName     = core.romName;
+        status.coreLine    = core.statusText;
+        status.cartLine    = casLine;
+        status.machineLine = machineLine;
+        status.biosLine    = biosLine;
+        status.audioLine   = casAudioLine;
+        status.frameCounter = core.frameCounter;
+
+        msx_display_submit_frame(&core.displayFrame, &status);
+
+        frameCount++;
+        const uint32_t nowMs = millis();
+        if (MSX_RUN_LOG_ENABLED && (nowMs - lastLogMs >= 1000)) {
+            const float fps = (frameCount * 1000.0f) / static_cast<float>(nowMs - lastLogMs);
+            MSX_RUN_LOG("[MSX] FPS %.1f | HEAP %u | CPU %s | PC %04X | VDP %s | MACHINE %s | AUDIOQ %u | CAS\n",
+                        fps,
+                        esp_get_free_heap_size(),
+                        msx_cpu_run_state_label(core.cpu.runState),
+                        core.cpu.pc,
+                        msx_vdp_mode_label(core.vdp.mode),
+                        msx_media_bios_target_label(core.biosTarget),
+                        static_cast<unsigned>(audioState.queuedBlocks));
+            frameCount = 0;
+            lastLogMs = nowMs;
+        }
+
+        nextFrameUs += frameUs;
+        const int64_t nowUs    = static_cast<int64_t>(esp_timer_get_time());
+        const int64_t lateness = nowUs - static_cast<int64_t>(nextFrameUs);
+
+        if (lateness > static_cast<int64_t>(frameUs)) {
+            nextFrameUs = static_cast<uint64_t>(nowUs);
+            taskYIELD();
+            continue;
+        }
+
+        if (lateness < 0) {
+            share::sleep_until_us(nextFrameUs);
+        } else {
+            taskYIELD();
+        }
+    }
+
+    msx_core_shutdown(&core);
+    msx_sound_shutdown();
     msx_media_release_bios_bundle(&bios);
     msx_display_shutdown();
 

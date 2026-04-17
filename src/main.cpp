@@ -382,7 +382,7 @@ void setup() {
 
   // Check the extension to choose the emulator
   const share::EmuProfile emuProfile = share::EmuProfile::MSX;
-  const bool hasProfile = (ext == ROM_TYPE_MSX || ext == ROM_TYPE_MSX_DISK);
+  const bool hasProfile = (ext == ROM_TYPE_MSX || ext == ROM_TYPE_MSX_DISK || ext == ROM_TYPE_MSX_CAS);
   if (hasProfile) {
     share::emuControlsLoad(sd, emuProfile);
   }
@@ -536,6 +536,10 @@ void setup() {
   else if (ext == ROM_TYPE_MSX_DISK) {
       // MSX disk image (.dsk) â€” ROM partition holds the DSK data via XIP
       run_msx_disk(get_rom_ptr(), get_rom_size(), romName.c_str(), sd);
+  }
+  else if (ext == ROM_TYPE_MSX_CAS) {
+      // MSX cassette tape image (.cas) — ROM partition holds CAS data via XIP
+      run_msx_cas(get_rom_ptr(), get_rom_size(), romName.c_str(), sd);
   }
   else if (ext == ROM_TYPE_COLECO) {
       // ColecoVision cartridge ROM

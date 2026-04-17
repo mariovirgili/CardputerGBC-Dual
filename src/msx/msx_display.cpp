@@ -179,30 +179,34 @@ static void msx_display_draw_placeholder(const MsxDisplayStatus* status)
     msx_display_draw_line(footer, 128, PRIMARY_COLOR, 1);
 }
 
-static const char* msx_display_runtime_menu_label(uint8_t index)
+static const char* msx_display_runtime_menu_label(const MsxInputOverlayState& overlay, uint8_t index)
 {
     if (msx_display_game_on_external()) {
         switch (index) {
             case 0u: return "JOY";
             case 1u: return "KEYBOARD";
-            case 2u: return "VAUS";
-            case 3u: return "VIEW";
-            case 4u: return "SELECT SLOT";
-            case 5u: return "SAVE SLOT";
-            case 6u: return "LOAD SLOT";
-            case 7u: return "CLOSE";
+            case 2u: return "BASIC KBD";
+            case 3u: return "VAUS";
+            case 4u: return "VIEW";
+            case 5u: return "SELECT SLOT";
+            case 6u: return "SAVE SLOT";
+            case 7u: return "LOAD SLOT";
+            case 8u: return overlay.casChangeAvailable ? "CHANGE CAS" : "CLOSE";
+            case 9u: return overlay.casChangeAvailable ? "CLOSE" : "";
             default: return "";
         }
     } else {
         switch (index) {
             case 0u: return "JOY";
             case 1u: return "KEYBOARD";
-            case 2u: return "VAUS";
-            case 3u: return "VIEW";
-            case 4u: return "STATE SLOT";
-            case 5u: return "SAVE STATE";
-            case 6u: return "LOAD STATE";
-            case 7u: return "CLOSE";
+            case 2u: return "BASIC KBD";
+            case 3u: return "VAUS";
+            case 4u: return "VIEW";
+            case 5u: return "STATE SLOT";
+            case 6u: return "SAVE STATE";
+            case 7u: return "LOAD STATE";
+            case 8u: return overlay.casChangeAvailable ? "CHANGE CAS" : "CLOSE";
+            case 9u: return overlay.casChangeAvailable ? "CLOSE" : "";
             default: return "";
         }
     }
@@ -217,10 +221,12 @@ static const char* msx_display_runtime_menu_value(const MsxInputOverlayState& ov
         case 1u:
             return overlay.keyboardEnabled ? "ON" : "OFF";
         case 2u:
-            return overlay.vausEnabled ? "ON" : "OFF";
+            return overlay.basicKeyboardEnabled ? "ON" : "OFF";
         case 3u:
-            return msx_display_game_on_external() ? "1:1" : msx_config_get_active_view_mode_label();
+            return overlay.vausEnabled ? "ON" : "OFF";
         case 4u:
+            return msx_display_game_on_external() ? "1:1" : msx_config_get_active_view_mode_label();
+        case 5u:
             std::snprintf(slotStr, sizeof(slotStr), "< %u >", static_cast<unsigned>(msx_input_get_state_slot()));
             return slotStr;
         default:
@@ -248,7 +254,9 @@ static void msx_display_draw_runtime_menu_shell(void)
         tft.drawRoundRect(boxX + 2, boxY + 2, kRuntimeMenuBoxW - 4, kRuntimeMenuBoxH - 4, DEFAULT_ROUND_RECT, RECT_COLOR_DARK);
         tft.setTextDatum(TL_DATUM);
         tft.setTextColor(PRIMARY_COLOR, TFT_BLACK);
-        tft.drawString("MSX MENU", innerX, boxY + 6, 2);
+        const char* title = "MSX MENU";
+        const int titleX = boxX + (kRuntimeMenuBoxW - tft.textWidth(title, 2)) / 2;
+        tft.drawString(title, titleX, boxY + 6, 2);
         tft.setTextColor(TEXT_COLOR, TFT_BLACK);
         tft.drawString(msx_display_game_on_external() ? "EXT TFT fixed 1:1" : "\\ quick view  GO toggle",
                        innerX, boxY + kRuntimeMenuBoxH - 19, 1);
@@ -264,7 +272,9 @@ static void msx_display_draw_runtime_menu_shell(void)
     display.setTextDatum(top_left);
     display.setFont(&fonts::Font2);
     display.setTextColor(PRIMARY_COLOR, TFT_BLACK);
-    display.drawString("MSX MENU", innerX, boxY + 6);
+    const char* title = "MSX MENU";
+    const int titleX = boxX + (kRuntimeMenuBoxW - display.textWidth(title)) / 2;
+    display.drawString(title, titleX, boxY + 6);
     display.setFont(&fonts::Font0);
     display.setTextColor(TEXT_COLOR, TFT_BLACK);
     display.drawString("\\ quick view  GO toggle", innerX, boxY + kRuntimeMenuBoxH - 19);
@@ -287,7 +297,7 @@ static void msx_display_draw_runtime_menu_row_state(const MsxInputOverlayState& 
     const int rowY = y - 2;
     const int rowW = kRuntimeMenuBoxW - 16;
     const int rowH = kRuntimeMenuRowH - 1;
-    const char* label = msx_display_runtime_menu_label(index);
+    const char* label = msx_display_runtime_menu_label(overlay, index);
     const char* value = msx_display_runtime_menu_value(overlay, index);
 
     if (msx_display_game_on_external()) {
@@ -395,14 +405,20 @@ void msx_display_submit_frame(const MsxDisplayFrame* frame, const MsxDisplayStat
             if (overlay.keyboardEnabled != s_lastMenuOverlay.keyboardEnabled) {
                 msx_display_draw_runtime_menu_row(overlay, 1u);
             }
-            if (overlay.vausEnabled != s_lastMenuOverlay.vausEnabled) {
+            if (overlay.basicKeyboardEnabled != s_lastMenuOverlay.basicKeyboardEnabled) {
                 msx_display_draw_runtime_menu_row(overlay, 2u);
             }
-            if (currentViewMode != s_lastViewMode) {
+            if (overlay.vausEnabled != s_lastMenuOverlay.vausEnabled) {
                 msx_display_draw_runtime_menu_row(overlay, 3u);
             }
-            if (currentStateSlot != s_lastStateSlot) {
+            if (currentViewMode != s_lastViewMode) {
                 msx_display_draw_runtime_menu_row(overlay, 4u);
+            }
+            if (currentStateSlot != s_lastStateSlot) {
+                msx_display_draw_runtime_menu_row(overlay, 5u);
+            }
+            if (overlay.casChangeAvailable != s_lastMenuOverlay.casChangeAvailable) {
+                msx_display_draw_runtime_menu(overlay);
             }
         }
 
@@ -415,7 +431,8 @@ void msx_display_submit_frame(const MsxDisplayFrame* frame, const MsxDisplayStat
         return;
     }
 
-    if (s_lastMenuVisible) {
+    const bool menuClosed = s_lastMenuVisible;
+    if (menuClosed) {
         msx_video_lock();
         if (msx_display_game_on_external()) {
             msx_video_finish_external_ui();
@@ -429,6 +446,9 @@ void msx_display_submit_frame(const MsxDisplayFrame* frame, const MsxDisplayStat
     s_lastMenuVisible = false;
 
     if (frame && frame->indexed8) {
+        if (menuClosed) {
+            msx_video_present_frame(frame);
+        }
         return;
     }
 

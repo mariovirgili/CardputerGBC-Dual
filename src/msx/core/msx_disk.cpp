@@ -899,22 +899,101 @@ static void patch_drvoff(MsxCpuState* cpu, MsxMemoryState* /*memory*/)
     clear_carry(cpu);
 }
 
+// ---------------------------------------------------------------------------
+// CAS cassette tape implementation
+// ---------------------------------------------------------------------------
+
+const uint8_t kMsxCasHeader[8] = { 0x1F, 0xA6, 0xDE, 0xBA, 0xCC, 0x13, 0x7D, 0x74 };
+
+void msx_cas_init(MsxCasState* state, const uint8_t* data, size_t size)
+{
+    if (!state) {
+        return;
+    }
+
+    state->casData = data;
+    state->casSize = size;
+    state->casPos  = 0;
+    state->ready   = (data != nullptr && size >= 8u);
+}
+
+// TAPION: search forward (aligned to 8 bytes) for the CAS block header.
+// CF=0 on success (position is just past the header), CF=1 on failure (rewound).
+static void patch_tapion(MsxCpuState* cpu, MsxCasState* cas)
+{
+    if (!cas || !cas->ready || !cas->casData) {
+        set_carry(cpu);
+        return;
+    }
+
+    // Align current position up to the next 8-byte boundary.
+    if (cas->casPos & 7u) {
+        cas->casPos = (cas->casPos + 8u) & ~static_cast<size_t>(7u);
+    }
+
+    while (cas->casPos + 8u <= cas->casSize) {
+        if (std::memcmp(cas->casData + cas->casPos, kMsxCasHeader, 8u) == 0) {
+            cas->casPos += 8u; // skip past the header
+            clear_carry(cpu);  // success
+            return;
+        }
+        cas->casPos += 8u;
+    }
+
+    // Header not found — rewind and signal error.
+    cas->casPos = 0;
+    set_carry(cpu);
+}
+
+// TAPIN: read one byte from the tape into A.
+// CF=0 on success, CF=1 on EOF (tape rewound).
+static void patch_tapin(MsxCpuState* cpu, MsxCasState* cas)
+{
+    if (!cas || !cas->ready || !cas->casData) {
+        set_carry(cpu);
+        return;
+    }
+
+    if (cas->casPos >= cas->casSize) {
+        cas->casPos = 0; // auto-rewind
+        set_carry(cpu);
+        return;
+    }
+
+    set_a(cpu, cas->casData[cas->casPos++]);
+    clear_carry(cpu);
+}
+
 void msx_disk_bios_patch_handler(MsxCpuState* cpu, MsxMemoryState* memory, uint16_t patchAddress)
 {
     if (!cpu || !memory) {
         return;
     }
 
+    MsxCasState* const cas = memory->cas;
+
     switch (patchAddress) {
-        case 0x00E1u: // TAPION
-        case 0x00E4u: // TAPIN
-        case 0x00EAu: // TAPOON
-        case 0x00EDu: // TAPOUT
+        case 0x00E1u: // TAPION – search for next block header
+            if (cas && cas->ready) {
+                patch_tapion(cpu, cas);
+            } else {
+                set_carry(cpu);
+            }
+            break;
+        case 0x00E4u: // TAPIN – read one byte
+            if (cas && cas->ready) {
+                patch_tapin(cpu, cas);
+            } else {
+                set_carry(cpu);
+            }
+            break;
+        case 0x00EAu: // TAPOON – open tape for write (not supported)
+        case 0x00EDu: // TAPOUT – write one byte (not supported)
             set_carry(cpu);
             break;
-        case 0x00E7u: // TAPIOF
-        case 0x00F0u: // TAPOOF
-        case 0x00F3u: // STMOTR
+        case 0x00E7u: // TAPIOF – close tape input (no-op)
+        case 0x00F0u: // TAPOOF – close tape output (no-op)
+        case 0x00F3u: // STMOTR – motor control (no-op)
             clear_carry(cpu);
             break;
         case 0x4010u: patch_phydio(cpu, memory);          break;

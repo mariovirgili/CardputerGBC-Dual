@@ -18,6 +18,8 @@ typedef void (*MsxDiskPatchFn)(struct MsxCpuState* cpu,
                                struct MsxMemoryState* memory,
                                uint16_t patchAddress);
 
+struct MsxCasState;
+
 struct MsxMemoryState {
     MsxMachineMode machineMode;
     MsxBiosState bios;
@@ -26,6 +28,7 @@ struct MsxMemoryState {
     MsxVdpState* vdp;
     MsxPsgState* psg;
     MsxDiskState* disk;
+    MsxCasState* cas;
     MsxDiskPatchFn diskPatch;
     const uint8_t* diskRom;
     size_t diskRomSize;
