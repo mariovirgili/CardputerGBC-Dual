@@ -8,11 +8,34 @@
 #include "coleco_video.h"
 #include "share/display_target.h"
 
+#include <cctype>
+
 static constexpr uint32_t kGoLongPressMs = 700;
 static bool s_goLongHandled = false;
 static bool s_suppressGoClick = false;
 static uint32_t s_suppressGoUntilMs = 0;
 static bool s_fnSaveLoadHandled = false;
+
+static bool coleco_key_pressed(const Keyboard_Class::KeysState& keys, char key) {
+    if (key == 0) {
+        return false;
+    }
+
+    for (char pressed : keys.word) {
+        if (pressed == key) {
+            return true;
+        }
+
+        if (std::isalpha(static_cast<unsigned char>(pressed)) &&
+            std::isalpha(static_cast<unsigned char>(key)) &&
+            std::tolower(static_cast<unsigned char>(pressed)) ==
+                std::tolower(static_cast<unsigned char>(key))) {
+            return true;
+        }
+    }
+
+    return false;
+}
 
 struct ColecoRuntimeOptions {
     bool joystickEnabled;
@@ -204,8 +227,8 @@ void coleco_input_poll(ColecoInputState* state) {
     auto status = M5Cardputer.Keyboard.keysState();
     share::checkCommonInput(status);
 
-    const bool fnSavePressed = status.fn && (M5Cardputer.Keyboard.isKeyPressed('s') || M5Cardputer.Keyboard.isKeyPressed('S'));
-    const bool fnLoadPressed = status.fn && (M5Cardputer.Keyboard.isKeyPressed('l') || M5Cardputer.Keyboard.isKeyPressed('L'));
+    const bool fnSavePressed = status.fn && coleco_key_pressed(status, 's');
+    const bool fnLoadPressed = status.fn && coleco_key_pressed(status, 'l');
     if (fnSavePressed || fnLoadPressed) {
         if (!s_fnSaveLoadHandled) {
             s_fnSaveLoadHandled = true;
@@ -251,19 +274,19 @@ void coleco_input_poll(ColecoInputState* state) {
         return; // Blocca i controlli fisici se il menu è aperto
     }
 
-    if (M5Cardputer.Keyboard.isKeyPressed(KEY_ARROW_UP) ||
-        M5Cardputer.Keyboard.isKeyPressed(CARDPUTER_UP_1) ||
-        M5Cardputer.Keyboard.isKeyPressed(CARDPUTER_UP_2)) state->up = true;
-    if (M5Cardputer.Keyboard.isKeyPressed(KEY_ARROW_DOWN) ||
-        M5Cardputer.Keyboard.isKeyPressed(CARDPUTER_DOWN_1) ||
-        M5Cardputer.Keyboard.isKeyPressed(CARDPUTER_DOWN_2) ||
-        M5Cardputer.Keyboard.isKeyPressed(CARDPUTER_DOWN_3)) state->down = true;
-    if (M5Cardputer.Keyboard.isKeyPressed(KEY_ARROW_LEFT) ||
-        M5Cardputer.Keyboard.isKeyPressed(CARDPUTER_LEFT_1) ||
-        M5Cardputer.Keyboard.isKeyPressed(CARDPUTER_LEFT_2)) state->left = true;
-    if (M5Cardputer.Keyboard.isKeyPressed(KEY_ARROW_RIGHT) ||
-        M5Cardputer.Keyboard.isKeyPressed(CARDPUTER_RIGHT_1) ||
-        M5Cardputer.Keyboard.isKeyPressed(CARDPUTER_RIGHT_2)) state->right = true;
+    if (coleco_key_pressed(status, KEY_ARROW_UP) ||
+        coleco_key_pressed(status, CARDPUTER_UP_1) ||
+        coleco_key_pressed(status, CARDPUTER_UP_2)) state->up = true;
+    if (coleco_key_pressed(status, KEY_ARROW_DOWN) ||
+        coleco_key_pressed(status, CARDPUTER_DOWN_1) ||
+        coleco_key_pressed(status, CARDPUTER_DOWN_2) ||
+        coleco_key_pressed(status, CARDPUTER_DOWN_3)) state->down = true;
+    if (coleco_key_pressed(status, KEY_ARROW_LEFT) ||
+        coleco_key_pressed(status, CARDPUTER_LEFT_1) ||
+        coleco_key_pressed(status, CARDPUTER_LEFT_2)) state->left = true;
+    if (coleco_key_pressed(status, KEY_ARROW_RIGHT) ||
+        coleco_key_pressed(status, CARDPUTER_RIGHT_1) ||
+        coleco_key_pressed(status, CARDPUTER_RIGHT_2)) state->right = true;
     
     // Mapped via standard emu controls
     char k_a = share::emuControlKey(share::EmuProfile::MSX, share::EmuAction::A);
@@ -271,19 +294,19 @@ void coleco_input_poll(ColecoInputState* state) {
     char k_start = share::emuControlKey(share::EmuProfile::MSX, share::EmuAction::Start);
     char k_select = share::emuControlKey(share::EmuProfile::MSX, share::EmuAction::Select);
 
-    if (M5Cardputer.Keyboard.isKeyPressed(k_a) ||
-        M5Cardputer.Keyboard.isKeyPressed(CARDPUTER_BTN_A_1) ||
-        M5Cardputer.Keyboard.isKeyPressed(CARDPUTER_BTN_A_2)) state->fire1 = true;
-    if (M5Cardputer.Keyboard.isKeyPressed(k_b) ||
-        M5Cardputer.Keyboard.isKeyPressed(CARDPUTER_BTN_B)) state->fire2 = true;
-    if (M5Cardputer.Keyboard.isKeyPressed(k_start) ||
-        M5Cardputer.Keyboard.isKeyPressed(CARDPUTER_BTN_START)) state->start = true;
-    if (M5Cardputer.Keyboard.isKeyPressed(k_select) ||
-        M5Cardputer.Keyboard.isKeyPressed(CARDPUTER_BTN_SELECT)) state->select = true;
+    if (coleco_key_pressed(status, k_a) ||
+        coleco_key_pressed(status, CARDPUTER_BTN_A_1) ||
+        coleco_key_pressed(status, CARDPUTER_BTN_A_2)) state->fire1 = true;
+    if (coleco_key_pressed(status, k_b) ||
+        coleco_key_pressed(status, CARDPUTER_BTN_B)) state->fire2 = true;
+    if (coleco_key_pressed(status, k_start) ||
+        coleco_key_pressed(status, CARDPUTER_BTN_START)) state->start = true;
+    if (coleco_key_pressed(status, k_select) ||
+        coleco_key_pressed(status, CARDPUTER_BTN_SELECT)) state->select = true;
     
-    if (M5Cardputer.Keyboard.isKeyPressed('\\')) state->toggleViewRequested = true;
+    if (coleco_key_pressed(status, '\\')) state->toggleViewRequested = true;
 
-    uint32_t padState = share::pollI2cPad();
+    uint32_t padState = share::hasI2cPad() ? share::pollI2cPad() : 0u;
     if (padState & share::PAD_UP) state->up = true;
     if (padState & share::PAD_DOWN) state->down = true;
     if (padState & share::PAD_LEFT) state->left = true;
@@ -292,6 +315,15 @@ void coleco_input_poll(ColecoInputState* state) {
     if (padState & share::PAD_B) state->fire2 = true;
     if (padState & share::PAD_START) state->start = true;
     if (padState & share::PAD_SELECT) state->select = true;
+
+    if (state->left && state->right) {
+        state->left = false;
+        state->right = false;
+    }
+    if (state->up && state->down) {
+        state->up = false;
+        state->down = false;
+    }
 }
 
 void coleco_input_get_overlay_state(ColecoInputOverlayState* state) {

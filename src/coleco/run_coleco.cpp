@@ -463,6 +463,7 @@ void run_coleco(const uint8_t* romData, size_t romLen, const char* romName, SdSe
         ColecoInputState inputState;
         coleco_input_poll(&inputState);
         const bool launchKeyHeld =
+            inputState.up || inputState.down || inputState.left || inputState.right ||
             inputState.fire1 || inputState.fire2 || inputState.start ||
             inputState.select || inputState.quitRequested || inputState.toggleViewRequested;
         if (startupInputGuardActive) {
@@ -475,6 +476,10 @@ void run_coleco(const uint8_t* romData, size_t romLen, const char* romName, SdSe
                     startupInputGuardLogged = true;
                     std::printf("[COLECO][INPUT] startup guard suppressed launch key state\n");
                 }
+                inputState.up = false;
+                inputState.down = false;
+                inputState.left = false;
+                inputState.right = false;
                 inputState.fire1 = false;
                 inputState.fire2 = false;
                 inputState.start = false;

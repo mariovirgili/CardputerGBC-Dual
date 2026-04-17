@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdio>
 #include <cstring>
 #include <iterator>
 
@@ -12,7 +13,7 @@ namespace {
 constexpr size_t kDefaultDirectoryLimit = 1024;
 constexpr size_t kDefaultRomBrowserLimit = 1024;
 constexpr const char* kDirectoryIndexFileName = ".cardputer.idx";
-constexpr const char* kDirectoryIndexHeader = "CARDPUTER_ROM_IDX_V1";
+constexpr const char* kDirectoryIndexHeader = "CARDPUTER_ROM_IDX_V3";
 constexpr size_t kInitialScanReserve = 48;
 
 #if defined(CONFIG_IDF_TARGET_ESP32S2) || defined(CONFIG_IDF_TARGET_ESP32S3)
@@ -193,6 +194,45 @@ std::vector<std::string> scanDirectoryNames(
     dir.close();
     std::sort(names.begin(), names.end());
     return names;
+}
+
+bool isIndexedDirectory(const std::string& dirPath, const std::string& name) {
+    char fullPath[512];
+    int written = 0;
+
+    if (dirPath.empty() || dirPath == "/") {
+        written = std::snprintf(fullPath, sizeof(fullPath), "/%s", name.c_str());
+    } else if (dirPath.back() == '/') {
+        written = std::snprintf(fullPath, sizeof(fullPath), "%s%s", dirPath.c_str(), name.c_str());
+    } else {
+        written = std::snprintf(fullPath, sizeof(fullPath), "%s/%s", dirPath.c_str(), name.c_str());
+    }
+
+    if (written <= 0 || static_cast<size_t>(written) >= sizeof(fullPath)) {
+        return false;
+    }
+
+    File entry = SD.open(fullPath);
+    if (entry && entry.isDirectory()) {
+        entry.close();
+        return true;
+    }
+    if (entry) {
+        entry.close();
+    }
+    return false;
+}
+
+void sortIndexedDirectoryElements(const std::string& dirPath,
+                                  std::vector<std::string>& indexedElements) {
+    size_t folderEnd = 0;
+    while (folderEnd < indexedElements.size() &&
+           isIndexedDirectory(dirPath, indexedElements[folderEnd])) {
+        ++folderEnd;
+    }
+
+    std::sort(indexedElements.begin(), indexedElements.begin() + folderEnd);
+    std::sort(indexedElements.begin() + folderEnd, indexedElements.end());
 }
 
 size_t writeDirectoryIndexPass(File& indexFile,
@@ -587,6 +627,7 @@ std::vector<std::string> SdService::getCachedDirectoryElements(
                                 static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_8BIT)));
                 }
                 if (headerSeen) {
+                    sortIndexedDirectoryElements(path, indexedElements);
                     return indexedElements;
                 }
             } else if (indexFile) {
