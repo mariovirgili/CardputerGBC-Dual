@@ -7,6 +7,9 @@
 #include <cstdio>
 #include <cstring>
 
+extern const uint8_t cbios_main_msx1_rom_start[] asm("_binary_bios_cbios_0_29a_roms_cbios_main_msx1_rom_start");
+extern const uint8_t cbios_main_msx1_rom_end[] asm("_binary_bios_cbios_0_29a_roms_cbios_main_msx1_rom_end");
+
 #ifndef MSX_BIOS_LOG_ENABLED
 #define MSX_BIOS_LOG_ENABLED 1
 #endif
@@ -27,6 +30,8 @@ constexpr size_t kMsxMainBiosMaxSize = 0x10000;
 constexpr size_t kMsxSubRomExactSize = 0x4000;
 constexpr const char* kMsx1BiosName = "MSX.ROM";
 constexpr const char* kMsx1BiosMd5 = "364a1a579fe5cb8dba54519bcfcdac0d";
+constexpr const char* kMsxEmbeddedCbiosName = "C-BIOS MSX1";
+constexpr const char* kMsxEmbeddedCbiosPath = "[embedded]/cbios_main_msx1.rom";
 
 bool msx_is_cart_exec_address(uint16_t address)
 {
@@ -376,6 +381,63 @@ bool msx_try_candidates(MsxBiosImage* image,
     return false;
 }
 
+bool msx_load_embedded_cbios_msx1(MsxBiosImage* image,
+                                  char* detailMessage,
+                                  size_t detailMessageSize)
+{
+    if (!image) {
+        return false;
+    }
+
+    const size_t size = static_cast<size_t>(cbios_main_msx1_rom_end - cbios_main_msx1_rom_start);
+    if (!msx_is_valid_main_bios_size(size)) {
+        if (detailMessage && detailMessageSize > 0) {
+            std::snprintf(detailMessage, detailMessageSize, "embedded C-BIOS size invalid");
+        }
+        MSX_BIOS_LOG("[MSX][BIOS] embedded C-BIOS reject size=%u\n",
+                     static_cast<unsigned>(size));
+        return false;
+    }
+
+    uint8_t* data = static_cast<uint8_t*>(heap_caps_malloc(size, MALLOC_CAP_8BIT));
+    if (!data) {
+        if (detailMessage && detailMessageSize > 0) {
+            std::snprintf(detailMessage, detailMessageSize, "no heap for embedded C-BIOS");
+        }
+        MSX_BIOS_LOG("[MSX][BIOS] embedded C-BIOS malloc failed size=%u\n",
+                     static_cast<unsigned>(size));
+        return false;
+    }
+
+    std::memcpy(data, cbios_main_msx1_rom_start, size);
+
+    char md5Hex[33] = {0};
+    if (!msx_compute_md5_hex(data, size, md5Hex)) {
+        heap_caps_free(data);
+        if (detailMessage && detailMessageSize > 0) {
+            std::snprintf(detailMessage, detailMessageSize, "embedded C-BIOS md5 failed");
+        }
+        return false;
+    }
+
+    msx_release_image(image);
+    image->data = data;
+    image->size = size;
+    image->status = MsxImageLoadStatus::Loaded;
+    msx_copy_string(image->path, sizeof(image->path), kMsxEmbeddedCbiosPath);
+    msx_copy_string(image->expectedName, sizeof(image->expectedName), kMsxEmbeddedCbiosName);
+    image->expectedMd5[0] = '\0';
+    msx_copy_string(image->foundMd5, sizeof(image->foundMd5), md5Hex);
+
+    if (detailMessage && detailMessageSize > 0) {
+        std::snprintf(detailMessage, detailMessageSize, "Embedded C-BIOS loaded");
+    }
+    MSX_BIOS_LOG("[MSX][BIOS] accept embedded C-BIOS size=%u md5=%s\n",
+                 static_cast<unsigned>(size),
+                 md5Hex);
+    return true;
+}
+
 size_t msx_find_header_offset(const uint8_t* data, size_t size)
 {
     const size_t probeLimit = size < kMsxMaxHeaderProbe ? size : kMsxMaxHeaderProbe;
@@ -484,6 +546,12 @@ bool msx_load_for_target(MsxBiosBundle* bundle, MsxBiosTarget target, const MsxB
     if (ok) {
         bundle->compatible = true;
         msx_set_message(bundle, "MSX1 BIOS loaded");
+        return true;
+    }
+
+    if (msx_load_embedded_cbios_msx1(&bundle->mainRom, detailMessage, sizeof(detailMessage))) {
+        bundle->compatible = true;
+        msx_set_message(bundle, "MSX1 C-BIOS fallback loaded");
         return true;
     }
 
