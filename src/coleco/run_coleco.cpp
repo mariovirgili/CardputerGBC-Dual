@@ -43,6 +43,7 @@ static PsgChannel g_psg_ch[4];
 bool g_emu_skip_video = false;
 
 static constexpr uint32_t kColecoExternalDisplayWarmupMs = 500;
+static constexpr uint32_t kColecoStartupInputGuardMs = 1200;
 
 extern uint8_t coleco_input_get_state_slot(void);
 extern bool coleco_input_get_save_requested(void);
@@ -403,6 +404,7 @@ void run_coleco(const uint8_t* romData, size_t romLen, const char* romName, SdSe
 
     coleco_display_init();
     if (useExternal) {
+        coleco_video_prime_frame_buffers(256, 192);
         vTaskDelay(pdMS_TO_TICKS(kColecoExternalDisplayWarmupMs));
     }
     coleco_input_init();
@@ -442,6 +444,9 @@ void run_coleco(const uint8_t* romData, size_t romLen, const char* romName, SdSe
     const bool isColeco = (bios.size == 8192);
 
     bool prevToggleViewRequested = false;
+    const uint32_t startupInputGuardDeadlineMs = millis() + kColecoStartupInputGuardMs;
+    bool startupInputGuardActive = true;
+    bool startupInputGuardLogged = false;
 
     while (!quitRequested) {
         int64_t nowUs = esp_timer_get_time();
@@ -457,6 +462,27 @@ void run_coleco(const uint8_t* romData, size_t romLen, const char* romName, SdSe
 
         ColecoInputState inputState;
         coleco_input_poll(&inputState);
+        const bool launchKeyHeld =
+            inputState.fire1 || inputState.fire2 || inputState.start ||
+            inputState.select || inputState.quitRequested || inputState.toggleViewRequested;
+        if (startupInputGuardActive) {
+            const bool guardTimedOut =
+                static_cast<int32_t>(millis() - startupInputGuardDeadlineMs) >= 0;
+            if (!launchKeyHeld || guardTimedOut) {
+                startupInputGuardActive = false;
+            } else {
+                if (!startupInputGuardLogged) {
+                    startupInputGuardLogged = true;
+                    std::printf("[COLECO][INPUT] startup guard suppressed launch key state\n");
+                }
+                inputState.fire1 = false;
+                inputState.fire2 = false;
+                inputState.start = false;
+                inputState.select = false;
+                inputState.quitRequested = false;
+                inputState.toggleViewRequested = false;
+            }
+        }
         
         uint16_t joy_high = 0xFF; // All released (active low)
         if (inputState.up) joy_high &= ~0x01;

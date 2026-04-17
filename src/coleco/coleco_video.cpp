@@ -90,6 +90,15 @@ int coleco_video_batch_lines(void)
     return coleco_video_use_external_rgb444() ? 1 : kBatchLines;
 }
 
+int coleco_video_current_batch_lines(void)
+{
+    const int preferred = coleco_video_batch_lines();
+    if (s_lineBatchCap <= 0) {
+        return preferred;
+    }
+    return (s_lineBatchCap < preferred) ? s_lineBatchCap : preferred;
+}
+
 int coleco_video_target_w(void)
 {
     return coleco_video_game_on_external() ? kExternalTargetW : kInternalTargetW;
@@ -335,31 +344,72 @@ bool coleco_video_layout_changed(const ColecoVideoPlan& plan, unsigned srcW, uns
 bool coleco_video_prepare_buffers(const ColecoVideoPlan& plan, bool layoutChanged)
 {
     const int neededLineWidth = plan.dstW;
-    const int batchLines = coleco_video_batch_lines();
+    const bool useRgb444 = coleco_video_use_external_rgb444();
+    const int preferredBatchLines = coleco_video_batch_lines();
     if (neededLineWidth <= 0 || plan.dstH <= 0) {
         return false;
     }
 
-    if (neededLineWidth > s_lineCap || batchLines > s_lineBatchCap) {
-        free(s_lineBuf);
-        const size_t lineBytes = static_cast<size_t>(neededLineWidth) * batchLines * sizeof(uint16_t);
-        s_lineBuf = static_cast<uint16_t*>(heap_caps_malloc(
-            lineBytes,
-            MALLOC_CAP_DMA | MALLOC_CAP_8BIT
-        ));
-        if (!s_lineBuf) s_lineBuf = static_cast<uint16_t*>(malloc(lineBytes));
-        s_lineCap = s_lineBuf ? neededLineWidth : 0;
-        s_lineBatchCap = s_lineBuf ? batchLines : 0;
-    }
+    const auto rgb444BytesForBatch = [neededLineWidth](int batchLines) -> int {
+        return ((neededLineWidth * batchLines + 1) / 2) * 3;
+    };
 
-    if (coleco_video_use_external_rgb444()) {
-        const int neededBytes = ((neededLineWidth * batchLines + 1) / 2) * 3;
-        if (neededBytes > s_lineBuf12Cap) {
-            free(s_lineBuf12);
-            s_lineBuf12 = static_cast<uint8_t*>(heap_caps_malloc(static_cast<size_t>(neededBytes), MALLOC_CAP_DMA | MALLOC_CAP_8BIT));
-            if (!s_lineBuf12) s_lineBuf12 = static_cast<uint8_t*>(malloc(static_cast<size_t>(neededBytes)));
-            s_lineBuf12Cap = s_lineBuf12 ? neededBytes : 0;
+    const int preferredLine12Bytes = useRgb444 ? rgb444BytesForBatch(preferredBatchLines) : 0;
+    if (neededLineWidth > s_lineCap ||
+        preferredBatchLines > s_lineBatchCap ||
+        (useRgb444 && preferredLine12Bytes > s_lineBuf12Cap)) {
+        free(s_lineBuf);
+        s_lineBuf = nullptr;
+        s_lineCap = 0;
+        s_lineBatchCap = 0;
+
+        free(s_lineBuf12);
+        s_lineBuf12 = nullptr;
+        s_lineBuf12Cap = 0;
+
+        for (int batchLines = preferredBatchLines; batchLines >= 1; --batchLines) {
+            const size_t lineBytes = static_cast<size_t>(neededLineWidth) * batchLines * sizeof(uint16_t);
+            uint16_t* lineBuf = static_cast<uint16_t*>(heap_caps_malloc(lineBytes, MALLOC_CAP_DMA | MALLOC_CAP_8BIT));
+            if (!lineBuf) {
+                lineBuf = static_cast<uint16_t*>(malloc(lineBytes));
+            }
+            if (!lineBuf) {
+                continue;
+            }
+
+            uint8_t* lineBuf12 = nullptr;
+            int lineBuf12Bytes = 0;
+            if (useRgb444) {
+                lineBuf12Bytes = rgb444BytesForBatch(batchLines);
+                lineBuf12 = static_cast<uint8_t*>(heap_caps_malloc(static_cast<size_t>(lineBuf12Bytes),
+                                                                   MALLOC_CAP_DMA | MALLOC_CAP_8BIT));
+                if (!lineBuf12) {
+                    lineBuf12 = static_cast<uint8_t*>(malloc(static_cast<size_t>(lineBuf12Bytes)));
+                }
+                if (!lineBuf12) {
+                    free(lineBuf);
+                    continue;
+                }
+            }
+
+            s_lineBuf = lineBuf;
+            s_lineCap = neededLineWidth;
+            s_lineBatchCap = batchLines;
+            s_lineBuf12 = lineBuf12;
+            s_lineBuf12Cap = lineBuf12 ? lineBuf12Bytes : 0;
+            if (batchLines != preferredBatchLines) {
+                std::printf("[COLECO][VIDEO] RGB444 batch fallback %d -> %d heap=%u largest=%u\n",
+                            preferredBatchLines,
+                            batchLines,
+                            static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_8BIT)),
+                            static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_8BIT)));
+            }
+            break;
         }
+    } else if (!useRgb444 && s_lineBuf12) {
+        free(s_lineBuf12);
+        s_lineBuf12 = nullptr;
+        s_lineBuf12Cap = 0;
     }
 
     if (!plan.cropOnly) {
@@ -381,7 +431,7 @@ bool coleco_video_prepare_buffers(const ColecoVideoPlan& plan, bool layoutChange
     if (!s_lineBuf) {
         return false;
     }
-    if (coleco_video_use_external_rgb444() && !s_lineBuf12) {
+    if (useRgb444 && !s_lineBuf12) {
         return false;
     }
     if (!plan.cropOnly && (!s_xmap || !s_ymap)) {
@@ -456,7 +506,7 @@ void coleco_video_draw_crop_frame(const ColecoDisplayFrame* frame, const ColecoV
 {
     const uint16_t* palette = frame->palette565 ? frame->palette565 : s_palette565;
     const bool useRgb444 = coleco_video_use_external_rgb444();
-    const int batchLines = coleco_video_batch_lines();
+    const int batchLines = coleco_video_current_batch_lines();
     coleco_video_init_palette_pairs(palette);
 
     if (coleco_video_game_on_external()) {
@@ -512,7 +562,7 @@ void coleco_video_draw_scaled_frame(const ColecoDisplayFrame* frame, const Colec
 {
     const uint16_t* palette = frame->palette565 ? frame->palette565 : s_palette565;
     const bool useRgb444 = coleco_video_use_external_rgb444();
-    const int batchLines = coleco_video_batch_lines();
+    const int batchLines = coleco_video_current_batch_lines();
     coleco_video_init_palette_pairs(palette);
 
     if (coleco_video_game_on_external()) {
@@ -593,7 +643,7 @@ bool coleco_video_render_frame_now(const ColecoDisplayFrame* frame)
         std::printf("[COLECO][VIDEO] prepare_buffers FAILED dstW=%d dstH=%d rgb444=%d batch=%d heap=%u largest=%u line=%p cap=%d rows=%d line12=%p cap=%d\n",
                     plan.dstW, plan.dstH,
                     static_cast<int>(coleco_video_use_external_rgb444()),
-                    coleco_video_batch_lines(),
+                    coleco_video_current_batch_lines(),
                     static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_8BIT)),
                     static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_8BIT)),
                     static_cast<void*>(s_lineBuf), s_lineCap, s_lineBatchCap,
@@ -628,6 +678,27 @@ void coleco_video_init(void)
     s_firstPresentLogged = false;
     coleco_video_reset_layout_cache();
     coleco_video_clear_target();
+}
+
+void coleco_video_prime_frame_buffers(unsigned srcW, unsigned srcH)
+{
+    if (s_videoMutex) xSemaphoreTake(s_videoMutex, portMAX_DELAY);
+
+    ColecoVideoPlan plan = {};
+    coleco_video_compute_plan(srcW, srcH, &plan);
+    const bool ok = coleco_video_prepare_buffers(plan, true);
+    if (coleco_video_game_on_external()) {
+        std::printf("[COLECO][VIDEO] primed buffers %s dstW=%d dstH=%d rgb444=%d batch=%d heap=%u largest=%u\n",
+                    ok ? "OK" : "FAIL",
+                    plan.dstW, plan.dstH,
+                    static_cast<int>(coleco_video_use_external_rgb444()),
+                    coleco_video_current_batch_lines(),
+                    static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_8BIT)),
+                    static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_8BIT)));
+    }
+    coleco_video_reset_layout_cache();
+
+    if (s_videoMutex) xSemaphoreGive(s_videoMutex);
 }
 
 void coleco_video_shutdown(void)

@@ -1039,6 +1039,7 @@ uint16_t CardputerView::colorForExt(const std::string& extRaw) const {
     if (ext == ".a26") return LYNX_COLOR;
     if (ext == ".a78") return LYNX_COLOR;
     if (ext == ".rom" || ext == ".dsk") return PRIMARY_COLOR;
+    if (ext == ".col") return COLECO_COLOR;
     if (ext == ".sfc" || ext == ".smc") return SNES_COLOR;
 
     return TEXT_COLOR;
@@ -1071,6 +1072,95 @@ void CardputerView::showValidExt(const std::vector<std::string>& exts) {
     Display->setTextColor(TEXT_COLOR);
 
     struct Badge { std::string raw; std::string txt; int w; int h; };
+
+    auto hasExt = [&](const char* wanted) {
+        for (const auto& raw : exts) {
+            std::string ext = raw;
+            for (auto& c : ext) c = (char)std::tolower((unsigned char)c);
+            if (!ext.empty() && ext[0] != '.') ext = "." + ext;
+            if (ext == wanted) return true;
+        }
+        return false;
+    };
+
+    const bool showSystemRows = hasExt(".col") && (hasExt(".rom") || hasExt(".dsk"));
+    if (showSystemRows) {
+        struct SystemRow {
+            const char* label;
+            std::vector<std::string> extensions;
+        };
+
+        std::vector<SystemRow> systemRows;
+        std::vector<std::string> msxExts;
+        if (hasExt(".rom")) msxExts.push_back(".ROM");
+        if (hasExt(".dsk")) msxExts.push_back(".DSK");
+        if (!msxExts.empty()) {
+            systemRows.push_back({"MSX:", msxExts});
+        }
+        systemRows.push_back({"Coleco:", {".COL"}});
+
+        for (const auto& row : systemRows) {
+            const int prefixW = Display->textWidth(row.label) + 5;
+            int rowWidth = prefixW;
+            std::vector<Badge> badges;
+
+            for (const auto& raw : row.extensions) {
+                const int textW = Display->textWidth(raw.c_str());
+                const int textH = Display->fontHeight();
+                const int badgeW = textW + badgeHPadding * 2;
+                const int badgeH = textH + badgeVPadding * 2;
+                badges.push_back(Badge{raw, raw, badgeW, badgeH});
+                rowWidth += badgeW;
+                if (badges.size() > 1) rowWidth += colGap;
+            }
+
+            int lineH = 0;
+            for (const auto& b : badges) lineH = std::max(lineH, b.h);
+            if (cursorY + lineH > boxY + boxH - 18) break;
+
+            int x = boxX + (boxW - rowWidth) / 2;
+            const int textH = Display->fontHeight();
+            const int textY = cursorY + (lineH - textH) / 2 + textH - 4;
+
+            Display->setTextColor(TEXT_COLOR);
+            Display->setCursor(x, textY);
+            Display->printf("%s", row.label);
+            x += prefixW;
+
+            for (size_t i = 0; i < badges.size(); ++i) {
+                const auto& b = badges[i];
+                const uint16_t accent = colorForExt(b.raw);
+                const uint16_t stroke = (accent == TEXT_COLOR) ? PRIMARY_COLOR : accent;
+
+                Display->fillRoundRect(x, cursorY, b.w, b.h, badgeRadius, RECT_COLOR_DARK);
+                Display->drawRoundRect(x, cursorY, b.w, b.h, badgeRadius, stroke);
+
+                const int badgeTextW = Display->textWidth(b.txt.c_str());
+                const int badgeTextH = Display->fontHeight();
+                const int badgeTextX = x + (b.w - badgeTextW) / 2;
+                const int badgeTextY = cursorY + (b.h - badgeTextH) / 2 + badgeTextH - 4;
+
+                Display->setTextColor(TEXT_COLOR);
+                Display->setCursor(badgeTextX, badgeTextY);
+                Display->printf("%s", b.txt.c_str());
+
+                x += b.w;
+                if (i + 1 < badges.size()) x += colGap;
+            }
+
+            cursorY += lineH + rowGap;
+        }
+
+        Display->setTextSize(TEXT_SMALL);
+        Display->setTextColor(PRIMARY_COLOR);
+        Display->drawCenterString("Press any key to continue",
+                                  Display->width() / 2,
+                                  boxY + boxH - 14);
+
+        Display->setTextSize(TEXT_MEDIUM);
+        Display->setTextColor(TEXT_COLOR);
+        return;
+    }
 
     std::vector<std::vector<Badge>> rows;
     std::vector<Badge> current;

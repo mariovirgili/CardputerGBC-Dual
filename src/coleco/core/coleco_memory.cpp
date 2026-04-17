@@ -15,8 +15,8 @@ bool coleco_memory_init(ColecoMemoryState* state, const uint8_t* biosRom, size_t
     state->cartRom = cartRom;
     state->cartRomSize = cartSize;
     state->joyMode = false;
-    state->joyState[0] = 0;
-    state->joyState[1] = 0;
+    state->joyState[0] = 0xFFFFu;
+    state->joyState[1] = 0xFFFFu;
     state->ready = true;
 
     return true;
@@ -45,8 +45,8 @@ void coleco_memory_reset(ColecoMemoryState* state)
     
     std::memset(state->ram, 0, sizeof(state->ram));
     state->joyMode = false;
-    state->joyState[0] = 0;
-    state->joyState[1] = 0;
+    state->joyState[0] = 0xFFFFu;
+    state->joyState[1] = 0xFFFFu;
 }
 
 uint8_t coleco_memory_read8(const ColecoMemoryState* state, uint16_t address)

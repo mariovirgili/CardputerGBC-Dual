@@ -2020,17 +2020,17 @@ void coleco_vdp_render(ColecoVdpState* state)
             s_vdpStatDrops++;
         }
     } else {
-        if (!g_emu_skip_video) {
-            coleco_vdp_render_internal(state);
+        if (g_emu_skip_video) {
+            return;
         }
+
+        coleco_vdp_render_internal(state);
         state->dirty = false;
         state->frameReady = true;
 
-        if (!g_emu_skip_video) {
-            ColecoDisplayFrame frame = {};
-            coleco_vdp_get_display_frame(state, &frame);
-            coleco_video_present_frame(&frame);
-        }
+        ColecoDisplayFrame frame = {};
+        coleco_vdp_get_display_frame(state, &frame);
+        coleco_video_present_frame(&frame);
     }
 }
 

@@ -34,7 +34,8 @@ static void showExternalRomSelectorTft()
   };
 
   static const ExternalRomBadge badges[] = {
-    {"MSX",  PRIMARY_COLOR}
+    {"MSX", PRIMARY_COLOR},
+    {"ColecoVision", COLECO_COLOR}
   };
 
   TFT_eSPI extTft;
@@ -48,7 +49,7 @@ static void showExternalRomSelectorTft()
   extTft.drawCentreString("Supported systems", 160, 52, 2);
 
   const int cols = 2;
-  const int badgeW = 68;
+  const int badgeW = 116;
   const int badgeH = 30;
   const int gapX = 8;
   const int gapY = 10;
