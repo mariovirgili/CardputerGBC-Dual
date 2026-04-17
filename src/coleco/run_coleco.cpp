@@ -42,9 +42,33 @@ static PsgChannel g_psg_ch[4];
 
 bool g_emu_skip_video = false;
 
+static constexpr uint32_t kColecoExternalDisplayWarmupMs = 500;
+
 extern uint8_t coleco_input_get_state_slot(void);
 extern bool coleco_input_get_save_requested(void);
 extern bool coleco_input_get_load_requested(void);
+
+struct ColecoViewModeOverrideGuard {
+    ColecoViewModeOverrideGuard()
+    {
+        coleco_config_clear_view_mode_override();
+    }
+
+    ~ColecoViewModeOverrideGuard()
+    {
+        coleco_config_clear_view_mode_override();
+    }
+
+    void configureForTarget(bool useExternal) const
+    {
+        if (useExternal) {
+            coleco_config_set_view_mode_override(ColecoInternalViewMode::PixelPerfect);
+            return;
+        }
+
+        coleco_config_clear_view_mode_override();
+    }
+};
 
 static String coleco_get_savestate_path(const char* romName, uint8_t slot) {
     String name(romName);
@@ -84,11 +108,14 @@ static String coleco_get_savestate_path(const char* romName, uint8_t slot) {
 
 static void coleco_draw_osd_message(const char* msg, bool useExternal) {
     if (useExternal) {
+        coleco_video_lock();
+        coleco_video_prepare_external_ui();
         auto& tft = coleco_video_external_tft();
         tft.fillRoundRect(80, 105, 160, 30, 4, TFT_BLACK);
         tft.drawRoundRect(80, 105, 160, 30, 4, PRIMARY_COLOR);
         tft.setTextColor(TFT_WHITE, TFT_BLACK);
         tft.drawCentreString(msg, 160, 113, 2);
+        coleco_video_unlock();
     } else {
         M5Cardputer.Display.fillRoundRect(60, 57, 120, 20, 4, TFT_BLACK);
         M5Cardputer.Display.drawRoundRect(60, 57, 120, 20, 4, PRIMARY_COLOR);
@@ -368,13 +395,16 @@ void run_coleco(const uint8_t* romData, size_t romLen, const char* romName, SdSe
         M5Cardputer.Display.setTextColor(TFT_ORANGE, TFT_BLACK);
         M5Cardputer.Display.setTextDatum(top_center);
         M5Cardputer.Display.drawString("ColecoVision: .col", M5Cardputer.Display.width() / 2, 20);
-
-        vTaskDelay(pdMS_TO_TICKS(2000)); // Pausa di 2 secondi per permettere la lettura dei comandi
     }
 
+    ColecoViewModeOverrideGuard viewModeGuard;
     coleco_config_load_internal_view_mode();
+    viewModeGuard.configureForTarget(useExternal);
 
     coleco_display_init();
+    if (useExternal) {
+        vTaskDelay(pdMS_TO_TICKS(kColecoExternalDisplayWarmupMs));
+    }
     coleco_input_init();
 
     // Init sound

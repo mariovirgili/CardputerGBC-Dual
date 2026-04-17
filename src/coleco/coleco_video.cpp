@@ -41,6 +41,7 @@ struct ColecoVideoPlan {
 
 static uint16_t* s_lineBuf = nullptr;
 static int s_lineCap = 0;
+static int s_lineBatchCap = 0;
 static uint8_t* s_lineBuf12 = nullptr;
 static int s_lineBuf12Cap = 0;
 static int16_t* s_xmap = nullptr;
@@ -84,6 +85,11 @@ bool coleco_video_use_external_rgb444(void)
     return coleco_video_game_on_external() && (g_emu_color_depth == EMU_COLOR_12BIT);
 }
 
+int coleco_video_batch_lines(void)
+{
+    return coleco_video_use_external_rgb444() ? 1 : kBatchLines;
+}
+
 int coleco_video_target_w(void)
 {
     return coleco_video_game_on_external() ? kExternalTargetW : kInternalTargetW;
@@ -92,6 +98,14 @@ int coleco_video_target_w(void)
 int coleco_video_target_h(void)
 {
     return coleco_video_game_on_external() ? kExternalTargetH : kInternalTargetH;
+}
+
+void coleco_video_write_external_colmod(bool useRgb444)
+{
+    s_extTft.writecommand(0x3A);
+    s_extTft.writedata(useRgb444 ? 0x53 : 0x55);
+    s_extTftRgb444Configured = useRgb444;
+    s_extTftColorModeKnown = true;
 }
 
 void coleco_video_prepare_external_tft(void)
@@ -113,11 +127,8 @@ void coleco_video_prepare_external_tft(void)
     const bool useRgb444 = coleco_video_use_external_rgb444();
     if (!s_extTftColorModeKnown || s_extTftRgb444Configured != useRgb444) {
         s_extTft.startWrite();
-        s_extTft.writecommand(0x3A);
-        s_extTft.writedata(useRgb444 ? 0x53 : 0x55);
+        coleco_video_write_external_colmod(useRgb444);
         s_extTft.endWrite();
-        s_extTftRgb444Configured = useRgb444;
-        s_extTftColorModeKnown = true;
     }
 }
 
@@ -172,6 +183,7 @@ void coleco_video_release_scratch_buffers(void)
     free(s_lineBuf);
     s_lineBuf = nullptr;
     s_lineCap = 0;
+    s_lineBatchCap = 0;
 
     free(s_lineBuf12);
     s_lineBuf12 = nullptr;
@@ -192,7 +204,16 @@ void coleco_video_clear_target(void)
 {
     if (coleco_video_game_on_external()) {
         coleco_video_prepare_external_tft();
+        const bool useRgb444 = coleco_video_use_external_rgb444();
+        if (useRgb444) {
+            s_extTft.startWrite();
+            coleco_video_write_external_colmod(false);
+            s_extTft.endWrite();
+        }
         s_extTft.fillScreen(TFT_BLACK);
+        if (useRgb444) {
+            s_extTftColorModeKnown = false;
+        }
     } else {
         M5Cardputer.Display.fillScreen(TFT_BLACK);
     }
@@ -313,26 +334,26 @@ bool coleco_video_layout_changed(const ColecoVideoPlan& plan, unsigned srcW, uns
 
 bool coleco_video_prepare_buffers(const ColecoVideoPlan& plan, bool layoutChanged)
 {
-    if (plan.dstW <= 0 || plan.dstH <= 0) {
+    const int neededLineWidth = plan.dstW;
+    const int batchLines = coleco_video_batch_lines();
+    if (neededLineWidth <= 0 || plan.dstH <= 0) {
         return false;
     }
 
-    // Allocate for maximum possible dimensions to avoid fragmentation errors on switch
-    const int maxW = coleco_video_game_on_external() ? kExternalTargetW : kInternalTargetW;
-    const int maxH = coleco_video_game_on_external() ? kExternalTargetH : kInternalTargetH;
-
-    if (maxW > s_lineCap) {
+    if (neededLineWidth > s_lineCap || batchLines > s_lineBatchCap) {
         free(s_lineBuf);
+        const size_t lineBytes = static_cast<size_t>(neededLineWidth) * batchLines * sizeof(uint16_t);
         s_lineBuf = static_cast<uint16_t*>(heap_caps_malloc(
-            static_cast<size_t>(maxW) * kBatchLines * sizeof(uint16_t),
+            lineBytes,
             MALLOC_CAP_DMA | MALLOC_CAP_8BIT
         ));
-        if (!s_lineBuf) s_lineBuf = static_cast<uint16_t*>(malloc(static_cast<size_t>(maxW) * kBatchLines * sizeof(uint16_t)));
-        s_lineCap = s_lineBuf ? maxW : 0;
+        if (!s_lineBuf) s_lineBuf = static_cast<uint16_t*>(malloc(lineBytes));
+        s_lineCap = s_lineBuf ? neededLineWidth : 0;
+        s_lineBatchCap = s_lineBuf ? batchLines : 0;
     }
 
     if (coleco_video_use_external_rgb444()) {
-        const int neededBytes = ((maxW * kBatchLines + 1) / 2) * 3;
+        const int neededBytes = ((neededLineWidth * batchLines + 1) / 2) * 3;
         if (neededBytes > s_lineBuf12Cap) {
             free(s_lineBuf12);
             s_lineBuf12 = static_cast<uint8_t*>(heap_caps_malloc(static_cast<size_t>(neededBytes), MALLOC_CAP_DMA | MALLOC_CAP_8BIT));
@@ -342,17 +363,17 @@ bool coleco_video_prepare_buffers(const ColecoVideoPlan& plan, bool layoutChange
     }
 
     if (!plan.cropOnly) {
-        if (maxW > s_xmapCap) {
+        if (plan.dstW > s_xmapCap) {
             free(s_xmap);
-            s_xmap = static_cast<int16_t*>(malloc(static_cast<size_t>(maxW) * sizeof(int16_t)));
-            s_xmapCap = s_xmap ? maxW : 0;
+            s_xmap = static_cast<int16_t*>(malloc(static_cast<size_t>(plan.dstW) * sizeof(int16_t)));
+            s_xmapCap = s_xmap ? plan.dstW : 0;
             layoutChanged = true;
         }
 
-        if (maxH > s_ymapCap) {
+        if (plan.dstH > s_ymapCap) {
             free(s_ymap);
-            s_ymap = static_cast<int16_t*>(malloc(static_cast<size_t>(maxH) * sizeof(int16_t)));
-            s_ymapCap = s_ymap ? maxH : 0;
+            s_ymap = static_cast<int16_t*>(malloc(static_cast<size_t>(plan.dstH) * sizeof(int16_t)));
+            s_ymapCap = s_ymap ? plan.dstH : 0;
             layoutChanged = true;
         }
     }
@@ -412,6 +433,9 @@ void coleco_video_begin_active_write(const ColecoVideoPlan& plan)
     if (coleco_video_game_on_external()) {
         coleco_video_prepare_external_tft();
         s_extTft.startWrite();
+        if (coleco_video_use_external_rgb444()) {
+            coleco_video_write_external_colmod(true);
+        }
         s_extTft.setAddrWindow(plan.xOff, plan.yOff, plan.dstW, plan.dstH);
     } else {
         M5Cardputer.Display.startWrite();
@@ -432,13 +456,14 @@ void coleco_video_draw_crop_frame(const ColecoDisplayFrame* frame, const ColecoV
 {
     const uint16_t* palette = frame->palette565 ? frame->palette565 : s_palette565;
     const bool useRgb444 = coleco_video_use_external_rgb444();
+    const int batchLines = coleco_video_batch_lines();
     coleco_video_init_palette_pairs(palette);
 
     if (coleco_video_game_on_external()) {
         coleco_video_begin_active_write(plan);
         if (useRgb444) {
-            for (int y = 0; y < plan.dstH; y += kBatchLines) {
-                const int batch = (y + kBatchLines <= plan.dstH) ? kBatchLines : (plan.dstH - y);
+            for (int y = 0; y < plan.dstH; y += batchLines) {
+                const int batch = (y + batchLines <= plan.dstH) ? batchLines : (plan.dstH - y);
                 for (int row = 0; row < batch; ++row) {
                     const uint8_t* src = frame->indexed8
                         + static_cast<size_t>(plan.srcY0 + y + row) * frame->pitchBytes
@@ -449,11 +474,10 @@ void coleco_video_draw_crop_frame(const ColecoDisplayFrame* frame, const ColecoV
                 coleco_video_pack_rgb444_line(s_lineBuf, plan.dstW * batch, s_lineBuf12);
                 const int bytesPerLine = ((plan.dstW + 1) / 2) * 3;
                 s_extTft.pushColors(reinterpret_cast<uint16_t*>(s_lineBuf12), (bytesPerLine * batch + 1) / 2, false);
-                taskYIELD();
             }
         } else {
-            for (int y = 0; y < plan.dstH; y += kBatchLines) {
-                const int batch = (y + kBatchLines <= plan.dstH) ? kBatchLines : (plan.dstH - y);
+            for (int y = 0; y < plan.dstH; y += batchLines) {
+                const int batch = (y + batchLines <= plan.dstH) ? batchLines : (plan.dstH - y);
                 for (int row = 0; row < batch; ++row) {
                     const uint8_t* src = frame->indexed8
                         + static_cast<size_t>(plan.srcY0 + y + row) * frame->pitchBytes
@@ -462,7 +486,6 @@ void coleco_video_draw_crop_frame(const ColecoDisplayFrame* frame, const ColecoV
                     coleco_video_expand_indexed_line(src, dst, plan.dstW, palette, frame->paletteEntryCount);
                 }
                 s_extTft.pushColors(s_lineBuf, plan.dstW * batch, false);
-                taskYIELD();
             }
         }
         coleco_video_end_active_write();
@@ -470,8 +493,8 @@ void coleco_video_draw_crop_frame(const ColecoDisplayFrame* frame, const ColecoV
     }
 
     coleco_video_begin_active_write(plan);
-    for (int y = 0; y < plan.dstH; y += kBatchLines) {
-        const int batch = (y + kBatchLines <= plan.dstH) ? kBatchLines : (plan.dstH - y);
+    for (int y = 0; y < plan.dstH; y += batchLines) {
+        const int batch = (y + batchLines <= plan.dstH) ? batchLines : (plan.dstH - y);
         for (int row = 0; row < batch; ++row) {
             const uint8_t* src = frame->indexed8
                 + static_cast<size_t>(plan.srcY0 + y + row) * frame->pitchBytes
@@ -489,13 +512,14 @@ void coleco_video_draw_scaled_frame(const ColecoDisplayFrame* frame, const Colec
 {
     const uint16_t* palette = frame->palette565 ? frame->palette565 : s_palette565;
     const bool useRgb444 = coleco_video_use_external_rgb444();
+    const int batchLines = coleco_video_batch_lines();
     coleco_video_init_palette_pairs(palette);
 
     if (coleco_video_game_on_external()) {
         coleco_video_begin_active_write(plan);
         if (useRgb444) {
-            for (int y = 0; y < plan.dstH; y += kBatchLines) {
-                const int batch = (y + kBatchLines <= plan.dstH) ? kBatchLines : (plan.dstH - y);
+            for (int y = 0; y < plan.dstH; y += batchLines) {
+                const int batch = (y + batchLines <= plan.dstH) ? batchLines : (plan.dstH - y);
                 for (int row = 0; row < batch; ++row) {
                     const uint8_t* src = frame->indexed8 + static_cast<size_t>(s_ymap[y + row]) * frame->pitchBytes;
                     uint16_t* dst = s_lineBuf + static_cast<size_t>(row) * plan.dstW;
@@ -506,11 +530,10 @@ void coleco_video_draw_scaled_frame(const ColecoDisplayFrame* frame, const Colec
                 coleco_video_pack_rgb444_line(s_lineBuf, plan.dstW * batch, s_lineBuf12);
                 const int bytesPerLine = ((plan.dstW + 1) / 2) * 3;
                 s_extTft.pushColors(reinterpret_cast<uint16_t*>(s_lineBuf12), (bytesPerLine * batch + 1) / 2, false);
-                taskYIELD();
             }
         } else {
-            for (int y = 0; y < plan.dstH; y += kBatchLines) {
-                const int batch = (y + kBatchLines <= plan.dstH) ? kBatchLines : (plan.dstH - y);
+            for (int y = 0; y < plan.dstH; y += batchLines) {
+                const int batch = (y + batchLines <= plan.dstH) ? batchLines : (plan.dstH - y);
                 for (int row = 0; row < batch; ++row) {
                     const uint8_t* src = frame->indexed8 + static_cast<size_t>(s_ymap[y + row]) * frame->pitchBytes;
                     uint16_t* dst = s_lineBuf + static_cast<size_t>(row) * plan.dstW;
@@ -519,7 +542,6 @@ void coleco_video_draw_scaled_frame(const ColecoDisplayFrame* frame, const Colec
                     }
                 }
                 s_extTft.pushColors(s_lineBuf, plan.dstW * batch, false);
-                taskYIELD();
             }
         }
         coleco_video_end_active_write();
@@ -527,8 +549,8 @@ void coleco_video_draw_scaled_frame(const ColecoDisplayFrame* frame, const Colec
     }
 
     coleco_video_begin_active_write(plan);
-    for (int y = 0; y < plan.dstH; y += kBatchLines) {
-        const int batch = (y + kBatchLines <= plan.dstH) ? kBatchLines : (plan.dstH - y);
+    for (int y = 0; y < plan.dstH; y += batchLines) {
+        const int batch = (y + batchLines <= plan.dstH) ? batchLines : (plan.dstH - y);
         for (int row = 0; row < batch; ++row) {
             const uint8_t* src = frame->indexed8 + static_cast<size_t>(s_ymap[y + row]) * frame->pitchBytes;
             uint16_t* dst = s_lineBuf + static_cast<size_t>(row) * plan.dstW;
@@ -568,7 +590,14 @@ bool coleco_video_render_frame_now(const ColecoDisplayFrame* frame)
     }
 
     if (!coleco_video_prepare_buffers(plan, layoutChanged)) {
-        std::printf("[COLECO][VIDEO] prepare_buffers FAILED dstW=%d dstH=%d\n", plan.dstW, plan.dstH);
+        std::printf("[COLECO][VIDEO] prepare_buffers FAILED dstW=%d dstH=%d rgb444=%d batch=%d heap=%u largest=%u line=%p cap=%d rows=%d line12=%p cap=%d\n",
+                    plan.dstW, plan.dstH,
+                    static_cast<int>(coleco_video_use_external_rgb444()),
+                    coleco_video_batch_lines(),
+                    static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_8BIT)),
+                    static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_8BIT)),
+                    static_cast<void*>(s_lineBuf), s_lineCap, s_lineBatchCap,
+                    static_cast<void*>(s_lineBuf12), s_lineBuf12Cap);
         return false;
     }
 
@@ -639,11 +668,8 @@ void coleco_video_prepare_external_ui(void)
 
     if (!s_extTftColorModeKnown || s_extTftRgb444Configured) {
         s_extTft.startWrite();
-        s_extTft.writecommand(0x3A);
-        s_extTft.writedata(0x55);
+        coleco_video_write_external_colmod(false);
         s_extTft.endWrite();
-        s_extTftRgb444Configured = false;
-        s_extTftColorModeKnown = true;
     }
 }
 

@@ -235,7 +235,7 @@ void CardputerView::showControlBindings(
 
         Display->fillRoundRect(badgeX, badgeY, badgeW, badgeH, 4, RECT_COLOR_DARK);
         Display->drawRoundRect(badgeX, badgeY, badgeW, badgeH, 4, PRIMARY_COLOR);
-        const int keyTextYOffset = (g_emu_display_target == EMU_DISPLAY_EXTERNAL) ? -3 : -2;
+        const int keyTextYOffset = (g_emu_display_target == EMU_DISPLAY_EXTERNAL) ? -4 : -2;
         Display->drawCenterString(key.c_str(), badgeX + badgeW / 2, badgeY + badgeH / 2 + keyTextYOffset);
     }
 

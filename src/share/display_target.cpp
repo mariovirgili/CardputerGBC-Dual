@@ -11,15 +11,17 @@ emu_color_depth_t g_emu_color_depth = EMU_COLOR_16BIT;
 bool g_emu_aux_screen_locked = false;
 
 // ROM type values from select_rom.h RomType enum
-// UNKNOWN=0, MSX=1, MSX_DISK=2
+// UNKNOWN=0, MSX=1, MSX_DISK=2, COLECO=3
 static constexpr int kRomMsx = 1;
 static constexpr int kRomMsxDisk = 2;
+static constexpr int kRomColeco = 3;
 
 bool emu_has_external_display_support(int romType)
 {
     switch (romType) {
         case kRomMsx:
         case kRomMsxDisk:
+        case kRomColeco:
             return true;
         default:
             return false;
@@ -31,6 +33,7 @@ static const char* romTypeToKey(int romType)
     switch (romType) {
         case kRomMsx: return "msx";
         case kRomMsxDisk: return "dsk";
+        case kRomColeco: return "coleco";
         default:        return "unk";
     }
 }
@@ -59,7 +62,9 @@ emu_color_depth_t emu_recommended_color_depth(int romType)
     switch (romType) {
         case kRomMsx:
         case kRomMsxDisk:
+        case kRomColeco:
             // MSX1 uses a tiny fixed palette and MSX2 tops out at 9-bit RGB,
+            // ColecoVision uses the same small VDP palette family,
             // so RGB444 is enough and cheaper to push on the external TFT.
             return EMU_COLOR_12BIT;
         default:
