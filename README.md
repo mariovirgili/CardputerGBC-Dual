@@ -1,135 +1,221 @@
-# Cardputer Game Station Dual Screen
+# CardputerGBC-Dual
 
-![GameStation 1.0 Dual Screen](images/Externaltitle.png)
+![CardputerGBC-Dual external title screen](images/Externaltitle.png)
 
-Dual-screen firmware branch for the M5Stack Cardputer with an external SPI TFT.
+CardputerGBC-Dual is a dual-screen emulator firmware for the M5Stack Cardputer.
+This branch focuses on MSX/MSX1 and ColecoVision support, with selectable output
+on the internal Cardputer LCD or on an external SPI TFT display.
 
-This branch keeps the original emulator pack and adds:
+Version 0.2 adds a dual-core MSX runtime, an embedded C-BIOS fallback, a
+ColecoVision emulator, save states, fast save/load shortcuts, SD reliability
+improvements, and indexed ROM browsing for large SD card collections.
 
-- dual-screen startup and ROM browser screens
-- per-core display target selection (`External TFT` or `Internal LCD`)
-- per-core control profiles saved on the SD card
-- Atari 2600 (`.a26`) and Atari 7800 (`.a78`) launcher integration
-- safer ROM loading with size checks before copying to flash
-- persistent ROM browser state (last folder and last launched game)
-- merged flashable firmware images in the `release/` folder
+The project started from the excellent work in
+[Cardputer-Game-Station-Emulators](https://github.com/geo-tp/Cardputer-Game-Station-Emulators)
+by /u/geo-tp, and keeps adapting the firmware around the Cardputer hardware.
 
-The project is powered by [Nofrendo](https://github.com/moononournation/arduino-nofrendo), [Snes9x](https://github.com/snes9xgit/snes9x), [Smsplus](https://github.com/ducalex/retro-go/tree/master/retro-core/components/smsplus), [Race](https://github.com/libretro/RACE), [Gwenesis](https://github.com/bzhxx/gwenesis), [Oswan](https://github.com/alekmaul/oswan), [GnuBoy](https://github.com/rofl0r/gnuboy), [Handy](https://github.com/libretro/libretro-handy), [PCE-GO](https://github.com/ducalex/retro-go/tree/master/retro-core/components/pce-go), [Stella](https://stella-emu.github.io/) and [prosystem-libretro](https://github.com/libretro/prosystem-libretro).
+## Version 0.2 Highlights
 
-![NES emulator screen captures on the M5Stack Cardputer](images/nes_emulator_s.jpg)
-![GBC emulator screen captures on the M5Stack Cardputer](images/gbc_emulator_s.jpg)
-![SMS emulator screen captures on the M5Stack Cardputer](images/sms_emulator_s.jpg)
-![NGP emulator screen captures on the M5Stack Cardputer](images/ngp_emulator_s.jpg)
-![Megadrive emulator screen captures on the M5Stack Cardputer](images/megadrive_emulator_s.jpg)
+- MSX/MSX1 emulation with a dual-core runtime on ESP32-S3.
+- Embedded C-BIOS fallback for MSX ROM loading, suggested by /u/geo-tp.
+- Official MSX BIOS support from SD for full BASIC and `.dsk` disk usage.
+- `STARTBASIC.ROM` helper ROM for launching MSX BASIC from the ROM selector.
+- ColecoVision emulation on internal LCD and external TFT.
+- ColecoVision external display output at 60 fps.
+- Internal and external display target selection before launch.
+- 16-bit and 12-bit external TFT color-depth modes.
+- Runtime config menu with save-state slot selection.
+- Save/load state support from the runtime menu.
+- Fast save and fast load with `Fn + S` and `Fn + L`.
+- SD access fixes while the external display is active.
+- ROM selector index files for large folders.
+- ROM selector refresh option for rebuilding directory indexes.
 
 ## Supported Systems
 
-| Console | Sound | Video | Save | Speed | Notes |
-| --- | --- | --- | --- | --- | --- |
-| NES | Yes | Yes | Yes | Full | A few mapper issues remain |
-| Game Boy / Game Boy Color | Yes | Yes | Yes | Full | Real DMG/CGB detection on launch |
-| Master System | Yes | Yes | Yes | Full | Fully playable |
-| Game Gear | Yes | Yes | Yes | Full | Fully playable |
-| PC Engine | Yes | Yes | Partial | Full | Very good overall compatibility |
-| Lynx | Yes | Yes | Partial | Mostly full | Some heavy titles can slow down |
-| Mega Drive / Genesis | Yes | Yes | Partial | Mostly full | Some heavy titles can slow down |
-| Neo Geo Pocket / Color | Yes | Yes | Partial | Mostly full | Mono/color support |
-| WonderSwan / Color | Yes | Yes | Yes | Partial | Not full speed in all titles |
-| Super NES | Partial | Yes | Partial | Partial | Experimental due RAM limits |
-| Atari 2600 | Yes | Yes | No | Mostly full | `.a26` only in current branch |
-| Atari 7800 | Yes | Yes | No | Partial | `.a78` only, NTSC/PAL supported, some titles are slow |
+| System | Extensions | Display | Save States | Notes |
+| --- | --- | --- | --- | --- |
+| MSX/MSX1 cartridge | `.rom`, `.mx1` | Internal LCD or external TFT | Yes | Embedded C-BIOS fallback available |
+| MSX disk image | `.dsk` | Internal LCD or external TFT | Yes | Requires official MSX BIOS and Disk ROM |
+| MSX BASIC launcher | `STARTBASIC.ROM` | Internal LCD or external TFT | Yes | Requires official MSX BIOS |
+| ColecoVision | `.col` | Internal LCD or external TFT | Yes | Requires ColecoVision BIOS on SD |
 
-Supported ROM extensions from SD:
+ROMs must be uncompressed. Do not use `.zip`, `.7z`, or `.rar`.
 
-`*.nes *.gb *.gbc *.sms *.gg *.ngc *.ngp *.md *.ws *.wsc *.pce *.lnx *.sfc *.smc *.a26 *.a78`
+## MSX Support
 
-ROMs must be uncompressed. Do not use `.zip`, `.7z` or `.rar`.
-Atari support currently exposes `.a26` and `.a78` only. Generic `.bin` loading is not enabled in this branch.
+The MSX runtime is built around a dual-core architecture:
 
-## Branch Highlights
+- the emulation loop runs on one ESP32-S3 core
+- VDP/rendering work is pushed to the other core where possible
+- external TFT output can run while SD access remains usable
 
-### Dual-screen workflow
+The current release targets MSX/MSX1. MSX2 is not included in v0.2 because the
+current Cardputer hardware has no PSRAM. After testing and optimization work,
+MSX2 is not realistic on this device without additional RAM.
 
-- Internal LCD shows the startup splash and the supported-systems screen.
-- External TFT shows a dedicated full-screen title image at boot.
-- While browsing ROMs, the external TFT shows a `Select Rom!` panel with supported systems.
-- For cores that support both screens, the firmware asks which display to use before launch.
-- When `External TFT` is selected, the firmware also asks for color depth:
-  - `16-bit 65K colors`
-  - `12-bit 4K colors`
-- Display target and color depth are saved per core in NVS.
-- Atari 2600 and Atari 7800 also expose an internal LCD view mode in the shared config menu:
-  - `Pixel Perfect`
-  - `Wide`
+The MSX2 work is still available in the GitHub repository on the
+`msx2-dualcore` branch. If M5Stack releases a Cardputer-like device with PSRAM,
+that branch can be resumed.
 
-### Game Boy / Game Boy Color routing
+### MSX BIOS And C-BIOS
 
-Game Boy handling is now based on the real ROM hardware type, not only the file extension:
+The firmware embeds C-BIOS as a fallback BIOS for MSX cartridge ROM loading.
+If no valid official `MSX.ROM` is found on the SD card, the loader copies the
+embedded C-BIOS from flash to RAM and uses it automatically.
 
-- DMG and SGB titles are rendered on the external TFT
-- CGB titles are rendered on the internal LCD
-- when a CGB game runs on the internal LCD, the external TFT shows the game name and control help
+When the fallback is used, the serial log includes a line similar to:
 
-### Atari 2600 and Atari 7800
+```text
+[MSX][BIOS] accept embedded C-BIOS size=32768 md5=...
+```
 
-- Atari 2600 is integrated as a dedicated module under `src/atari2600/` using vendored Stella sources.
-- Atari 7800 is integrated as a separate module under `src/atari7800/` using a small local libretro host for `prosystem-libretro`.
-- Both Atari modules keep the existing launcher flow:
-  - browse ROM on SD
-  - copy ROM to flash/XIP
-  - dispatch to a dedicated `run_*()` wrapper
-- Both support the shared control editor and per-core display target selection.
-- Both support internal LCD `Pixel Perfect` and `Wide` modes through the shared config menu.
-- Atari 7800 supports both NTSC and PAL timing from the core AV info.
+C-BIOS is useful for many cartridge ROMs, but it does not replace the official
+MSX BIOS for every use case.
 
-### Per-core control profiles
+To boot MSX BASIC, use the official MSX BIOS:
 
-Controls are no longer fixed globally. Each core has its own `.opt` file on the SD root:
+```text
+/sd/bios/msx/MSX.ROM
+```
 
-- `NES.opt`
-- `SMS.opt`
-- `NGP.opt`
-- `WS.opt`
-- `PCE.opt`
-- `GBC.opt`
-- `LYNX.opt`
-- `GENESIS.opt`
-- `SNES.opt`
-- `A2600.opt`
-- `A7800.opt`
+To boot `.dsk` disk images, also provide:
 
-You can edit the current core bindings from the pre-launch control screen with a long press on `GO`.
+```text
+/sd/bios/msx/DISK.ROM
+```
 
-### ROM browser quality-of-life changes
+Reference hashes:
 
-- The browser remembers the last visited folder in `/.cardputer/last_rom_folder.txt`
-- The browser remembers the last launched ROM in NVS
-- The cursor repositions itself on the last ROM when you reopen the same folder
-- If the remembered ROM or folder no longer exists, the firmware falls back to browsing the SD card instead of getting stuck on `No ROM selected`
-- The browser reopens automatically when a selected ROM is too large or cannot be read
+```text
+MSX.ROM   364a1a579fe5cb8dba54519bcfcdac0d
+DISK.ROM  80dcd1ad1a4cf65d64b7ba10504e8190
+```
 
-### Safer ROM loading
+The loader searches the configured BIOS path first, then common SD locations
+such as:
 
-Before copying a ROM to flash, the firmware checks the real file size against the active ROM partition.
+```text
+/sd/bios/msx/
+/sd/msx/
+```
 
-If the ROM is too large:
+### STARTBASIC.ROM
 
-- the game is not started
-- an error is shown
-- the ROM browser is reopened so you can pick another file
+Version 0.2 includes `STARTBASIC.ROM`, a small helper ROM that can be copied to:
 
-### SD reliability
+```text
+/sd/roms/MSX/STARTBASIC.ROM
+```
 
-SD initialization is more robust in this branch:
+It appears in the ROM selector and lets you start MSX BASIC more conveniently.
 
-- the SPI bus is reset before mounting
-- CS is forced high before init
-- mount retries use several SPI speeds, from 40 MHz down to 1 MHz
-- root directory access is verified after mount
+`STARTBASIC.ROM` does not replace the official MSX BIOS. To actually boot into
+BASIC, you still need:
 
-## ROM Browser Controls
+```text
+/sd/bios/msx/MSX.ROM
+```
 
-Inside the ROM selector:
+For `.dsk` disk support, you should also provide:
+
+```text
+/sd/bios/msx/DISK.ROM
+```
+
+Recommended BASIC and disk setup:
+
+```text
+/sd/roms/MSX/STARTBASIC.ROM
+/sd/bios/msx/MSX.ROM
+/sd/bios/msx/DISK.ROM
+```
+
+## ColecoVision Support
+
+ColecoVision emulation is implemented in `src/coleco` and supports:
+
+- `.col` cartridge ROMs
+- internal Cardputer LCD output
+- external SPI TFT output
+- 60 fps video output
+- 12-bit and 16-bit external TFT modes
+- runtime menu integration
+- save states
+- fast save and fast load
+
+The ColecoVision BIOS is not embedded. Put the official BIOS on the SD card,
+for example:
+
+```text
+/sd/bios/coleco.rom
+/sd/bios/coleco/coleco.rom
+```
+
+### ColecoVision Emulator Lineage
+
+The ColecoVision emulator is not a direct port of ColEm, CoolCV, or SMS Plus.
+
+Short version: it uses a fMSX/EMULib foundation by Marat Fayzullin, Z80
+adaptation work from the esplay-fMSX area, and a custom ColecoVision core
+implemented for this project.
+
+More specifically:
+
+- Z80 CPU: based on the fMSX Z80 engine by Marat Fayzullin, as ported to ESP32
+  in esplay-fMSX.
+- SN76489 audio: from EMULib by Marat Fayzullin, copyright 1996-1998.
+- TMS9918/VDP: local implementation in `src/coleco/core/coleco_vdp.cpp`, with
+  some logic and comments inspired by fMSX, especially around Screen 2 and
+  addressing behavior.
+- ColecoVision memory map, I/O, input, Cardputer video output, save states, SD
+  integration, and internal/external display support are custom or adapted
+  specifically for CardputerGBC-Dual.
+
+## SD Card Layout
+
+Suggested SD card folders:
+
+```text
+/sd/roms/MSX/
+/sd/roms/Coleco/
+/sd/bios/msx/
+/sd/bios/coleco/
+```
+
+Useful files:
+
+```text
+/sd/roms/MSX/STARTBASIC.ROM
+/sd/bios/msx/MSX.ROM
+/sd/bios/msx/DISK.ROM
+/sd/bios/coleco.rom
+```
+
+Save-state files are created automatically in per-system folders on the SD card
+and are linked to the ROM filename.
+
+## ROM Selector
+
+The ROM selector supports `.rom`, `.mx1`, `.dsk`, and `.col` files.
+
+Large ROM folders can be slow or unstable to scan directly on embedded hardware,
+so the selector now uses index files. Index files are created automatically the
+first time you open a ROM directory.
+
+After an index exists, the selector loads the cached file list instead of
+rescanning the whole folder every time. This makes navigation much faster and
+more reliable with large SD collections.
+
+If you add, remove, or rename ROM files, refresh the index from the selector:
+
+1. Open the ROM selector.
+2. Long-press `G0`.
+3. Select the refresh index option.
+
+This rebuilds the index for the current ROM directory.
+
+### ROM Selector Controls
 
 - `E` = up
 - `Z` = down
@@ -140,73 +226,97 @@ Inside the ROM selector:
 - `K` = go back to parent folder
 - typing letters/numbers = filter the list
 - `Del` = remove characters from the filter
+- long-press `G0` = selector options, including index refresh
 
 On the `RESUME LAST GAME?` prompt:
 
-- `D`, `Right` or `Enter` = yes
-- `A`, `Left` or `GO` = no
+- `D`, `Right`, or `Enter` = yes
+- `A`, `Left`, or `G0` = no
 
-## In-game and Pre-launch Controls
+## Display Workflow
 
-### Global runtime keys
+- The internal LCD shows the startup splash and supported formats.
+- The external TFT shows a dedicated startup screen when connected/enabled.
+- Before launching a supported ROM, the firmware asks whether to use the
+  internal LCD or the external TFT.
+- When the external TFT is selected, the firmware can use 16-bit or 12-bit color
+  depth depending on the saved setting.
+- Display target and color depth are saved per core in NVS.
 
-- `GO` short press during emulation = quit safely and return to the ROM browser
-- backtick long press during emulation = quit safely and return to the ROM browser
+## In-Game Controls
+
+### Runtime Menu And Save States
+
+Save states are supported for both MSX and ColecoVision.
+
+During gameplay, long-press `G0` to open the runtime config menu. From there you
+can:
+
+- select the active save slot
+- save the current state
+- load a previous state
+- close the menu and return to gameplay
+
+Quick shortcuts are also available:
+
+- `Fn + S` = fast save
+- `Fn + L` = fast load
+
+Fast save/load uses the currently selected slot.
+
+### Global Runtime Keys
+
+- short `G0` press during emulation = quit safely and return to the ROM selector
+- backtick long press during emulation = quit safely and return to the ROM selector
 - `+` / `-` = audio volume
 - `[` / `]` = LCD brightness
 - `\` = screen mode toggle
 - `Fn + Left / Right` = zoom out / zoom in
 
-### Pre-launch screen
+### Pre-Launch Controls
 
-Before a game starts, the firmware shows the current bindings for the selected core.
+Before a game starts, the firmware shows the current bindings for the selected
+core.
 
 - any normal key starts the game
-- long press `GO` opens the control editor for the current core
+- long-press `G0` opens the control editor for the current core
 
-### Default bindings
-
-The defaults depend on the core, but the base layout is:
+Default bindings:
 
 - directions: `E`, `S`, `A`, `D`
-- 2-button cores: `K`, `L`
+- buttons: `K`, `L`
 - `Start`: `1`
 - `Select`: `2`
 
-Additional defaults:
+## SD Reliability
 
-- Genesis adds `J` for button `C`
-- SNES uses `I`, `J`, `O`, `P`, `K`, `L`
-- WonderSwan exposes both directional groups (`X1..X4`, `Y1..Y4`)
+SD initialization and access are tuned for the shared hardware constraints:
 
-## ROMs and Saves
-
-ROMs can be placed anywhere on the SD card.
-
-Save files are created automatically in per-console folders on the SD card and are linked to the ROM filename.
-
-The quit path waits for pending save activity before rebooting back to the selector, so using `GO` is the safe way to leave a game.
+- the SPI bus is reset before mounting
+- CS is forced high before init
+- mount retries use several SPI speeds, from 40 MHz down to 1 MHz
+- root directory access is verified after mount
+- external display writes are paused when needed so SD transfers can complete
 
 ## Flash Layouts
 
-This branch includes multiple partition CSV files. The recommended release environment is:
+The recommended release environment is:
 
-- `m5stack-stamps3-max-spiffs`
+```text
+m5stack-stamps3-max-spiffs
+```
 
-It currently uses:
-
-- [`partitions_a2600_8mb.csv`](partitions_a2600_8mb.csv)
+It currently uses the 8 MB partition table configured in `platformio.ini`.
 
 Layout:
 
 - app partition: `0x340000` bytes
 - ROM partition (`spiffs`): `0x4B0000` bytes
 
-That gives roughly `4.69 MiB` of ROM storage in the current recommended build, with a larger app partition for the integrated Atari cores.
+The older launcher-driven runtime repartitioning flow is disabled in this
+branch. Partition layout is chosen at build/flash time.
 
-The older launcher-driven runtime repartitioning flow is disabled in this branch. Partition layout is chosen at build/flash time instead.
-
-## Build and Flash
+## Build And Flash
 
 Recommended build:
 
@@ -216,9 +326,12 @@ C:\Users\user\.platformio\penv\Scripts\platformio.exe run --environment m5stack-
 
 The merged flashable image is stored at:
 
-- [`release/CardputerGBC-Dual-max-spiffs-flashable.bin`](release/CardputerGBC-Dual-max-spiffs-flashable.bin)
+```text
+release/CardputerGBC-Dual-max-spiffs-flashable.bin
+```
 
-Important: when regenerating the merged image manually, keep the bootloader flash mode (`DIO`). Do not force `QIO`.
+Important: when regenerating the merged image manually, keep the bootloader
+flash mode as `DIO`. Do not force `QIO`.
 
 Example flash command:
 
@@ -226,14 +339,27 @@ Example flash command:
 C:\Users\user\.platformio\penv\Scripts\python.exe -X utf8 C:\Users\user\.platformio\packages\tool-esptoolpy\esptool.py --chip esp32s3 --port COM4 --baud 921600 write_flash 0x0 release\CardputerGBC-Dual-max-spiffs-flashable.bin
 ```
 
+## Acknowledgements
+
+Thanks to:
+
+- /u/geo-tp for the Cardputer Game Station emulator work and for suggesting the
+  C-BIOS fallback path.
+- Marat Fayzullin for fMSX and EMULib.
+- the esplay-fMSX project for ESP32-oriented fMSX/Z80 adaptation work.
+- M5Stack and the Cardputer community for testing and feedback.
+
 ## M5Stack Joystick
 
-You can also use the M5Stack Joystick v1.1 (U024-C) or Joystick2 (U024-V2). Plug it in before launching a game and it will be detected automatically.
+You can use the M5Stack Joystick v1.1 (U024-C) or Joystick2 (U024-V2). Plug it
+in before launching a game and it will be detected automatically.
 
 <img src="images/m5stack_joysticks.jpg" alt="A photo of the M5Stack Joysticks" width="800" height="400">
 
 ## D-Pad 3D Model
 
-[Cardputer-Accessories repo](https://github.com/AndreiVladescu/Cardputer-Accessories) contains a printable D-Pad model that fits the Cardputer keyboard. Thanks to @AndreiVladescu.
+[Cardputer-Accessories repo](https://github.com/AndreiVladescu/Cardputer-Accessories)
+contains a printable D-Pad model that fits the Cardputer keyboard. Thanks to
+@AndreiVladescu.
 
 [![A render of the 3D DPAD model](images/cardputer_gamepad_render.jpg)](https://github.com/AndreiVladescu/Cardputer-Accessories)
