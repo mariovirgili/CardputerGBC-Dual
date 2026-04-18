@@ -17,6 +17,17 @@
 #include <cstring>
 #include <string>
 
+extern "C" {
+bool o2em_render_plus_external_line(uint16_t* out_line,
+                                    int dst_width,
+                                    int dst_height,
+                                    int dst_y,
+                                    const uint8_t* base_line,
+                                    int src_width,
+                                    int src_height,
+                                    const uint16_t palette[256]);
+}
+
 namespace {
 
 constexpr int kInternalTargetW = 240;
@@ -624,6 +635,86 @@ void videopac_display_render_indexed(const uint8_t* buffer,
     }
 }
 
+void videopac_display_render_indexed_plus_external(const uint8_t* buffer,
+                                                   int width,
+                                                   int height,
+                                                   int pitchPixels,
+                                                   const uint16_t palette[256],
+                                                   bool useExternal)
+{
+    if (!useExternal) {
+        videopac_display_render_indexed(buffer, width, height, pitchPixels, palette, useExternal);
+        return;
+    }
+
+    if (!buffer || !palette || width <= 0 || height <= 0) {
+        return;
+    }
+
+    if (pitchPixels < width) {
+        pitchPixels = width;
+    }
+
+    const VideoPlan plan = make_plan(width, height, useExternal);
+    if (plan.dstW <= 0 || plan.dstH <= 0) {
+        return;
+    }
+
+    if (plan_changed(plan, useExternal)) {
+        videopac_trace_printf("display",
+                              "plus_indexed_plan size=%dx%d pitch=%d target=%s dst=%dx%d pos=%d,%d",
+                              width,
+                              height,
+                              pitchPixels,
+                              useExternal ? "external" : "internal",
+                              plan.dstW,
+                              plan.dstH,
+                              plan.x,
+                              plan.y);
+        clear_target(useExternal);
+        s_lastDstW = plan.dstW;
+        s_lastDstH = plan.dstH;
+        s_lastX = plan.x;
+        s_lastY = plan.y;
+        s_lastExternal = useExternal;
+    }
+
+    const bool useRgb444 = use_external_rgb444(useExternal);
+    if (useRgb444 && !ensure_rgb444_buffer(plan.dstW)) {
+        return;
+    }
+    if (!ensure_line_buffer(plan.dstW)) {
+        return;
+    }
+
+    begin_external_pixels(plan);
+    int previousSy = -1;
+    const uint8_t* baseLine = nullptr;
+    for (int dy = 0; dy < plan.dstH; ++dy) {
+        const int sy = (dy * height) / plan.dstH;
+        if (sy != previousSy) {
+            previousSy = sy;
+            baseLine = buffer + sy * pitchPixels;
+        }
+
+        if (!o2em_render_plus_external_line(s_lineBuf,
+                                            plan.dstW,
+                                            plan.dstH,
+                                            dy,
+                                            baseLine,
+                                            width,
+                                            height,
+                                            palette)) {
+            end_external_pixels();
+            videopac_display_render_indexed(buffer, width, height, pitchPixels, palette, useExternal);
+            return;
+        }
+
+        push_external_line(s_lineBuf, plan.dstW, useRgb444);
+    }
+    end_external_pixels();
+}
+
 void videopac_display_show_external_info(const char* romTitle, const char* biosName)
 {
     VideopacTraceScope scope("display", "external_info");
@@ -679,7 +770,7 @@ void videopac_display_show_runtime_menu(bool useExternal)
     tft.setSwapBytes(true);
     tft.fillRoundRect(20, 34, 200, 78, 6, TFT_BLACK);
     tft.drawRoundRect(20, 34, 200, 78, 6, TFT_CYAN);
-    tft.drawFastHLine(30, 57, 180, TFT_DARKGREY);
+    tft.drawFastHLine(30, 60, 180, TFT_DARKGREY);
 
     tft.setTextWrap(false);
     tft.setTextSize(1);
@@ -689,16 +780,16 @@ void videopac_display_show_runtime_menu(bool useExternal)
         tft.print(text);
     };
 
-    tft.setTextSize(2);
-    drawCentered("VIDEOPAC MENU", 40, TFT_CYAN);
+    tft.setTextSize(1);
+    drawCentered("VIDEOPAC MENU", 42, TFT_CYAN);
 
     tft.setTextSize(1);
     const char* modeLabel = videopac_config_get_video_mode_label();
     tft.setTextColor(TFT_CYAN, TFT_BLACK);
-    tft.setCursor(38, 70);
+    tft.setCursor(38, 72);
     tft.print("VIDEO");
     tft.setTextColor(TFT_YELLOW, TFT_BLACK);
-    tft.setCursor(200 - static_cast<int>(tft.textWidth(modeLabel)), 70);
+    tft.setCursor(200 - static_cast<int>(tft.textWidth(modeLabel)), 72);
     tft.print(modeLabel);
 
     drawCentered("LEFT / RIGHT change", 91, TFT_DARKGREY);
@@ -736,15 +827,47 @@ void videopac_display_show_input_mode_overlay(bool keyboardOnlyMode, bool useExt
 
     auto& tft = M5Cardputer.Display;
     tft.setSwapBytes(true);
-    const int w = 126;
+    const int w = 104;
+    const int h = 18;
+    const int x = (kInternalTargetW - w) / 2;
+    const int y = 10;
+    tft.fillRoundRect(x, y, w, h, 4, TFT_BLACK);
+    tft.drawRoundRect(x, y, w, h, 4, accent);
+    tft.setTextSize(1);
+    tft.setTextColor(accent, TFT_BLACK);
+    tft.drawCenterString(label, kInternalTargetW / 2, y + 9);
+}
+
+void videopac_display_hide_input_mode_overlay(bool useExternal)
+{
+    if (useExternal) {
+        prepare_external_tft();
+
+        const bool wasRgb444 = use_external_rgb444(true);
+        if (wasRgb444) {
+            s_extTft.startWrite();
+            s_extTft.writecommand(0x3A);
+            s_extTft.writedata(0x55);
+            s_extTft.endWrite();
+            s_extTft.setSwapBytes(true);
+            s_extTftColorModeKnown = false;
+        }
+
+        const int w = 164;
+        const int h = 38;
+        const int x = (kExternalTargetW - w) / 2;
+        const int y = 10;
+        s_extTft.fillRect(x, y, w, h, TFT_BLACK);
+        return;
+    }
+
+    auto& tft = M5Cardputer.Display;
+    tft.setSwapBytes(true);
+    const int w = 112;
     const int h = 24;
     const int x = (kInternalTargetW - w) / 2;
-    const int y = 8;
-    tft.fillRoundRect(x, y, w, h, 5, TFT_BLACK);
-    tft.drawRoundRect(x, y, w, h, 5, accent);
-    tft.setTextSize(2);
-    tft.setTextColor(accent, TFT_BLACK);
-    tft.drawCenterString(label, kInternalTargetW / 2, y + 13);
+    const int y = 7;
+    tft.fillRect(x, y, w, h, TFT_BLACK);
 }
 
 void videopac_display_shutdown(void)

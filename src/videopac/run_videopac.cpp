@@ -37,6 +37,7 @@ extern "C" {
                                 int* out_height,
                                 int* out_pitch_pixels,
                                 uint16_t out_palette[256]);
+    void o2em_set_plus_external_native(bool enabled);
     void o2em_set_joystick(bool up, bool down, bool left, bool right, bool action);
     void o2em_set_key(char key, bool pressed);
     void o2em_get_audio(int16_t** out_buffer, size_t* out_samples);
@@ -269,13 +270,19 @@ std::string videopac_bios_vfs_path(VideopacBiosId id)
     return std::string(kVideopacBiosVfsDir) + "/" + videopac_bios_info(id).fileName;
 }
 
-VideopacBiosId videopac_select_bios_for_rom(CardputerView& display,
-                                             CardputerInput& input,
-                                             const std::string& romPath)
+bool videopac_select_bios_for_rom(CardputerView& display,
+                                  CardputerInput& input,
+                                  const std::string& romPath,
+                                  VideopacBiosId* outId)
 {
+    if (!outId) {
+        return false;
+    }
+
     if (!rom_name_has_bin_ext(romPath.c_str())) {
         videopac_trace_printf("bios", "auto_select rom_ext=o2 bios=%s", kVideopacBioses[0].fileName);
-        return VideopacBiosId::Odyssey2Ntsc;
+        *outId = VideopacBiosId::Odyssey2Ntsc;
+        return true;
     }
 
     VideopacTraceScope scope("bios", "select_menu");
@@ -297,13 +304,18 @@ VideopacBiosId videopac_select_bios_for_rom(CardputerView& display,
         display.topBar("SELECT VIDEOPAC BIOS", false, false);
         const int selected = selector.select("Select BIOS", options,
                                              false, false, details,
-                                             {}, false, true, false, 0);
+                                             {}, false, true, false, 0, -2, -2);
         if (selected >= 0 && selected < static_cast<int>(options.size())) {
             videopac_trace_printf("bios", "selected index=%d label=%s file=%s",
                                   selected,
                                   kVideopacBioses[selected].label,
                                   kVideopacBioses[selected].fileName);
-            return kVideopacBioses[selected].id;
+            *outId = kVideopacBioses[selected].id;
+            return true;
+        }
+        if (selected == -2) {
+            videopac_trace_mark("bios", "selection_aborted");
+            return false;
         }
         display.subMessage("Choose a BIOS", "for this .BIN ROM", 900);
     }
@@ -481,7 +493,19 @@ void run_videopac(const uint8_t* romData,
                           biosImage.md5);
 
     const bool useExternal = (g_emu_display_target == EMU_DISPLAY_EXTERNAL);
-    const VideopacVideoMode videoMode = videopac_config_load_video_mode();
+    const bool usePlusBios =
+        biosImage.id == VideopacBiosId::VideopacPlusG7400 ||
+        biosImage.id == VideopacBiosId::VideopacPlusFrance;
+    const bool usePlusExternalNative = useExternal && usePlusBios;
+    const VideopacVideoMode storedVideoMode = videopac_config_load_video_mode();
+    VideopacVideoMode videoMode = storedVideoMode;
+    if (usePlusExternalNative && storedVideoMode == VideopacVideoMode::Fit) {
+        videoMode = VideopacVideoMode::FitFast;
+        videopac_config_set_video_mode(videoMode, false);
+        videopac_trace_printf("display",
+                              "video_mode_auto mode=%s reason=plus_external_default",
+                              videopac_config_video_mode_label(videoMode));
+    }
     videopac_trace_printf("display", "target=%s video_mode=%s color_depth=%s",
                           useExternal ? "external" : "internal",
                           videopac_config_video_mode_label(videoMode),
@@ -530,6 +554,7 @@ void run_videopac(const uint8_t* romData,
         show_launch_error("O2EM core init failed", "Check ROM and BIOS");
         return;
     }
+    o2em_set_plus_external_native(usePlusExternalNative);
 
     double coreFps = 60.0;
     double coreSampleRate = 42240.0;
@@ -576,6 +601,7 @@ void run_videopac(const uint8_t* romData,
     double lastFitTargetVideoFps = 0.0;
     uint32_t fitSkippedFrames = 0;
     int64_t inputModeOverlayHoldUntilUs = 0;
+    bool inputModeOverlayVisible = false;
 
     videopac_trace_printf("loop", "start target_frame_us=%lld",
                           static_cast<long long>(targetFrameTimeUs));
@@ -595,6 +621,7 @@ void run_videopac(const uint8_t* romData,
         if (inputState.inputModeChanged) {
             videopac_display_show_input_mode_overlay(inputState.keyboardOnlyMode, useExternal);
             inputModeOverlayHoldUntilUs = esp_timer_get_time() + kInputModeOverlayHoldUs;
+            inputModeOverlayVisible = true;
         }
         if (inputState.menuChanged) {
             if (inputState.menuVisible) {
@@ -679,7 +706,18 @@ void run_videopac(const uint8_t* romData,
             fitSkippedFrames = 0;
         }
 
-        const bool holdOverlay = inputModeOverlayHoldUntilUs > esp_timer_get_time();
+        bool forceOverlayClearRender = false;
+        if (inputModeOverlayVisible && inputModeOverlayHoldUntilUs <= esp_timer_get_time()) {
+            videopac_display_hide_input_mode_overlay(useExternal);
+            inputModeOverlayVisible = false;
+            inputModeOverlayHoldUntilUs = 0;
+            forceOverlayClearRender = true;
+            renderThisFrame = true;
+            fitSkippedFrames = 0;
+        }
+
+        const bool holdOverlay = inputModeOverlayVisible &&
+                                 inputModeOverlayHoldUntilUs > esp_timer_get_time();
         if (renderThisFrame && !holdOverlay) {
             uint16_t* frameBuffer = nullptr;
             const uint8_t* indexedFrameBuffer = nullptr;
@@ -700,11 +738,28 @@ void run_videopac(const uint8_t* romData,
 
             stageStartUs = videopac_trace_now_us();
 #if defined(FRONTEND_SUPPORTS_INDEXED_VIDEO)
-            videopac_display_render_indexed(indexedFrameBuffer, frameW, frameH, framePitch, indexedPalette, useExternal);
+            if (usePlusExternalNative) {
+                videopac_display_render_indexed_plus_external(indexedFrameBuffer,
+                                                              frameW,
+                                                              frameH,
+                                                              framePitch,
+                                                              indexedPalette,
+                                                              useExternal);
+            } else {
+                videopac_display_render_indexed(indexedFrameBuffer,
+                                                frameW,
+                                                frameH,
+                                                framePitch,
+                                                indexedPalette,
+                                                useExternal);
+            }
 #else
             videopac_display_render(frameBuffer, frameW, frameH, framePitch, useExternal);
 #endif
             videopac_trace_frame_sample("render", videopac_trace_now_us() - stageStartUs);
+            if (forceOverlayClearRender) {
+                videopac_trace_frame_sample("overlay_clear", 0);
+            }
         } else if (holdOverlay) {
             videopac_trace_frame_sample("overlay_hold", 0);
         } else {
@@ -769,6 +824,7 @@ void run_videopac(const uint8_t* romData,
     }
     {
         VideopacTraceScope scope("core", "o2em_shutdown");
+        o2em_set_plus_external_native(false);
         o2em_shutdown();
     }
     {

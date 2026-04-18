@@ -33,9 +33,10 @@ struct VideopacBiosImage {
 const VideopacBiosChoice& videopac_bios_info(VideopacBiosId id);
 std::string videopac_bios_sd_path(VideopacBiosId id);
 std::string videopac_bios_vfs_path(VideopacBiosId id);
-VideopacBiosId videopac_select_bios_for_rom(CardputerView& display,
-                                             CardputerInput& input,
-                                             const std::string& romPath);
+bool videopac_select_bios_for_rom(CardputerView& display,
+                                  CardputerInput& input,
+                                  const std::string& romPath,
+                                  VideopacBiosId* outId);
 bool videopac_load_bios_image(VideopacBiosId id,
                               VideopacBiosImage* outImage,
                               char* error,

@@ -679,7 +679,7 @@ void retro_destroybmp(void)
 void finish_display(void)
 {
 #if defined(VIDEOPAC_LOW_MEMORY_VIDEO)
-	vpp_finish_bmp(vscreen, 9, 5, BMPW-9, BMPH-5, BMPW, BMPH);
+	vpp_finish_bmp(vscreen, BORDERW, 0, WNDW, BMPH, BMPW, BMPH);
 #else
 	int x,y,sn;
 	static int cache_counter=0;

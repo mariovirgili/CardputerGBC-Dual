@@ -52,6 +52,15 @@ extern "C" {
     void retro_get_system_av_info(struct retro_system_av_info *info);
     void retro_o2em_set_bios_image(const uint8_t *data, size_t size);
     void o2em_vdc_get_palette565(uint16_t out_palette[256]);
+    void vpp_set_external_native_mode(int enabled);
+    int vpp_render_external_line_rgb565(uint16_t *out_line,
+                                        int dst_w,
+                                        int dst_h,
+                                        int dy,
+                                        const uint8_t *base_line,
+                                        int src_w,
+                                        int src_h,
+                                        const uint16_t palette[256]);
 }
 
 static void log_printf_cb(enum retro_log_level level, const char *fmt, ...)
@@ -410,6 +419,30 @@ void o2em_get_video_indexed(const uint8_t** out_buffer,
     if (out_palette) {
         o2em_vdc_get_palette565(out_palette);
     }
+}
+
+void o2em_set_plus_external_native(bool enabled)
+{
+    vpp_set_external_native_mode(enabled ? 1 : 0);
+}
+
+bool o2em_render_plus_external_line(uint16_t* out_line,
+                                    int dst_width,
+                                    int dst_height,
+                                    int dst_y,
+                                    const uint8_t* base_line,
+                                    int src_width,
+                                    int src_height,
+                                    const uint16_t palette[256])
+{
+    return vpp_render_external_line_rgb565(out_line,
+                                           dst_width,
+                                           dst_height,
+                                           dst_y,
+                                           base_line,
+                                           src_width,
+                                           src_height,
+                                           palette) != 0;
 }
 
 void o2em_get_audio(int16_t** out_buffer, size_t* out_samples)

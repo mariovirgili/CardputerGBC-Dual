@@ -1091,7 +1091,7 @@ void CardputerView::showValidExt(const std::vector<std::string>& exts) {
         Display->setTextSize(TEXT_SMALL);
         cursorY = boxY + 8;
         const int systemBadgeVPadding = 1;
-        const int systemRowGap = 4;
+        const int systemRowGap = 3;
 
         struct SystemRow {
             const char* label;
@@ -1114,6 +1114,9 @@ void CardputerView::showValidExt(const std::vector<std::string>& exts) {
             if (hasExt(".o2")) videopacExts.push_back(".O2");
             if (hasExt(".bin")) videopacExts.push_back(".BIN");
             systemRows.push_back({"Videopac:", videopacExts});
+        }
+        if (hasExt(".bin")) {
+            systemRows.push_back({"Videopac+:", {".BIN"}});
         }
 
         for (const auto& row : systemRows) {

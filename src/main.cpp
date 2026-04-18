@@ -37,7 +37,8 @@ static void showExternalRomSelectorTft()
   static const ExternalRomBadge badges[] = {
     {"MSX", PRIMARY_COLOR},
     {"ColecoVision", COLECO_COLOR},
-    {"Videopac", VIDEOPAC_COLOR}
+    {"Videopac", VIDEOPAC_COLOR},
+    {"Videopac+", VIDEOPAC_COLOR}
   };
 
   TFT_eSPI extTft;
@@ -342,179 +343,219 @@ void setup() {
     }
   }
 
-  while (!ensureSelectedRomFitsPartition(sd, display, input, romPart, romPath)) {
+  VideopacBiosImage videopacBios = {};
+  RomType ext = ROM_TYPE_UNKNOWN;
+  share::EmuProfile emuProfile = share::EmuProfile::MSX;
+  bool hasProfile = false;
+  std::string romName;
+
+  auto reopenBrowserFromCurrentRom = [&]() {
+    videopac_free_bios_image(&videopacBios);
+    clearPendingLaunchFromNvs();
     std::string browserFolder = getRomFolderFromSd(sd);
     if (browserFolder.empty()) {
       browserFolder = extractRomFolder(romPath);
     }
     romPath = reopenRomBrowser(sd, display, input, browserFolder, true);
-  }
+    selectedFromBrowser = !romPath.empty();
+    pendingLaunch = PendingLaunchState{};
+  };
 
-  const RomType ext = getRomType(romPath);
-  if (!pendingLaunch.valid() && selectedFromBrowser && ext != ROM_TYPE_UNKNOWN) {
-    const bool msxLikeLaunch = isMsxLikeRomType(ext);
-    int pendingMode = -1;
-    if (msxLikeLaunch) {
-      msx_config_set_machine_mode(MsxMachineMode::MSX1, false);
-      pendingMode = static_cast<int>(MsxMachineMode::MSX1);
-    } else if (ext == ROM_TYPE_VIDEOPAC) {
-      VideopacBiosId biosId = videopac_select_bios_for_rom(display, input, romPath);
-      pendingMode = videopac_bios_to_pending_mode(biosId);
-    }
-    restartForPendingLaunch(display,
-                            sd,
-                            romPath,
-                            pendingMode);
-  }
-
-  VideopacBiosImage videopacBios;
-  if (ext == ROM_TYPE_VIDEOPAC) {
-    VideopacBiosId biosId = VideopacBiosId::Odyssey2Ntsc;
-    if (videopac_bios_from_pending_mode(pendingLaunch.machineMode, &biosId)) {
-      const auto& bios = videopac_bios_info(biosId);
-      printf("[VIDEOPAC] pending BIOS selection: %s (%s)\n", bios.label, bios.fileName);
-    } else {
-      biosId = videopac_select_bios_for_rom(display, input, romPath);
-    }
-
-    char biosError[80] = {};
-    if (!videopac_load_bios_image(biosId, &videopacBios, biosError, sizeof(biosError))) {
-      while (1) {
-        display.topBar("VIDEOPAC BIOS ERROR", false, false);
-        display.subMessage(biosError[0] ? biosError : "BIOS load failed",
-                           videopac_bios_sd_path(biosId),
-                           1800);
-        display.subMessage("Check /bios/videopac", "and restart", 1800);
-        delay(1500);
+  while (true) {
+    while (!ensureSelectedRomFitsPartition(sd, display, input, romPart, romPath)) {
+      std::string browserFolder = getRomFolderFromSd(sd);
+      if (browserFolder.empty()) {
+        browserFolder = extractRomFolder(romPath);
       }
+      romPath = reopenRomBrowser(sd, display, input, browserFolder, true);
+      selectedFromBrowser = !romPath.empty();
+      pendingLaunch = PendingLaunchState{};
     }
-  }
 
-  printf("Selected ROM: %s\n", romPath.c_str());
+    ext = getRomType(romPath);
+    videopac_free_bios_image(&videopacBios);
 
-  display.topBar("COPYING ROM TO FLASH", false, false);
-  display.subMessage("Loading...", 0);
-
-  // Copy the ROM file to the partition
-  size_t romSize = 0;
-  if (!copyFileToPartition(romPath.c_str(), romPart, &romSize, CardputerView::copyProgress, &display)) {
-
-    // Generic flash copy failure
-    while (1) {
-        display.topBar("ROM COPY ERROR", false, false);
-        display.subMessage("Copy ROM to flash failed", 1500);
-        display.subMessage("Restart and retry", 1500);
-        delay(1500);
+    if (!pendingLaunch.valid() && selectedFromBrowser && ext != ROM_TYPE_UNKNOWN) {
+      const bool msxLikeLaunch = isMsxLikeRomType(ext);
+      int pendingMode = -1;
+      if (msxLikeLaunch) {
+        msx_config_set_machine_mode(MsxMachineMode::MSX1, false);
+        pendingMode = static_cast<int>(MsxMachineMode::MSX1);
+      } else if (ext == ROM_TYPE_VIDEOPAC) {
+        VideopacBiosId biosId = VideopacBiosId::Odyssey2Ntsc;
+        if (!videopac_select_bios_for_rom(display, input, romPath, &biosId)) {
+          reopenBrowserFromCurrentRom();
+          continue;
+        }
+        pendingMode = videopac_bios_to_pending_mode(biosId);
+      }
+      restartForPendingLaunch(display,
+                              sd,
+                              romPath,
+                              pendingMode);
     }
-  }
 
-  input.flushInput(10); // flush any input just in case
-
-  // Map the ROM partition in XIP
-  if (xip_map_rom_partition("spiffs", romSize) != 0) {
-    while (1) {
-      display.topBar("ERROR", false, false);
-      display.subMessage("Map ROM failed", 0);
-      delay(1500);
-    }
-  }
-
-  // Register the XIP VFS
-  vfs_xip_register();
-
-  // Check the extension to choose the emulator
-  const share::EmuProfile emuProfile =
-    (ext == ROM_TYPE_VIDEOPAC) ? share::EmuProfile::Videopac : share::EmuProfile::MSX;
-  const bool hasProfile =
-    (ext == ROM_TYPE_MSX || ext == ROM_TYPE_MSX_DISK || ext == ROM_TYPE_MSX_CAS ||
-     ext == ROM_TYPE_COLECO || ext == ROM_TYPE_VIDEOPAC);
-  if (hasProfile) {
-    share::emuControlsLoad(sd, emuProfile);
-  }
-
-  // Prepare ROM filename early so we can preview the secondary info screen
-  auto pos = romPath.find_last_of("/\\");
-  std::string romName = (pos == std::string::npos) ? romPath : romPath.substr(pos + 1);
-
-  // Display target selection (for cores that support external TFT)
-  if (emu_has_external_display_support((int)ext)) {
-    emu_set_aux_screen_locked(false);
-    emu_display_target_t savedTarget = emu_load_display_target((int)ext);
-
-    VerticalSelector displaySelector(display, input);
-    std::vector<std::string> displayOptions = {"External TFT", "Internal LCD"};
-    int initialIdx = (savedTarget == EMU_DISPLAY_EXTERNAL) ? 0 : 1;
-    int sel = initialIdx;
-
-    for (;;) {
-      display.topBar("SELECT DISPLAY", false, false);
-      sel = displaySelector.select("Display target", displayOptions,
-                  false, false, {}, {}, false, true, true, initialIdx,
-                  hasProfile ? -2 : -1);
-      if (sel == -2 && hasProfile) {
-        share::emuControlsEdit(sd, emuProfile, display, input);
-        input.flushInput(150);
+    if (ext == ROM_TYPE_VIDEOPAC) {
+      VideopacBiosId biosId = VideopacBiosId::Odyssey2Ntsc;
+      if (videopac_bios_from_pending_mode(pendingLaunch.machineMode, &biosId)) {
+        const auto& bios = videopac_bios_info(biosId);
+        printf("[VIDEOPAC] pending BIOS selection: %s (%s)\n", bios.label, bios.fileName);
+      } else if (!videopac_select_bios_for_rom(display, input, romPath, &biosId)) {
+        reopenBrowserFromCurrentRom();
         continue;
       }
-      if (sel < 0) {
-        sel = initialIdx;
+
+      char biosError[80] = {};
+      if (!videopac_load_bios_image(biosId, &videopacBios, biosError, sizeof(biosError))) {
+        while (1) {
+          display.topBar("VIDEOPAC BIOS ERROR", false, false);
+          display.subMessage(biosError[0] ? biosError : "BIOS load failed",
+                             videopac_bios_sd_path(biosId),
+                             1800);
+          display.subMessage("Check /bios/videopac", "and restart", 1800);
+          delay(1500);
+        }
       }
-      break;
     }
 
-    emu_display_target_t chosen;
-    if (sel == 0) {
-      chosen = EMU_DISPLAY_EXTERNAL;
+    printf("Selected ROM: %s\n", romPath.c_str());
+
+    display.topBar("COPYING ROM TO FLASH", false, false);
+    display.subMessage("Loading...", 0);
+
+    size_t romSize = 0;
+    if (!copyFileToPartition(romPath.c_str(), romPart, &romSize, CardputerView::copyProgress, &display)) {
+      while (1) {
+          display.topBar("ROM COPY ERROR", false, false);
+          display.subMessage("Copy ROM to flash failed", 1500);
+          display.subMessage("Restart and retry", 1500);
+          delay(1500);
+      }
+    }
+
+    input.flushInput(10);
+
+    if (xip_map_rom_partition("spiffs", romSize) != 0) {
+      while (1) {
+        display.topBar("ERROR", false, false);
+        display.subMessage("Map ROM failed", 0);
+        delay(1500);
+      }
+    }
+
+    vfs_xip_register();
+
+    emuProfile = (ext == ROM_TYPE_VIDEOPAC) ? share::EmuProfile::Videopac : share::EmuProfile::MSX;
+    hasProfile =
+      (ext == ROM_TYPE_MSX || ext == ROM_TYPE_MSX_DISK || ext == ROM_TYPE_MSX_CAS ||
+       ext == ROM_TYPE_COLECO || ext == ROM_TYPE_VIDEOPAC);
+    if (hasProfile) {
+      share::emuControlsLoad(sd, emuProfile);
+    }
+
+    auto pos = romPath.find_last_of("/\\");
+    romName = (pos == std::string::npos) ? romPath : romPath.substr(pos + 1);
+
+    bool abortToRomSelector = false;
+
+    if (emu_has_external_display_support((int)ext)) {
+      emu_set_aux_screen_locked(false);
+      emu_display_target_t savedTarget = emu_load_display_target((int)ext);
+
+      VerticalSelector displaySelector(display, input);
+      std::vector<std::string> displayOptions = {"External TFT", "Internal LCD"};
+      int initialIdx = (savedTarget == EMU_DISPLAY_EXTERNAL) ? 0 : 1;
+      int sel = initialIdx;
+
+      for (;;) {
+        display.topBar("SELECT DISPLAY", false, false);
+        sel = displaySelector.select("Display target", displayOptions,
+                    false, false, {}, {}, false, true, true, initialIdx,
+                    hasProfile ? -2 : -3, -3);
+        if (sel == -3) {
+          abortToRomSelector = true;
+          break;
+        }
+        if (sel == -2 && hasProfile) {
+          share::emuControlsEdit(sd, emuProfile, display, input);
+          input.flushInput(150);
+          continue;
+        }
+        if (sel < 0) {
+          sel = initialIdx;
+        }
+        break;
+      }
+
+      if (!abortToRomSelector) {
+        emu_display_target_t chosen;
+        if (sel == 0) {
+          chosen = EMU_DISPLAY_EXTERNAL;
+        } else {
+          chosen = EMU_DISPLAY_INTERNAL;
+        }
+
+        g_emu_display_target = chosen;
+        if (chosen != savedTarget) {
+          emu_save_display_target((int)ext, chosen);
+        }
+
+        if (chosen == EMU_DISPLAY_EXTERNAL) {
+          emu_color_depth_t savedDepth = emu_load_color_depth((int)ext);
+          emu_color_depth_t recommended = emu_recommended_color_depth((int)ext);
+
+          std::string recommendedLabel =
+            (recommended == EMU_COLOR_12BIT)
+              ? "12-bit 4K colors (recommended)"
+              : "16-bit 65K colors (recommended)";
+          std::string alternateLabel =
+            (recommended == EMU_COLOR_12BIT)
+              ? "16-bit 65K colors"
+              : "12-bit 4K colors";
+
+          VerticalSelector depthSelector(display, input);
+          std::vector<std::string> depthOptions = {recommendedLabel, alternateLabel};
+          display.topBar("COLOR DEPTH", false, false);
+
+          int depthInitial = 0;
+          int dsel = depthSelector.select("Color depth", depthOptions,
+                        false, false, {}, {}, false, true, true, depthInitial,
+                        -3, -3);
+          if (dsel == -3) {
+            abortToRomSelector = true;
+          } else {
+            if (dsel < 0) {
+              dsel = depthInitial;
+            }
+            emu_color_depth_t chosenDepth = (dsel == 0)
+              ? recommended
+              : (recommended == EMU_COLOR_12BIT ? EMU_COLOR_16BIT : EMU_COLOR_12BIT);
+
+            g_emu_color_depth = chosenDepth;
+            if (chosenDepth != savedDepth) {
+              emu_save_color_depth((int)ext, chosenDepth);
+            }
+          }
+        } else {
+          g_emu_color_depth = EMU_COLOR_16BIT;
+        }
+      }
+
+      display.initialize();
+      emu_set_aux_screen_locked(false);
     } else {
-      chosen = EMU_DISPLAY_INTERNAL;
-    }
-
-    g_emu_display_target = chosen;
-    if (chosen != savedTarget) {
-      emu_save_display_target((int)ext, chosen);
-    }
-
-    // Color depth selection (only when external display is chosen)
-    if (chosen == EMU_DISPLAY_EXTERNAL) {
-      emu_color_depth_t savedDepth = emu_load_color_depth((int)ext);
-      emu_color_depth_t recommended = emu_recommended_color_depth((int)ext);
-
-      std::string recommendedLabel =
-        (recommended == EMU_COLOR_12BIT)
-          ? "12-bit 4K colors (recommended)"
-          : "16-bit 65K colors (recommended)";
-      std::string alternateLabel =
-        (recommended == EMU_COLOR_12BIT)
-          ? "16-bit 65K colors"
-          : "12-bit 4K colors";
-
-      VerticalSelector depthSelector(display, input);
-      std::vector<std::string> depthOptions = {recommendedLabel, alternateLabel};
-      display.topBar("COLOR DEPTH", false, false);
-
-      int depthInitial = 0;
-      int dsel = depthSelector.select("Color depth", depthOptions,
-                    false, false, {}, {}, false, true, true, depthInitial);
-      if (dsel < 0) {
-        dsel = depthInitial;
-      }
-      emu_color_depth_t chosenDepth = (dsel == 0)
-        ? recommended
-        : (recommended == EMU_COLOR_12BIT ? EMU_COLOR_16BIT : EMU_COLOR_12BIT);
-
-      g_emu_color_depth = chosenDepth;
-      if (chosenDepth != savedDepth) {
-        emu_save_color_depth((int)ext, chosenDepth);
-      }
-    } else {
+      g_emu_display_target = EMU_DISPLAY_INTERNAL;
       g_emu_color_depth = EMU_COLOR_16BIT;
     }
 
-    display.initialize();
-    emu_set_aux_screen_locked(false);
-  } else {
-    g_emu_display_target = EMU_DISPLAY_INTERNAL;
-    g_emu_color_depth = EMU_COLOR_16BIT;
+    if (abortToRomSelector) {
+      vfs_xip_unregister();
+      xip_unmap();
+      reopenBrowserFromCurrentRom();
+      continue;
+    }
+
+    break;
   }
 
   // Show keymapping
