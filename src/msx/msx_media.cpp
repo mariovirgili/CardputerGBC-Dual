@@ -7,6 +7,8 @@
 #include <cstdio>
 #include <cstring>
 
+#include "../share/emu_static_pool.h"
+
 extern const uint8_t cbios_main_msx1_rom_start[] asm("_binary_bios_cbios_0_29a_roms_cbios_main_msx1_rom_start");
 extern const uint8_t cbios_main_msx1_rom_end[] asm("_binary_bios_cbios_0_29a_roms_cbios_main_msx1_rom_end");
 
@@ -28,10 +30,22 @@ constexpr size_t kMsxMaxHeaderProbe = 0x10000;
 constexpr size_t kMsxMainBiosMinSize = 0x4000;
 constexpr size_t kMsxMainBiosMaxSize = 0x10000;
 constexpr size_t kMsxSubRomExactSize = 0x4000;
+constexpr size_t kMsxMainBiosStaticSize = 0x8000;
 constexpr const char* kMsx1BiosName = "MSX.ROM";
 constexpr const char* kMsx1BiosMd5 = "364a1a579fe5cb8dba54519bcfcdac0d";
 constexpr const char* kMsxEmbeddedCbiosName = "C-BIOS MSX1";
 constexpr const char* kMsxEmbeddedCbiosPath = "[embedded]/cbios_main_msx1.rom";
+constexpr size_t kMsxMainBiosStaticOffset = EMU_STATIC_POOL_SIZE - kMsxMainBiosStaticSize;
+
+static_assert(EMU_STATIC_POOL_SIZE >= (kMsxMainBiosStaticSize + kMsxPageSize8K),
+              "MSX static pool too small for official BIOS fallback");
+
+static bool s_msxMainBiosStaticUsed = false;
+
+uint8_t* msx_main_bios_static_buffer()
+{
+    return g_emu_static_pool + kMsxMainBiosStaticOffset;
+}
 
 bool msx_is_cart_exec_address(uint16_t address)
 {
@@ -175,12 +189,30 @@ bool msx_compute_md5_hex(const uint8_t* data, size_t size, char out[33])
     return ok;
 }
 
+uint8_t* msx_alloc_image_buffer(size_t size)
+{
+    uint8_t* buffer = static_cast<uint8_t*>(heap_caps_malloc(size, MALLOC_CAP_8BIT));
+    if (!buffer) {
+        buffer = static_cast<uint8_t*>(heap_caps_malloc(size, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+    }
+    if (!buffer) {
+        buffer = static_cast<uint8_t*>(heap_caps_malloc(size, MALLOC_CAP_INTERNAL));
+    }
+    if (!buffer) {
+        buffer = static_cast<uint8_t*>(heap_caps_malloc(size, MALLOC_CAP_DEFAULT));
+    }
+    return buffer;
+}
+
 bool msx_load_file_exact(const char* path,
                          uint8_t** outData,
                          size_t* outSize,
                          char outMd5[33],
                          char* error,
-                         size_t errorSize)
+                         size_t errorSize,
+                         uint8_t* staticFallback,
+                         size_t staticFallbackSize,
+                         bool* staticFallbackUsed)
 {
     if (outData) {
         *outData = nullptr;
@@ -220,7 +252,16 @@ bool msx_load_file_exact(const char* path,
         return false;
     }
 
-    uint8_t* buffer = static_cast<uint8_t*>(heap_caps_malloc(size, MALLOC_CAP_8BIT));
+    uint8_t* buffer = msx_alloc_image_buffer(size);
+    bool usedStaticFallback = false;
+    if (!buffer) {
+        if (staticFallback && staticFallbackUsed &&
+            size == staticFallbackSize && !(*staticFallbackUsed)) {
+            buffer = staticFallback;
+            *staticFallbackUsed = true;
+            usedStaticFallback = true;
+        }
+    }
     if (!buffer) {
         file.close();
         if (error && errorSize > 0) {
@@ -233,7 +274,11 @@ bool msx_load_file_exact(const char* path,
     file.close();
 
     if (readBytes != size) {
-        heap_caps_free(buffer);
+        if (usedStaticFallback && staticFallbackUsed) {
+            *staticFallbackUsed = false;
+        } else {
+            heap_caps_free(buffer);
+        }
         if (error && errorSize > 0) {
             std::snprintf(error, errorSize, "short read %s", openPath);
         }
@@ -241,7 +286,11 @@ bool msx_load_file_exact(const char* path,
     }
 
     if (outMd5 && !msx_compute_md5_hex(buffer, size, outMd5)) {
-        heap_caps_free(buffer);
+        if (usedStaticFallback && staticFallbackUsed) {
+            *staticFallbackUsed = false;
+        } else {
+            heap_caps_free(buffer);
+        }
         if (error && errorSize > 0) {
             std::snprintf(error, errorSize, "md5 failed %s", openPath);
         }
@@ -263,7 +312,9 @@ void msx_release_image(MsxBiosImage* image)
         return;
     }
 
-    if (image->data) {
+    if (image->data && msx_media_is_static_main_bios_pointer(image->data)) {
+        s_msxMainBiosStaticUsed = false;
+    } else if (image->data && image->ownsData) {
         heap_caps_free(image->data);
     }
 
@@ -310,12 +361,22 @@ bool msx_try_candidates(MsxBiosImage* image,
         size_t size = 0;
         char md5Hex[33] = {0};
         char fileError[96] = {0};
+        const bool allowStaticMainBios = candidate.expectedName &&
+                                         (std::strcmp(candidate.expectedName, kMsx1BiosName) == 0);
 
         MSX_BIOS_LOG("[MSX][BIOS] probe path=%s open=%s expected=%s\n",
                      candidate.path,
                      msx_sd_open_path(candidate.path),
                      candidate.expectedName ? candidate.expectedName : "-");
-        if (!msx_load_file_exact(candidate.path, &data, &size, md5Hex, fileError, sizeof(fileError))) {
+        if (!msx_load_file_exact(candidate.path,
+                                 &data,
+                                 &size,
+                                 md5Hex,
+                                 fileError,
+                                 sizeof(fileError),
+                                 allowStaticMainBios ? msx_main_bios_static_buffer() : nullptr,
+                                 allowStaticMainBios ? kMsxMainBiosStaticSize : 0u,
+                                 allowStaticMainBios ? &s_msxMainBiosStaticUsed : nullptr)) {
             MSX_BIOS_LOG("[MSX][BIOS] skip path=%s reason=%s\n", candidate.path, fileError);
             msx_copy_string(lastDetail, sizeof(lastDetail), fileError);
             continue;
@@ -362,6 +423,7 @@ bool msx_try_candidates(MsxBiosImage* image,
         image->data = data;
         image->size = size;
         image->status = MsxImageLoadStatus::Loaded;
+        image->ownsData = !msx_media_is_static_main_bios_pointer(data);
         msx_set_image_probe_details(image, candidate, md5Hex);
         MSX_BIOS_LOG("[MSX][BIOS] accept path=%s size=%u md5=%s\n",
                      candidate.path,
@@ -399,17 +461,16 @@ bool msx_load_embedded_cbios_msx1(MsxBiosImage* image,
         return false;
     }
 
-    uint8_t* data = static_cast<uint8_t*>(heap_caps_malloc(size, MALLOC_CAP_8BIT));
+    uint8_t* data = msx_alloc_image_buffer(size);
+    bool ownsData = true;
     if (!data) {
-        if (detailMessage && detailMessageSize > 0) {
-            std::snprintf(detailMessage, detailMessageSize, "no heap for embedded C-BIOS");
-        }
-        MSX_BIOS_LOG("[MSX][BIOS] embedded C-BIOS malloc failed size=%u\n",
+        data = const_cast<uint8_t*>(cbios_main_msx1_rom_start);
+        ownsData = false;
+        MSX_BIOS_LOG("[MSX][BIOS] embedded C-BIOS using flash-backed image size=%u\n",
                      static_cast<unsigned>(size));
-        return false;
+    } else {
+        std::memcpy(data, cbios_main_msx1_rom_start, size);
     }
-
-    std::memcpy(data, cbios_main_msx1_rom_start, size);
 
     char md5Hex[33] = {0};
     if (!msx_compute_md5_hex(data, size, md5Hex)) {
@@ -424,6 +485,7 @@ bool msx_load_embedded_cbios_msx1(MsxBiosImage* image,
     image->data = data;
     image->size = size;
     image->status = MsxImageLoadStatus::Loaded;
+    image->ownsData = ownsData;
     msx_copy_string(image->path, sizeof(image->path), kMsxEmbeddedCbiosPath);
     msx_copy_string(image->expectedName, sizeof(image->expectedName), kMsxEmbeddedCbiosName);
     image->expectedMd5[0] = '\0';
@@ -665,4 +727,27 @@ const char* msx_media_bios_target_label(MsxBiosTarget target)
 MsxMachineMode msx_media_target_to_machine_mode(MsxBiosTarget target)
 {
     return MsxMachineMode::MSX1;
+}
+
+bool msx_media_is_static_main_bios_pointer(const uint8_t* data)
+{
+    return data == msx_main_bios_static_buffer();
+}
+
+uint8_t msx_media_static_ram_bank_count_for_main_bios(const uint8_t* mainRom)
+{
+    const size_t reservedBytes = msx_media_is_static_main_bios_pointer(mainRom)
+                                     ? kMsxMainBiosStaticSize
+                                     : 0u;
+    return static_cast<uint8_t>((EMU_STATIC_POOL_SIZE - reservedBytes) / kMsxPageSize8K);
+}
+
+uint8_t* msx_media_static_ram_bank_ptr_for_main_bios(const uint8_t* mainRom, uint8_t bankIndex)
+{
+    const uint8_t staticBankCount = msx_media_static_ram_bank_count_for_main_bios(mainRom);
+    if (bankIndex >= staticBankCount) {
+        return nullptr;
+    }
+
+    return g_emu_static_pool + (static_cast<size_t>(bankIndex) * kMsxPageSize8K);
 }

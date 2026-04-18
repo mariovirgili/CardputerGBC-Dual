@@ -33,6 +33,8 @@ struct MsxMemoryState {
     const uint8_t* diskRom;
     size_t diskRomSize;
     uint8_t* ramBanks[16];
+    uint8_t* ramBanksDynamicBase;
+    size_t ramBanksDynamicSize;
     size_t ramSize;
     uint8_t ramSegmentCount;
     uint8_t ramBankCount;

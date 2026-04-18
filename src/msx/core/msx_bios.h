@@ -10,6 +10,7 @@ struct MsxBiosState {
     MsxMachineMode machineMode;
     const uint8_t* mainRom;
     size_t mainSize;
+    uint8_t* patchedMainPage0;
     const uint8_t* subRom;
     size_t subSize;
     bool hasSubRom;

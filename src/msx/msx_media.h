@@ -43,6 +43,7 @@ struct MsxBiosImage {
     uint8_t* data;
     size_t size;
     MsxImageLoadStatus status;
+    bool ownsData;
     char path[96];
     char expectedName[24];
     char expectedMd5[33];
@@ -69,6 +70,9 @@ struct MsxBiosSearchConfig {
 bool msx_media_analyze_rom(MsxRomImage* image, const uint8_t* romData, size_t romLen);
 bool msx_media_load_bios_bundle(MsxBiosBundle* bundle, const MsxBiosSearchConfig* config);
 void msx_media_release_bios_bundle(MsxBiosBundle* bundle);
+bool msx_media_is_static_main_bios_pointer(const uint8_t* data);
+uint8_t msx_media_static_ram_bank_count_for_main_bios(const uint8_t* mainRom);
+uint8_t* msx_media_static_ram_bank_ptr_for_main_bios(const uint8_t* mainRom, uint8_t bankIndex);
 
 const char* msx_media_cartridge_type_label(MsxCartridgeType type);
 const char* msx_media_bios_target_label(MsxBiosTarget target);
