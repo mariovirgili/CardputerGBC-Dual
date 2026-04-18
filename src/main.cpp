@@ -14,6 +14,7 @@
 #include "msx/msx_config.h"
 #include "msx/msx_display.h"
 #include "coleco/run_coleco.h"
+#include "videopac/run_videopac.h"
 #include "last_game.h"
 #include "esp_system.h"
 #include "esp_task_wdt.h"
@@ -35,7 +36,8 @@ static void showExternalRomSelectorTft()
 
   static const ExternalRomBadge badges[] = {
     {"MSX", PRIMARY_COLOR},
-    {"ColecoVision", COLECO_COLOR}
+    {"ColecoVision", COLECO_COLOR},
+    {"Videopac", VIDEOPAC_COLOR}
   };
 
   TFT_eSPI extTft;
@@ -54,14 +56,15 @@ static void showExternalRomSelectorTft()
   const int gapX = 8;
   const int gapY = 10;
   const int totalBadgeCount = static_cast<int>(sizeof(badges) / sizeof(badges[0]));
-  const int usedCols = totalBadgeCount < cols ? totalBadgeCount : cols;
-  const int rowWidth = usedCols * badgeW + (usedCols - 1) * gapX;
-  const int startX = (320 - rowWidth) / 2;
   const int startY = 82;
 
   for (int i = 0; i < (int)(sizeof(badges) / sizeof(badges[0])); ++i) {
     const int row = i / cols;
     const int col = i % cols;
+    const int remaining = totalBadgeCount - row * cols;
+    const int rowItems = remaining < cols ? remaining : cols;
+    const int rowWidth = rowItems * badgeW + (rowItems - 1) * gapX;
+    const int startX = (320 - rowWidth) / 2;
     const int x = startX + col * (badgeW + gapX);
     const int y = startY + row * (badgeH + gapY);
 
@@ -173,6 +176,10 @@ static std::string formatRomSizeLabel(size_t bytes) {
   char buffer[32];
   snprintf(buffer, sizeof(buffer), "%.2f MB", static_cast<double>(bytes) / (1024.0 * 1024.0));
   return std::string(buffer);
+}
+
+static bool isMsxLikeRomType(RomType type) {
+  return type == ROM_TYPE_MSX || type == ROM_TYPE_MSX_DISK || type == ROM_TYPE_MSX_CAS;
 }
 
 static bool ensureSelectedRomFitsPartition(
@@ -292,7 +299,8 @@ void setup() {
   PendingLaunchState pendingLaunch;
   if (!forceRomSelector && !resetSavedRomState && !quittingGame) {
     pendingLaunch = consumePendingLaunchFromNvs(sd);
-    if (pendingLaunch.valid() && pendingLaunch.machineMode >= 0) {
+    const RomType pendingExt = pendingLaunch.valid() ? getRomType(pendingLaunch.romPath) : ROM_TYPE_UNKNOWN;
+    if (pendingLaunch.valid() && isMsxLikeRomType(pendingExt) && pendingLaunch.machineMode >= 0) {
       msx_config_set_machine_mode(static_cast<MsxMachineMode>(pendingLaunch.machineMode), false);
     }
   }
@@ -344,8 +352,42 @@ void setup() {
 
   const RomType ext = getRomType(romPath);
   if (!pendingLaunch.valid() && selectedFromBrowser && ext != ROM_TYPE_UNKNOWN) {
-    msx_config_set_machine_mode(MsxMachineMode::MSX1, false);
-    restartForPendingLaunch(display, sd, romPath, static_cast<int>(MsxMachineMode::MSX1));
+    const bool msxLikeLaunch = isMsxLikeRomType(ext);
+    int pendingMode = -1;
+    if (msxLikeLaunch) {
+      msx_config_set_machine_mode(MsxMachineMode::MSX1, false);
+      pendingMode = static_cast<int>(MsxMachineMode::MSX1);
+    } else if (ext == ROM_TYPE_VIDEOPAC) {
+      VideopacBiosId biosId = videopac_select_bios_for_rom(display, input, romPath);
+      pendingMode = videopac_bios_to_pending_mode(biosId);
+    }
+    restartForPendingLaunch(display,
+                            sd,
+                            romPath,
+                            pendingMode);
+  }
+
+  VideopacBiosImage videopacBios;
+  if (ext == ROM_TYPE_VIDEOPAC) {
+    VideopacBiosId biosId = VideopacBiosId::Odyssey2Ntsc;
+    if (videopac_bios_from_pending_mode(pendingLaunch.machineMode, &biosId)) {
+      const auto& bios = videopac_bios_info(biosId);
+      printf("[VIDEOPAC] pending BIOS selection: %s (%s)\n", bios.label, bios.fileName);
+    } else {
+      biosId = videopac_select_bios_for_rom(display, input, romPath);
+    }
+
+    char biosError[80] = {};
+    if (!videopac_load_bios_image(biosId, &videopacBios, biosError, sizeof(biosError))) {
+      while (1) {
+        display.topBar("VIDEOPAC BIOS ERROR", false, false);
+        display.subMessage(biosError[0] ? biosError : "BIOS load failed",
+                           videopac_bios_sd_path(biosId),
+                           1800);
+        display.subMessage("Check /bios/videopac", "and restart", 1800);
+        delay(1500);
+      }
+    }
   }
 
   printf("Selected ROM: %s\n", romPath.c_str());
@@ -381,8 +423,11 @@ void setup() {
   vfs_xip_register();
 
   // Check the extension to choose the emulator
-  const share::EmuProfile emuProfile = share::EmuProfile::MSX;
-  const bool hasProfile = (ext == ROM_TYPE_MSX || ext == ROM_TYPE_MSX_DISK || ext == ROM_TYPE_MSX_CAS);
+  const share::EmuProfile emuProfile =
+    (ext == ROM_TYPE_VIDEOPAC) ? share::EmuProfile::Videopac : share::EmuProfile::MSX;
+  const bool hasProfile =
+    (ext == ROM_TYPE_MSX || ext == ROM_TYPE_MSX_DISK || ext == ROM_TYPE_MSX_CAS ||
+     ext == ROM_TYPE_COLECO || ext == ROM_TYPE_VIDEOPAC);
   if (hasProfile) {
     share::emuControlsLoad(sd, emuProfile);
   }
@@ -545,11 +590,17 @@ void setup() {
       // ColecoVision cartridge ROM
       run_coleco(get_rom_ptr(), get_rom_size(), romName.c_str(), sd);
   }
+  else if (ext == ROM_TYPE_VIDEOPAC) {
+      // Philips Videopac / Magnavox Odyssey2 cartridge ROM
+      run_videopac(get_rom_ptr(), get_rom_size(), romName.c_str(), sd, videopacBios);
+  }
   else {
       display.topBar("ERROR", false, false);
       display.subMessage("Unsupported ROM type", 0);
       while (1) delay(1000);
   }
+
+  videopac_free_bios_image(&videopacBios);
 }
 
 void loop() {

@@ -297,13 +297,10 @@ void run_coleco(const uint8_t* romData, size_t romLen, const char* romName, SdSe
     printf("[COLECO] run_coleco start, ROM size=%zu, free heap=%lu\n",
         romLen, (unsigned long)esp_get_free_heap_size());
 
-    // Pre-allochiamo anche il buffer del BIOS (8KB) per evitare frammentazioni
     ColecoBiosImage bios;
     memset(&bios, 0, sizeof(ColecoBiosImage));
-    bios.data = (uint8_t*)heap_caps_calloc(1, 8192, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
 
-    // Pre-allocate VDP buffers (87KB total) as the very first malloc so the
-    // heap is still contiguous. BIOS and sound allocations happen afterwards.
+    // Pre-allocate VDP buffers before BIOS and sound allocations.
     ColecoVdpState vdp;
     memset(&vdp, 0, sizeof(ColecoVdpState));
 

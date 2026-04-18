@@ -12,6 +12,7 @@
 
 #include "../coleco_display.h"
 #include "../coleco_video.h"
+#include "../../share/emu_static_pool.h"
 
 #ifndef COLECO_VDP_TRACE_ENABLED
 #define COLECO_VDP_TRACE_ENABLED 0
@@ -28,6 +29,7 @@ constexpr unsigned kColecoFrameHeightColeco1 = 192;
 constexpr unsigned kColecoFrameHeightColeco2 = 212;
 constexpr unsigned kColecoSpriteColorLineWidth = kColecoFrameWidth + 64u;
 constexpr size_t kColecoFramePixels = static_cast<size_t>(kColecoFrameWidth) * kColecoFrameHeightColeco2;
+static_assert(EMU_STATIC_POOL_SIZE >= kColecoFramePixels, "Coleco framebuffer must fit in shared emulator pool");
 constexpr uint8_t kColecoMaxSpritesLineColeco1 = 4u;
 constexpr uint8_t kColecoMaxSpritesLineColeco2 = 8u;
 constexpr uint8_t kColecoVdpRegsInit[64] = {
@@ -45,9 +47,8 @@ constexpr uint8_t kColecoVdpStatusInit[10] = {
     0x00, 0x00, 0x00, 0x00, 0x00,
 };
 
-// The Cardputer runs only one MSX core instance at a time, so a single
-// shared indexed frame buffer avoids large heap allocations and fragmentation
-// during VDP startup.
+// The Cardputer runs one emulator at a time. Reuse the shared pool for the
+// indexed framebuffer so Coleco does not depend on a large contiguous heap block.
 static uint8_t* s_msxFrameBuffer = nullptr;
 static uint8_t* s_msx1Vram = nullptr;
 static uint8_t* s_msx1VramB = nullptr;
@@ -1823,15 +1824,22 @@ bool coleco_vdp_init(ColecoVdpState* state, ColecoMachineMode machineMode)
     std::memset(state, 0, sizeof(*state));
 
     if (!s_msxFrameBuffer) {
-        // Allocating the larger frame buffer (54KB) first, then VRAM (16KB)
-        // ensures the largest contiguous block is given to the framebuffer.
-        s_msxFrameBuffer = (uint8_t*)heap_caps_malloc(kColecoFramePixels, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+        s_msxFrameBuffer = g_emu_static_pool;
         s_msx1Vram = (uint8_t*)heap_caps_malloc(kColeco1VramSize, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
         s_msx1VramB = nullptr; // Fallback to sync rendering to save 16KB of internal RAM
-        std::printf("[VDP] alloc: frameBuffer=%p vram=%p vramB=%p freeInternal=%u largestBlock=%u\n",
+        std::printf("[VDP] alloc: frameBuffer=%p(static) vram=%p vramB=%p freeInternal=%u largestBlock=%u\n",
             (void*)s_msxFrameBuffer, (void*)s_msx1Vram, (void*)s_msx1VramB,
             (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
+        if (!s_msx1Vram) {
+            std::printf("[VDP] init failed: Coleco VRAM alloc failed size=%u freeInternal=%u largestBlock=%u\n",
+                        static_cast<unsigned>(kColeco1VramSize),
+                        static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL)),
+                        static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL)));
+            s_msxFrameBuffer = nullptr;
+            std::memset(state, 0, sizeof(*state));
+            return false;
+        }
     }
 
     state->machineMode = machineMode;

@@ -28,6 +28,7 @@
 #define GAMEBOY_COLOR  0xFCD3
 #define SNES_COLOR     0xD024  // redish
 #define COLECO_COLOR   0x07D4
+#define VIDEOPAC_COLOR 0x07FF
 #define FOLDER_COLOR   0xFEC0  // Jaune pâle (≈ #F6EB61)
 
 // TEXT SIZE

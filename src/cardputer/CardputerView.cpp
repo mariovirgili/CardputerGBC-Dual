@@ -1041,6 +1041,7 @@ uint16_t CardputerView::colorForExt(const std::string& extRaw) const {
     if (ext == ".rom" || ext == ".dsk" || ext == ".cas") return PRIMARY_COLOR;
     if (ext == ".col") return COLECO_COLOR;
     if (ext == ".sfc" || ext == ".smc") return SNES_COLOR;
+    if (ext == ".o2" || ext == ".bin") return VIDEOPAC_COLOR;
 
     return TEXT_COLOR;
 }
@@ -1083,8 +1084,15 @@ void CardputerView::showValidExt(const std::vector<std::string>& exts) {
         return false;
     };
 
-    const bool showSystemRows = hasExt(".col") && (hasExt(".rom") || hasExt(".dsk") || hasExt(".cas"));
+    const bool hasMsxExt = hasExt(".rom") || hasExt(".dsk") || hasExt(".cas");
+    const bool hasVideopacExt = hasExt(".o2") || hasExt(".bin");
+    const bool showSystemRows = (hasExt(".col") || hasVideopacExt) && hasMsxExt;
     if (showSystemRows) {
+        Display->setTextSize(TEXT_SMALL);
+        cursorY = boxY + 8;
+        const int systemBadgeVPadding = 1;
+        const int systemRowGap = 4;
+
         struct SystemRow {
             const char* label;
             std::vector<std::string> extensions;
@@ -1098,7 +1106,15 @@ void CardputerView::showValidExt(const std::vector<std::string>& exts) {
         if (!msxExts.empty()) {
             systemRows.push_back({"MSX:", msxExts});
         }
-        systemRows.push_back({"Coleco:", {".COL"}});
+        if (hasExt(".col")) {
+            systemRows.push_back({"Coleco:", {".COL"}});
+        }
+        if (hasVideopacExt) {
+            std::vector<std::string> videopacExts;
+            if (hasExt(".o2")) videopacExts.push_back(".O2");
+            if (hasExt(".bin")) videopacExts.push_back(".BIN");
+            systemRows.push_back({"Videopac:", videopacExts});
+        }
 
         for (const auto& row : systemRows) {
             const int prefixW = Display->textWidth(row.label) + 5;
@@ -1109,7 +1125,7 @@ void CardputerView::showValidExt(const std::vector<std::string>& exts) {
                 const int textW = Display->textWidth(raw.c_str());
                 const int textH = Display->fontHeight();
                 const int badgeW = textW + badgeHPadding * 2;
-                const int badgeH = textH + badgeVPadding * 2;
+                const int badgeH = textH + systemBadgeVPadding * 2;
                 badges.push_back(Badge{raw, raw, badgeW, badgeH});
                 rowWidth += badgeW;
                 if (badges.size() > 1) rowWidth += colGap;
@@ -1117,7 +1133,7 @@ void CardputerView::showValidExt(const std::vector<std::string>& exts) {
 
             int lineH = 0;
             for (const auto& b : badges) lineH = std::max(lineH, b.h);
-            if (cursorY + lineH > boxY + boxH - 18) break;
+            if (cursorY + lineH > boxY + boxH - 12) break;
 
             int x = boxX + (boxW - rowWidth) / 2;
             const int textH = Display->fontHeight();
@@ -1149,14 +1165,14 @@ void CardputerView::showValidExt(const std::vector<std::string>& exts) {
                 if (i + 1 < badges.size()) x += colGap;
             }
 
-            cursorY += lineH + rowGap;
+            cursorY += lineH + systemRowGap;
         }
 
         Display->setTextSize(TEXT_SMALL);
         Display->setTextColor(PRIMARY_COLOR);
         Display->drawCenterString("Press any key to continue",
                                   Display->width() / 2,
-                                  boxY + boxH - 14);
+                                  boxY + boxH - 12);
 
         Display->setTextSize(TEXT_MEDIUM);
         Display->setTextColor(TEXT_COLOR);

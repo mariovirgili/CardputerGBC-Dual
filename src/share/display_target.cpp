@@ -11,11 +11,12 @@ emu_color_depth_t g_emu_color_depth = EMU_COLOR_16BIT;
 bool g_emu_aux_screen_locked = false;
 
 // ROM type values from select_rom.h RomType enum
-// UNKNOWN=0, MSX=1, MSX_DISK=2, COLECO=3, MSX_CAS=4
+// UNKNOWN=0, MSX=1, MSX_DISK=2, COLECO=3, MSX_CAS=4, VIDEOPAC=5
 static constexpr int kRomMsx = 1;
 static constexpr int kRomMsxDisk = 2;
 static constexpr int kRomColeco = 3;
 static constexpr int kRomMsxCas = 4;
+static constexpr int kRomVideopac = 5;
 
 bool emu_has_external_display_support(int romType)
 {
@@ -24,6 +25,7 @@ bool emu_has_external_display_support(int romType)
         case kRomMsxDisk:
         case kRomColeco:
         case kRomMsxCas:
+        case kRomVideopac:
             return true;
         default:
             return false;
@@ -37,6 +39,7 @@ static const char* romTypeToKey(int romType)
         case kRomMsxDisk: return "dsk";
         case kRomColeco: return "coleco";
         case kRomMsxCas: return "cas";
+        case kRomVideopac: return "vpack";
         default:        return "unk";
     }
 }
@@ -70,6 +73,10 @@ emu_color_depth_t emu_recommended_color_depth(int romType)
             // MSX1 uses a tiny fixed palette and MSX2 tops out at 9-bit RGB,
             // ColecoVision uses the same small VDP palette family,
             // so RGB444 is enough and cheaper to push on the external TFT.
+            return EMU_COLOR_12BIT;
+        case kRomVideopac:
+            // O2EM uses a small palette in the low-memory indexed path, so RGB444
+            // is enough and reduces external TFT bandwidth.
             return EMU_COLOR_12BIT;
         default:
             return EMU_COLOR_16BIT;

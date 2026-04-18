@@ -5,6 +5,7 @@
 #include "../cardputer/SdService.h"
 #include "../cardputer/VerticalSelector.h"
 #include "../msx/msx_config.h"
+#include "../videopac/videopac_config.h"
 #include "input.h"
 
 #include <M5Cardputer.h>
@@ -42,8 +43,19 @@ constexpr ControlEntry kMsxEntries[] = {
     {EmuAction::Select, "select", "MENU", '2'},
 };
 
+constexpr ControlEntry kVideopacEntries[] = {
+    {EmuAction::Up, "up", "UP", 'e'},
+    {EmuAction::Down, "down", "DOWN", 's'},
+    {EmuAction::Left, "left", "LEFT", 'a'},
+    {EmuAction::Right, "right", "RIGHT", 'd'},
+    {EmuAction::A, "action", "ACTION", 'l'},
+    {EmuAction::Start, "start", "START", '1'},
+    {EmuAction::Select, "select", "SELECT", '0'},
+};
+
 constexpr ProfileDef kProfiles[] = {
     {"MSX", "MSX.opt", kMsxEntries, sizeof(kMsxEntries) / sizeof(kMsxEntries[0])},
+    {"VIDEOPAC", "VIDEOPAC.opt", kVideopacEntries, sizeof(kVideopacEntries) / sizeof(kVideopacEntries[0])},
 };
 
 constexpr size_t kProfileCount = static_cast<size_t>(EmuProfile::Count);
@@ -360,13 +372,19 @@ bool emuControlsEdit(SdService& sd, EmuProfile profile, CardputerView& display, 
 
     const auto& def = getProfileDef(profile);
     const auto originalBindings = s_bindings[static_cast<size_t>(profile)];
+    const bool msxSettings = profile == EmuProfile::MSX;
+    const bool videopacSettings = profile == EmuProfile::Videopac;
     const int pixelInternalView = 0;
     const int wideInternalView = 1;
 
-    const int originalInternalView = static_cast<int>(msx_config_load_internal_view_mode());
+    const int originalInternalView = msxSettings ? static_cast<int>(msx_config_load_internal_view_mode()) : wideInternalView;
     int pendingInternalView = originalInternalView;
-    int pendingMachineMode = static_cast<int>(msx_config_load_machine_mode());
+    int pendingMachineMode = msxSettings ? static_cast<int>(msx_config_load_machine_mode()) : 0;
     const int originalMachineMode = pendingMachineMode;
+    int pendingVideopacVideoMode = videopacSettings
+        ? static_cast<int>(videopac_config_load_video_mode())
+        : static_cast<int>(VideopacVideoMode::Fast);
+    const int originalVideopacVideoMode = pendingVideopacVideoMode;
     int selectedIndex = 0;
 
     VerticalSelector selector(display, input);
@@ -375,18 +393,32 @@ bool emuControlsEdit(SdService& sd, EmuProfile profile, CardputerView& display, 
         std::vector<std::string> values = emuControlKeyLabels(profile);
         std::vector<std::string> labels = emuControlActionLabels(profile);
 
-        labels.emplace_back("INT VIEW");
-        values.emplace_back(msx_config_internal_view_mode_label(
-            pendingInternalView == pixelInternalView
-                ? MsxInternalViewMode::PixelPerfect
-                : MsxInternalViewMode::Wide));
-
-        labels.emplace_back("MACHINE");
-        values.emplace_back(msx_config_machine_mode_label(static_cast<MsxMachineMode>(pendingMachineMode)));
-
         int nextIndex = static_cast<int>(def.entryCount);
-        const int internalViewIndex = nextIndex++;
-        const int machineIndex = nextIndex++;
+        int internalViewIndex = -1;
+        int machineIndex = -1;
+        int videopacVideoIndex = -1;
+
+        if (msxSettings) {
+            labels.emplace_back("INT VIEW");
+            values.emplace_back(msx_config_internal_view_mode_label(
+                pendingInternalView == pixelInternalView
+                    ? MsxInternalViewMode::PixelPerfect
+                    : MsxInternalViewMode::Wide));
+
+            labels.emplace_back("MACHINE");
+            values.emplace_back(msx_config_machine_mode_label(static_cast<MsxMachineMode>(pendingMachineMode)));
+
+            internalViewIndex = nextIndex++;
+            machineIndex = nextIndex++;
+        }
+
+        if (videopacSettings) {
+            labels.emplace_back("VIDEO");
+            values.emplace_back(videopac_config_video_mode_label(
+                static_cast<VideopacVideoMode>(pendingVideopacVideoMode)));
+            videopacVideoIndex = nextIndex++;
+        }
+
         const int saveIndex = nextIndex++;
         const int defaultsIndex = nextIndex++;
         const int cancelIndex = nextIndex++;
@@ -415,8 +447,13 @@ bool emuControlsEdit(SdService& sd, EmuProfile profile, CardputerView& display, 
 
         if (selection < 0) {
             s_bindings[static_cast<size_t>(profile)] = originalBindings;
-            msx_config_set_internal_view_mode(static_cast<MsxInternalViewMode>(originalInternalView), false);
-            msx_config_set_machine_mode(static_cast<MsxMachineMode>(originalMachineMode), false);
+            if (msxSettings) {
+                msx_config_set_internal_view_mode(static_cast<MsxInternalViewMode>(originalInternalView), false);
+                msx_config_set_machine_mode(static_cast<MsxMachineMode>(originalMachineMode), false);
+            }
+            if (videopacSettings) {
+                videopac_config_set_video_mode(static_cast<VideopacVideoMode>(originalVideopacVideoMode), false);
+            }
             return false;
         }
 
@@ -448,7 +485,7 @@ bool emuControlsEdit(SdService& sd, EmuProfile profile, CardputerView& display, 
             continue;
         }
 
-        if (selection == internalViewIndex) {
+        if (msxSettings && selection == internalViewIndex) {
             pendingInternalView = pendingInternalView == pixelInternalView ? wideInternalView : pixelInternalView;
             msx_config_set_internal_view_mode(
                 pendingInternalView == pixelInternalView
@@ -459,40 +496,71 @@ bool emuControlsEdit(SdService& sd, EmuProfile profile, CardputerView& display, 
             continue;
         }
 
-        if (selection == machineIndex) {
+        if (msxSettings && selection == machineIndex) {
             pendingMachineMode = (pendingMachineMode + 1) % 3;
             msx_config_set_machine_mode(static_cast<MsxMachineMode>(pendingMachineMode), false);
             continue;
         }
 
+        if (videopacSettings && selection == videopacVideoIndex) {
+            pendingVideopacVideoMode =
+                pendingVideopacVideoMode == static_cast<int>(VideopacVideoMode::Fit)
+                    ? static_cast<int>(VideopacVideoMode::Fast)
+                    : static_cast<int>(VideopacVideoMode::Fit);
+            videopac_config_set_video_mode(
+                static_cast<VideopacVideoMode>(pendingVideopacVideoMode),
+                false
+            );
+            continue;
+        }
+
         if (selection == defaultsIndex) {
             emuControlsResetDefaults(profile);
-            pendingInternalView = wideInternalView;
-            pendingMachineMode = static_cast<int>(MsxMachineMode::Auto);
-            msx_config_set_internal_view_mode(MsxInternalViewMode::Wide, false);
-            msx_config_set_machine_mode(MsxMachineMode::Auto, false);
+            if (msxSettings) {
+                pendingInternalView = wideInternalView;
+                pendingMachineMode = static_cast<int>(MsxMachineMode::Auto);
+                msx_config_set_internal_view_mode(MsxInternalViewMode::Wide, false);
+                msx_config_set_machine_mode(MsxMachineMode::Auto, false);
+            }
+            if (videopacSettings) {
+                pendingVideopacVideoMode = static_cast<int>(VideopacVideoMode::Fit);
+                videopac_config_set_video_mode(VideopacVideoMode::Fit, false);
+            }
             continue;
         }
 
         if (selection == cancelIndex) {
             s_bindings[static_cast<size_t>(profile)] = originalBindings;
-            msx_config_set_internal_view_mode(static_cast<MsxInternalViewMode>(originalInternalView), false);
-            msx_config_set_machine_mode(static_cast<MsxMachineMode>(originalMachineMode), false);
+            if (msxSettings) {
+                msx_config_set_internal_view_mode(static_cast<MsxInternalViewMode>(originalInternalView), false);
+                msx_config_set_machine_mode(static_cast<MsxMachineMode>(originalMachineMode), false);
+            }
+            if (videopacSettings) {
+                videopac_config_set_video_mode(static_cast<VideopacVideoMode>(originalVideopacVideoMode), false);
+            }
             return false;
         }
 
         if (selection == saveIndex) {
             const bool saved = emuControlsSave(sd, profile);
-            msx_config_set_internal_view_mode(
-                pendingInternalView == pixelInternalView
-                    ? MsxInternalViewMode::PixelPerfect
-                    : MsxInternalViewMode::Wide,
-                true
-            );
-            msx_config_set_machine_mode(static_cast<MsxMachineMode>(pendingMachineMode), true);
+            if (msxSettings) {
+                msx_config_set_internal_view_mode(
+                    pendingInternalView == pixelInternalView
+                        ? MsxInternalViewMode::PixelPerfect
+                        : MsxInternalViewMode::Wide,
+                    true
+                );
+                msx_config_set_machine_mode(static_cast<MsxMachineMode>(pendingMachineMode), true);
+            }
+            if (videopacSettings) {
+                videopac_config_set_video_mode(
+                    static_cast<VideopacVideoMode>(pendingVideopacVideoMode),
+                    true
+                );
+            }
 
             display.topBar(saved ? "CONFIG SAVED" : "SAVE FAILED", false, false);
-            display.subMessage(saved ? "MSX settings updated" : "Could not write config", 700);
+            display.subMessage(saved ? "Controls updated" : "Could not write config", 700);
             input.flushInput(120);
             return saved;
         }
