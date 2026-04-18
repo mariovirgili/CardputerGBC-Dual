@@ -1084,7 +1084,7 @@ void CardputerView::showValidExt(const std::vector<std::string>& exts) {
         return false;
     };
 
-    const bool hasMsxExt = hasExt(".rom") || hasExt(".dsk") || hasExt(".cas");
+    const bool hasMsxExt = hasExt(".rom");
     const bool hasVideopacExt = hasExt(".o2") || hasExt(".bin");
     const bool showSystemRows = (hasExt(".col") || hasVideopacExt) && hasMsxExt;
     if (showSystemRows) {
@@ -1101,8 +1101,6 @@ void CardputerView::showValidExt(const std::vector<std::string>& exts) {
         std::vector<SystemRow> systemRows;
         std::vector<std::string> msxExts;
         if (hasExt(".rom")) msxExts.push_back(".ROM");
-        if (hasExt(".dsk")) msxExts.push_back(".DSK");
-        if (hasExt(".cas")) msxExts.push_back(".CAS");
         if (!msxExts.empty()) {
             systemRows.push_back({"MSX:", msxExts});
         }
