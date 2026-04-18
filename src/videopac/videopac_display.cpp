@@ -56,6 +56,9 @@ static int s_lastDstH = -1;
 static int s_lastX = -1;
 static int s_lastY = -1;
 static bool s_lastExternal = false;
+static uint32_t s_externalPrevRowHashes[kExternalTargetH];
+static int s_externalPrevRowHashCount = 0;
+static bool s_externalRowHashesValid = false;
 
 struct VideoPlan {
     int dstW;
@@ -63,6 +66,23 @@ struct VideoPlan {
     int x;
     int y;
 };
+
+void invalidate_external_row_cache()
+{
+    s_externalPrevRowHashCount = 0;
+    s_externalRowHashesValid = false;
+}
+
+uint32_t hash_bytes32(const void* data, size_t len)
+{
+    const uint8_t* bytes = static_cast<const uint8_t*>(data);
+    uint32_t hash = 2166136261u;
+    for (size_t i = 0; i < len; ++i) {
+        hash ^= static_cast<uint32_t>(bytes[i]);
+        hash *= 16777619u;
+    }
+    return hash;
+}
 
 VideoPlan make_scaled_plan(int width, int height, int targetW, int targetH)
 {
@@ -364,6 +384,7 @@ VideoPlan make_plan(int width, int height, bool useExternal)
 void clear_target(bool useExternal)
 {
     if (useExternal) {
+        invalidate_external_row_cache();
         prepare_external_tft();
         s_extTft.fillScreen(TFT_BLACK);
     } else {
@@ -687,47 +708,35 @@ void videopac_display_render_indexed_plus_external(const uint8_t* buffer,
         return;
     }
 
-    begin_external_pixels(plan);
     int previousSy = -1;
     const uint8_t* baseLine = nullptr;
     if (useRgb444) {
         const int maxStripRows = std::min(plan.dstH, kExternalRgb444StripRows);
         const int rowBytes = ((plan.dstW + 1) / 2) * 3;
+        int pendingStartDy = -1;
+        int pendingRows = 0;
+        bool writeActive = false;
+        bool renderFailed = false;
+        auto flushPending = [&]() {
+            if (pendingRows <= 0) {
+                return;
+            }
+            if (!writeActive) {
+                prepare_external_tft();
+                s_extTft.startWrite();
+                raise_external_spi_clock();
+                writeActive = true;
+            }
+            s_extTft.setAddrWindow(plan.x, plan.y + pendingStartDy, plan.dstW, pendingRows);
+            push_external_rgb444_pixels(s_lineBuf12, plan.dstW * pendingRows);
+            pendingStartDy = -1;
+            pendingRows = 0;
+        };
         int dy = 0;
 
         while (dy < plan.dstH) {
-            const int rows = std::min(maxStripRows, plan.dstH - dy);
-            for (int row = 0; row < rows; ++row) {
-                const int currentDy = dy + row;
-                const int sy = (currentDy * height) / plan.dstH;
-                if (sy != previousSy) {
-                    previousSy = sy;
-                    baseLine = buffer + sy * pitchPixels;
-                }
-
-                if (!o2em_render_plus_external_line(s_lineBuf,
-                                                    plan.dstW,
-                                                    plan.dstH,
-                                                    currentDy,
-                                                    baseLine,
-                                                    width,
-                                                    height,
-                                                    palette)) {
-                    end_external_pixels();
-                    videopac_display_render_indexed(buffer, width, height, pitchPixels, palette, useExternal);
-                    return;
-                }
-
-                pack_rgb444_line(s_lineBuf,
-                                 plan.dstW,
-                                 s_lineBuf12 + row * rowBytes);
-            }
-            push_external_rgb444_pixels(s_lineBuf12, plan.dstW * rows);
-            dy += rows;
-        }
-    } else {
-        for (int dy = 0; dy < plan.dstH; ++dy) {
-            const int sy = (dy * height) / plan.dstH;
+            const int currentDy = dy;
+            const int sy = (currentDy * height) / plan.dstH;
             if (sy != previousSy) {
                 previousSy = sy;
                 baseLine = buffer + sy * pitchPixels;
@@ -736,18 +745,86 @@ void videopac_display_render_indexed_plus_external(const uint8_t* buffer,
             if (!o2em_render_plus_external_line(s_lineBuf,
                                                 plan.dstW,
                                                 plan.dstH,
-                                                dy,
+                                                currentDy,
                                                 baseLine,
                                                 width,
                                                 height,
                                                 palette)) {
-                end_external_pixels();
-                videopac_display_render_indexed(buffer, width, height, pitchPixels, palette, useExternal);
-                return;
+                renderFailed = true;
+                break;
             }
 
-            push_external_line(s_lineBuf, plan.dstW, false);
+            const uint32_t rowHash = hash_bytes32(s_lineBuf,
+                                                  static_cast<size_t>(plan.dstW) * sizeof(uint16_t));
+            const bool rowChanged = !s_externalRowHashesValid ||
+                                    currentDy >= s_externalPrevRowHashCount ||
+                                    s_externalPrevRowHashes[currentDy] != rowHash;
+
+            if (!rowChanged) {
+                flushPending();
+                s_externalPrevRowHashes[currentDy] = rowHash;
+                ++dy;
+                continue;
+            }
+
+            if (pendingRows == 0) {
+                pendingStartDy = currentDy;
+            } else if (pendingRows >= maxStripRows) {
+                flushPending();
+                pendingStartDy = currentDy;
+            }
+
+            pack_rgb444_line(s_lineBuf,
+                             plan.dstW,
+                             s_lineBuf12 + pendingRows * rowBytes);
+            s_externalPrevRowHashes[currentDy] = rowHash;
+            pendingRows++;
+            ++dy;
         }
+
+        flushPending();
+        if (writeActive) {
+            s_extTft.endWrite();
+        }
+
+        if (renderFailed) {
+            invalidate_external_row_cache();
+            s_lastDstW = -1;
+            s_lastDstH = -1;
+            s_lastX = -1;
+            s_lastY = -1;
+            s_lastExternal = false;
+            videopac_display_render_indexed(buffer, width, height, pitchPixels, palette, useExternal);
+            return;
+        }
+
+        s_externalPrevRowHashCount = plan.dstH;
+        s_externalRowHashesValid = true;
+        return;
+    }
+
+    begin_external_pixels(plan);
+    for (int dy = 0; dy < plan.dstH; ++dy) {
+        const int sy = (dy * height) / plan.dstH;
+        if (sy != previousSy) {
+            previousSy = sy;
+            baseLine = buffer + sy * pitchPixels;
+        }
+
+        if (!o2em_render_plus_external_line(s_lineBuf,
+                                            plan.dstW,
+                                            plan.dstH,
+                                            dy,
+                                            baseLine,
+                                            width,
+                                            height,
+                                            palette)) {
+            end_external_pixels();
+            videopac_display_render_indexed(buffer, width, height, pitchPixels, palette, useExternal);
+            return;
+        }
+
+        push_external_line(s_lineBuf, plan.dstW, false);
     }
     end_external_pixels();
 }
@@ -755,6 +832,7 @@ void videopac_display_render_indexed_plus_external(const uint8_t* buffer,
 void videopac_display_show_external_info(const char* romTitle, const char* biosName)
 {
     VideopacTraceScope scope("display", "external_info");
+    invalidate_external_row_cache();
     prepare_external_tft();
     auto& tft = s_extTft;
     tft.fillScreen(TFT_BLACK);
@@ -839,6 +917,7 @@ void videopac_display_show_input_mode_overlay(bool keyboardOnlyMode, bool useExt
     const uint16_t accent = keyboardOnlyMode ? TFT_CYAN : TFT_YELLOW;
 
     if (useExternal) {
+        invalidate_external_row_cache();
         prepare_external_tft();
 
         const bool wasRgb444 = use_external_rgb444(true);
@@ -878,6 +957,7 @@ void videopac_display_show_input_mode_overlay(bool keyboardOnlyMode, bool useExt
 void videopac_display_hide_input_mode_overlay(bool useExternal)
 {
     if (useExternal) {
+        invalidate_external_row_cache();
         prepare_external_tft();
 
         const bool wasRgb444 = use_external_rgb444(true);
@@ -911,6 +991,7 @@ void videopac_display_shutdown(void)
 {
     videopac_trace_mark("display", "shutdown");
     release_line_buffer();
+    invalidate_external_row_cache();
     s_lastDstW = -1;
     s_lastDstH = -1;
     s_extTftPrepared = false;
