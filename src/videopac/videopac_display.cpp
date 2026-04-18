@@ -34,8 +34,8 @@ constexpr int kInternalTargetW = 240;
 constexpr int kInternalTargetH = 135;
 constexpr int kExternalTargetW = 320;
 constexpr int kExternalTargetH = 240;
-constexpr uint32_t kVideopacExternalSpiFrequency = 60000000u;
-constexpr int kExternalRgb444StripRows = 2;
+constexpr uint32_t kVideopacExternalSpiFrequency = 70000000u;
+constexpr int kExternalRgb444StripRows = 4;
 constexpr int kExternalFitFastScaleNum = 5;
 constexpr int kExternalFitFastScaleDen = 4;
 
@@ -680,7 +680,7 @@ void videopac_display_render_indexed_plus_external(const uint8_t* buffer,
     }
 
     const bool useRgb444 = use_external_rgb444(useExternal);
-    if (useRgb444 && !ensure_rgb444_buffer(plan.dstW)) {
+    if (useRgb444 && !ensure_rgb444_buffer(plan.dstW * std::min(plan.dstH, kExternalRgb444StripRows))) {
         return;
     }
     if (!ensure_line_buffer(plan.dstW)) {
@@ -690,27 +690,64 @@ void videopac_display_render_indexed_plus_external(const uint8_t* buffer,
     begin_external_pixels(plan);
     int previousSy = -1;
     const uint8_t* baseLine = nullptr;
-    for (int dy = 0; dy < plan.dstH; ++dy) {
-        const int sy = (dy * height) / plan.dstH;
-        if (sy != previousSy) {
-            previousSy = sy;
-            baseLine = buffer + sy * pitchPixels;
-        }
+    if (useRgb444) {
+        const int maxStripRows = std::min(plan.dstH, kExternalRgb444StripRows);
+        const int rowBytes = ((plan.dstW + 1) / 2) * 3;
+        int dy = 0;
 
-        if (!o2em_render_plus_external_line(s_lineBuf,
-                                            plan.dstW,
-                                            plan.dstH,
-                                            dy,
-                                            baseLine,
-                                            width,
-                                            height,
-                                            palette)) {
-            end_external_pixels();
-            videopac_display_render_indexed(buffer, width, height, pitchPixels, palette, useExternal);
-            return;
-        }
+        while (dy < plan.dstH) {
+            const int rows = std::min(maxStripRows, plan.dstH - dy);
+            for (int row = 0; row < rows; ++row) {
+                const int currentDy = dy + row;
+                const int sy = (currentDy * height) / plan.dstH;
+                if (sy != previousSy) {
+                    previousSy = sy;
+                    baseLine = buffer + sy * pitchPixels;
+                }
 
-        push_external_line(s_lineBuf, plan.dstW, useRgb444);
+                if (!o2em_render_plus_external_line(s_lineBuf,
+                                                    plan.dstW,
+                                                    plan.dstH,
+                                                    currentDy,
+                                                    baseLine,
+                                                    width,
+                                                    height,
+                                                    palette)) {
+                    end_external_pixels();
+                    videopac_display_render_indexed(buffer, width, height, pitchPixels, palette, useExternal);
+                    return;
+                }
+
+                pack_rgb444_line(s_lineBuf,
+                                 plan.dstW,
+                                 s_lineBuf12 + row * rowBytes);
+            }
+            push_external_rgb444_pixels(s_lineBuf12, plan.dstW * rows);
+            dy += rows;
+        }
+    } else {
+        for (int dy = 0; dy < plan.dstH; ++dy) {
+            const int sy = (dy * height) / plan.dstH;
+            if (sy != previousSy) {
+                previousSy = sy;
+                baseLine = buffer + sy * pitchPixels;
+            }
+
+            if (!o2em_render_plus_external_line(s_lineBuf,
+                                                plan.dstW,
+                                                plan.dstH,
+                                                dy,
+                                                baseLine,
+                                                width,
+                                                height,
+                                                palette)) {
+                end_external_pixels();
+                videopac_display_render_indexed(buffer, width, height, pitchPixels, palette, useExternal);
+                return;
+            }
+
+            push_external_line(s_lineBuf, plan.dstW, false);
+        }
     }
     end_external_pixels();
 }
