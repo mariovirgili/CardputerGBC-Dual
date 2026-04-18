@@ -497,15 +497,7 @@ void run_videopac(const uint8_t* romData,
         biosImage.id == VideopacBiosId::VideopacPlusG7400 ||
         biosImage.id == VideopacBiosId::VideopacPlusFrance;
     const bool usePlusExternalNative = useExternal && usePlusBios;
-    const VideopacVideoMode storedVideoMode = videopac_config_load_video_mode();
-    VideopacVideoMode videoMode = storedVideoMode;
-    if (usePlusExternalNative && storedVideoMode == VideopacVideoMode::Fit) {
-        videoMode = VideopacVideoMode::FitFast;
-        videopac_config_set_video_mode(videoMode, false);
-        videopac_trace_printf("display",
-                              "video_mode_auto mode=%s reason=plus_external_default",
-                              videopac_config_video_mode_label(videoMode));
-    }
+    const VideopacVideoMode videoMode = videopac_config_load_video_mode();
     videopac_trace_printf("display", "target=%s video_mode=%s color_depth=%s",
                           useExternal ? "external" : "internal",
                           videopac_config_video_mode_label(videoMode),

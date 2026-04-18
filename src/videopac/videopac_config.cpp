@@ -8,8 +8,8 @@ namespace {
 constexpr const char* kVideopacConfigNs = "vpack_cfg";
 constexpr const char* kVideoModeKey = "video";
 constexpr const char* kConfigVersionKey = "ver";
-constexpr uint8_t kConfigVersion = 3;
-constexpr VideopacVideoMode kDefaultVideoMode = VideopacVideoMode::FitFast;
+constexpr uint8_t kConfigVersion = 4;
+constexpr VideopacVideoMode kDefaultVideoMode = VideopacVideoMode::Fit;
 constexpr VideopacVideoMode kVideoModeCycle[] = {
     VideopacVideoMode::Fit,
     VideopacVideoMode::FitFast,
@@ -67,9 +67,19 @@ VideopacVideoMode videopac_config_load_video_mode(void)
     );
     prefs.end();
 
-    s_videoMode = (hasSavedValue && savedVersion >= kConfigVersion)
-        ? sanitize_video_mode(saved)
-        : kDefaultVideoMode;
+    if (hasSavedValue) {
+        const VideopacVideoMode savedMode = sanitize_video_mode(saved);
+        if (savedVersion >= kConfigVersion) {
+            s_videoMode = savedMode;
+        } else if (savedMode == VideopacVideoMode::FitFast) {
+            // Migrate the old external default to the new FIT standard.
+            s_videoMode = VideopacVideoMode::Fit;
+        } else {
+            s_videoMode = savedMode;
+        }
+    } else {
+        s_videoMode = kDefaultVideoMode;
+    }
 
     if (!hasSavedValue || savedVersion < kConfigVersion) {
         store_video_mode(s_videoMode);
