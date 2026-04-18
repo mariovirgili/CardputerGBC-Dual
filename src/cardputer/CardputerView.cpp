@@ -1091,7 +1091,7 @@ void CardputerView::showValidExt(const std::vector<std::string>& exts) {
         Display->setTextSize(TEXT_SMALL);
         cursorY = boxY + 8;
         const int systemBadgeVPadding = 1;
-        const int systemRowGap = 3;
+        const int systemRowGap = 5;
 
         struct SystemRow {
             const char* label;

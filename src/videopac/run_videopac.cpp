@@ -143,8 +143,8 @@ void draw_internal_rom_title(const char* romName)
         title = truncate_middle(rom_title_without_extension(romName), maxChars);
     }
 
-    screen.fillRect(0, 27, screen.width(), 8, TFT_BLACK);
-    screen.drawString(title.c_str(), screen.width() / 2, 27);
+    screen.fillRect(0, 26, screen.width(), 8, TFT_BLACK);
+    screen.drawString(title.c_str(), screen.width() / 2, 26);
     screen.setTextDatum(middle_center);
 }
 
