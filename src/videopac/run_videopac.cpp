@@ -571,6 +571,7 @@ void run_videopac(const uint8_t* romData,
     size_t lastAudioFrames = 0;
     int64_t lastLatenessUs = 0;
     bool lastFrameSkipEnabled = false;
+    VideopacVideoMode lastFrameSkipMode = VideopacVideoMode::Fast;
     double fitRenderAccumulator = 0.0;
     double lastFitTargetVideoFps = 0.0;
     uint32_t fitSkippedFrames = 0;
@@ -587,7 +588,7 @@ void run_videopac(const uint8_t* romData,
         videopac_input_poll(&inputState);
         videopac_trace_frame_sample("input", videopac_trace_now_us() - stageStartUs);
         if (inputState.videoModeToggleRequested) {
-            videopac_config_toggle_video_mode();
+            videopac_config_step_video_mode(inputState.videoModeDirection);
             videopac_trace_printf("display", "video_mode_toggle mode=%s",
                                   videopac_config_get_video_mode_label());
         }
@@ -628,21 +629,31 @@ void run_videopac(const uint8_t* romData,
         o2em_run_frame();
         videopac_trace_frame_sample("core", videopac_trace_now_us() - stageStartUs);
 
+        const VideopacVideoMode currentVideoMode = videopac_config_get_video_mode();
         const bool frameSkipEnabled =
-            useExternal && videopac_config_get_video_mode() == VideopacVideoMode::Fit;
-        if (frameSkipEnabled != lastFrameSkipEnabled) {
+            useExternal &&
+            (currentVideoMode == VideopacVideoMode::Fit ||
+             currentVideoMode == VideopacVideoMode::FitFast);
+        if (frameSkipEnabled != lastFrameSkipEnabled ||
+            (frameSkipEnabled && currentVideoMode != lastFrameSkipMode)) {
             lastFrameSkipEnabled = frameSkipEnabled;
+            lastFrameSkipMode = currentVideoMode;
             fitRenderAccumulator = frameSkipEnabled ? coreFps : 0.0;
             lastFitTargetVideoFps = 0.0;
             fitSkippedFrames = 0;
             videopac_trace_printf("display", "frame_skip %s",
-                                  frameSkipEnabled ? "external_fit_on" : "off");
+                                  frameSkipEnabled
+                                      ? (currentVideoMode == VideopacVideoMode::FitFast
+                                             ? "external_fit_fast_adaptive"
+                                             : "external_fit_on")
+                                      : "off");
         }
         bool renderThisFrame = true;
         if (frameSkipEnabled) {
-            const double targetVideoFps = coreFps >= 55.0
-                ? kExternalFitNtscVideoFps
-                : kExternalFitPalVideoFps;
+            const double targetVideoFps =
+                currentVideoMode == VideopacVideoMode::FitFast
+                    ? coreFps
+                    : (coreFps >= 55.0 ? kExternalFitNtscVideoFps : kExternalFitPalVideoFps);
             if (targetVideoFps != lastFitTargetVideoFps) {
                 lastFitTargetVideoFps = targetVideoFps;
                 videopac_trace_printf("display", "fit_target_video_fps=%.1f",

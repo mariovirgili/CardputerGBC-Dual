@@ -24,7 +24,9 @@ constexpr int kInternalTargetH = 135;
 constexpr int kExternalTargetW = 320;
 constexpr int kExternalTargetH = 240;
 constexpr uint32_t kVideopacExternalSpiFrequency = 60000000u;
-constexpr int kExternalRgb444StripRows = 1;
+constexpr int kExternalRgb444StripRows = 2;
+constexpr int kExternalFitFastScaleNum = 5;
+constexpr int kExternalFitFastScaleDen = 4;
 
 static TFT_eSPI s_extTft;
 static bool s_extTftPrepared = false;
@@ -50,6 +52,25 @@ struct VideoPlan {
     int x;
     int y;
 };
+
+VideoPlan make_scaled_plan(int width, int height, int targetW, int targetH)
+{
+    VideoPlan plan = {};
+    if (width <= 0 || height <= 0 || targetW <= 0 || targetH <= 0) {
+        return plan;
+    }
+
+    const int byWidthH = (height * targetW) / width;
+    if (byWidthH <= targetH) {
+        plan.dstW = targetW;
+        plan.dstH = std::max(1, byWidthH);
+    } else {
+        plan.dstH = targetH;
+        plan.dstW = std::max(1, (width * targetH) / height);
+    }
+
+    return plan;
+}
 
 void prepare_external_tft()
 {
@@ -300,7 +321,8 @@ VideoPlan make_plan(int width, int height, bool useExternal)
         return plan;
     }
 
-    if (useExternal && videopac_config_get_video_mode() == VideopacVideoMode::Fast) {
+    const VideopacVideoMode mode = videopac_config_get_video_mode();
+    if (useExternal && mode == VideopacVideoMode::Fast) {
         plan.dstW = std::min(width, targetW);
         plan.dstH = std::min(height, targetH);
         plan.x = (targetW - plan.dstW) / 2;
@@ -308,15 +330,21 @@ VideoPlan make_plan(int width, int height, bool useExternal)
         return plan;
     }
 
-    const int byWidthH = (height * targetW) / width;
-    if (byWidthH <= targetH) {
-        plan.dstW = targetW;
-        plan.dstH = std::max(1, byWidthH);
-    } else {
-        plan.dstH = targetH;
-        plan.dstW = std::max(1, (width * targetH) / height);
+    int fitW = targetW;
+    int fitH = targetH;
+    if (useExternal && mode == VideopacVideoMode::FitFast) {
+        fitW = std::min(targetW, std::max(width, (width * kExternalFitFastScaleNum) / kExternalFitFastScaleDen));
+        fitH = std::min(targetH, std::max(height, (height * kExternalFitFastScaleNum) / kExternalFitFastScaleDen));
     }
 
+    plan = make_scaled_plan(width, height, fitW, fitH);
+    if (use_external_rgb444(useExternal) && plan.dstW >= 4) {
+        const int alignedW = plan.dstW & ~3;
+        if (alignedW > 0 && alignedW != plan.dstW) {
+            plan.dstW = alignedW;
+            plan.dstH = std::min(targetH, std::max(1, (height * plan.dstW) / width));
+        }
+    }
     plan.x = (targetW - plan.dstW) / 2;
     plan.y = (targetH - plan.dstH) / 2;
     return plan;

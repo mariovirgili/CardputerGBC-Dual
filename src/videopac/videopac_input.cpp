@@ -144,6 +144,7 @@ void videopac_input_poll(VideopacInputState* state)
             if ((menuLeftPressed && !s_menuLeftHeld) ||
                 (menuRightPressed && !s_menuRightHeld)) {
                 state->videoModeToggleRequested = true;
+                state->videoModeDirection = menuLeftPressed ? -1 : 1;
                 videopac_trace_printf("input", "runtime_menu video_toggle dir=%s",
                                       menuLeftPressed ? "left" : "right");
             }

@@ -1,22 +1,45 @@
 #include "videopac_config.h"
 
 #include <Preferences.h>
+#include <cstddef>
 
 namespace {
 
 constexpr const char* kVideopacConfigNs = "vpack_cfg";
 constexpr const char* kVideoModeKey = "video";
 constexpr const char* kConfigVersionKey = "ver";
-constexpr uint8_t kConfigVersion = 2;
-constexpr VideopacVideoMode kDefaultVideoMode = VideopacVideoMode::Fit;
+constexpr uint8_t kConfigVersion = 3;
+constexpr VideopacVideoMode kDefaultVideoMode = VideopacVideoMode::FitFast;
+constexpr VideopacVideoMode kVideoModeCycle[] = {
+    VideopacVideoMode::Fit,
+    VideopacVideoMode::FitFast,
+    VideopacVideoMode::Fast,
+};
 
 VideopacVideoMode s_videoMode = kDefaultVideoMode;
 
 VideopacVideoMode sanitize_video_mode(uint8_t value)
 {
-    return value == static_cast<uint8_t>(VideopacVideoMode::Fit)
-               ? VideopacVideoMode::Fit
-               : VideopacVideoMode::Fast;
+    switch (static_cast<VideopacVideoMode>(value)) {
+    case VideopacVideoMode::Fit:
+        return VideopacVideoMode::Fit;
+    case VideopacVideoMode::Fast:
+        return VideopacVideoMode::Fast;
+    case VideopacVideoMode::FitFast:
+        return VideopacVideoMode::FitFast;
+    default:
+        return kDefaultVideoMode;
+    }
+}
+
+int video_mode_index(VideopacVideoMode mode)
+{
+    for (size_t i = 0; i < sizeof(kVideoModeCycle) / sizeof(kVideoModeCycle[0]); ++i) {
+        if (kVideoModeCycle[i] == mode) {
+            return static_cast<int>(i);
+        }
+    }
+    return 0;
 }
 
 void store_video_mode(VideopacVideoMode mode)
@@ -62,7 +85,16 @@ VideopacVideoMode videopac_config_get_video_mode(void)
 
 const char* videopac_config_video_mode_label(VideopacVideoMode mode)
 {
-    return mode == VideopacVideoMode::Fit ? "FIT" : "FAST";
+    switch (mode) {
+    case VideopacVideoMode::Fit:
+        return "FIT";
+    case VideopacVideoMode::FitFast:
+        return "FIT FAST";
+    case VideopacVideoMode::Fast:
+        return "FAST";
+    default:
+        return "FIT";
+    }
 }
 
 const char* videopac_config_get_video_mode_label(void)
@@ -80,9 +112,18 @@ void videopac_config_set_video_mode(VideopacVideoMode mode, bool persist)
 
 void videopac_config_toggle_video_mode(void)
 {
-    const VideopacVideoMode nextMode =
-        (s_videoMode == VideopacVideoMode::Fit)
-            ? VideopacVideoMode::Fast
-            : VideopacVideoMode::Fit;
-    videopac_config_set_video_mode(nextMode, true);
+    videopac_config_step_video_mode(1);
+}
+
+void videopac_config_step_video_mode(int direction)
+{
+    constexpr int count = static_cast<int>(sizeof(kVideoModeCycle) / sizeof(kVideoModeCycle[0]));
+    int index = video_mode_index(s_videoMode);
+    index += direction < 0 ? -1 : 1;
+    if (index < 0) {
+        index = count - 1;
+    } else if (index >= count) {
+        index = 0;
+    }
+    videopac_config_set_video_mode(kVideoModeCycle[index], true);
 }

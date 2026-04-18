@@ -13,6 +13,7 @@ struct VideopacInputState {
     bool menuVisible;
     bool menuChanged;
     bool videoModeToggleRequested;
+    int8_t videoModeDirection;
     bool keyboardOnlyMode;
     bool inputModeChanged;
     bool keys[128]; // Tastiera a membrana
