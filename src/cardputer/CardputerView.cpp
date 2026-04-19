@@ -1039,7 +1039,6 @@ uint16_t CardputerView::colorForExt(const std::string& extRaw) const {
     if (ext == ".a26") return LYNX_COLOR;
     if (ext == ".a78") return LYNX_COLOR;
     if (ext == ".rom" || ext == ".dsk" || ext == ".cas") return PRIMARY_COLOR;
-    if (ext == ".col") return COLECO_COLOR;
     if (ext == ".sfc" || ext == ".smc") return SNES_COLOR;
 
     return TEXT_COLOR;
@@ -1083,7 +1082,7 @@ void CardputerView::showValidExt(const std::vector<std::string>& exts) {
         return false;
     };
 
-    const bool showSystemRows = hasExt(".col") && (hasExt(".rom") || hasExt(".dsk") || hasExt(".cas"));
+    const bool showSystemRows = hasExt(".rom") || hasExt(".dsk") || hasExt(".cas");
     if (showSystemRows) {
         struct SystemRow {
             const char* label;
@@ -1098,7 +1097,6 @@ void CardputerView::showValidExt(const std::vector<std::string>& exts) {
         if (!msxExts.empty()) {
             systemRows.push_back({"MSX:", msxExts});
         }
-        systemRows.push_back({"Coleco:", {".COL"}});
 
         for (const auto& row : systemRows) {
             const int prefixW = Display->textWidth(row.label) + 5;
