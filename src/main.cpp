@@ -23,51 +23,47 @@
 #include "tft_setup.h"
 #include "cardputer/Welcome.h"
 #include "cardputer/WelcomeExternalImage.h"
+#include "cardputer/VerticalSelector.h"
 
 static void showExternalRomSelectorTft()
 {
   emu_set_aux_screen_locked(false);
-  struct ExternalRomBadge {
-    const char* label;
-    uint16_t color;
-  };
-
-  static const ExternalRomBadge badges[] = {
-    {"MSX", PRIMARY_COLOR}
-  };
-
   TFT_eSPI extTft;
   extTft.begin();
   extTft.setRotation(3);
-  extTft.fillScreen(TFT_BLACK);
+  extTft.setSwapBytes(true);
+  extTft.pushImage(0, 0, BGGAMESTATION_DS_EXT_WIDTH, BGGAMESTATION_DS_EXT_HEIGHT, bggamestation_ds_ext);
+  extTft.setSwapBytes(false);
+}
 
-  extTft.setTextColor(TFT_WHITE, TFT_BLACK);
-  extTft.drawCentreString("Select Rom!", 160, 16, 4);
-  extTft.setTextColor(PRIMARY_COLOR, TFT_BLACK);
-  extTft.drawCentreString("Supported systems", 160, 52, 2);
+static MsxMachineMode selectMsxLaunchSystem(CardputerView& display, CardputerInput& input)
+{
+  VerticalSelector selector(display, input);
+  const MsxMachineMode persistedMode = msx_config_load_machine_mode();
+  const std::vector<std::string> options = {
+      "AUTO",
+      "MSX1",
+      "MSX2",
+  };
 
-  const int cols = 2;
-  const int badgeW = 116;
-  const int badgeH = 30;
-  const int gapX = 8;
-  const int gapY = 10;
-  const int totalBadgeCount = static_cast<int>(sizeof(badges) / sizeof(badges[0]));
-  const int usedCols = totalBadgeCount < cols ? totalBadgeCount : cols;
-  const int rowWidth = usedCols * badgeW + (usedCols - 1) * gapX;
-  const int startX = (320 - rowWidth) / 2;
-  const int startY = 82;
-
-  for (int i = 0; i < (int)(sizeof(badges) / sizeof(badges[0])); ++i) {
-    const int row = i / cols;
-    const int col = i % cols;
-    const int x = startX + col * (badgeW + gapX);
-    const int y = startY + row * (badgeH + gapY);
-
-    extTft.fillRoundRect(x, y, badgeW, badgeH, 6, RECT_COLOR_DARK);
-    extTft.drawRoundRect(x, y, badgeW, badgeH, 6, badges[i].color);
-    extTft.setTextColor(TFT_WHITE, RECT_COLOR_DARK);
-    extTft.drawCentreString(badges[i].label, x + badgeW / 2, y + 8, 2);
+  int initialIndex = static_cast<int>(persistedMode);
+  if (initialIndex < 0 || initialIndex > 2) {
+    initialIndex = 0;
   }
+
+  const int selected = selector.select("MSX launch system",
+                                       options,
+                                       false,
+                                       false,
+                                       {},
+                                       {},
+                                       false,
+                                       true,
+                                       true,
+                                       initialIndex);
+
+  const int chosen = selected >= 0 ? selected : initialIndex;
+  return static_cast<MsxMachineMode>(chosen);
 }
 
 static void welcomeExternalTft()
@@ -291,7 +287,9 @@ void setup() {
   if (!forceRomSelector && !resetSavedRomState && !quittingGame) {
     pendingLaunch = consumePendingLaunchFromNvs(sd);
     if (pendingLaunch.valid() && pendingLaunch.machineMode >= 0) {
-      msx_config_set_machine_mode(static_cast<MsxMachineMode>(pendingLaunch.machineMode), false);
+      // Keep the selected machine mode for this boot instead of reloading an old
+      // persisted value in the launcher flow.
+      msx_config_set_machine_mode(static_cast<MsxMachineMode>(pendingLaunch.machineMode), true);
     }
   }
 
@@ -342,8 +340,12 @@ void setup() {
 
   const RomType ext = getRomType(romPath);
   if (!pendingLaunch.valid() && selectedFromBrowser && ext != ROM_TYPE_UNKNOWN) {
-    msx_config_set_machine_mode(MsxMachineMode::MSX1, false);
-    restartForPendingLaunch(display, sd, romPath, static_cast<int>(MsxMachineMode::MSX1));
+    MsxMachineMode chosenMachineMode = msx_config_load_machine_mode();
+    if (ext == ROM_TYPE_MSX || ext == ROM_TYPE_MSX_DISK || ext == ROM_TYPE_MSX_CAS) {
+      chosenMachineMode = selectMsxLaunchSystem(display, input);
+    }
+    msx_config_set_machine_mode(chosenMachineMode, false);
+    restartForPendingLaunch(display, sd, romPath, static_cast<int>(chosenMachineMode));
   }
 
   printf("Selected ROM: %s\n", romPath.c_str());

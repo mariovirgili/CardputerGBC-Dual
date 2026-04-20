@@ -93,19 +93,20 @@ constexpr const char* kMsxBiosDirFallback = "/sd/msx/";
 
 static const char* kMsxBiosReferenceTable =
     "MSX.ROM      364a1a579fe5cb8dba54519bcfcdac0d\n"
+    "MSX2.ROM     (no md5)\n"
+    "MSX2EXT.ROM  (no md5)\n"
     "DISK.ROM     80dcd1ad1a4cf65d64b7ba10504e8190\n"
     "MSXDOS2.ROM  6418d091cd6907bbcf940324339e43bb\n"
     "FMPAC.ROM    6f69cc8b5ed761b03afd78000dfb0e19\n";
 
 constexpr MsxBiosReferenceEntry kMsxBiosReferences[] = {
     {"MSX.ROM",      "364a1a579fe5cb8dba54519bcfcdac0d"},
+    {"MSX2.ROM",     ""},
+    {"MSX2EXT.ROM",  ""},
     {"DISK.ROM",     "80dcd1ad1a4cf65d64b7ba10504e8190"},
     {"MSXDOS2.ROM",  "6418d091cd6907bbcf940324339e43bb"},
     {"FMPAC.ROM",    "6f69cc8b5ed761b03afd78000dfb0e19"},
 };
-
-static uint8_t s_msx_disk_rom_static[16384];
-static bool s_msx_disk_rom_static_used = false;
 
 const char* msx_sd_open_path(const char* path)
 {
@@ -136,6 +137,25 @@ const char* msx_file_label(const char* path)
     }
 
     return base ? base + 1 : path;
+}
+
+void msx_format_bios_status_line(const MsxBiosBundle& bios, char* out, size_t outSize)
+{
+    if (!out || outSize == 0) {
+        return;
+    }
+
+    if (bios.subRomRequired && bios.subRom.status == MsxImageLoadStatus::Loaded &&
+        bios.subRom.path[0] != '\0') {
+        std::snprintf(out,
+                      outSize,
+                      "BIOS: %s + %s",
+                      msx_file_label(bios.mainRom.path),
+                      msx_file_label(bios.subRom.path));
+        return;
+    }
+
+    std::snprintf(out, outSize, "BIOS: %s", msx_file_label(bios.mainRom.path));
 }
 
 static bool msx_path_has_cas_ext(const std::string& path)
@@ -462,12 +482,25 @@ void msx_show_bios_reference_help(MsxMachineMode configuredMode, const MsxBiosBu
         msx_wait_bios_page_ack(input);
     }
 
+    char needBiosLine[64];
+    if (configuredMode == MsxMachineMode::MSX2) {
+        std::snprintf(needBiosLine,
+                      sizeof(needBiosLine),
+                      "Need now: MSX2.ROM + MSX2EXT.ROM");
+    } else if (configuredMode == MsxMachineMode::MSX1) {
+        std::snprintf(needBiosLine, sizeof(needBiosLine), "Need now: MSX.ROM");
+    } else {
+        std::snprintf(needBiosLine,
+                      sizeof(needBiosLine),
+                      "Need now: MSX2.ROM + MSX2EXT.ROM or MSX.ROM");
+    }
+
     const char* introLines[7] = {
         bios && bios->message[0] != '\0' ? bios->message : "Missing BIOS files.",
         "Place BIOS on SD in:",
         kMsxBiosSdDirPrimary,
         kMsxBiosSdDirFallback,
-        "Need now: MSX.ROM",
+        needBiosLine,
         nullptr,
     };
 
@@ -553,11 +586,6 @@ uint8_t* msx_load_bios_file(const char* filename, size_t expectedSize, size_t* o
         }
         if (!buf) {
             buf = static_cast<uint8_t*>(heap_caps_malloc(fileSize, MALLOC_CAP_DEFAULT));
-        }
-        if (!buf && std::strcmp(filename, "DISK.ROM") == 0 && fileSize == 16384 && !s_msx_disk_rom_static_used) {
-            buf = s_msx_disk_rom_static;
-            s_msx_disk_rom_static_used = true;
-            std::printf("[MSX] %s: using static fallback buffer (%u B)\n", openPath, static_cast<unsigned>(fileSize));
         }
         if (!buf) {
             std::printf("[MSX] %s: heap alloc failed (%u B) free8=%u largest8=%u freeInternal=%u largestInternal=%u\n",
@@ -978,6 +1006,8 @@ void run_msx(const uint8_t* romData, size_t romLen, const char* romName, SdServi
     const MsxMachineMode configuredMode = msx_config_load_machine_mode();
     msx_config_load_bios_path();
     msx_config_load_msx1_bios_path();
+    msx_config_load_msx2_bios_path();
+    msx_config_load_msx2_subrom_path();
 
     MsxRomImage rom = {};
     if (!msx_media_analyze_rom(&rom, romData, romLen)) {
@@ -992,6 +1022,8 @@ void run_msx(const uint8_t* romData, size_t romLen, const char* romName, SdServi
     biosSearch.requestedMode = configuredMode;
     biosSearch.genericBiosPath = msx_config_get_bios_path();
     biosSearch.msx1BiosPath = msx_config_get_msx1_bios_path();
+    biosSearch.msx2BiosPath = msx_config_get_msx2_bios_path();
+    biosSearch.msx2SubRomPath = msx_config_get_msx2_subrom_path();
 
     MsxBiosBundle bios = {};
     if (!msx_media_load_bios_bundle(&bios, &biosSearch)) {
@@ -1089,7 +1121,7 @@ void run_msx(const uint8_t* romData, size_t romLen, const char* romName, SdServi
 
         char cartLine[48];
         char machineLine[48];
-        char biosLine[64];
+        char biosLine[96];
         char audioLine[48];
 
         const MsxAudioHookState& audioState = msx_sound_get_state();
@@ -1105,10 +1137,7 @@ void run_msx(const uint8_t* romData, size_t romLen, const char* romName, SdServi
                       "MACHINE: %s -> %s",
                       msx_config_machine_mode_label(configuredMode),
                       msx_media_bios_target_label(core.biosTarget));
-        std::snprintf(biosLine,
-                      sizeof(biosLine),
-                      "BIOS: %s",
-                      msx_file_label(bios.mainRom.path));
+        msx_format_bios_status_line(bios, biosLine, sizeof(biosLine));
 
         if (!audioState.compiledIn) {
             std::snprintf(audioLine, sizeof(audioLine), "AUDIO: build OFF");
@@ -1209,11 +1238,15 @@ void run_msx_disk(const uint8_t* dskData, size_t dskLen, const char* dskName, Sd
     const MsxMachineMode configuredMode = msx_config_load_machine_mode();
     msx_config_load_bios_path();
     msx_config_load_msx1_bios_path();
+    msx_config_load_msx2_bios_path();
+    msx_config_load_msx2_subrom_path();
 
     MsxBiosSearchConfig biosSearch = {};
     biosSearch.requestedMode    = configuredMode;
     biosSearch.genericBiosPath  = msx_config_get_bios_path();
     biosSearch.msx1BiosPath     = msx_config_get_msx1_bios_path();
+    biosSearch.msx2BiosPath     = msx_config_get_msx2_bios_path();
+    biosSearch.msx2SubRomPath   = msx_config_get_msx2_subrom_path();
 
     MsxBiosBundle bios = {};
     if (!msx_media_load_bios_bundle(&bios, &biosSearch)) {
@@ -1255,10 +1288,9 @@ void run_msx_disk(const uint8_t* dskData, size_t dskLen, const char* dskName, Sd
         printf("[MSX] core init_disk failed\n");
         msx_show_launch_error("MSX DISK ERROR", "Core init failed", "Check BIOS on SD");
         msx_sound_shutdown();
-        if (diskRomData && diskRomData != s_msx_disk_rom_static) {
+        if (diskRomData) {
             heap_caps_free(diskRomData);
         }
-        s_msx_disk_rom_static_used = false;
         msx_media_release_bios_bundle(&bios);
         msx_display_shutdown();
         msx_request_quit_to_launcher();
@@ -1317,7 +1349,7 @@ void run_msx_disk(const uint8_t* dskData, size_t dskLen, const char* dskName, Sd
 
         char modeLine[48];
         char machineLine[48];
-        char biosLine[64];
+        char biosLine[96];
         char audioLine[48];
 
         const MsxAudioHookState& audioState = msx_sound_get_state();
@@ -1331,9 +1363,7 @@ void run_msx_disk(const uint8_t* dskData, size_t dskLen, const char* dskName, Sd
                       "MACHINE: %s -> %s",
                       msx_config_machine_mode_label(configuredMode),
                       msx_media_bios_target_label(core.biosTarget));
-        std::snprintf(biosLine, sizeof(biosLine),
-                      "BIOS: %s",
-                      msx_file_label(bios.mainRom.path));
+        msx_format_bios_status_line(bios, biosLine, sizeof(biosLine));
 
         if (!audioState.compiledIn) {
             std::snprintf(audioLine, sizeof(audioLine), "AUDIO: build OFF");
@@ -1395,10 +1425,9 @@ void run_msx_disk(const uint8_t* dskData, size_t dskLen, const char* dskName, Sd
     }
 
     msx_core_shutdown(&core);
-    if (diskRomData && diskRomData != s_msx_disk_rom_static) {
+    if (diskRomData) {
         heap_caps_free(diskRomData);
     }
-    s_msx_disk_rom_static_used = false;
     msx_sound_shutdown();
     msx_media_release_bios_bundle(&bios);
     msx_display_shutdown();
@@ -1430,11 +1459,15 @@ void run_msx_basic(const char* name, SdService& sd)
     const MsxMachineMode configuredMode = msx_config_load_machine_mode();
     msx_config_load_bios_path();
     msx_config_load_msx1_bios_path();
+    msx_config_load_msx2_bios_path();
+    msx_config_load_msx2_subrom_path();
 
     MsxBiosSearchConfig biosSearch = {};
     biosSearch.requestedMode    = configuredMode;
     biosSearch.genericBiosPath  = msx_config_get_bios_path();
     biosSearch.msx1BiosPath     = msx_config_get_msx1_bios_path();
+    biosSearch.msx2BiosPath     = msx_config_get_msx2_bios_path();
+    biosSearch.msx2SubRomPath   = msx_config_get_msx2_subrom_path();
 
     MsxBiosBundle bios = {};
     if (!msx_media_load_bios_bundle(&bios, &biosSearch)) {
@@ -1521,15 +1554,13 @@ void run_msx_basic(const char* name, SdService& sd)
         }
 
         char machineLine[48];
-        char biosLine[64];
+        char biosLine[96];
 
         std::snprintf(machineLine, sizeof(machineLine),
                       "MACHINE: %s -> %s",
                       msx_config_machine_mode_label(configuredMode),
                       msx_media_bios_target_label(core.biosTarget));
-        std::snprintf(biosLine, sizeof(biosLine),
-                      "BIOS: %s",
-                      msx_file_label(bios.mainRom.path));
+        msx_format_bios_status_line(bios, biosLine, sizeof(biosLine));
 
         MsxDisplayStatus status = {};
         status.romName      = core.romName;
@@ -1643,11 +1674,15 @@ void run_msx_cas(const uint8_t* casData, size_t casLen, const char* casName, SdS
     const MsxMachineMode configuredMode = msx_config_load_machine_mode();
     msx_config_load_bios_path();
     msx_config_load_msx1_bios_path();
+    msx_config_load_msx2_bios_path();
+    msx_config_load_msx2_subrom_path();
 
     MsxBiosSearchConfig biosSearch = {};
     biosSearch.requestedMode    = configuredMode;
     biosSearch.genericBiosPath  = msx_config_get_bios_path();
     biosSearch.msx1BiosPath     = msx_config_get_msx1_bios_path();
+    biosSearch.msx2BiosPath     = msx_config_get_msx2_bios_path();
+    biosSearch.msx2SubRomPath   = msx_config_get_msx2_subrom_path();
 
     MsxBiosBundle bios = {};
     if (!msx_media_load_bios_bundle(&bios, &biosSearch)) {
@@ -1749,7 +1784,7 @@ void run_msx_cas(const uint8_t* casData, size_t casLen, const char* casName, SdS
 
         char casLine[48];
         char machineLine[48];
-        char biosLine[64];
+        char biosLine[96];
 
         std::snprintf(casLine, sizeof(casLine),
                       "CAS: %s",
@@ -1758,9 +1793,7 @@ void run_msx_cas(const uint8_t* casData, size_t casLen, const char* casName, SdS
                       "MACHINE: %s -> %s",
                       msx_config_machine_mode_label(configuredMode),
                       msx_media_bios_target_label(core.biosTarget));
-        std::snprintf(biosLine, sizeof(biosLine),
-                      "BIOS: %s",
-                      msx_file_label(bios.mainRom.path));
+        msx_format_bios_status_line(bios, biosLine, sizeof(biosLine));
 
         const MsxAudioHookState& audioState = msx_sound_get_state();
         static char casAudioLine[48];

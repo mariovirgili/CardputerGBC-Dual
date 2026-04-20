@@ -5,7 +5,6 @@
 #include <string.h>
 #include "esp_spi_flash.h"
 
-
 const esp_partition_t* findRomPartition(const char* name) {
   esp_vfs_spiffs_unregister(NULL);
   if (!name) name = "spiffs";

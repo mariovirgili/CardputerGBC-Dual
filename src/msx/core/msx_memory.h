@@ -25,6 +25,7 @@ struct MsxMemoryState {
     MsxBiosState bios;
     MsxCartState cart;
     MsxKeyboardState keyboard;
+    const MsxCpuState* cpu;
     MsxVdpState* vdp;
     MsxPsgState* psg;
     MsxDiskState* disk;

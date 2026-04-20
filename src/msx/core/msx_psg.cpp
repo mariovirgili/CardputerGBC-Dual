@@ -1,13 +1,16 @@
 #include "msx_psg.h"
 
+#include <esp_heap_caps.h>
+
 #include <cstring>
 
 namespace {
 
 constexpr uint32_t kMsxCpuClockHz = 3579545u;
 constexpr uint32_t kMsxPsgClockHz = 1789772u;
-constexpr size_t kMsxPsgRingSamples = 4096u;
-static int16_t s_psgRing[kMsxPsgRingSamples] = {};
+constexpr size_t kMsxPsgRingSamplesDefault = 4096u;
+static int16_t* s_psgRing = nullptr;
+static size_t s_psgRingSamples = 0u;
 constexpr uint16_t kMsxVausMin = 164u;
 constexpr uint16_t kMsxVausMax = 309u;
 constexpr uint16_t kMsxVausCenter = 236u;
@@ -20,6 +23,44 @@ constexpr int16_t kMsxPsgVolumeTable[16] = {
 
 static int32_t s_dcFilterX = 0;
 static int32_t s_dcFilterY = 0;
+
+size_t msx_psg_ring_samples()
+{
+    return s_psgRingSamples != 0u ? s_psgRingSamples : kMsxPsgRingSamplesDefault;
+}
+
+size_t msx_psg_ring_bytes()
+{
+    return msx_psg_ring_samples() * sizeof(int16_t);
+}
+
+bool msx_psg_ensure_ring()
+{
+    if (s_psgRing) {
+        return true;
+    }
+
+    static constexpr size_t kRingCandidates[] = {4096u, 2048u, 1024u};
+    for (size_t i = 0; i < (sizeof(kRingCandidates) / sizeof(kRingCandidates[0])); ++i) {
+        const size_t samples = kRingCandidates[i];
+        const size_t bytes = samples * sizeof(int16_t);
+        s_psgRing = static_cast<int16_t*>(heap_caps_malloc(bytes, MALLOC_CAP_8BIT));
+        if (!s_psgRing) {
+            s_psgRing = static_cast<int16_t*>(heap_caps_malloc(bytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+        }
+        if (!s_psgRing) {
+            s_psgRing = static_cast<int16_t*>(heap_caps_malloc(bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+        }
+        if (!s_psgRing) {
+            s_psgRing = static_cast<int16_t*>(heap_caps_malloc(bytes, MALLOC_CAP_DEFAULT));
+        }
+        if (s_psgRing) {
+            s_psgRingSamples = samples;
+            break;
+        }
+    }
+    return s_psgRing != nullptr;
+}
 
 uint16_t msx_psg_clamp_vaus_position(int value)
 {
@@ -212,14 +253,15 @@ void msx_psg_push_sample(MsxPsgState* state, int16_t sample)
         return;
     }
 
-    if (state->ringCount >= kMsxPsgRingSamples) {
-        state->ringReadIndex = static_cast<uint16_t>((state->ringReadIndex + 1u) % kMsxPsgRingSamples);
+    const size_t ringSamples = msx_psg_ring_samples();
+    if (state->ringCount >= ringSamples) {
+        state->ringReadIndex = static_cast<uint16_t>((state->ringReadIndex + 1u) % ringSamples);
         state->ringCount--;
         state->droppedSamples++;
     }
 
     state->ring[state->ringWriteIndex] = sample;
-    state->ringWriteIndex = static_cast<uint16_t>((state->ringWriteIndex + 1u) % kMsxPsgRingSamples);
+    state->ringWriteIndex = static_cast<uint16_t>((state->ringWriteIndex + 1u) % ringSamples);
     state->ringCount++;
     state->generatedSamples++;
 }
@@ -289,7 +331,7 @@ int16_t msx_psg_render_sample(MsxPsgState* state)
 
 bool msx_psg_init(MsxPsgState* state, uint32_t sampleRate)
 {
-    if (!state || sampleRate == 0u) {
+    if (!state || sampleRate == 0u || !msx_psg_ensure_ring()) {
         return false;
     }
 
@@ -321,7 +363,11 @@ void msx_psg_reset(MsxPsgState* state)
     state->cpuClockHz = cpuClockHz;
     state->psgClockHz = psgClockHz;
     state->ring = s_psgRing;
-    std::memset(state->ring, 0, sizeof(s_psgRing));
+    if (!state->ring) {
+        state->ready = false;
+        return;
+    }
+    std::memset(state->ring, 0, msx_psg_ring_bytes());
     state->selectedReg = 0u;
     state->joystickPortA = 0xFFu; // active-low: 0xFF = no buttons pressed
     state->joystickPortB = 0xFFu; // second GP port defaults to idle/high
@@ -346,6 +392,11 @@ void msx_psg_shutdown(MsxPsgState* state)
         return;
     }
 
+    if (s_psgRing) {
+        heap_caps_free(s_psgRing);
+        s_psgRing = nullptr;
+        s_psgRingSamples = 0u;
+    }
     std::memset(state, 0, sizeof(*state));
 }
 
@@ -484,9 +535,10 @@ size_t msx_psg_read_samples(MsxPsgState* state, int16_t* dst, size_t maxSamples)
     }
 
     size_t count = 0u;
+    const size_t ringSamples = msx_psg_ring_samples();
     while (count < maxSamples && state->ringCount > 0u) {
         dst[count++] = state->ring[state->ringReadIndex];
-        state->ringReadIndex = static_cast<uint16_t>((state->ringReadIndex + 1u) % kMsxPsgRingSamples);
+        state->ringReadIndex = static_cast<uint16_t>((state->ringReadIndex + 1u) % ringSamples);
         state->ringCount--;
     }
     return count;
@@ -502,7 +554,7 @@ void msx_psg_discard_samples(MsxPsgState* state, size_t sampleCount)
         sampleCount = state->ringCount;
     }
 
-    state->ringReadIndex = static_cast<uint16_t>((state->ringReadIndex + sampleCount) % kMsxPsgRingSamples);
+    state->ringReadIndex = static_cast<uint16_t>((state->ringReadIndex + sampleCount) % msx_psg_ring_samples());
     state->ringCount = static_cast<uint16_t>(state->ringCount - sampleCount);
 }
 

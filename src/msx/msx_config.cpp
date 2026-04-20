@@ -11,8 +11,10 @@ constexpr const char* kMsxViewKey = "int_view";
 constexpr const char* kMsxMachineKey = "machine";
 constexpr const char* kMsxBiosPathKey = "bios_path";
 constexpr const char* kMsx1BiosPathKey = "bios_msx1";
+constexpr const char* kMsx2BiosPathKey = "bios_msx2";
+constexpr const char* kMsx2SubRomPathKey = "bios_sub2";
 constexpr MsxInternalViewMode kMsxDefaultInternalViewMode = MsxInternalViewMode::Wide;
-constexpr MsxMachineMode kMsxDefaultMachineMode = MsxMachineMode::MSX1;
+constexpr MsxMachineMode kMsxDefaultMachineMode = MsxMachineMode::Auto;
 
 MsxInternalViewMode s_internalViewMode = kMsxDefaultInternalViewMode;
 MsxInternalViewMode s_viewModeOverride = kMsxDefaultInternalViewMode;
@@ -20,6 +22,8 @@ bool s_viewModeOverrideEnabled = false;
 MsxMachineMode s_machineMode = kMsxDefaultMachineMode;
 char s_genericBiosPath[96] = {0};
 char s_msx1BiosPath[96] = {0};
+char s_msx2BiosPath[96] = {0};
+char s_msx2SubRomPath[96] = {0};
 
 MsxInternalViewMode msx_sanitize_internal_view_mode(uint8_t value)
 {
@@ -30,7 +34,14 @@ MsxInternalViewMode msx_sanitize_internal_view_mode(uint8_t value)
 
 MsxMachineMode msx_sanitize_machine_mode(uint8_t value)
 {
-    return MsxMachineMode::MSX1;
+    switch (value) {
+        case static_cast<uint8_t>(MsxMachineMode::MSX1):
+            return MsxMachineMode::MSX1;
+        case static_cast<uint8_t>(MsxMachineMode::MSX2):
+            return MsxMachineMode::MSX2;
+        default:
+            return MsxMachineMode::Auto;
+    }
 }
 
 void msx_copy_path(char* dst, size_t dstSize, const char* src)
@@ -214,7 +225,14 @@ MsxMachineMode msx_config_get_machine_mode(void)
 
 const char* msx_config_machine_mode_label(MsxMachineMode mode)
 {
-    return "MSX1";
+    switch (mode) {
+        case MsxMachineMode::MSX1:
+            return "MSX1";
+        case MsxMachineMode::MSX2:
+            return "MSX2";
+        default:
+            return "AUTO";
+    }
 }
 
 const char* msx_config_get_machine_mode_label(void)
@@ -258,4 +276,34 @@ const char* msx_config_get_msx1_bios_path(void)
 void msx_config_set_msx1_bios_path(const char* path, bool persist)
 {
     msx_save_path_key(kMsx1BiosPathKey, s_msx1BiosPath, sizeof(s_msx1BiosPath), path, persist);
+}
+
+const char* msx_config_load_msx2_bios_path(void)
+{
+    return msx_load_path_key(kMsx2BiosPathKey, s_msx2BiosPath, sizeof(s_msx2BiosPath));
+}
+
+const char* msx_config_get_msx2_bios_path(void)
+{
+    return s_msx2BiosPath;
+}
+
+void msx_config_set_msx2_bios_path(const char* path, bool persist)
+{
+    msx_save_path_key(kMsx2BiosPathKey, s_msx2BiosPath, sizeof(s_msx2BiosPath), path, persist);
+}
+
+const char* msx_config_load_msx2_subrom_path(void)
+{
+    return msx_load_path_key(kMsx2SubRomPathKey, s_msx2SubRomPath, sizeof(s_msx2SubRomPath));
+}
+
+const char* msx_config_get_msx2_subrom_path(void)
+{
+    return s_msx2SubRomPath;
+}
+
+void msx_config_set_msx2_subrom_path(const char* path, bool persist)
+{
+    msx_save_path_key(kMsx2SubRomPathKey, s_msx2SubRomPath, sizeof(s_msx2SubRomPath), path, persist);
 }

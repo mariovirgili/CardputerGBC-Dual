@@ -14,7 +14,7 @@ namespace {
 
 #if MSX_AUDIO_ENABLED
 constexpr int kChannel = 0;
-constexpr size_t kMaxFrameSamples = 1024;
+constexpr size_t kMaxFrameSamples = 512;
 constexpr int kOutputGain = 2;
 static MsxAudioHookState s_audioState = {};
 static int16_t s_mixBuffer[kMaxFrameSamples] = {};
@@ -30,8 +30,14 @@ static bool msx_sound_prepare_buffers(void)
 
         s_playBuffers[i] = static_cast<int16_t*>(heap_caps_malloc(
             kMaxFrameSamples * sizeof(int16_t),
-            MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA | MALLOC_CAP_8BIT
+            MALLOC_CAP_8BIT
         ));
+        if (!s_playBuffers[i]) {
+            s_playBuffers[i] = static_cast<int16_t*>(heap_caps_malloc(
+                kMaxFrameSamples * sizeof(int16_t),
+                MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT
+            ));
+        }
         if (!s_playBuffers[i]) {
             s_playBuffers[i] = static_cast<int16_t*>(heap_caps_malloc(
                 kMaxFrameSamples * sizeof(int16_t),
@@ -144,8 +150,8 @@ bool msx_sound_init(uint32_t sampleRate, uint8_t channels)
     auto cfg = M5Cardputer.Speaker.config();
     cfg.sample_rate = sampleRate;
     cfg.stereo = false;
-    cfg.dma_buf_len = 256;
-    cfg.dma_buf_count = 6;
+    cfg.dma_buf_len = 128;
+    cfg.dma_buf_count = 4;
     cfg.task_priority = 4;
     cfg.task_pinned_core = 0;
     M5Cardputer.Speaker.config(cfg);
@@ -250,7 +256,7 @@ void msx_sound_submit(const int16_t* samples, size_t sampleCount)
         s_audioState.queuedBlocks = static_cast<uint8_t>(queued);
 
         static uint32_t s_lastDropLog = 0;
-        if (millis() - s_lastDropLog > 1000) {
+        if (millis() - s_lastDropLog > 5000) {
             std::printf("[MSX][AUDIO] WARNING: I2S buffer overrun! Frame dropped. (Total drops: %lu)\n", 
                         static_cast<unsigned long>(s_audioState.droppedFrames));
             s_lastDropLog = millis();

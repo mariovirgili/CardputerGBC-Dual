@@ -24,6 +24,7 @@ constexpr int kExternalTargetH = 240;
 constexpr int kWideAspectW = 4;
 constexpr int kWideAspectH = 3;
 constexpr int kBatchLines = 6;
+constexpr unsigned kMsxVisibleSafeHeight = 192u;
 
 struct MsxVideoPlan {
     int srcX0;
@@ -35,6 +36,19 @@ struct MsxVideoPlan {
     int xOff;
     int yOff;
     bool cropOnly;
+};
+
+struct MsxLineStreamState {
+    bool active;
+    bool cropOnly;
+    bool useRgb444;
+    int srcX0;
+    int srcY0;
+    int roiH;
+    int dstW;
+    int dstH;
+    const uint16_t* palette;
+    uint16_t paletteEntries;
 };
 
 static uint16_t* s_lineBuf = nullptr;
@@ -68,6 +82,7 @@ static bool s_extTftClockLogged = false;
 static bool s_externalUiActive = false;
 static bool s_runtimeMenuActive = false;
 static bool s_stateOverlayActive = false;
+static MsxLineStreamState s_lineStream = {};
 
 static uint32_t s_spiPushFrames = 0;
 static uint32_t s_spiPushUs = 0;
@@ -251,11 +266,17 @@ void msx_video_compute_plan(unsigned srcW, unsigned srcH, MsxVideoPlan* plan)
     const MsxInternalViewMode mode = msx_config_get_active_view_mode();
     const int targetW = msx_video_target_w();
     const int targetH = msx_video_target_h();
+    const bool cropVerticalOverscan = srcH > kMsxVisibleSafeHeight;
+    const unsigned effectiveSrcH = cropVerticalOverscan ? kMsxVisibleSafeHeight : srcH;
+    const unsigned effectiveSrcY0 = cropVerticalOverscan ? ((srcH - kMsxVisibleSafeHeight) / 2u) : 0u;
     if (mode == MsxInternalViewMode::PixelPerfect) {
         plan->srcX0 = static_cast<int>((srcW > static_cast<unsigned>(targetW)) ? (srcW - targetW) / 2u : 0u);
-        plan->srcY0 = static_cast<int>((srcH > static_cast<unsigned>(targetH)) ? (srcH - targetH) / 2u : 0u);
+        plan->srcY0 = static_cast<int>(
+            effectiveSrcY0 +
+            ((effectiveSrcH > static_cast<unsigned>(targetH)) ? (effectiveSrcH - targetH) / 2u : 0u)
+        );
         plan->roiW = static_cast<int>((srcW > static_cast<unsigned>(targetW)) ? targetW : srcW);
-        plan->roiH = static_cast<int>((srcH > static_cast<unsigned>(targetH)) ? targetH : srcH);
+        plan->roiH = static_cast<int>((effectiveSrcH > static_cast<unsigned>(targetH)) ? targetH : effectiveSrcH);
         plan->dstW = plan->roiW;
         plan->dstH = plan->roiH;
         plan->xOff = (targetW - plan->dstW) / 2;
@@ -265,9 +286,9 @@ void msx_video_compute_plan(unsigned srcW, unsigned srcH, MsxVideoPlan* plan)
     }
 
     plan->srcX0 = 0;
-    plan->srcY0 = 0;
+    plan->srcY0 = static_cast<int>(effectiveSrcY0);
     plan->roiW = static_cast<int>(srcW);
-    plan->roiH = static_cast<int>(srcH);
+    plan->roiH = static_cast<int>(effectiveSrcH);
     plan->dstH = targetH;
     plan->dstW = (targetH * kWideAspectW) / kWideAspectH;
     if (plan->dstW > targetW) {
@@ -420,6 +441,122 @@ void msx_video_end_active_write(void)
     } else {
         M5Cardputer.Display.endWrite();
     }
+}
+
+static void msx_video_emit_stream_line(const MsxLineStreamState& stream,
+                                      const uint8_t* srcLine)
+{
+    if (!stream.active || !srcLine || stream.dstW <= 0 || !stream.palette) {
+        return;
+    }
+
+    if (stream.cropOnly) {
+        const uint8_t* src = srcLine + static_cast<size_t>(stream.srcX0);
+        msx_video_expand_indexed_line(src, s_lineBuf, stream.dstW, stream.palette, stream.paletteEntries);
+    } else {
+        const uint8_t* src = srcLine;
+        if (!s_xmap) {
+            return;
+        }
+        for (int x = 0; x < stream.dstW; ++x) {
+            s_lineBuf[x] = stream.palette[src[s_xmap[x]]];
+        }
+    }
+
+    if (msx_video_game_on_external()) {
+        if (stream.useRgb444) {
+            msx_video_pack_rgb444_line(s_lineBuf, stream.dstW, s_lineBuf12);
+            const int bytesPerLine = ((stream.dstW + 1) / 2) * 3;
+            s_extTft.pushColors(reinterpret_cast<uint16_t*>(s_lineBuf12), (bytesPerLine + 1) / 2, false);
+        } else {
+            s_extTft.pushColors(s_lineBuf, stream.dstW, false);
+        }
+        return;
+    }
+
+    M5Cardputer.Display.pushPixels(s_lineBuf, stream.dstW);
+    taskYIELD();
+}
+
+bool msx_video_begin_line_stream_impl(const MsxDisplayFrame* frame)
+{
+    if (!frame || !frame->indexed8 || frame->width == 0u || frame->height == 0u || frame->pitchBytes < frame->width) {
+        return false;
+    }
+
+    s_lineStream.active = false;
+    if (frame->paletteEntryCount == 0u) {
+        return false;
+    }
+
+    MsxVideoPlan plan = {};
+    msx_video_compute_plan(frame->width, frame->height, &plan);
+    const bool layoutChanged = msx_video_layout_changed(plan, frame->width, frame->height);
+
+    if (!msx_video_prepare_buffers(plan, layoutChanged)) {
+        return false;
+    }
+
+    if (layoutChanged) {
+        msx_video_clear_target();
+    }
+
+    const uint16_t* palette = frame->palette565 ? frame->palette565 : s_palette565;
+    msx_video_init_palette_pairs(palette);
+
+    s_lineStream.active = true;
+    s_lineStream.cropOnly = plan.cropOnly;
+    s_lineStream.useRgb444 = msx_video_use_external_rgb444();
+    s_lineStream.srcX0 = plan.srcX0;
+    s_lineStream.srcY0 = plan.srcY0;
+    s_lineStream.roiH = plan.roiH;
+    s_lineStream.dstW = plan.dstW;
+    s_lineStream.dstH = plan.dstH;
+    s_lineStream.palette = palette;
+    s_lineStream.paletteEntries = frame->paletteEntryCount;
+
+    msx_video_begin_active_write(plan);
+    return true;
+}
+
+bool msx_video_stream_line_impl(const MsxDisplayFrame* frame, const uint8_t* srcLine, unsigned srcLineIndex)
+{
+    if (!s_lineStream.active || !frame || !srcLine || frame->width == 0u) {
+        return false;
+    }
+
+    if (frame->pitchBytes < frame->width || srcLineIndex >= frame->height) {
+        return false;
+    }
+
+    bool emitted = false;
+    if (s_lineStream.cropOnly) {
+        const int dstLine = static_cast<int>(srcLineIndex) - s_lineStream.srcY0;
+        if (dstLine >= 0 && dstLine < s_lineStream.roiH) {
+            msx_video_emit_stream_line(s_lineStream, srcLine);
+            emitted = true;
+        }
+        return emitted;
+    }
+
+    for (int y = 0; y < s_lineStream.dstH; ++y) {
+        if (s_ymap[y] == static_cast<int16_t>(srcLineIndex)) {
+            msx_video_emit_stream_line(s_lineStream, srcLine);
+            emitted = true;
+        }
+    }
+
+    return emitted;
+}
+
+void msx_video_end_line_stream_impl(void)
+{
+    if (!s_lineStream.active) {
+        return;
+    }
+
+    msx_video_end_active_write();
+    s_lineStream = {};
 }
 
 void msx_video_draw_crop_frame(const MsxDisplayFrame* frame, const MsxVideoPlan& plan)
@@ -577,6 +714,30 @@ bool msx_video_render_frame_now(const MsxDisplayFrame* frame)
 
 } // namespace
 
+static uint32_t s_videoPerfOverBudgetFrames = 0;
+static uint32_t s_videoPerfOverHalfRateFrames = 0;
+static uint32_t s_videoPerfWorstUs = 0;
+static uint32_t s_videoPerfPresentFails = 0;
+static uint32_t s_videoPerfWindowFrames = 0;
+static uint32_t s_videoPerfSkippedFrames = 0;
+static uint16_t s_autoFrameskipStep256 = 0;
+static uint16_t s_autoFrameskipAccum256 = 0;
+
+bool msx_video_begin_line_stream(const MsxDisplayFrame* frame)
+{
+    return msx_video_begin_line_stream_impl(frame);
+}
+
+bool msx_video_stream_line(const MsxDisplayFrame* frame, const uint8_t* srcLine, unsigned srcLineIndex)
+{
+    return msx_video_stream_line_impl(frame, srcLine, srcLineIndex);
+}
+
+void msx_video_end_line_stream(void)
+{
+    msx_video_end_line_stream_impl();
+}
+
 void msx_video_init(void)
 {
     if (!s_videoMutex) {
@@ -587,6 +748,16 @@ void msx_video_init(void)
         msx_video_prepare_external_tft();
     }
     s_firstPresentLogged = false;
+    s_spiPushUs = 0;
+    s_spiPushFrames = 0;
+    s_videoPerfOverBudgetFrames = 0;
+    s_videoPerfOverHalfRateFrames = 0;
+    s_videoPerfWorstUs = 0;
+    s_videoPerfPresentFails = 0;
+    s_videoPerfWindowFrames = 0;
+    s_videoPerfSkippedFrames = 0;
+    s_autoFrameskipStep256 = 0;
+    s_autoFrameskipAccum256 = 0;
     msx_video_reset_layout_cache();
     msx_video_clear_target();
 }
@@ -689,12 +860,26 @@ void msx_video_prepare_sd_access(void)
 
     msx_video_release_scratch_buffers();
     s_firstPresentLogged = false;
+    s_spiPushUs = 0;
+    s_spiPushFrames = 0;
+    s_videoPerfOverBudgetFrames = 0;
+    s_videoPerfOverHalfRateFrames = 0;
+    s_videoPerfWorstUs = 0;
+    s_videoPerfPresentFails = 0;
+    s_videoPerfWindowFrames = 0;
+    s_videoPerfSkippedFrames = 0;
+    s_autoFrameskipStep256 = 0;
+    s_autoFrameskipAccum256 = 0;
 
     msx_video_unlock();
 }
 
 bool msx_video_present_frame(const MsxDisplayFrame* frame)
 {
+    constexpr uint32_t kFrameBudgetUs = 16667u;
+    constexpr uint32_t kHalfRateBudgetUs = 33333u;
+    constexpr uint32_t kFrameskipDeadbandUs = 17500u;
+
     msx_video_lock();
 
     if (s_runtimeMenuActive || s_stateOverlayActive) {
@@ -709,18 +894,83 @@ bool msx_video_present_frame(const MsxDisplayFrame* frame)
         }
     }
 
-    int64_t t0 = esp_timer_get_time();
-    bool result = msx_video_render_frame_now(frame);
-    int64_t t1 = esp_timer_get_time();
+    bool skipPresent = false;
+    if (s_autoFrameskipStep256 != 0u) {
+        s_autoFrameskipAccum256 = static_cast<uint16_t>(s_autoFrameskipAccum256 + s_autoFrameskipStep256);
+        if (s_autoFrameskipAccum256 >= 256u) {
+            s_autoFrameskipAccum256 = static_cast<uint16_t>(s_autoFrameskipAccum256 - 256u);
+            skipPresent = true;
+        }
+    }
+
+    bool result = true;
+    uint32_t frameUs = 0;
+    if (!skipPresent) {
+        int64_t t0 = esp_timer_get_time();
+        result = msx_video_render_frame_now(frame);
+        int64_t t1 = esp_timer_get_time();
+        frameUs = static_cast<uint32_t>(t1 - t0);
+    }
 
     if (result) {
-        s_spiPushUs += static_cast<uint32_t>(t1 - t0);
-        s_spiPushFrames++;
-        if (s_spiPushFrames >= 60) {
-            std::printf("[MSX][VIDEO-PUSH] 60fps | SPI Push Avg: %u us\n",
-                        static_cast<unsigned>(s_spiPushUs / 60u));
+        s_videoPerfWindowFrames++;
+        if (skipPresent) {
+            s_videoPerfSkippedFrames++;
+        } else {
+            s_spiPushUs += frameUs;
+            s_spiPushFrames++;
+            if (frameUs > s_videoPerfWorstUs) {
+                s_videoPerfWorstUs = frameUs;
+            }
+            if (frameUs > kFrameBudgetUs) {
+                s_videoPerfOverBudgetFrames++;
+            }
+            if (frameUs > kHalfRateBudgetUs) {
+                s_videoPerfOverHalfRateFrames++;
+            }
+        }
+        if (s_videoPerfWindowFrames >= 60u) {
+            const uint32_t avgUs = s_spiPushFrames
+                                     ? static_cast<uint32_t>(s_spiPushUs / s_spiPushFrames)
+                                     : 0u;
+            const uint32_t fps10 = avgUs ? static_cast<uint32_t>((10000000ull + (avgUs / 2u)) / avgUs) : 0u;
+            if (avgUs > kFrameskipDeadbandUs) {
+                const uint32_t keep256 = static_cast<uint32_t>((static_cast<uint64_t>(kFrameBudgetUs) * 256u) / avgUs);
+                s_autoFrameskipStep256 = static_cast<uint16_t>(keep256 >= 256u ? 0u : (256u - keep256));
+            } else {
+                s_autoFrameskipStep256 = 0u;
+                s_autoFrameskipAccum256 = 0u;
+            }
+            const uint32_t frameskipPct = static_cast<uint32_t>((static_cast<uint32_t>(s_autoFrameskipStep256) * 100u + 128u) / 256u);
+            std::printf("[MSX][VIDEO-PERF] 60f avg=%u us est=%u.%u fps >16.7ms=%u >33.3ms=%u worst=%u us fail=%u skip=%u fs=%u%%\n",
+                        static_cast<unsigned>(avgUs),
+                        static_cast<unsigned>(fps10 / 10u),
+                        static_cast<unsigned>(fps10 % 10u),
+                        static_cast<unsigned>(s_videoPerfOverBudgetFrames),
+                        static_cast<unsigned>(s_videoPerfOverHalfRateFrames),
+                        static_cast<unsigned>(s_videoPerfWorstUs),
+                        static_cast<unsigned>(s_videoPerfPresentFails),
+                        static_cast<unsigned>(s_videoPerfSkippedFrames),
+                        static_cast<unsigned>(frameskipPct));
+            s_videoPerfWindowFrames = 0;
+            s_videoPerfSkippedFrames = 0;
             s_spiPushFrames = 0;
             s_spiPushUs = 0;
+            s_videoPerfOverBudgetFrames = 0;
+            s_videoPerfOverHalfRateFrames = 0;
+            s_videoPerfWorstUs = 0;
+            s_videoPerfPresentFails = 0;
+        }
+    } else {
+        s_videoPerfPresentFails++;
+        if (s_videoPerfPresentFails <= 4u || (s_videoPerfPresentFails % 30u) == 0u) {
+            std::printf("[MSX][VIDEO-PERF] present failed #%u render=%u us frame=%p w=%u h=%u pitch=%u\n",
+                        static_cast<unsigned>(s_videoPerfPresentFails),
+                        static_cast<unsigned>(frameUs),
+                        static_cast<const void*>(frame),
+                        frame ? frame->width : 0u,
+                        frame ? frame->height : 0u,
+                        frame ? static_cast<unsigned>(frame->pitchBytes) : 0u);
         }
     }
 

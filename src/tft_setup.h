@@ -16,7 +16,7 @@
     // --- External driver 320x240 (Default) ---
     #define ILI9341_DRIVER
     // 40 MHz — Reduced for stability to prevent glitching and shifting
-    #define SPI_FREQUENCY        40000000
+    #define SPI_FREQUENCY        70000000
     #define SPI_READ_FREQUENCY  6000000     // was 6000000
 #endif
 

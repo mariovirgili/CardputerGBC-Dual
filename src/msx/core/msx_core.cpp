@@ -4,8 +4,10 @@
 #include <cstdio>
 #include <cstring>
 #include <SD.h>
+#include <esp_heap_caps.h>
 
 #include "msx_disk.h"
+#include "../msx_video.h"
 
 #ifndef MSX_CORE_LOG_ENABLED
 #define MSX_CORE_LOG_ENABLED 1
@@ -54,6 +56,32 @@ constexpr uint16_t kMsxAddrMaster = 0xF348u;
 constexpr uint16_t kMsxAddrCartInitLo = 0xF7C5u;
 constexpr uint16_t kMsxAddrCartInitHi = 0xF7C6u;
 constexpr uint16_t kMsxAddrCartInitSlot = 0xF7C7u;
+constexpr size_t kMsxRamSizeMsx2 = 0x20000u;
+constexpr size_t kMsxRamSizeMsx1 = 0x10000u;
+constexpr size_t kMsxPageSize16K = 0x4000u;
+constexpr size_t kMsx2VramSize = 0x20000u;
+constexpr size_t kMsxCoreInitReserve = 0x4000u;
+
+size_t msx_core_select_msx2_ram_size()
+{
+    size_t freeInternal = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
+    const size_t minRam = kMsxRamSizeMsx1;
+    if (freeInternal <= (kMsx2VramSize + kMsxCoreInitReserve)) {
+        return minRam;
+    }
+
+    size_t budget = freeInternal - (kMsx2VramSize + kMsxCoreInitReserve);
+    if (budget < minRam) {
+        return minRam;
+    }
+
+    budget &= ~(kMsxPageSize16K - 1u);
+    if (budget < minRam) {
+        return minRam;
+    }
+
+    return (budget > kMsxRamSizeMsx2) ? kMsxRamSizeMsx2 : budget;
+}
 
 void msx_core_set_status(MsxCoreState* state, const char* format, ...)
 {
@@ -472,27 +500,46 @@ bool msx_core_init(MsxCoreState* state,
     }
 
     std::printf("[MSX] core init: cart ok\n");
-    std::printf("[MSX] core init: memory begin\n");
+    if (state->machineMode == MsxMachineMode::MSX2) {
+        std::printf("[MSX] core init: vdp begin\n");
+        if (!msx_vdp_init(&state->vdp, state->machineMode)) {
+            std::printf("[MSX] core init failed at vdp init\n");
+            msx_bios_shutdown(&state->bios);
+            std::memset(&state->cart, 0, sizeof(state->cart));
+            return false;
+        }
+        std::printf("[MSX] core init: vdp ok\n");
+    }
+
     const size_t requestedRamSize =
-        (state->machineMode == MsxMachineMode::MSX1) ? kMsxCartRamSizeMsx1 : 0u;
+        (state->machineMode == MsxMachineMode::MSX1) ? kMsxCartRamSizeMsx1
+                                                     : msx_core_select_msx2_ram_size();
+    std::printf("[MSX] core init: memory begin\n");
+    std::printf("[MSX] core init: ram budget free=%u requested=%u\n",
+                static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL)),
+                static_cast<unsigned>(requestedRamSize));
     if (!msx_memory_init(&state->memory, state->machineMode, &state->bios, &state->cart, requestedRamSize)) {
         std::printf("[MSX] core init failed at memory init\n");
+        if (state->machineMode == MsxMachineMode::MSX2) {
+            msx_vdp_shutdown(&state->vdp);
+        }
         msx_bios_shutdown(&state->bios);
         std::memset(&state->cart, 0, sizeof(state->cart));
         return false;
     }
 
     std::printf("[MSX] core init: memory ok\n");
-    std::printf("[MSX] core init: vdp begin\n");
-    if (!msx_vdp_init(&state->vdp, state->machineMode)) {
-        std::printf("[MSX] core init failed at vdp init\n");
-        msx_memory_shutdown(&state->memory);
-        msx_bios_shutdown(&state->bios);
-        std::memset(&state->cart, 0, sizeof(state->cart));
-        return false;
+    if (state->machineMode != MsxMachineMode::MSX2) {
+        std::printf("[MSX] core init: vdp begin\n");
+        if (!msx_vdp_init(&state->vdp, state->machineMode)) {
+            std::printf("[MSX] core init failed at vdp init\n");
+            msx_memory_shutdown(&state->memory);
+            msx_bios_shutdown(&state->bios);
+            std::memset(&state->cart, 0, sizeof(state->cart));
+            return false;
+        }
+        std::printf("[MSX] core init: vdp ok\n");
     }
-
-    std::printf("[MSX] core init: vdp ok\n");
     msx_core_init_audio(state, audioSampleRate);
     msx_core_attach_runtime_devices(state);
 
@@ -670,13 +717,74 @@ void msx_core_step_frame(MsxCoreState* state)
         return;
     }
 
+    const bool bitmap4SliceMode = state->machineMode == MsxMachineMode::MSX2 &&
+                                  state->vdp.mode == MsxVdpMode::Bitmap4 &&
+                                  msx_vdp_display_enabled(&state->vdp);
+    if (state->machineMode == MsxMachineMode::MSX2) {
+        state->memory.cpu = &state->cpu;
+        state->vdp.frameStartCpuCycles = state->cpu.totalCycles;
+        state->vdp.currentFrameCpuCycles = 0u;
+        state->vdp.frameCycleBudget = static_cast<uint32_t>(kMsxFrameCycles60Hz);
+    }
     const bool irqEnabled = msx_vdp_begin_frame(&state->vdp);
-    if (irqEnabled) {
+    if (irqEnabled && !bitmap4SliceMode) {
         msx_cpu_request_irq(&state->cpu);
     }
 
     const MsxCpuRunState prevRunState = state->cpu.runState;
-    state->lastFrameCycles = static_cast<uint32_t>(msx_cpu_run_cycles(&state->cpu, &state->memory, kMsxFrameCycles60Hz));
+    if (bitmap4SliceMode) {
+        const unsigned visibleLines = state->vdp.activeHeight != 0u ? state->vdp.activeHeight : 212u;
+        const unsigned totalLines = 262u;
+        const unsigned vblankLine = visibleLines > 192u ? 230u : 220u;
+        uint32_t executedCycles = 0u;
+        msx_vdp_prepare_frame_render(&state->vdp);
+        state->vdp.status[0] &= static_cast<uint8_t>(~0x80u);
+        state->vdp.status[1] &= static_cast<uint8_t>(~0x01u);
+        state->vdp.status[2] &= static_cast<uint8_t>(~0x60u);
+        for (unsigned line = 0; line < totalLines; ++line) {
+            state->vdp.currentFrameCpuCycles = executedCycles;
+            msx_vdp_advance_command_engine(&state->vdp, executedCycles);
+            if (line < visibleLines) {
+                msx_vdp_render_bitmap4_slice(&state->vdp, line, line + 1u, line + 1u == visibleLines);
+            }
+            const uint32_t targetCycles =
+                static_cast<uint32_t>((static_cast<uint64_t>(line + 1u) *
+                                       static_cast<uint64_t>(kMsxFrameCycles60Hz)) /
+                                      static_cast<uint64_t>(totalLines));
+            const int sliceBudget = targetCycles > executedCycles
+                                        ? static_cast<int>(targetCycles - executedCycles)
+                                        : 0;
+            executedCycles += static_cast<uint32_t>(msx_cpu_run_cycles(&state->cpu, &state->memory, sliceBudget));
+            state->vdp.currentFrameCpuCycles = executedCycles;
+            if (line == static_cast<unsigned>(state->vdp.regs[19])) {
+                state->vdp.status[1] |= 0x01u;
+                if ((state->vdp.regs[0] & 0x10u) != 0u) {
+                    msx_cpu_request_irq(&state->cpu);
+                }
+            }
+            if (line + 1u == vblankLine) {
+                state->vdp.status[0] |= 0x80u;
+                if ((state->vdp.regs[1] & 0x20u) != 0u) {
+                    msx_cpu_request_irq(&state->cpu);
+                }
+            }
+        }
+        uint64_t finalFrameCycles = state->cpu.totalCycles - state->vdp.frameStartCpuCycles;
+        if (finalFrameCycles > static_cast<uint64_t>(state->vdp.frameCycleBudget)) {
+            finalFrameCycles = static_cast<uint64_t>(state->vdp.frameCycleBudget);
+        }
+        state->vdp.currentFrameCpuCycles = static_cast<uint32_t>(finalFrameCycles);
+        msx_vdp_advance_command_engine(&state->vdp, state->vdp.currentFrameCpuCycles);
+        state->lastFrameCycles = executedCycles;
+        state->vdp.dirty = false;
+        state->vdp.frameReady = true;
+        msx_vdp_get_display_frame(&state->vdp, &state->displayFrame);
+        if (state->displayFrame.indexed8) {
+            msx_video_present_frame(&state->displayFrame);
+        }
+    } else {
+        state->lastFrameCycles = static_cast<uint32_t>(msx_cpu_run_cycles(&state->cpu, &state->memory, kMsxFrameCycles60Hz));
+    }
 
     // Log the first time the CPU enters a non-running state, and every 60 frames while stuck.
     const MsxCpuRunState curRunState = state->cpu.runState;
@@ -709,8 +817,10 @@ void msx_core_step_frame(MsxCoreState* state)
     }
 #endif
 
-    msx_vdp_render(&state->vdp);
-    msx_vdp_get_display_frame(&state->vdp, &state->displayFrame);
+    if (!bitmap4SliceMode) {
+        msx_vdp_render(&state->vdp);
+        msx_vdp_get_display_frame(&state->vdp, &state->displayFrame);
+    }
     state->frameCounter++;
 
     if (msx_core_status_needs_refresh(state)) {

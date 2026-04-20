@@ -26,6 +26,11 @@ enum class MsxVdpTransferCommand : uint8_t {
     Lmcm,
     Lmmc,
     Hmmc,
+    Hmmv,
+    Lmmv,
+    Lmmm,
+    Hmmm,
+    Ymmm,
 };
 
 struct MsxVdpCommandState {
@@ -44,6 +49,7 @@ struct MsxVdpCommandState {
     uint16_t mx;
     int16_t tx;
     int16_t ty;
+    uint32_t cycleStamp;
 };
 
 struct MsxVdpState {
@@ -67,6 +73,9 @@ struct MsxVdpState {
     bool dirty;
     bool frameReady;
     uint32_t frameCounter;
+    uint32_t frameStartCpuCycles;
+    uint32_t currentFrameCpuCycles;
+    uint32_t frameCycleBudget;
     unsigned activeWidth;
     unsigned activeHeight;
     MsxVdpMode mode;
@@ -77,7 +86,10 @@ bool msx_vdp_init(MsxVdpState* state, MsxMachineMode machineMode);
 void msx_vdp_shutdown(MsxVdpState* state);
 void msx_vdp_reset(MsxVdpState* state);
 bool msx_vdp_begin_frame(MsxVdpState* state);
+void msx_vdp_prepare_frame_render(MsxVdpState* state);
 void msx_vdp_render(MsxVdpState* state);
+void msx_vdp_render_bitmap4_slice(MsxVdpState* state, unsigned yStart, unsigned yEnd, bool finalizeFrame);
+void msx_vdp_advance_command_engine(MsxVdpState* state, uint32_t targetFrameCycles);
 uint8_t msx_vdp_in_data(MsxVdpState* state);
 uint8_t msx_vdp_in_status(MsxVdpState* state);
 void msx_vdp_out_data(MsxVdpState* state, uint8_t value);

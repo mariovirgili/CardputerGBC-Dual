@@ -33,6 +33,10 @@ constexpr size_t kMsxSubRomExactSize = 0x4000;
 constexpr size_t kMsxMainBiosStaticSize = 0x8000;
 constexpr const char* kMsx1BiosName = "MSX.ROM";
 constexpr const char* kMsx1BiosMd5 = "364a1a579fe5cb8dba54519bcfcdac0d";
+constexpr const char* kMsx2BiosName = "MSX2.ROM";
+constexpr const char* kMsx2BiosMd5 = nullptr;
+constexpr const char* kMsx2ExtBiosName = "MSX2EXT.ROM";
+constexpr const char* kMsx2ExtBiosMd5 = nullptr;
 constexpr const char* kMsxEmbeddedCbiosName = "C-BIOS MSX1";
 constexpr const char* kMsxEmbeddedCbiosPath = "[embedded]/cbios_main_msx1.rom";
 constexpr size_t kMsxMainBiosStaticOffset = EMU_STATIC_POOL_SIZE - kMsxMainBiosStaticSize;
@@ -42,9 +46,19 @@ static_assert(EMU_STATIC_POOL_SIZE >= (kMsxMainBiosStaticSize + kMsxPageSize8K),
 
 static bool s_msxMainBiosStaticUsed = false;
 
+uint8_t* msx_main_bios_static_buffer_if_acquired()
+{
+    uint8_t* pool = emu_static_pool_get();
+    return pool ? (pool + kMsxMainBiosStaticOffset) : nullptr;
+}
+
 uint8_t* msx_main_bios_static_buffer()
 {
-    return g_emu_static_pool + kMsxMainBiosStaticOffset;
+    if (!emu_static_pool_acquire()) {
+        return nullptr;
+    }
+
+    return msx_main_bios_static_buffer_if_acquired();
 }
 
 bool msx_is_cart_exec_address(uint16_t address)
@@ -585,39 +599,68 @@ bool msx_load_for_target(MsxBiosBundle* bundle, MsxBiosTarget target, const MsxB
     }
 
     msx_media_release_bios_bundle(bundle);
-    bundle->target = MsxBiosTarget::MSX1;
-    bundle->subRomRequired = false;
+    bundle->target = target;
+    bundle->subRomRequired = (target == MsxBiosTarget::MSX2);
 
     CandidateList mainCandidates = {};
     char detailMessage[128] = {0};
 
-    MSX_BIOS_LOG("[MSX][BIOS] begin target=MSX1 requested-mode=%u\n",
+    MSX_BIOS_LOG("[MSX][BIOS] begin target=%s requested-mode=%u\n",
+                 target == MsxBiosTarget::MSX2 ? "MSX2" : "MSX1",
                  static_cast<unsigned>(config->requestedMode));
 
-    msx_append_candidate(&mainCandidates, config->msx1BiosPath, kMsx1BiosName, kMsx1BiosMd5);
-    msx_append_candidate(&mainCandidates, config->genericBiosPath, kMsx1BiosName, kMsx1BiosMd5);
-    msx_append_candidate(&mainCandidates, "/sd/bios/msx/MSX.ROM", kMsx1BiosName, kMsx1BiosMd5);
-    msx_append_candidate(&mainCandidates, "/sd/msx/MSX.ROM", kMsx1BiosName, kMsx1BiosMd5);
+    if (target == MsxBiosTarget::MSX2) {
+        msx_append_candidate(&mainCandidates, config->msx2BiosPath, kMsx2BiosName, kMsx2BiosMd5);
+        msx_append_candidate(&mainCandidates, config->genericBiosPath, kMsx2BiosName, kMsx2BiosMd5);
+        msx_append_candidate(&mainCandidates, "/sd/bios/msx/MSX2.ROM", kMsx2BiosName, kMsx2BiosMd5);
+        msx_append_candidate(&mainCandidates, "/sd/msx/MSX2.ROM", kMsx2BiosName, kMsx2BiosMd5);
+    } else {
+        msx_append_candidate(&mainCandidates, config->msx1BiosPath, kMsx1BiosName, kMsx1BiosMd5);
+        msx_append_candidate(&mainCandidates, config->genericBiosPath, kMsx1BiosName, kMsx1BiosMd5);
+        msx_append_candidate(&mainCandidates, "/sd/bios/msx/MSX.ROM", kMsx1BiosName, kMsx1BiosMd5);
+        msx_append_candidate(&mainCandidates, "/sd/msx/MSX.ROM", kMsx1BiosName, kMsx1BiosMd5);
+    }
 
     const bool ok = msx_try_candidates(&bundle->mainRom,
                                        mainCandidates,
                                        msx_is_valid_main_bios_size,
-                                       "MSX.ROM not found",
+                                       target == MsxBiosTarget::MSX2 ? "MSX2.ROM not found" : "MSX.ROM not found",
                                        detailMessage,
                                        sizeof(detailMessage));
     if (ok) {
         bundle->compatible = true;
-        msx_set_message(bundle, "MSX1 BIOS loaded");
+        msx_set_message(bundle, target == MsxBiosTarget::MSX2 ? "MSX2 BIOS loaded" : "MSX1 BIOS loaded");
         return true;
     }
 
-    if (msx_load_embedded_cbios_msx1(&bundle->mainRom, detailMessage, sizeof(detailMessage))) {
+    if (target == MsxBiosTarget::MSX1) {
+        if (msx_load_embedded_cbios_msx1(&bundle->mainRom, detailMessage, sizeof(detailMessage))) {
+            bundle->compatible = true;
+            msx_set_message(bundle, "MSX1 C-BIOS fallback loaded");
+            return true;
+        }
+
+        msx_set_message(bundle, detailMessage[0] != '\0' ? detailMessage : "MSX.ROM not found");
+        return false;
+    }
+
+    CandidateList subCandidates = {};
+    char subDetailMessage[128] = {0};
+    msx_append_candidate(&subCandidates, config->msx2SubRomPath, kMsx2ExtBiosName, kMsx2ExtBiosMd5);
+    msx_append_candidate(&subCandidates, "/sd/bios/msx/MSX2EXT.ROM", kMsx2ExtBiosName, kMsx2ExtBiosMd5);
+    msx_append_candidate(&subCandidates, "/sd/msx/MSX2EXT.ROM", kMsx2ExtBiosName, kMsx2ExtBiosMd5);
+    if (msx_try_candidates(&bundle->subRom,
+                          subCandidates,
+                          msx_is_valid_subrom_size,
+                          "MSX2EXT.ROM not found",
+                          subDetailMessage,
+                          sizeof(subDetailMessage))) {
         bundle->compatible = true;
-        msx_set_message(bundle, "MSX1 C-BIOS fallback loaded");
+        msx_set_message(bundle, "MSX2 BIOS and sub-ROM loaded");
         return true;
     }
 
-    msx_set_message(bundle, detailMessage[0] != '\0' ? detailMessage : "MSX.ROM not found");
+    msx_set_message(bundle, subDetailMessage[0] != '\0' ? subDetailMessage : "MSX2EXT.ROM not found");
     return false;
 }
 
@@ -682,6 +725,17 @@ bool msx_media_load_bios_bundle(MsxBiosBundle* bundle, const MsxBiosSearchConfig
 
     msx_media_release_bios_bundle(bundle);
 
+    if (config->requestedMode == MsxMachineMode::MSX1) {
+        return msx_load_for_target(bundle, MsxBiosTarget::MSX1, config);
+    }
+    if (config->requestedMode == MsxMachineMode::MSX2) {
+        return msx_load_for_target(bundle, MsxBiosTarget::MSX2, config);
+    }
+
+    if (msx_load_for_target(bundle, MsxBiosTarget::MSX2, config)) {
+        return true;
+    }
+
     return msx_load_for_target(bundle, MsxBiosTarget::MSX1, config);
 }
 
@@ -697,6 +751,7 @@ void msx_media_release_bios_bundle(MsxBiosBundle* bundle)
     bundle->compatible = false;
     bundle->subRomRequired = false;
     bundle->message[0] = '\0';
+    emu_static_pool_release();
 }
 
 const char* msx_media_cartridge_type_label(MsxCartridgeType type)
@@ -721,21 +776,39 @@ const char* msx_media_cartridge_type_label(MsxCartridgeType type)
 
 const char* msx_media_bios_target_label(MsxBiosTarget target)
 {
-    return "MSX1";
+    switch (target) {
+        case MsxBiosTarget::MSX2:
+            return "MSX2";
+        case MsxBiosTarget::MSX1:
+            return "MSX1";
+        default:
+            return "UNKNOWN";
+    }
 }
 
 MsxMachineMode msx_media_target_to_machine_mode(MsxBiosTarget target)
 {
-    return MsxMachineMode::MSX1;
+    switch (target) {
+        case MsxBiosTarget::MSX2:
+            return MsxMachineMode::MSX2;
+        case MsxBiosTarget::MSX1:
+            return MsxMachineMode::MSX1;
+        default:
+            return MsxMachineMode::Auto;
+    }
 }
 
 bool msx_media_is_static_main_bios_pointer(const uint8_t* data)
 {
-    return data == msx_main_bios_static_buffer();
+    return data == msx_main_bios_static_buffer_if_acquired();
 }
 
 uint8_t msx_media_static_ram_bank_count_for_main_bios(const uint8_t* mainRom)
 {
+    if (!emu_static_pool_acquire()) {
+        return 0u;
+    }
+
     const size_t reservedBytes = msx_media_is_static_main_bios_pointer(mainRom)
                                      ? kMsxMainBiosStaticSize
                                      : 0u;
@@ -744,10 +817,14 @@ uint8_t msx_media_static_ram_bank_count_for_main_bios(const uint8_t* mainRom)
 
 uint8_t* msx_media_static_ram_bank_ptr_for_main_bios(const uint8_t* mainRom, uint8_t bankIndex)
 {
+    if (!emu_static_pool_acquire()) {
+        return nullptr;
+    }
+
     const uint8_t staticBankCount = msx_media_static_ram_bank_count_for_main_bios(mainRom);
     if (bankIndex >= staticBankCount) {
         return nullptr;
     }
 
-    return g_emu_static_pool + (static_cast<size_t>(bankIndex) * kMsxPageSize8K);
+    return emu_static_pool_get() + (static_cast<size_t>(bankIndex) * kMsxPageSize8K);
 }

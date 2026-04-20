@@ -372,16 +372,14 @@ void msx_display_submit_frame(const MsxDisplayFrame* frame, const MsxDisplayStat
     const uint32_t nowMs = millis();
     MsxInputOverlayState overlay = {};
     msx_input_get_overlay_state(&overlay);
+    const bool streamFrame = frame &&
+                            frame->indexed8 == nullptr &&
+                            frame->width != 0u &&
+                            frame->height != 0u &&
+                            frame->pitchBytes == 0u;
 
     if (s_lastDisplayDiagMs == 0 || (uint32_t)(nowMs - s_lastDisplayDiagMs) >= kDisplayDiagIntervalMs) {
         s_lastDisplayDiagMs = nowMs;
-        std::printf("[MSX][DISP] frame=%p indexed8=%p w=%u h=%u pitch=%u fc=%lu\n",
-                    static_cast<const void*>(frame),
-                    frame ? static_cast<const void*>(frame->indexed8) : nullptr,
-                    frame ? frame->width : 0u,
-                    frame ? frame->height : 0u,
-                    frame ? static_cast<unsigned>(frame->pitchBytes) : 0u,
-                    static_cast<unsigned long>(status ? status->frameCounter : 0u));
     }
 
     const MsxInternalViewMode currentViewMode = msx_config_get_active_view_mode();
@@ -445,9 +443,11 @@ void msx_display_submit_frame(const MsxDisplayFrame* frame, const MsxDisplayStat
     }
     s_lastMenuVisible = false;
 
-    if (frame && frame->indexed8) {
+    if (frame && (frame->indexed8 || streamFrame)) {
         if (menuClosed) {
-            msx_video_present_frame(frame);
+            if (frame->indexed8) {
+                msx_video_present_frame(frame);
+            }
         }
         return;
     }

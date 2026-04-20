@@ -6,6 +6,7 @@
 #include <cstring>
 
 #include "../../share/emu_static_pool.h"
+#include "msx_cpu.h"
 #include "msx_disk.h"
 #include "msx_psg.h"
 #include "msx_vdp.h"
@@ -85,9 +86,11 @@ uint8_t msx_memory_ram_segment(const MsxMemoryState* state, uint8_t pageIndex)
 
 bool msx_memory_is_static_bank(const uint8_t* ptr)
 {
+    uint8_t* pool = emu_static_pool_get();
     return ptr &&
-           ptr >= g_emu_static_pool &&
-           ptr < (g_emu_static_pool + EMU_STATIC_POOL_SIZE);
+           pool &&
+           ptr >= pool &&
+           ptr < (pool + EMU_STATIC_POOL_SIZE);
 }
 
 void msx_memory_bind_open_bus(MsxMemoryState* state, uint8_t bank)
@@ -527,12 +530,39 @@ bool msx_memory_init(MsxMemoryState* state,
         ramSize = kMsxPageSize16K;
     }
 
-    state->ramSize = ramSize;
-    state->ramSegmentCount = static_cast<uint8_t>(state->ramSize / kMsxPageSize16K);
-    state->ramBankCount = static_cast<uint8_t>(state->ramSize / kMsxPageSize8K);
-    state->mapperEnabled = (machineMode == MsxMachineMode::MSX2) && state->ramSegmentCount > 4u;
+    const size_t msx2MinRamSize = (requestedRamSize != 0u) ? requestedRamSize
+                                                          : kMsxRamSizeMsx1;
 
-    if (!msx_memory_allocate_ram_banks(state)) {
+    do {
+        state->ramSize = ramSize;
+        state->ramSegmentCount = static_cast<uint8_t>(state->ramSize / kMsxPageSize16K);
+        state->ramBankCount = static_cast<uint8_t>(state->ramSize / kMsxPageSize8K);
+        state->mapperEnabled = (machineMode == MsxMachineMode::MSX2) && state->ramSegmentCount > 4u;
+
+        if (msx_memory_allocate_ram_banks(state)) {
+            break;
+        }
+
+        if (machineMode != MsxMachineMode::MSX2 || requestedRamSize != 0u || ramSize <= msx2MinRamSize) {
+            std::memset(state, 0, sizeof(*state));
+            return false;
+        }
+
+        const size_t nextRamSize = ramSize - kMsxPageSize16K;
+        if (nextRamSize < msx2MinRamSize) {
+            std::printf("[MSX] memory init: no alloc strategy available, fallback below min %u\n",
+                        static_cast<unsigned>(msx2MinRamSize));
+            std::memset(state, 0, sizeof(*state));
+            return false;
+        }
+
+        ramSize = nextRamSize;
+        std::printf("[MSX] memory init: MSX2 RAM fallback to %u bytes\n",
+                    static_cast<unsigned>(ramSize));
+        msx_memory_release_ram_banks(state);
+    } while (true);
+
+    if (!state->ramSize || state->ramBankCount == 0u) {
         std::memset(state, 0, sizeof(*state));
         return false;
     }
@@ -755,6 +785,17 @@ void msx_memory_write16(MsxMemoryState* state, uint16_t address, uint16_t value)
 
 uint8_t msx_memory_in(MsxMemoryState* state, uint8_t port)
 {
+    if (state && state->vdp && state->vdp->machineMode == MsxMachineMode::MSX2) {
+        uint32_t frameCycles = 0u;
+        if (state->cpu) {
+            const uint32_t totalCycles = state->cpu->totalCycles;
+            if (totalCycles >= state->vdp->frameStartCpuCycles) {
+                frameCycles = totalCycles - state->vdp->frameStartCpuCycles;
+            }
+        }
+        state->vdp->currentFrameCpuCycles = frameCycles;
+    }
+
     switch (port) {
         case 0x98: {
             const uint8_t value = (state && state->vdp) ? msx_vdp_in_data(state->vdp) : 0xFFu;
@@ -850,6 +891,16 @@ void msx_memory_out(MsxMemoryState* state, uint8_t port, uint8_t value)
     }
 
     state->ioWriteCount++;
+    if (state->vdp && state->vdp->machineMode == MsxMachineMode::MSX2) {
+        uint32_t frameCycles = 0u;
+        if (state->cpu) {
+            const uint32_t totalCycles = state->cpu->totalCycles;
+            if (totalCycles >= state->vdp->frameStartCpuCycles) {
+                frameCycles = totalCycles - state->vdp->frameStartCpuCycles;
+            }
+        }
+        state->vdp->currentFrameCpuCycles = frameCycles;
+    }
     switch (port) {
         case 0x98:
             state->lastPort98 = value;
