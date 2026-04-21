@@ -134,9 +134,11 @@ void msx_runtime_log_summary(const MsxCoreState* core,
         msx_runtime_avg_us(timingWindow ? timingWindow->presentUs : 0u, timedFrames);
     const uint32_t avgOtherUs =
         msx_runtime_avg_us(timingWindow ? timingWindow->otherUs : 0u, timedFrames);
+    const char* viewLabel =
+        msx_config_get_active_view_mode_label_for_target(g_emu_display_target == EMU_DISPLAY_EXTERNAL);
 
     if (suffix && suffix[0] != '\0') {
-        MSX_RUN_LOG("[MSX] FPS %.1f | FT %u | CPU %u | RND %u | PRS %u | OTH %u | HEAP %u | CPU %s | PC %04X | VDP %s | MACHINE %s | PERF %s | AUDIOQ %u | %s\n",
+        MSX_RUN_LOG("[MSX] FPS %.1f | FT %u | CPU %u | RND %u | PRS %u | OTH %u | HEAP %u | CPU %s | PC %04X | VDP %s | MACHINE %s | VIEW %s | PERF %s | AUDIOQ %u | %s\n",
                     fps,
                     avgFrameUs,
                     avgCpuUs,
@@ -148,11 +150,12 @@ void msx_runtime_log_summary(const MsxCoreState* core,
                     core->cpu.pc,
                     msx_vdp_mode_label(core->vdp.mode),
                     msx_media_bios_target_label(core->biosTarget),
+                    viewLabel,
                     msx_config_get_performance_mode_label(),
                     static_cast<unsigned>(audioState->queuedBlocks),
                     suffix);
     } else {
-        MSX_RUN_LOG("[MSX] FPS %.1f | FT %u | CPU %u | RND %u | PRS %u | OTH %u | HEAP %u | CPU %s | PC %04X | VDP %s | MACHINE %s | PERF %s | AUDIOQ %u\n",
+        MSX_RUN_LOG("[MSX] FPS %.1f | FT %u | CPU %u | RND %u | PRS %u | OTH %u | HEAP %u | CPU %s | PC %04X | VDP %s | MACHINE %s | VIEW %s | PERF %s | AUDIOQ %u\n",
                     fps,
                     avgFrameUs,
                     avgCpuUs,
@@ -164,6 +167,7 @@ void msx_runtime_log_summary(const MsxCoreState* core,
                     core->cpu.pc,
                     msx_vdp_mode_label(core->vdp.mode),
                     msx_media_bios_target_label(core->biosTarget),
+                    viewLabel,
                     msx_config_get_performance_mode_label(),
                     static_cast<unsigned>(audioState->queuedBlocks));
     }
@@ -1186,8 +1190,8 @@ void run_msx(const uint8_t* romData, size_t romLen, const char* romName, SdServi
             break;
         }
 
-        if (input.toggleViewRequested && !useExternal) {
-            msx_config_toggle_active_view_mode();
+        if (input.toggleViewRequested) {
+            msx_config_toggle_active_view_mode_for_target(useExternal);
         }
 
         if (msx_input_get_save_requested()) {
@@ -1415,8 +1419,8 @@ void run_msx_disk(const uint8_t* dskData, size_t dskLen, const char* dskName, Sd
             break;
         }
 
-        if (input.toggleViewRequested && !useExternal) {
-            msx_config_toggle_active_view_mode();
+        if (input.toggleViewRequested) {
+            msx_config_toggle_active_view_mode_for_target(useExternal);
         }
 
         if (msx_input_get_save_requested()) {
@@ -1622,8 +1626,8 @@ void run_msx_basic(const char* name, SdService& sd)
             break;
         }
 
-        if (input.toggleViewRequested && !useExternal) {
-            msx_config_toggle_active_view_mode();
+        if (input.toggleViewRequested) {
+            msx_config_toggle_active_view_mode_for_target(useExternal);
         }
 
         if (msx_input_get_save_requested()) {
@@ -1845,8 +1849,8 @@ void run_msx_cas(const uint8_t* casData, size_t casLen, const char* casName, SdS
             break;
         }
 
-        if (input.toggleViewRequested && !useExternal) {
-            msx_config_toggle_active_view_mode();
+        if (input.toggleViewRequested) {
+            msx_config_toggle_active_view_mode_for_target(useExternal);
         }
 
         if (msx_input_get_change_cas_requested()) {

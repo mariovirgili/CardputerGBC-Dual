@@ -25,6 +25,11 @@ constexpr int kInternalTargetW = 240;
 constexpr int kInternalTargetH = 135;
 constexpr int kExternalTargetW = 320;
 constexpr int kExternalTargetH = 240;
+constexpr int kExternalFastTargetW = 240;
+constexpr int kExternalFastTargetH = 180;
+constexpr int kExternalFastPlusCropH = 192;
+constexpr int kExternalFastPlusTargetW = 192;
+constexpr int kExternalFastPlusTargetH = 144;
 constexpr int kWideAspectW = 4;
 constexpr int kWideAspectH = 3;
 constexpr int kBatchLines = 6;
@@ -335,6 +340,50 @@ void msx_video_compute_plan(unsigned srcW, unsigned srcH, MsxVideoPlan* plan)
         plan->xOff = (targetW - plan->dstW) / 2;
         plan->yOff = (targetH - plan->dstH) / 2;
         plan->cropOnly = true;
+        return;
+    }
+
+    if (msx_video_game_on_external() && mode == MsxInternalViewMode::FastPlus) {
+        const unsigned fastPlusSrcH =
+            effectiveSrcH > kExternalFastPlusCropH ? kExternalFastPlusCropH : effectiveSrcH;
+        const unsigned fastPlusSrcY0 =
+            effectiveSrcY0 +
+            ((effectiveSrcH > fastPlusSrcH) ? ((effectiveSrcH - fastPlusSrcH) / 2u) : 0u);
+
+        plan->srcX0 = 0;
+        plan->srcY0 = static_cast<int>(fastPlusSrcY0);
+        plan->roiW = static_cast<int>(srcW);
+        plan->roiH = static_cast<int>(fastPlusSrcH);
+        plan->dstW = kExternalFastPlusTargetW;
+        plan->dstH = kExternalFastPlusTargetH;
+        if (plan->dstW > targetW) {
+            plan->dstW = targetW;
+        }
+        if (plan->dstH > targetH) {
+            plan->dstH = targetH;
+        }
+        plan->xOff = (targetW - plan->dstW) / 2;
+        plan->yOff = (targetH - plan->dstH) / 2;
+        plan->cropOnly = false;
+        return;
+    }
+
+    if (msx_video_game_on_external()) {
+        plan->srcX0 = 0;
+        plan->srcY0 = static_cast<int>(effectiveSrcY0);
+        plan->roiW = static_cast<int>(srcW);
+        plan->roiH = static_cast<int>(effectiveSrcH);
+        plan->dstW = kExternalFastTargetW;
+        plan->dstH = kExternalFastTargetH;
+        if (plan->dstW > targetW) {
+            plan->dstW = targetW;
+        }
+        if (plan->dstH > targetH) {
+            plan->dstH = targetH;
+        }
+        plan->xOff = (targetW - plan->dstW) / 2;
+        plan->yOff = (targetH - plan->dstH) / 2;
+        plan->cropOnly = false;
         return;
     }
 

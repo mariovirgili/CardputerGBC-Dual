@@ -37,9 +37,15 @@ char s_msx2SubRomPath[96] = {0};
 
 MsxInternalViewMode msx_sanitize_internal_view_mode(uint8_t value)
 {
-    return value == static_cast<uint8_t>(MsxInternalViewMode::PixelPerfect)
-               ? MsxInternalViewMode::PixelPerfect
-               : MsxInternalViewMode::Wide;
+    switch (value) {
+        case static_cast<uint8_t>(MsxInternalViewMode::PixelPerfect):
+            return MsxInternalViewMode::PixelPerfect;
+        case static_cast<uint8_t>(MsxInternalViewMode::FastPlus):
+            return MsxInternalViewMode::FastPlus;
+        case static_cast<uint8_t>(MsxInternalViewMode::Wide):
+        default:
+            return MsxInternalViewMode::Wide;
+    }
 }
 
 MsxMachineMode msx_sanitize_machine_mode(uint8_t value)
@@ -196,7 +202,32 @@ MsxInternalViewMode msx_config_get_active_view_mode(void)
 
 const char* msx_config_internal_view_mode_label(MsxInternalViewMode mode)
 {
-    return mode == MsxInternalViewMode::PixelPerfect ? "CROP" : "WIDE";
+    switch (mode) {
+        case MsxInternalViewMode::PixelPerfect:
+            return "CROP";
+        case MsxInternalViewMode::FastPlus:
+            return "WIDE+";
+        case MsxInternalViewMode::Wide:
+        default:
+            return "WIDE";
+    }
+}
+
+const char* msx_config_view_mode_label_for_target(MsxInternalViewMode mode, bool useExternal)
+{
+    if (useExternal) {
+        switch (mode) {
+            case MsxInternalViewMode::PixelPerfect:
+                return "1:1";
+            case MsxInternalViewMode::FastPlus:
+                return "FAST+";
+            case MsxInternalViewMode::Wide:
+            default:
+                return "FAST";
+        }
+    }
+
+    return msx_config_internal_view_mode_label(mode);
 }
 
 const char* msx_config_get_internal_view_mode_label(void)
@@ -207,6 +238,11 @@ const char* msx_config_get_internal_view_mode_label(void)
 const char* msx_config_get_active_view_mode_label(void)
 {
     return msx_config_internal_view_mode_label(msx_config_get_active_view_mode());
+}
+
+const char* msx_config_get_active_view_mode_label_for_target(bool useExternal)
+{
+    return msx_config_view_mode_label_for_target(msx_config_get_active_view_mode(), useExternal);
 }
 
 void msx_config_set_internal_view_mode(MsxInternalViewMode mode, bool persist)
@@ -244,6 +280,29 @@ void msx_config_toggle_active_view_mode(void)
         (msx_config_get_active_view_mode() == MsxInternalViewMode::PixelPerfect)
             ? MsxInternalViewMode::Wide
             : MsxInternalViewMode::PixelPerfect;
+
+    if (s_viewModeOverrideEnabled) {
+        s_viewModeOverride = nextMode;
+        return;
+    }
+
+    msx_config_set_internal_view_mode(nextMode, true);
+}
+
+void msx_config_toggle_active_view_mode_for_target(bool useExternal)
+{
+    if (!useExternal) {
+        msx_config_toggle_active_view_mode();
+        return;
+    }
+
+    const MsxInternalViewMode currentMode = msx_config_get_active_view_mode();
+    const MsxInternalViewMode nextMode =
+        (currentMode == MsxInternalViewMode::PixelPerfect)
+            ? MsxInternalViewMode::Wide
+            : (currentMode == MsxInternalViewMode::Wide)
+                  ? MsxInternalViewMode::FastPlus
+                  : MsxInternalViewMode::PixelPerfect;
 
     if (s_viewModeOverrideEnabled) {
         s_viewModeOverride = nextMode;

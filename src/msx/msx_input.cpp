@@ -36,11 +36,14 @@ struct MsxInputBindingCache {
 
 static constexpr uint32_t kBacktickLongPressMs = 700;
 static constexpr uint32_t kGoLongPressMs = 700;
+static constexpr uint32_t kViewToggleDebounceMs = 1000;
 static uint32_t s_backtickPressedMs = 0;
 static bool s_backtickLongHandled = false;
 static bool s_goLongHandled = false;
 static bool s_suppressGoClick = false;
 static uint32_t s_suppressGoUntilMs = 0;
+static bool s_viewToggleHeld = false;
+static uint32_t s_lastViewToggleMs = 0;
 
 struct MsxRuntimeOptions {
     bool joystickEnabled;
@@ -120,7 +123,14 @@ static MsxMachineMode s_runtimeMachineMode = MsxMachineMode::MSX2;
 
 static bool msx_view_toggle_allowed(void)
 {
-    return g_emu_display_target != EMU_DISPLAY_EXTERNAL;
+    return true;
+}
+
+static const char* msx_runtime_view_label(void)
+{
+    return msx_config_get_active_view_mode_label_for_target(
+        g_emu_display_target == EMU_DISPLAY_EXTERNAL
+    );
 }
 
 static bool msx_runtime_menu_in_performance_page(void)
@@ -454,7 +464,7 @@ static void msx_runtime_log_options(void)
                 msx_config_get_performance_mode_label(),
                 msx_runtime_menu_in_performance_page() ? "perf" : "main",
                 s_runtimeOptions.changeCasAvailable ? "on" : "off",
-                msx_view_toggle_allowed() ? msx_config_get_active_view_mode_label() : "1:1",
+                msx_runtime_view_label(),
                 s_runtimeMenu.visible ? "open" : "closed");
 }
 
@@ -500,7 +510,9 @@ static void msx_runtime_menu_accept(void)
             break;
         case MsxRuntimeMenuItem::View:
             if (msx_view_toggle_allowed()) {
-                msx_config_toggle_active_view_mode();
+                msx_config_toggle_active_view_mode_for_target(
+                    g_emu_display_target == EMU_DISPLAY_EXTERNAL
+                );
             }
             break;
         case MsxRuntimeMenuItem::Performance:
@@ -1195,10 +1207,22 @@ void msx_input_poll(MsxInputState* state)
         s_backtickLongHandled = false;
     }
 
-    if (msx_view_toggle_allowed() &&
-        M5Cardputer.Keyboard.isChange() &&
-        msx_key_pressed_any(CARDPUTER_SCREEN_TOGGLE, '|')) {
-        state->toggleViewRequested = true;
+    if (msx_view_toggle_allowed()) {
+        const bool viewTogglePressed = msx_key_pressed_any(CARDPUTER_SCREEN_TOGGLE, '|');
+        if (viewTogglePressed) {
+            const uint32_t nowMs = millis();
+            if (!s_viewToggleHeld &&
+                (s_lastViewToggleMs == 0u ||
+                 static_cast<uint32_t>(nowMs - s_lastViewToggleMs) >= kViewToggleDebounceMs)) {
+                state->toggleViewRequested = true;
+                s_lastViewToggleMs = nowMs;
+            }
+            s_viewToggleHeld = true;
+        } else {
+            s_viewToggleHeld = false;
+        }
+    } else {
+        s_viewToggleHeld = false;
     }
 
     const bool menuWasVisible = s_runtimeMenu.visible;

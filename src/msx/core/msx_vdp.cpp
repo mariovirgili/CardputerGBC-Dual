@@ -86,6 +86,24 @@ static uint8_t* s_msx1VramB = nullptr;
 static uint8_t* s_msx2VramB = nullptr;
 static uint8_t s_msxSpriteOccupancy[kMsxFrameWidth];
 static uint8_t s_msxColorSpriteLine[kMsxSpriteColorLineWidth];
+struct MsxMonoSpriteCachedAttr {
+    int16_t y;
+    int16_t x;
+    uint8_t patternId;
+    uint8_t attrColor;
+};
+struct MsxMonoSpriteLineCache {
+    uint8_t selected[kMsxMaxSpritesLineMsx1];
+    uint8_t count;
+    uint8_t lastIndex;
+    uint8_t overflowIndex;
+    bool hasOverflow;
+};
+static MsxMonoSpriteCachedAttr s_msxMonoSpriteAttrs[32u];
+static MsxMonoSpriteLineCache s_msxMonoSpriteLines[kMsxFrameHeightMsx1];
+static bool s_msxMonoSpriteCacheValid = false;
+static uint8_t s_msxMonoSpriteInputHeight = 8u;
+static uint8_t s_msxMonoSpriteScale = 1u;
 static uint8_t s_msxColorSpriteAttrSnapshot[32u * 4u];
 static uint8_t s_msxColorSpriteColorSnapshot[32u * 16u];
 static uint8_t s_msxColorSpritePatternSnapshot[256u * 8u];
@@ -704,39 +722,46 @@ inline uint8_t msx_vdp_resolve_color(const MsxVdpState* state, uint8_t color)
     return static_cast<uint8_t>(color & 0x0Fu);
 }
 
-inline void msx_vdp_write_vram(MsxVdpState* state, uint32_t address, uint8_t value)
+inline void msx_vdp_write_vram_msx1(MsxVdpState* state, uint32_t address, uint8_t value)
+{
+    const uint32_t wrapped = address & state->vramMask;
+    if (state->vram[wrapped] != value) {
+        state->vram[wrapped] = value;
+        state->dirty = true;
+    }
+}
+
+inline void msx_vdp_write_vram_msx2(MsxVdpState* state, uint32_t address, uint8_t value)
 {
     const uint32_t wrapped = address & state->vramMask;
     if (state->vram[wrapped] != value) {
         state->vram[wrapped] = value;
         state->dirty = true;
 
-        if (msx_vdp_is_msx2(state)) {
-            const uint32_t attrBase = msx_vdp_sprite_attr_base(state) & state->vramMask;
-            const uint32_t colorBase = static_cast<uint32_t>((attrBase - 0x200u) & state->vramMask);
-            const uint32_t patternBase = msx_vdp_sprite_pattern_base(state) & state->vramMask;
-            const uint32_t attrOffset = (wrapped - attrBase) & state->vramMask;
-            const uint32_t colorOffset = (wrapped - colorBase) & state->vramMask;
-            const uint32_t patternOffset = (wrapped - patternBase) & state->vramMask;
+        const uint32_t attrBase = msx_vdp_sprite_attr_base(state) & state->vramMask;
+        const uint32_t colorBase = static_cast<uint32_t>((attrBase - 0x200u) & state->vramMask);
+        const uint32_t patternBase = msx_vdp_sprite_pattern_base(state) & state->vramMask;
+        const uint32_t attrOffset = (wrapped - attrBase) & state->vramMask;
+        const uint32_t colorOffset = (wrapped - colorBase) & state->vramMask;
+        const uint32_t patternOffset = (wrapped - patternBase) & state->vramMask;
 
-            if (attrOffset < sizeof(s_msxColorSpriteAttrSnapshot)) {
-                msx_vdp_log_color_sprite_write(state,
-                                               kMsxColorSpriteWriteAttr,
-                                               static_cast<uint16_t>(attrOffset),
-                                               value);
-            }
-            if (colorOffset < sizeof(s_msxColorSpriteColorSnapshot)) {
-                msx_vdp_log_color_sprite_write(state,
-                                               kMsxColorSpriteWriteColor,
-                                               static_cast<uint16_t>(colorOffset),
-                                               value);
-            }
-            if (patternOffset < sizeof(s_msxColorSpritePatternSnapshot)) {
-                msx_vdp_log_color_sprite_write(state,
-                                               kMsxColorSpriteWritePattern,
-                                               static_cast<uint16_t>(patternOffset),
-                                               value);
-            }
+        if (attrOffset < sizeof(s_msxColorSpriteAttrSnapshot)) {
+            msx_vdp_log_color_sprite_write(state,
+                                           kMsxColorSpriteWriteAttr,
+                                           static_cast<uint16_t>(attrOffset),
+                                           value);
+        }
+        if (colorOffset < sizeof(s_msxColorSpriteColorSnapshot)) {
+            msx_vdp_log_color_sprite_write(state,
+                                           kMsxColorSpriteWriteColor,
+                                           static_cast<uint16_t>(colorOffset),
+                                           value);
+        }
+        if (patternOffset < sizeof(s_msxColorSpritePatternSnapshot)) {
+            msx_vdp_log_color_sprite_write(state,
+                                           kMsxColorSpriteWritePattern,
+                                           static_cast<uint16_t>(patternOffset),
+                                           value);
         }
     }
 }
@@ -1998,6 +2023,90 @@ void msx_vdp_reset_sprite_status(MsxVdpState* state)
     state->status[0] = static_cast<uint8_t>((state->status[0] & 0x80u) | 0x1Fu);
 }
 
+static void msx_vdp_invalidate_mono_sprite_cache(void)
+{
+    s_msxMonoSpriteCacheValid = false;
+    s_msxMonoSpriteInputHeight = 8u;
+    s_msxMonoSpriteScale = 1u;
+}
+
+static void msx_vdp_prepare_mono_sprite_cache(MsxVdpState* state)
+{
+    msx_vdp_invalidate_mono_sprite_cache();
+    if (!state || msx_vdp_is_msx2(state)) {
+        return;
+    }
+
+    static constexpr uint8_t kSpriteHeights[4] = {8u, 16u, 16u, 32u};
+    const uint8_t outputHeight = kSpriteHeights[state->regs[1] & 0x03u];
+    s_msxMonoSpriteInputHeight = kSpriteHeights[state->regs[1] & 0x02u];
+    s_msxMonoSpriteScale = (outputHeight > s_msxMonoSpriteInputHeight) ? 2u : 1u;
+
+    const uint32_t attrBase = msx_vdp_sprite_attr_base(state);
+    const uint8_t* const vram = state->vram;
+    const uint32_t mask = state->vramMask;
+    uint8_t scanEndIndex = 31u;
+
+    for (unsigned line = 0u; line < kMsxFrameHeightMsx1; ++line) {
+        MsxMonoSpriteLineCache& cache = s_msxMonoSpriteLines[line];
+        cache.count = 0u;
+        cache.lastIndex = 31u;
+        cache.overflowIndex = 31u;
+        cache.hasOverflow = false;
+    }
+
+    for (uint8_t index = 0u; index < 32u; ++index) {
+        const uint32_t attr = attrBase + static_cast<uint32_t>(index) * 4u;
+        const uint8_t rawY = msx_vdp_read_vram_fast(vram, mask, attr);
+        if (rawY == 208u) {
+            scanEndIndex = index;
+            break;
+        }
+
+        MsxMonoSpriteCachedAttr& sprite = s_msxMonoSpriteAttrs[index];
+        sprite.y = static_cast<int16_t>(rawY);
+        if (sprite.y > static_cast<int16_t>(256 - s_msxMonoSpriteInputHeight)) {
+            sprite.y = static_cast<int16_t>(sprite.y - 256);
+        }
+        sprite.x = static_cast<int16_t>(msx_vdp_read_vram_fast(vram, mask, attr + 1u));
+        sprite.patternId = msx_vdp_read_vram_fast(vram, mask, attr + 2u);
+        sprite.attrColor = msx_vdp_read_vram_fast(vram, mask, attr + 3u);
+        if ((sprite.attrColor & 0x80u) != 0u) {
+            sprite.x = static_cast<int16_t>(sprite.x - 32);
+        }
+
+        int startY = static_cast<int>(sprite.y) + 1;
+        int endY = static_cast<int>(sprite.y) + outputHeight;
+        if (endY < 0 || startY >= static_cast<int>(kMsxFrameHeightMsx1)) {
+            continue;
+        }
+
+        if (startY < 0) {
+            startY = 0;
+        }
+        if (endY >= static_cast<int>(kMsxFrameHeightMsx1)) {
+            endY = static_cast<int>(kMsxFrameHeightMsx1) - 1;
+        }
+
+        for (int line = startY; line <= endY; ++line) {
+            MsxMonoSpriteLineCache& cache = s_msxMonoSpriteLines[line];
+            if (cache.count < kMsxMaxSpritesLineMsx1) {
+                cache.selected[cache.count++] = index;
+            } else if (!cache.hasOverflow) {
+                cache.hasOverflow = true;
+                cache.overflowIndex = index;
+            }
+        }
+    }
+
+    for (unsigned line = 0u; line < kMsxFrameHeightMsx1; ++line) {
+        MsxMonoSpriteLineCache& cache = s_msxMonoSpriteLines[line];
+        cache.lastIndex = cache.hasOverflow ? cache.overflowIndex : scanEndIndex;
+    }
+
+    s_msxMonoSpriteCacheValid = true;
+}
+
 void msx_vdp_record_sprite_index(MsxVdpState* state, uint8_t index)
 {
     if (!state) {
@@ -2068,6 +2177,80 @@ void msx_vdp_render_mono_sprites_line(MsxVdpState* state, unsigned y, uint8_t* d
 {
     if (!state || !dst || msx_vdp_sprites_disabled_for_line(state, y)) {
         return;
+    }
+
+    if (!msx_vdp_is_msx2(state) && y < kMsxFrameHeightMsx1) {
+        if (!s_msxMonoSpriteCacheValid) {
+            msx_vdp_prepare_mono_sprite_cache(state);
+        }
+
+        if (s_msxMonoSpriteCacheValid) {
+            const MsxMonoSpriteLineCache& cache = s_msxMonoSpriteLines[y];
+            const uint32_t patternBase = msx_vdp_sprite_pattern_base(state);
+            const bool accurateSpriteOverflow =
+                !msx_config_get_performance_flag(MsxPerformanceFlag::SimplifySpriteOverflow);
+            const bool detectSpriteCollision =
+                !msx_config_get_performance_flag(MsxPerformanceFlag::DisableSpriteCollision);
+
+            if (cache.hasOverflow && accurateSpriteOverflow) {
+                msx_vdp_record_sprite_overflow(state, cache.overflowIndex);
+            } else {
+                msx_vdp_record_sprite_index(state, cache.lastIndex);
+            }
+
+            if (detectSpriteCollision) {
+                std::memset(s_msxSpriteOccupancy, 0, sizeof(s_msxSpriteOccupancy));
+            }
+
+            const bool largeSprite = s_msxMonoSpriteInputHeight > 8u;
+            for (int selectedIndex = static_cast<int>(cache.count) - 1; selectedIndex >= 0; --selectedIndex) {
+                const uint8_t index = cache.selected[static_cast<size_t>(selectedIndex)];
+                const MsxMonoSpriteCachedAttr& sprite = s_msxMonoSpriteAttrs[index];
+                const uint8_t color = static_cast<uint8_t>(sprite.attrColor & 0x0Fu);
+                if (color == 0u) {
+                    continue;
+                }
+
+                int line = static_cast<int>(y) - static_cast<int>(sprite.y) - 1;
+                if (s_msxMonoSpriteScale == 2u) {
+                    line >>= 1;
+                }
+                if (line < 0) {
+                    continue;
+                }
+
+                const uint8_t spriteColor = msx_vdp_resolve_color(state, color);
+                const uint8_t basePattern =
+                    largeSprite ? static_cast<uint8_t>(sprite.patternId & 0xFCu) : sprite.patternId;
+                const uint32_t patternRow =
+                    patternBase + static_cast<uint32_t>(basePattern) * 8u + static_cast<uint32_t>(line);
+                const uint8_t leftBits =
+                    msx_vdp_read_vram_fast(state->vram, state->vramMask, patternRow);
+                msx_vdp_plot_sprite_bits(state,
+                                         dst,
+                                         s_msxSpriteOccupancy,
+                                         static_cast<int>(sprite.x),
+                                         leftBits,
+                                         spriteColor,
+                                         s_msxMonoSpriteScale,
+                                         detectSpriteCollision);
+
+                if (largeSprite) {
+                    const uint8_t rightBits =
+                        msx_vdp_read_vram_fast(state->vram, state->vramMask, patternRow + 16u);
+                    msx_vdp_plot_sprite_bits(state,
+                                             dst,
+                                             s_msxSpriteOccupancy,
+                                             static_cast<int>(sprite.x)
+                                                 + static_cast<int>(8u * s_msxMonoSpriteScale),
+                                             rightBits,
+                                             spriteColor,
+                                             s_msxMonoSpriteScale,
+                                             detectSpriteCollision);
+                }
+            }
+            return;
+        }
     }
 
     static constexpr uint8_t kSpriteHeights[4] = {8u, 16u, 16u, 32u};
@@ -3587,6 +3770,9 @@ bool msx_vdp_init(MsxVdpState* state, MsxMachineMode machineMode)
 
     std::memset(state, 0, sizeof(*state));
     state->machineMode = machineMode;
+    state->writeVram = (machineMode == MsxMachineMode::MSX2)
+                           ? &msx_vdp_write_vram_msx2
+                           : &msx_vdp_write_vram_msx1;
     state->vramSize = (machineMode == MsxMachineMode::MSX2) ? kMsx2VramSize : kMsx1VramSize;
     state->vramMask = static_cast<uint32_t>(state->vramSize - 1u);
     state->ownsVram = false;
@@ -3736,6 +3922,7 @@ void msx_vdp_reset(MsxVdpState* state)
         state->dirty = true;
         state->frameReady = false;
         state->frameCounter = 0;
+        msx_vdp_invalidate_mono_sprite_cache();
         msx_vdp_init_palette(state);
         msx_vdp_update_mode_geometry(state);
         return;
@@ -3775,6 +3962,7 @@ void msx_vdp_reset(MsxVdpState* state)
     state->frameCounter = 0;
     state->lineInterruptFrameTag = 0xFFFFFFFFu;
     state->lineInterruptLineTag = 0xFFu;
+    msx_vdp_invalidate_mono_sprite_cache();
     if (msx_vdp_is_msx2(state)) {
         state->regs[8] = 0x08u;
         state->regs[16] = 0u;
@@ -3840,6 +4028,11 @@ void msx_vdp_prepare_frame_render(MsxVdpState* state)
 
     msx_vdp_update_mode_geometry(state);
     msx_vdp_reset_sprite_status(state);
+    if (msx_vdp_is_msx2(state)) {
+        msx_vdp_invalidate_mono_sprite_cache();
+    } else {
+        msx_vdp_prepare_mono_sprite_cache(state);
+    }
 }
 
 bool msx_vdp_render_internal(MsxVdpState* state)
@@ -4026,7 +4219,7 @@ void msx_vdp_out_data(MsxVdpState* state, uint8_t value)
         return;
     }
 
-    msx_vdp_write_vram(state, state->address, value);
+    state->writeVram(state, state->address, value);
     msx_vdp_advance_address(state);
     state->readBuffer = value;
     state->controlPending = false;

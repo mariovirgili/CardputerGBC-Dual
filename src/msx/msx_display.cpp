@@ -46,6 +46,11 @@ static bool msx_display_game_on_external(void)
     return g_emu_display_target == EMU_DISPLAY_EXTERNAL;
 }
 
+static const char* msx_display_active_view_label(void)
+{
+    return msx_config_get_active_view_mode_label_for_target(msx_display_game_on_external());
+}
+
 static int msx_display_runtime_menu_box_y(void)
 {
     return msx_display_game_on_external() ? 42 : 22;
@@ -175,7 +180,7 @@ static void msx_display_draw_placeholder(const MsxDisplayStatus* status)
     std::snprintf(footer,
                   sizeof(footer),
                   "VIEW %s  FRAME %lu",
-                  msx_config_get_active_view_mode_label(),
+                  msx_display_active_view_label(),
                   static_cast<unsigned long>(status ? status->frameCounter : 0));
     msx_display_draw_line(footer, 128, PRIMARY_COLOR, 1);
 }
@@ -262,7 +267,7 @@ static const char* msx_display_runtime_menu_value(const MsxInputOverlayState& ov
         case 3u:
             return overlay.vausEnabled ? "ON" : "OFF";
         case 4u:
-            return msx_display_game_on_external() ? "1:1" : msx_config_get_active_view_mode_label();
+            return msx_display_active_view_label();
         case 5u:
             return msx_config_get_performance_mode_label();
         case 6u:
@@ -286,7 +291,7 @@ static void msx_display_draw_runtime_menu_shell(const MsxInputOverlayState& over
     const char* title = overlay.performanceSubmenuVisible ? "PERF TUNING" : "MSX MENU";
     const char* hint1 = overlay.performanceSubmenuVisible
                             ? "GO toggle  DEL back"
-                            : (msx_display_game_on_external() ? "EXT TFT fixed 1:1" : "\\ quick view  GO toggle");
+                            : "\\ switch view  GO toggle";
     const char* hint2 = overlay.performanceSubmenuVisible
                             ? "Hold GO closes menu"
                             : "Hold GO closes menu";
@@ -485,11 +490,12 @@ void msx_display_submit_frame(const MsxDisplayFrame* frame, const MsxDisplayStat
             !msx_display_runtime_menu_overlay_equals(overlay, s_lastMenuOverlay);
         const bool scrollChanged = scrollIndex != s_lastScrollIndex;
         const bool stateSlotChanged = currentStateSlot != s_lastStateSlot;
+        const bool viewChanged = currentViewMode != s_lastViewMode;
 
         if (fullMenuRedraw) {
             msx_display_draw_runtime_menu(overlay);
-        } else if (overlayChanged || scrollChanged || stateSlotChanged) {
-            if (scrollChanged || stateSlotChanged) {
+        } else if (overlayChanged || scrollChanged || stateSlotChanged || viewChanged) {
+            if (scrollChanged || stateSlotChanged || viewChanged) {
                 for (uint8_t i = 0; i < kRuntimeMenuRowCount; ++i) {
                     msx_display_draw_runtime_menu_row(overlay, scrollIndex + i);
                 }
