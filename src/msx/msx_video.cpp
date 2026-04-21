@@ -28,7 +28,7 @@ constexpr int kExternalTargetH = 240;
 constexpr int kWideAspectW = 4;
 constexpr int kWideAspectH = 3;
 constexpr int kBatchLines = 6;
-constexpr unsigned kMsxVisibleSafeHeight = 192u;
+constexpr unsigned kMsxVisibleSafeHeight = 212u;
 
 struct MsxVideoPlan {
     int srcX0;
@@ -83,6 +83,7 @@ static bool s_extTftPrepared = false;
 static bool s_extTftRgb444Configured = false;
 static bool s_extTftColorModeKnown = false;
 static bool s_extTftClockLogged = false;
+static bool s_extTftColorModeLogged = false;
 static bool s_externalUiActive = false;
 static bool s_runtimeMenuActive = false;
 static bool s_stateOverlayActive = false;
@@ -137,6 +138,13 @@ void msx_video_prepare_external_tft(void)
         s_extTft.endWrite();
         s_extTftRgb444Configured = useRgb444;
         s_extTftColorModeKnown = true;
+        std::printf("[MSX][VIDEO] external color=%s\n",
+                    useRgb444 ? "RGB444 12-bit" : "RGB565 16-bit");
+        s_extTftColorModeLogged = true;
+    } else if (!s_extTftColorModeLogged) {
+        std::printf("[MSX][VIDEO] external color=%s\n",
+                    s_extTftRgb444Configured ? "RGB444 12-bit" : "RGB565 16-bit");
+        s_extTftColorModeLogged = true;
     }
 }
 
@@ -812,6 +820,7 @@ void msx_video_prepare_external_ui(void)
         s_extTft.endWrite();
         s_extTftRgb444Configured = false;
         s_extTftColorModeKnown = true;
+        s_extTftColorModeLogged = false;
     }
 }
 
@@ -860,6 +869,7 @@ void msx_video_prepare_sd_access(void)
         s_extTftPrepared = false;
         s_extTftColorModeKnown = false;
         s_extTftRgb444Configured = false;
+        s_extTftColorModeLogged = false;
         s_externalUiActive = false;
     }
 

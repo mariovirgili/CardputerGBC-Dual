@@ -4,7 +4,7 @@
 #include <stdint.h>
 
 #ifndef MSX_PROFILE_LOG_ENABLED
-#define MSX_PROFILE_LOG_ENABLED 1
+#define MSX_PROFILE_LOG_ENABLED 0
 #endif
 
 #ifndef MSX_PROFILE_LOG_INTERVAL_FRAMES

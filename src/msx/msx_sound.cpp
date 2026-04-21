@@ -5,6 +5,8 @@
 #include <esp_heap_caps.h>
 
 #include <cstring>
+#include <freertos/queue.h>
+#include <freertos/task.h>
 
 #ifndef MSX_AUDIO_TRACE_ENABLED
 #define MSX_AUDIO_TRACE_ENABLED 0
@@ -16,32 +18,42 @@ namespace {
 constexpr int kChannel = 0;
 constexpr size_t kMaxFrameSamples = 512;
 constexpr int kOutputGain = 2;
+constexpr size_t kNumPlayBuffers = 4;
+constexpr TickType_t kAudioWorkerPollTicks = pdMS_TO_TICKS(20);
 static MsxAudioHookState s_audioState = {};
 static int16_t s_mixBuffer[kMaxFrameSamples] = {};
-static int16_t* s_playBuffers[2] = {nullptr, nullptr};
-static uint8_t s_playFlip = 0u;
+static int16_t* s_playBuffers[kNumPlayBuffers] = {nullptr, nullptr, nullptr, nullptr};
+static QueueHandle_t s_freeBufferQueue = nullptr;
+static QueueHandle_t s_readyBlockQueue = nullptr;
+static TaskHandle_t s_audioTask = nullptr;
+static volatile bool s_audioTaskRunning = false;
+
+struct MsxAudioBlock {
+    uint8_t bufferIndex;
+    uint16_t sampleCount;
+};
 
 static bool msx_sound_prepare_buffers(void)
 {
-    for (size_t i = 0; i < 2u; ++i) {
+    for (size_t i = 0; i < kNumPlayBuffers; ++i) {
         if (s_playBuffers[i]) {
             continue;
         }
 
         s_playBuffers[i] = static_cast<int16_t*>(heap_caps_malloc(
             kMaxFrameSamples * sizeof(int16_t),
-            MALLOC_CAP_8BIT
+            MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT
         ));
         if (!s_playBuffers[i]) {
             s_playBuffers[i] = static_cast<int16_t*>(heap_caps_malloc(
                 kMaxFrameSamples * sizeof(int16_t),
-                MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT
+                MALLOC_CAP_8BIT
             ));
         }
         if (!s_playBuffers[i]) {
             s_playBuffers[i] = static_cast<int16_t*>(heap_caps_malloc(
                 kMaxFrameSamples * sizeof(int16_t),
-                MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT
+                MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT
             ));
         }
         if (!s_playBuffers[i]) {
@@ -54,12 +66,45 @@ static bool msx_sound_prepare_buffers(void)
 
 static void msx_sound_release_buffers(void)
 {
-    for (size_t i = 0; i < 2u; ++i) {
+    for (size_t i = 0; i < kNumPlayBuffers; ++i) {
         if (s_playBuffers[i]) {
             heap_caps_free(s_playBuffers[i]);
             s_playBuffers[i] = nullptr;
         }
     }
+}
+
+static void msx_sound_release_queues(void)
+{
+    if (s_freeBufferQueue) {
+        vQueueDelete(s_freeBufferQueue);
+        s_freeBufferQueue = nullptr;
+    }
+    if (s_readyBlockQueue) {
+        vQueueDelete(s_readyBlockQueue);
+        s_readyBlockQueue = nullptr;
+    }
+}
+
+static bool msx_sound_prepare_queues(void)
+{
+    if (!s_freeBufferQueue) {
+        s_freeBufferQueue = xQueueCreate(kNumPlayBuffers, sizeof(uint8_t));
+    }
+    if (!s_readyBlockQueue) {
+        s_readyBlockQueue = xQueueCreate(kNumPlayBuffers, sizeof(MsxAudioBlock));
+    }
+    if (!s_freeBufferQueue || !s_readyBlockQueue) {
+        return false;
+    }
+
+    xQueueReset(s_freeBufferQueue);
+    xQueueReset(s_readyBlockQueue);
+    for (uint8_t index = 0u; index < static_cast<uint8_t>(kNumPlayBuffers); ++index) {
+        (void)xQueueSend(s_freeBufferQueue, &index, 0);
+    }
+
+    return true;
 }
 
 static void msx_sound_reset_state(bool compiledIn)
@@ -70,20 +115,56 @@ static void msx_sound_reset_state(bool compiledIn)
 
 static void msx_sound_update_queue_depth(void)
 {
-    s_audioState.queuedBlocks = s_audioState.enabled
-        ? static_cast<uint8_t>(M5Cardputer.Speaker.isPlaying(kChannel))
-        : 0u;
+    if (!s_audioState.enabled) {
+        s_audioState.queuedBlocks = 0u;
+        return;
+    }
+
+    const size_t hardwareQueued = M5Cardputer.Speaker.isPlaying(kChannel);
+    const UBaseType_t pendingQueued = s_readyBlockQueue ? uxQueueMessagesWaiting(s_readyBlockQueue) : 0u;
+    size_t totalQueued = hardwareQueued + static_cast<size_t>(pendingQueued);
+    if (totalQueued > 255u) {
+        totalQueued = 255u;
+    }
+    s_audioState.queuedBlocks = static_cast<uint8_t>(totalQueued);
 }
 
-static void msx_sound_queue_block(const int16_t* samples, size_t sampleCount)
+static void msx_sound_release_block(const MsxAudioBlock& block)
 {
-    if (!samples || sampleCount == 0u || !s_audioState.enabled || s_audioState.paused) {
+    if (!s_freeBufferQueue || block.bufferIndex >= kNumPlayBuffers) {
+        return;
+    }
+
+    uint8_t bufferIndex = block.bufferIndex;
+    (void)xQueueSend(s_freeBufferQueue, &bufferIndex, 0);
+}
+
+static void msx_sound_flush_pending_blocks(void)
+{
+    if (!s_readyBlockQueue) {
+        return;
+    }
+
+    MsxAudioBlock block = {};
+    while (xQueueReceive(s_readyBlockQueue, &block, 0) == pdTRUE) {
+        msx_sound_release_block(block);
+    }
+    msx_sound_update_queue_depth();
+}
+
+static void msx_sound_queue_to_speaker(const MsxAudioBlock& block)
+{
+    if (block.bufferIndex >= kNumPlayBuffers ||
+        !s_playBuffers[block.bufferIndex] ||
+        block.sampleCount == 0u ||
+        !s_audioState.enabled ||
+        s_audioState.paused) {
         return;
     }
 
     (void)M5Cardputer.Speaker.playRaw(
-        samples,
-        sampleCount,
+        s_playBuffers[block.bufferIndex],
+        block.sampleCount,
         s_audioState.sampleRate,
         false,
         1,
@@ -91,6 +172,111 @@ static void msx_sound_queue_block(const int16_t* samples, size_t sampleCount)
         false
     );
     s_audioState.streamSeen = true;
+}
+
+static void msx_sound_audio_task(void* arg)
+{
+    (void)arg;
+
+    while (s_audioTaskRunning) {
+        MsxAudioBlock block = {};
+        if (!s_readyBlockQueue ||
+            xQueueReceive(s_readyBlockQueue, &block, kAudioWorkerPollTicks) != pdTRUE) {
+            msx_sound_update_queue_depth();
+            continue;
+        }
+
+        if (block.bufferIndex >= kNumPlayBuffers || block.sampleCount == 0u) {
+            continue;
+        }
+
+        size_t queuedBefore = 0u;
+        while (s_audioTaskRunning && s_audioState.enabled && !s_audioState.paused) {
+            queuedBefore = M5Cardputer.Speaker.isPlaying(kChannel);
+            if (queuedBefore < 2u) {
+                break;
+            }
+            msx_sound_update_queue_depth();
+            vTaskDelay(1);
+        }
+
+        if (!s_audioTaskRunning || !s_audioState.enabled || s_audioState.paused) {
+            msx_sound_release_block(block);
+            continue;
+        }
+
+        const bool needInitialPrime = (queuedBefore == 0u) && !s_audioState.streamSeen;
+        msx_sound_queue_to_speaker(block);
+        s_audioState.submittedFrames++;
+
+        if (needInitialPrime) {
+            MsxAudioBlock primeBlock = {};
+            if (s_readyBlockQueue && xQueueReceive(s_readyBlockQueue, &primeBlock, 0) == pdTRUE) {
+                if (!s_audioState.paused && s_audioState.enabled && s_audioTaskRunning) {
+                    msx_sound_queue_to_speaker(primeBlock);
+                    s_audioState.submittedFrames++;
+                }
+                msx_sound_release_block(primeBlock);
+            } else {
+                msx_sound_queue_to_speaker(block);
+                s_audioState.submittedFrames++;
+            }
+        }
+
+        msx_sound_release_block(block);
+        msx_sound_update_queue_depth();
+    }
+
+    s_audioTask = nullptr;
+    vTaskDelete(nullptr);
+}
+
+static bool msx_sound_start_worker(void)
+{
+    if (s_audioTask) {
+        return true;
+    }
+
+    s_audioTaskRunning = true;
+    const BaseType_t ok = xTaskCreatePinnedToCore(
+        msx_sound_audio_task,
+        "msx_audio",
+        4096,
+        nullptr,
+        6,
+        &s_audioTask,
+        0
+    );
+    if (ok == pdPASS) {
+        return true;
+    }
+
+    s_audioTaskRunning = false;
+    s_audioTask = nullptr;
+    return false;
+}
+
+static void msx_sound_stop_worker(void)
+{
+    s_audioTaskRunning = false;
+
+    if (s_readyBlockQueue) {
+        const MsxAudioBlock wakeBlock = {0xFFu, 0u};
+        (void)xQueueSend(s_readyBlockQueue, &wakeBlock, 0);
+    }
+
+    if (!s_audioTask) {
+        return;
+    }
+
+    for (int i = 0; i < 25 && s_audioTask; ++i) {
+        vTaskDelay(1);
+    }
+
+    if (s_audioTask) {
+        vTaskDelete(s_audioTask);
+        s_audioTask = nullptr;
+    }
 }
 
 static uint16_t msx_sound_copy_with_gain(int16_t* dst, const int16_t* src, size_t count)
@@ -139,6 +325,10 @@ bool msx_sound_init(uint32_t sampleRate, uint8_t channels)
         msx_sound_shutdown();
         return false;
     }
+    if (!msx_sound_prepare_queues()) {
+        msx_sound_shutdown();
+        return false;
+    }
 
     s_audioState.sampleRate = sampleRate;
     s_audioState.channels = channels;
@@ -159,14 +349,17 @@ bool msx_sound_init(uint32_t sampleRate, uint8_t channels)
     if (!M5Cardputer.Speaker.isRunning()) {
         M5Cardputer.Speaker.begin();
     }
+    if (!msx_sound_start_worker()) {
+        msx_sound_shutdown();
+        return false;
+    }
 
     M5Cardputer.Speaker.setVolume(80);
     M5Cardputer.Speaker.stop(kChannel);
     std::memset(s_mixBuffer, 0, sizeof(s_mixBuffer));
-    for (size_t i = 0; i < 2u; ++i) {
+    for (size_t i = 0; i < kNumPlayBuffers; ++i) {
         std::memset(s_playBuffers[i], 0, kMaxFrameSamples * sizeof(int16_t));
     }
-    s_playFlip = 0u;
 
     s_audioState.enabled = true;
     s_audioState.running = true;
@@ -186,10 +379,13 @@ void msx_sound_shutdown(void)
     }
 
     s_audioState.running = false;
+    s_audioTaskRunning = false;
     M5Cardputer.Speaker.stop(kChannel);
+    msx_sound_stop_worker();
+    msx_sound_flush_pending_blocks();
     std::memset(s_mixBuffer, 0, sizeof(s_mixBuffer));
+    msx_sound_release_queues();
     msx_sound_release_buffers();
-    s_playFlip = 0u;
     msx_sound_reset_state(true);
 #endif
 }
@@ -242,7 +438,8 @@ void msx_sound_submit(const int16_t* samples, size_t sampleCount)
     (void)samples;
     (void)sampleCount;
 #else
-    if (!s_audioState.enabled || s_audioState.paused || !samples || sampleCount == 0) {
+    if (!s_audioState.enabled || s_audioState.paused || !samples || sampleCount == 0 ||
+        !s_freeBufferQueue || !s_readyBlockQueue) {
         return;
     }
 
@@ -250,56 +447,48 @@ void msx_sound_submit(const int16_t* samples, size_t sampleCount)
         sampleCount = kMaxFrameSamples;
     }
 
-    const size_t queued = M5Cardputer.Speaker.isPlaying(kChannel);
-    if (queued >= 2u) {
+    uint8_t bufferIndex = 0xFFu;
+    if (xQueueReceive(s_freeBufferQueue, &bufferIndex, 0) != pdTRUE ||
+        bufferIndex >= kNumPlayBuffers ||
+        !s_playBuffers[bufferIndex]) {
         s_audioState.droppedFrames++;
-        s_audioState.queuedBlocks = static_cast<uint8_t>(queued);
+        msx_sound_update_queue_depth();
 
         static uint32_t s_lastDropLog = 0;
         if (millis() - s_lastDropLog > 5000) {
-            std::printf("[MSX][AUDIO] WARNING: I2S buffer overrun! Frame dropped. (Total drops: %lu)\n", 
+            std::printf("[MSX][AUDIO] WARNING: worker queue full, frame dropped. (Total drops: %lu)\n",
                         static_cast<unsigned long>(s_audioState.droppedFrames));
             s_lastDropLog = millis();
         }
         return;
     }
 
-    auto copy_and_queue = [&](size_t count, size_t queuedBefore) {
-        if (!s_playBuffers[s_playFlip]) {
-            return;
-        }
-
-        const uint16_t peak = msx_sound_copy_with_gain(s_playBuffers[s_playFlip], samples, count);
+    const uint16_t peak = msx_sound_copy_with_gain(s_playBuffers[bufferIndex], samples, sampleCount);
 #if MSX_AUDIO_TRACE_ENABLED
-        static uint16_t s_audioPeakLogCount = 0u;
-        static uint16_t s_lastLoggedPeak = 0xFFFFu;
-        if (s_audioPeakLogCount < 64u &&
-            (peak != s_lastLoggedPeak || peak == 0u || queuedBefore == 0u)) {
-            std::printf("[MSX][AUDIO] submit n=%u peak=%u queued=%u gain=%u #%u\n",
-                        static_cast<unsigned>(count),
-                        static_cast<unsigned>(peak),
-                        static_cast<unsigned>(queuedBefore),
-                        static_cast<unsigned>(kOutputGain),
-                        static_cast<unsigned>(s_audioPeakLogCount));
-            s_lastLoggedPeak = peak;
-            ++s_audioPeakLogCount;
-        }
+    static uint16_t s_audioPeakLogCount = 0u;
+    static uint16_t s_lastLoggedPeak = 0xFFFFu;
+    const uint8_t queuedBefore = s_audioState.queuedBlocks;
+    if (s_audioPeakLogCount < 64u &&
+        (peak != s_lastLoggedPeak || peak == 0u || queuedBefore == 0u)) {
+        std::printf("[MSX][AUDIO] submit n=%u peak=%u queued=%u gain=%u #%u\n",
+                    static_cast<unsigned>(sampleCount),
+                    static_cast<unsigned>(peak),
+                    static_cast<unsigned>(queuedBefore),
+                    static_cast<unsigned>(kOutputGain),
+                    static_cast<unsigned>(s_audioPeakLogCount));
+        s_lastLoggedPeak = peak;
+        ++s_audioPeakLogCount;
+    }
 #else
-        (void)peak;
-        (void)queuedBefore;
+    (void)peak;
 #endif
 
-        msx_sound_queue_block(s_playBuffers[s_playFlip], count);
-        s_playFlip ^= 0x01u;
-        s_audioState.submittedFrames++;
-    };
-
-    // Prime the hardware queue only on a fresh stream start. Repeating the same
-    // block on every underrun makes audio sound artificially slowed down.
-    const bool needInitialPrime = (queued == 0u) && !s_audioState.streamSeen;
-    copy_and_queue(sampleCount, queued);
-    if (needInitialPrime) {
-        copy_and_queue(sampleCount, 1u);
+    const MsxAudioBlock block = {bufferIndex, static_cast<uint16_t>(sampleCount)};
+    if (xQueueSend(s_readyBlockQueue, &block, 0) != pdTRUE) {
+        msx_sound_release_block(block);
+        s_audioState.droppedFrames++;
+        msx_sound_update_queue_depth();
+        return;
     }
 
     msx_sound_update_queue_depth();
@@ -327,6 +516,7 @@ void msx_sound_set_paused(bool paused)
     }
 
     M5Cardputer.Speaker.stop(kChannel);
+    msx_sound_flush_pending_blocks();
     s_audioState.queuedBlocks = 0u;
     s_audioState.streamSeen = false;
 #endif

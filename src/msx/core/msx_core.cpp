@@ -827,10 +827,12 @@ void msx_core_step_frame(MsxCoreState* state)
         return;
     }
 
+#if MSX_PROFILE_LOG_ENABLED
     const int64_t frameStartUs = esp_timer_get_time();
     uint32_t cpuRunUs = 0u;
     uint32_t vdpRenderUs = 0u;
     uint32_t presentUs = 0u;
+#endif
 
     const bool vdpSliceMode = state->machineMode == MsxMachineMode::MSX2 &&
                               state->vdp.mode != MsxVdpMode::Unsupported &&
@@ -852,9 +854,13 @@ void msx_core_step_frame(MsxCoreState* state)
         const unsigned totalLines = 262u;
         const unsigned vblankLine = visibleLines > 192u ? 230u : 220u;
         uint32_t executedCycles = 0u;
+#if MSX_PROFILE_LOG_ENABLED
         int64_t vdpStartUs = esp_timer_get_time();
+#endif
         msx_vdp_prepare_frame_render(&state->vdp);
+#if MSX_PROFILE_LOG_ENABLED
         vdpRenderUs += static_cast<uint32_t>(esp_timer_get_time() - vdpStartUs);
+#endif
         state->vdp.status[0] &= static_cast<uint8_t>(~0x80u);
         state->vdp.status[1] &= static_cast<uint8_t>(~0x01u);
         state->vdp.status[2] &= static_cast<uint8_t>(~0x60u);
@@ -862,9 +868,13 @@ void msx_core_step_frame(MsxCoreState* state)
             state->vdp.currentFrameCpuCycles = executedCycles;
             msx_vdp_advance_command_engine(&state->vdp, executedCycles);
             if (line < visibleLines) {
+#if MSX_PROFILE_LOG_ENABLED
                 vdpStartUs = esp_timer_get_time();
+#endif
                 msx_vdp_render_slice(&state->vdp, line, line + 1u, line + 1u == visibleLines);
+#if MSX_PROFILE_LOG_ENABLED
                 vdpRenderUs += static_cast<uint32_t>(esp_timer_get_time() - vdpStartUs);
+#endif
             }
             const uint32_t targetCycles =
                 static_cast<uint32_t>((static_cast<uint64_t>(line + 1u) *
@@ -873,9 +883,13 @@ void msx_core_step_frame(MsxCoreState* state)
             const int sliceBudget = targetCycles > executedCycles
                                         ? static_cast<int>(targetCycles - executedCycles)
                                         : 0;
+#if MSX_PROFILE_LOG_ENABLED
             const int64_t cpuStartUs = esp_timer_get_time();
+#endif
             executedCycles += static_cast<uint32_t>(msx_cpu_run_cycles(&state->cpu, &state->memory, sliceBudget));
+#if MSX_PROFILE_LOG_ENABLED
             cpuRunUs += static_cast<uint32_t>(esp_timer_get_time() - cpuStartUs);
+#endif
             state->vdp.currentFrameCpuCycles = executedCycles;
             if (line == static_cast<unsigned>(state->vdp.regs[19])) {
                 state->vdp.status[1] |= 0x01u;
@@ -899,18 +913,30 @@ void msx_core_step_frame(MsxCoreState* state)
         state->lastFrameCycles = executedCycles;
         state->vdp.dirty = false;
         state->vdp.frameReady = true;
+#if MSX_PROFILE_LOG_ENABLED
         vdpStartUs = esp_timer_get_time();
+#endif
         msx_vdp_get_display_frame(&state->vdp, &state->displayFrame);
+#if MSX_PROFILE_LOG_ENABLED
         vdpRenderUs += static_cast<uint32_t>(esp_timer_get_time() - vdpStartUs);
+#endif
         if (state->displayFrame.indexed8) {
+#if MSX_PROFILE_LOG_ENABLED
             const int64_t presentStartUs = esp_timer_get_time();
+#endif
             msx_video_present_frame(&state->displayFrame);
+#if MSX_PROFILE_LOG_ENABLED
             presentUs += static_cast<uint32_t>(esp_timer_get_time() - presentStartUs);
+#endif
         }
     } else {
+#if MSX_PROFILE_LOG_ENABLED
         const int64_t cpuStartUs = esp_timer_get_time();
+#endif
         state->lastFrameCycles = static_cast<uint32_t>(msx_cpu_run_cycles(&state->cpu, &state->memory, kMsxFrameCycles60Hz));
+#if MSX_PROFILE_LOG_ENABLED
         cpuRunUs += static_cast<uint32_t>(esp_timer_get_time() - cpuStartUs);
+#endif
     }
 
     // Log the first time the CPU enters a non-running state, and every 60 frames while stuck.
@@ -945,10 +971,14 @@ void msx_core_step_frame(MsxCoreState* state)
 #endif
 
     if (!vdpSliceMode) {
+#if MSX_PROFILE_LOG_ENABLED
         const int64_t vdpStartUs = esp_timer_get_time();
+#endif
         msx_vdp_render(&state->vdp);
         msx_vdp_get_display_frame(&state->vdp, &state->displayFrame);
+#if MSX_PROFILE_LOG_ENABLED
         vdpRenderUs += static_cast<uint32_t>(esp_timer_get_time() - vdpStartUs);
+#endif
     }
 #if MSX_PROFILE_LOG_ENABLED
     const uint32_t frameUs = static_cast<uint32_t>(esp_timer_get_time() - frameStartUs);

@@ -25,6 +25,10 @@
 #define MSX_VDP_SPRITE_LOG_ENABLED 0
 #endif
 
+#ifndef MSX_VDP_MODE_LOG_ENABLED
+#define MSX_VDP_MODE_LOG_ENABLED 0
+#endif
+
 #ifndef MSX_VDP_DUALCORE_STATS_LOG_ENABLED
 #define MSX_VDP_DUALCORE_STATS_LOG_ENABLED 0
 #endif
@@ -2312,6 +2316,7 @@ MsxVdpMode msx_vdp_decode_mode(const MsxVdpState* state)
 
 void msx_vdp_update_mode_geometry(MsxVdpState* state)
 {
+#if MSX_VDP_MODE_LOG_ENABLED
     static MsxVdpMode s_lastLoggedMode = MsxVdpMode::Unsupported;
     static unsigned s_lastLoggedHeight = 0u;
     static uint8_t s_lastLoggedR2 = 0xFFu;
@@ -2319,6 +2324,7 @@ void msx_vdp_update_mode_geometry(MsxVdpState* state)
     static uint8_t s_lastLoggedR25 = 0xFFu;
     static uint8_t s_lastLoggedR26 = 0xFFu;
     static uint8_t s_lastLoggedR27 = 0xFFu;
+#endif
 
     if (!state) {
         return;
@@ -2338,6 +2344,7 @@ void msx_vdp_update_mode_geometry(MsxVdpState* state)
         state->activeHeight = kMsxFrameHeightMsx2;
     }
 
+#if MSX_VDP_MODE_LOG_ENABLED
     if (msx_vdp_is_msx2(state) &&
         (state->mode != s_lastLoggedMode ||
          state->activeHeight != s_lastLoggedHeight ||
@@ -2366,6 +2373,7 @@ void msx_vdp_update_mode_geometry(MsxVdpState* state)
         s_lastLoggedR26 = state->regs[26];
         s_lastLoggedR27 = state->regs[27];
     }
+#endif
 }
 
 void msx_vdp_clear_active_frame(MsxVdpState* state, uint8_t color)
