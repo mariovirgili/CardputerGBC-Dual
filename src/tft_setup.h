@@ -9,7 +9,7 @@
     #define ILI9488_DRIVER
  
     // Frequencies (ILI9488 handles high freq well, but starting safe)
-    #define SPI_FREQUENCY        50000000 
+    #define SPI_FREQUENCY        70000000 
     #define SPI_READ_FREQUENCY    6000000
 
 #else

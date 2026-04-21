@@ -801,6 +801,7 @@ void msx_memory_reset(MsxMemoryState* state)
     state->lastPortA8 = state->slotRegister;
     state->lastPortAA = state->ppiPortC;
     state->ioWriteCount = 0u;
+    state->mapEpoch = 0u;
     state->cartBootWorkareaFallbackArmed = false;
     state->cartBootMappingRestoreArmed = false;
 
@@ -845,6 +846,11 @@ void msx_memory_refresh_maps(MsxMemoryState* state)
                     break;
             }
         }
+    }
+
+    state->mapEpoch = (state->mapEpoch == 0xFFFFFFFFu) ? 1u : (state->mapEpoch + 1u);
+    if (state->mapEpoch == 0u) {
+        state->mapEpoch = 1u;
     }
 }
 

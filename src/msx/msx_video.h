@@ -34,3 +34,5 @@ void msx_video_set_state_overlay_active(bool active);
 void msx_video_prepare_sd_access(void);
 void msx_video_request_full_redraw(void);
 MsxVideoPerfSummary msx_video_get_perf_summary(void);
+uint32_t msx_video_get_last_present_us(void);
+void msx_video_clear_last_present_us(void);

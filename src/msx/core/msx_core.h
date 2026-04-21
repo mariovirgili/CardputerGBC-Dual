@@ -20,6 +20,11 @@ struct MsxCoreState {
     bool videoHookReady;
     bool audioHookReady;
     uint32_t frameCounter;
+    uint32_t lastFrameCpuUs;
+    uint32_t lastFrameVdpUs;
+    uint32_t lastFramePresentUs;
+    uint32_t lastFrameOtherUs;
+    uint32_t lastFrameTotalUs;
     uint32_t lastFrameCycles;
     uint32_t lastStatusFrame;
     uint32_t audioSampleRate;

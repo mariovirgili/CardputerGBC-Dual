@@ -29,9 +29,13 @@ struct MsxCpuState {
     uint8_t im;
     uint8_t lastOpcode;
     uint8_t unsupportedOpcode;
+    uint8_t fetchBank;
+    uint16_t currentPcAddress;
     uint16_t lastPc;
     uint16_t unsupportedPc;
     uint32_t totalCycles;
+    uint32_t fetchMapEpoch;
+    const uint8_t* currentPcPtr;
     bool iff1;
     bool iff2;
     uint8_t eiDelay; // 0=off, 1=enable after current step, 2=skip one instruction after EI

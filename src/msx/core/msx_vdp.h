@@ -6,6 +6,9 @@
 #include "../msx_config.h"
 
 struct MsxDisplayFrame;
+struct MsxVdpState;
+
+using MsxVdpWriteVramFn = void (*)(MsxVdpState* state, uint32_t address, uint8_t value);
 
 enum class MsxVdpMode : uint8_t {
     Graphics1 = 0,
@@ -68,6 +71,7 @@ struct MsxVdpState {
     uint32_t address;
     uint8_t latchedControl;
     uint8_t paletteLatch;
+    MsxVdpWriteVramFn writeVram;
     bool palettePending;
     bool controlPending;
     bool dirty;

@@ -42,6 +42,7 @@ struct MsxMemoryState {
     uint8_t mapperRegisters[4];
     const uint8_t* readMap[8];
     uint8_t* writeMap[8];
+    uint32_t mapEpoch;
     uint8_t slotRegister;
     uint8_t secondarySlotRegs[4];  // SSLReg[primary slot], read/written via 0xFFFF using page3 slot
     uint8_t rtcRegisterSelect;

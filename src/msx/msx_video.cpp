@@ -55,6 +55,16 @@ struct MsxLineStreamState {
     uint16_t paletteEntries;
 };
 
+void msx_video_pack_indexed_rgb444_line(const uint8_t* src,
+                                        uint8_t* dst,
+                                        int pixelCount,
+                                        uint16_t paletteEntries);
+void msx_video_pack_mapped_rgb444_line(const uint8_t* src,
+                                       uint8_t* dst,
+                                       int pixelCount,
+                                       const int16_t* xmap,
+                                       uint16_t paletteEntries);
+
 static uint16_t* s_lineBuf = nullptr;
 static int s_lineCap = 0;
 static uint8_t* s_lineBuf12 = nullptr;
@@ -78,6 +88,8 @@ static bool s_swapBytesConfigured = false;
 static bool s_firstPresentLogged = false;
 static uint16_t s_palette565[16] = {};
 static uint32_t s_palettePairs565[256] = {};
+static uint16_t s_palette444[256] = {};
+static uint32_t s_palettePairs444[256] = {};
 static TFT_eSPI s_extTft;
 static bool s_extTftPrepared = false;
 static bool s_extTftRgb444Configured = false;
@@ -91,6 +103,7 @@ static MsxLineStreamState s_lineStream = {};
 
 static uint32_t s_spiPushFrames = 0;
 static uint32_t s_spiPushUs = 0;
+static uint32_t s_lastPresentUs = 0;
 static MsxVideoPerfSummary s_videoPerfSummary = {};
 static SemaphoreHandle_t s_videoMutex = nullptr;
 
@@ -151,6 +164,21 @@ void msx_video_prepare_external_tft(void)
 constexpr uint16_t msx_rgb565(uint8_t r, uint8_t g, uint8_t b)
 {
     return static_cast<uint16_t>((r & 0xF8u) | (g >> 5) | ((g & 0x1Cu) << 11) | ((b & 0xF8u) << 5));
+}
+
+inline uint16_t msx_rgb565_to_rgb444(uint16_t raw)
+{
+    const uint16_t c = static_cast<uint16_t>((raw >> 8) | (raw << 8));
+    return static_cast<uint16_t>(((c >> 4) & 0x0F00u) |
+                                 ((c >> 3) & 0x00F0u) |
+                                 ((c >> 1) & 0x000Fu));
+}
+
+constexpr uint32_t msx_pack_rgb444_pair(uint16_t c0, uint16_t c1)
+{
+    return static_cast<uint32_t>((c0 >> 4) & 0xFFu)
+         | (static_cast<uint32_t>(((c0 & 0x0Fu) << 4) | ((c1 >> 8) & 0x0Fu)) << 8)
+         | (static_cast<uint32_t>(c1 & 0x00FFu) << 16);
 }
 
 void msx_video_init_palette(void)
@@ -223,10 +251,21 @@ void msx_video_clear_target(void)
     }
 }
 
-void msx_video_init_palette_pairs(const uint16_t* palette)
+void msx_video_init_palette_pairs(const uint16_t* palette, uint16_t paletteEntries)
 {
     if (!palette) {
         return;
+    }
+
+    const unsigned entryCount = paletteEntries == 0u
+                                    ? 16u
+                                    : (paletteEntries > 256u ? 256u : paletteEntries);
+
+    for (unsigned i = 0; i < 256u; ++i) {
+        s_palette444[i] = 0u;
+    }
+    for (unsigned i = 0; i < entryCount; ++i) {
+        s_palette444[i] = msx_rgb565_to_rgb444(palette[i]);
     }
 
     for (unsigned key = 0; key < 256u; ++key) {
@@ -234,6 +273,7 @@ void msx_video_init_palette_pairs(const uint16_t* palette)
         const uint8_t c1 = static_cast<uint8_t>((key >> 4) & 0x0Fu);
         s_palettePairs565[key] = static_cast<uint32_t>(palette[c0])
                                | (static_cast<uint32_t>(palette[c1]) << 16);
+        s_palettePairs444[key] = msx_pack_rgb444_pair(s_palette444[c0], s_palette444[c1]);
     }
 }
 
@@ -463,6 +503,27 @@ static void msx_video_emit_stream_line(const MsxLineStreamState& stream,
         return;
     }
 
+    if (msx_video_game_on_external() && stream.useRgb444) {
+        const int bytesPerLine = ((stream.dstW + 1) / 2) * 3;
+        if (stream.cropOnly) {
+            msx_video_pack_indexed_rgb444_line(srcLine + static_cast<size_t>(stream.srcX0),
+                                               s_lineBuf12,
+                                               stream.dstW,
+                                               stream.paletteEntries);
+        } else {
+            if (!s_xmap) {
+                return;
+            }
+            msx_video_pack_mapped_rgb444_line(srcLine,
+                                              s_lineBuf12,
+                                              stream.dstW,
+                                              s_xmap,
+                                              stream.paletteEntries);
+        }
+        s_extTft.pushColors(reinterpret_cast<uint16_t*>(s_lineBuf12), (bytesPerLine + 1) / 2, false);
+        return;
+    }
+
     if (stream.cropOnly) {
         const uint8_t* src = srcLine + static_cast<size_t>(stream.srcX0);
         msx_video_expand_indexed_line(src, s_lineBuf, stream.dstW, stream.palette, stream.paletteEntries);
@@ -515,7 +576,7 @@ bool msx_video_begin_line_stream_impl(const MsxDisplayFrame* frame)
     }
 
     const uint16_t* palette = frame->palette565 ? frame->palette565 : s_palette565;
-    msx_video_init_palette_pairs(palette);
+    msx_video_init_palette_pairs(palette, frame->paletteEntryCount);
 
     s_lineStream.active = true;
     s_lineStream.cropOnly = plan.cropOnly;
@@ -576,22 +637,21 @@ void msx_video_draw_crop_frame(const MsxDisplayFrame* frame, const MsxVideoPlan&
 {
     const uint16_t* palette = frame->palette565 ? frame->palette565 : s_palette565;
     const bool useRgb444 = msx_video_use_external_rgb444();
-    msx_video_init_palette_pairs(palette);
+    msx_video_init_palette_pairs(palette, frame->paletteEntryCount);
 
     if (msx_video_game_on_external()) {
         msx_video_begin_active_write(plan);
         if (useRgb444) {
+            const int bytesPerLine = ((plan.dstW + 1) / 2) * 3;
             for (int y = 0; y < plan.dstH; y += kBatchLines) {
                 const int batch = (y + kBatchLines <= plan.dstH) ? kBatchLines : (plan.dstH - y);
                 for (int row = 0; row < batch; ++row) {
                     const uint8_t* src = frame->indexed8
                         + static_cast<size_t>(plan.srcY0 + y + row) * frame->pitchBytes
                         + static_cast<size_t>(plan.srcX0);
-                    uint16_t* dst = s_lineBuf + static_cast<size_t>(row) * plan.dstW;
-                    msx_video_expand_indexed_line(src, dst, plan.dstW, palette, frame->paletteEntryCount);
+                    uint8_t* dst = s_lineBuf12 + static_cast<size_t>(row) * bytesPerLine;
+                    msx_video_pack_indexed_rgb444_line(src, dst, plan.dstW, frame->paletteEntryCount);
                 }
-                msx_video_pack_rgb444_line(s_lineBuf, plan.dstW * batch, s_lineBuf12);
-                const int bytesPerLine = ((plan.dstW + 1) / 2) * 3;
                 s_extTft.pushColors(reinterpret_cast<uint16_t*>(s_lineBuf12), (bytesPerLine * batch + 1) / 2, false);
             }
         } else {
@@ -631,22 +691,23 @@ void msx_video_draw_scaled_frame(const MsxDisplayFrame* frame, const MsxVideoPla
 {
     const uint16_t* palette = frame->palette565 ? frame->palette565 : s_palette565;
     const bool useRgb444 = msx_video_use_external_rgb444();
-    msx_video_init_palette_pairs(palette);
+    msx_video_init_palette_pairs(palette, frame->paletteEntryCount);
 
     if (msx_video_game_on_external()) {
         msx_video_begin_active_write(plan);
         if (useRgb444) {
+            const int bytesPerLine = ((plan.dstW + 1) / 2) * 3;
             for (int y = 0; y < plan.dstH; y += kBatchLines) {
                 const int batch = (y + kBatchLines <= plan.dstH) ? kBatchLines : (plan.dstH - y);
                 for (int row = 0; row < batch; ++row) {
                     const uint8_t* src = frame->indexed8 + static_cast<size_t>(s_ymap[y + row]) * frame->pitchBytes;
-                    uint16_t* dst = s_lineBuf + static_cast<size_t>(row) * plan.dstW;
-                    for (int x = 0; x < plan.dstW; ++x) {
-                        dst[x] = palette[src[s_xmap[x]]];
-                    }
+                    uint8_t* dst = s_lineBuf12 + static_cast<size_t>(row) * bytesPerLine;
+                    msx_video_pack_mapped_rgb444_line(src,
+                                                      dst,
+                                                      plan.dstW,
+                                                      s_xmap,
+                                                      frame->paletteEntryCount);
                 }
-                msx_video_pack_rgb444_line(s_lineBuf, plan.dstW * batch, s_lineBuf12);
-                const int bytesPerLine = ((plan.dstW + 1) / 2) * 3;
                 s_extTft.pushColors(reinterpret_cast<uint16_t*>(s_lineBuf12), (bytesPerLine * batch + 1) / 2, false);
             }
         } else {
@@ -771,6 +832,7 @@ void msx_video_init(void)
     s_videoPerfSkippedFrames = 0;
     s_autoFrameskipStep256 = 0;
     s_autoFrameskipAccum256 = 0;
+    s_lastPresentUs = 0;
     msx_video_reset_layout_cache();
     msx_video_clear_target();
 }
@@ -781,6 +843,7 @@ void msx_video_shutdown(void)
     s_extTftColorModeKnown = false;
     s_externalUiActive = false;
     s_stateOverlayActive = false;
+    s_lastPresentUs = 0;
     msx_video_reset_layout_cache();
 }
 
@@ -823,6 +886,101 @@ void msx_video_prepare_external_ui(void)
         s_extTftColorModeLogged = false;
     }
 }
+
+namespace {
+
+void msx_video_pack_indexed_rgb444_line(const uint8_t* src,
+                                        uint8_t* dst,
+                                        int pixelCount,
+                                        uint16_t paletteEntries)
+{
+    if (!src || !dst || pixelCount <= 0) {
+        return;
+    }
+
+    if (paletteEntries <= 16u) {
+        int x = 0;
+        int j = 0;
+        for (; x + 1 < pixelCount; x += 2, j += 3) {
+            const uint8_t key = static_cast<uint8_t>((src[x] & 0x0Fu) | ((src[x + 1] & 0x0Fu) << 4));
+            const uint32_t packed = s_palettePairs444[key];
+            dst[j] = static_cast<uint8_t>(packed & 0xFFu);
+            dst[j + 1] = static_cast<uint8_t>((packed >> 8) & 0xFFu);
+            dst[j + 2] = static_cast<uint8_t>((packed >> 16) & 0xFFu);
+        }
+        if (x < pixelCount) {
+            const uint16_t color = s_palette444[src[x] & 0x0Fu];
+            dst[j] = static_cast<uint8_t>((color >> 4) & 0xFFu);
+            dst[j + 1] = static_cast<uint8_t>((color & 0x0Fu) << 4);
+            dst[j + 2] = 0u;
+        }
+        return;
+    }
+
+    int x = 0;
+    int j = 0;
+    for (; x + 1 < pixelCount; x += 2, j += 3) {
+        const uint32_t packed = msx_pack_rgb444_pair(s_palette444[src[x]], s_palette444[src[x + 1]]);
+        dst[j] = static_cast<uint8_t>(packed & 0xFFu);
+        dst[j + 1] = static_cast<uint8_t>((packed >> 8) & 0xFFu);
+        dst[j + 2] = static_cast<uint8_t>((packed >> 16) & 0xFFu);
+    }
+    if (x < pixelCount) {
+        const uint16_t color = s_palette444[src[x]];
+        dst[j] = static_cast<uint8_t>((color >> 4) & 0xFFu);
+        dst[j + 1] = static_cast<uint8_t>((color & 0x0Fu) << 4);
+        dst[j + 2] = 0u;
+    }
+}
+
+void msx_video_pack_mapped_rgb444_line(const uint8_t* src,
+                                       uint8_t* dst,
+                                       int pixelCount,
+                                       const int16_t* xmap,
+                                       uint16_t paletteEntries)
+{
+    if (!src || !dst || pixelCount <= 0 || !xmap) {
+        return;
+    }
+
+    if (paletteEntries <= 16u) {
+        int x = 0;
+        int j = 0;
+        for (; x + 1 < pixelCount; x += 2, j += 3) {
+            const uint8_t key = static_cast<uint8_t>((src[xmap[x]] & 0x0Fu) |
+                                                     ((src[xmap[x + 1]] & 0x0Fu) << 4));
+            const uint32_t packed = s_palettePairs444[key];
+            dst[j] = static_cast<uint8_t>(packed & 0xFFu);
+            dst[j + 1] = static_cast<uint8_t>((packed >> 8) & 0xFFu);
+            dst[j + 2] = static_cast<uint8_t>((packed >> 16) & 0xFFu);
+        }
+        if (x < pixelCount) {
+            const uint16_t color = s_palette444[src[xmap[x]] & 0x0Fu];
+            dst[j] = static_cast<uint8_t>((color >> 4) & 0xFFu);
+            dst[j + 1] = static_cast<uint8_t>((color & 0x0Fu) << 4);
+            dst[j + 2] = 0u;
+        }
+        return;
+    }
+
+    int x = 0;
+    int j = 0;
+    for (; x + 1 < pixelCount; x += 2, j += 3) {
+        const uint32_t packed = msx_pack_rgb444_pair(s_palette444[src[xmap[x]]],
+                                                     s_palette444[src[xmap[x + 1]]]);
+        dst[j] = static_cast<uint8_t>(packed & 0xFFu);
+        dst[j + 1] = static_cast<uint8_t>((packed >> 8) & 0xFFu);
+        dst[j + 2] = static_cast<uint8_t>((packed >> 16) & 0xFFu);
+    }
+    if (x < pixelCount) {
+        const uint16_t color = s_palette444[src[xmap[x]]];
+        dst[j] = static_cast<uint8_t>((color >> 4) & 0xFFu);
+        dst[j + 1] = static_cast<uint8_t>((color & 0x0Fu) << 4);
+        dst[j + 2] = 0u;
+    }
+}
+
+} // namespace
 
 void msx_video_finish_external_ui(void)
 {
@@ -885,6 +1043,7 @@ void msx_video_prepare_sd_access(void)
     s_videoPerfSkippedFrames = 0;
     s_autoFrameskipStep256 = 0;
     s_autoFrameskipAccum256 = 0;
+    s_lastPresentUs = 0;
 
     msx_video_unlock();
 }
@@ -896,6 +1055,7 @@ bool msx_video_present_frame(const MsxDisplayFrame* frame)
     constexpr uint32_t kFrameskipDeadbandUs = 17500u;
 
     msx_video_lock();
+    s_lastPresentUs = 0;
 
     if (s_runtimeMenuActive || s_stateOverlayActive) {
         msx_video_unlock();
@@ -932,6 +1092,7 @@ bool msx_video_present_frame(const MsxDisplayFrame* frame)
         if (skipPresent) {
             s_videoPerfSkippedFrames++;
         } else {
+            s_lastPresentUs = frameUs;
             s_spiPushUs += frameUs;
             s_spiPushFrames++;
             if (frameUs > s_videoPerfWorstUs) {
@@ -1008,6 +1169,16 @@ bool msx_video_present_frame(const MsxDisplayFrame* frame)
 MsxVideoPerfSummary msx_video_get_perf_summary(void)
 {
     return s_videoPerfSummary;
+}
+
+uint32_t msx_video_get_last_present_us(void)
+{
+    return s_lastPresentUs;
+}
+
+void msx_video_clear_last_present_us(void)
+{
+    s_lastPresentUs = 0u;
 }
 
 void msx_video_request_full_redraw(void)

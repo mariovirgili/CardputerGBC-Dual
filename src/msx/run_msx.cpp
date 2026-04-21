@@ -38,7 +38,7 @@
 #include "vfs/rom_xip.h"
 
 #ifndef MSX_RUN_LOG_ENABLED
-#define MSX_RUN_LOG_ENABLED 0
+#define MSX_RUN_LOG_ENABLED 1
 #endif
 
 #if MSX_RUN_LOG_ENABLED
@@ -82,6 +82,96 @@ struct MsxBiosReferenceEntry {
     const char* name;
     const char* md5;
 };
+
+struct MsxRuntimeTimingWindow {
+    uint32_t frames;
+    uint64_t frameUs;
+    uint64_t cpuUs;
+    uint64_t vdpUs;
+    uint64_t presentUs;
+    uint64_t otherUs;
+};
+
+uint32_t msx_runtime_avg_us(uint64_t totalUs, uint32_t frames)
+{
+    return frames != 0u ? static_cast<uint32_t>(totalUs / frames) : 0u;
+}
+
+void msx_runtime_timing_add(MsxRuntimeTimingWindow* window, const MsxCoreState* core)
+{
+    if (!window || !core) {
+        return;
+    }
+
+    window->frames++;
+    window->frameUs += core->lastFrameTotalUs;
+    window->cpuUs += core->lastFrameCpuUs;
+    window->vdpUs += core->lastFrameVdpUs;
+    window->presentUs += core->lastFramePresentUs;
+    window->otherUs += core->lastFrameOtherUs;
+}
+
+void msx_runtime_log_summary(const MsxCoreState* core,
+                             const MsxAudioHookState* audioState,
+                             uint32_t frameCount,
+                             uint32_t elapsedMs,
+                             MsxRuntimeTimingWindow* timingWindow,
+                             const char* suffix = nullptr)
+{
+    if (!core || !audioState || elapsedMs == 0u) {
+        return;
+    }
+
+    const float fps = (frameCount * 1000.0f) / static_cast<float>(elapsedMs);
+    const uint32_t timedFrames = timingWindow ? timingWindow->frames : 0u;
+    const uint32_t avgFrameUs =
+        msx_runtime_avg_us(timingWindow ? timingWindow->frameUs : 0u, timedFrames);
+    const uint32_t avgCpuUs =
+        msx_runtime_avg_us(timingWindow ? timingWindow->cpuUs : 0u, timedFrames);
+    const uint32_t avgVdpUs =
+        msx_runtime_avg_us(timingWindow ? timingWindow->vdpUs : 0u, timedFrames);
+    const uint32_t avgPresentUs =
+        msx_runtime_avg_us(timingWindow ? timingWindow->presentUs : 0u, timedFrames);
+    const uint32_t avgOtherUs =
+        msx_runtime_avg_us(timingWindow ? timingWindow->otherUs : 0u, timedFrames);
+
+    if (suffix && suffix[0] != '\0') {
+        MSX_RUN_LOG("[MSX] FPS %.1f | FT %u | CPU %u | RND %u | PRS %u | OTH %u | HEAP %u | CPU %s | PC %04X | VDP %s | MACHINE %s | PERF %s | AUDIOQ %u | %s\n",
+                    fps,
+                    avgFrameUs,
+                    avgCpuUs,
+                    avgVdpUs,
+                    avgPresentUs,
+                    avgOtherUs,
+                    esp_get_free_heap_size(),
+                    msx_cpu_run_state_label(core->cpu.runState),
+                    core->cpu.pc,
+                    msx_vdp_mode_label(core->vdp.mode),
+                    msx_media_bios_target_label(core->biosTarget),
+                    msx_config_get_performance_mode_label(),
+                    static_cast<unsigned>(audioState->queuedBlocks),
+                    suffix);
+    } else {
+        MSX_RUN_LOG("[MSX] FPS %.1f | FT %u | CPU %u | RND %u | PRS %u | OTH %u | HEAP %u | CPU %s | PC %04X | VDP %s | MACHINE %s | PERF %s | AUDIOQ %u\n",
+                    fps,
+                    avgFrameUs,
+                    avgCpuUs,
+                    avgVdpUs,
+                    avgPresentUs,
+                    avgOtherUs,
+                    esp_get_free_heap_size(),
+                    msx_cpu_run_state_label(core->cpu.runState),
+                    core->cpu.pc,
+                    msx_vdp_mode_label(core->vdp.mode),
+                    msx_media_bios_target_label(core->biosTarget),
+                    msx_config_get_performance_mode_label(),
+                    static_cast<unsigned>(audioState->queuedBlocks));
+    }
+
+    if (timingWindow) {
+        *timingWindow = {};
+    }
+}
 
 constexpr uint32_t kMsxSkeletonSampleRate = 22050;
 constexpr uint8_t kMsxSkeletonChannels = 1;
@@ -1085,6 +1175,7 @@ void run_msx(const uint8_t* romData, size_t romLen, const char* romName, SdServi
     uint64_t nextFrameUs = esp_timer_get_time();
     uint32_t frameCount = 0;
     uint32_t lastLogMs = millis();
+    MsxRuntimeTimingWindow timingWindow = {};
     bool quitRequested = false;
 
     while (!quitRequested) {
@@ -1117,6 +1208,7 @@ void run_msx(const uint8_t* romData, size_t romLen, const char* romName, SdServi
             size_t audioMixCapacity = 0;
             int16_t* audioMix = msx_sound_begin_mix(&audioMixCapacity);
             msx_core_step_frame(&core);
+            msx_runtime_timing_add(&timingWindow, &core);
             const size_t audioSampleCount = msx_core_drain_audio(&core, audioMix, audioMixCapacity);
             msx_sound_end_mix(audioSampleCount);
         }
@@ -1174,15 +1266,11 @@ void run_msx(const uint8_t* romData, size_t romLen, const char* romName, SdServi
         frameCount++;
         const uint32_t nowMs = millis();
         if (MSX_RUN_LOG_ENABLED && (nowMs - lastLogMs >= 1000)) {
-            const float fps = (frameCount * 1000.0f) / static_cast<float>(nowMs - lastLogMs);
-            MSX_RUN_LOG("[MSX] FPS %.1f | HEAP %u | CPU %s | PC %04X | VDP %s | MACHINE %s | AUDIOQ %u\n",
-                        fps,
-                        esp_get_free_heap_size(),
-                        msx_cpu_run_state_label(core.cpu.runState),
-                        core.cpu.pc,
-                        msx_vdp_mode_label(core.vdp.mode),
-                        msx_media_bios_target_label(core.biosTarget),
-                        static_cast<unsigned>(audioState.queuedBlocks));
+            msx_runtime_log_summary(&core,
+                                    &audioState,
+                                    frameCount,
+                                    nowMs - lastLogMs,
+                                    &timingWindow);
             frameCount = 0;
             lastLogMs = nowMs;
         }
@@ -1317,6 +1405,7 @@ void run_msx_disk(const uint8_t* dskData, size_t dskLen, const char* dskName, Sd
     bool quitRequested = false;
     uint32_t frameCount = 0;
     uint32_t lastLogMs = millis();
+    MsxRuntimeTimingWindow timingWindow = {};
 
     while (!quitRequested) {
         MsxInputState input = {};
@@ -1347,6 +1436,7 @@ void run_msx_disk(const uint8_t* dskData, size_t dskLen, const char* dskName, Sd
             size_t audioMixCapacity = 0;
             int16_t* audioMix = msx_sound_begin_mix(&audioMixCapacity);
             msx_core_step_frame(&core);
+            msx_runtime_timing_add(&timingWindow, &core);
             const size_t audioSampleCount = msx_core_drain_audio(&core, audioMix, audioMixCapacity);
             msx_sound_end_mix(audioSampleCount);
         }
@@ -1398,15 +1488,12 @@ void run_msx_disk(const uint8_t* dskData, size_t dskLen, const char* dskName, Sd
         frameCount++;
         const uint32_t nowMs = millis();
         if (MSX_RUN_LOG_ENABLED && (nowMs - lastLogMs >= 1000)) {
-            const float fps = (frameCount * 1000.0f) / static_cast<float>(nowMs - lastLogMs);
-            MSX_RUN_LOG("[MSX] FPS %.1f | HEAP %u | CPU %s | PC %04X | VDP %s | MACHINE %s | AUDIOQ %u | DISK\n",
-                        fps,
-                        esp_get_free_heap_size(),
-                        msx_cpu_run_state_label(core.cpu.runState),
-                        core.cpu.pc,
-                        msx_vdp_mode_label(core.vdp.mode),
-                        msx_media_bios_target_label(core.biosTarget),
-                        static_cast<unsigned>(audioState.queuedBlocks));
+            msx_runtime_log_summary(&core,
+                                    &audioState,
+                                    frameCount,
+                                    nowMs - lastLogMs,
+                                    &timingWindow,
+                                    "DISK");
             frameCount = 0;
             lastLogMs = nowMs;
         }
@@ -1525,6 +1612,7 @@ void run_msx_basic(const char* name, SdService& sd)
     bool quitRequested = false;
     uint32_t frameCount = 0;
     uint32_t lastLogMs = millis();
+    MsxRuntimeTimingWindow timingWindow = {};
 
     while (!quitRequested) {
         MsxInputState input = {};
@@ -1555,6 +1643,7 @@ void run_msx_basic(const char* name, SdService& sd)
             size_t audioMixCapacity = 0;
             int16_t* audioMix = msx_sound_begin_mix(&audioMixCapacity);
             msx_core_step_frame(&core);
+            msx_runtime_timing_add(&timingWindow, &core);
             const size_t audioSampleCount = msx_core_drain_audio(&core, audioMix, audioMixCapacity);
             msx_sound_end_mix(audioSampleCount);
         }
@@ -1604,15 +1693,12 @@ void run_msx_basic(const char* name, SdService& sd)
         frameCount++;
         const uint32_t nowMs = millis();
         if (MSX_RUN_LOG_ENABLED && (nowMs - lastLogMs >= 1000)) {
-            const float fps = (frameCount * 1000.0f) / static_cast<float>(nowMs - lastLogMs);
-            MSX_RUN_LOG("[MSX] FPS %.1f | HEAP %u | CPU %s | PC %04X | VDP %s | MACHINE %s | AUDIOQ %u | BASIC\n",
-                        fps,
-                        esp_get_free_heap_size(),
-                        msx_cpu_run_state_label(core.cpu.runState),
-                        core.cpu.pc,
-                        msx_vdp_mode_label(core.vdp.mode),
-                        msx_media_bios_target_label(core.biosTarget),
-                        static_cast<unsigned>(audioState.queuedBlocks));
+            msx_runtime_log_summary(&core,
+                                    &audioState,
+                                    frameCount,
+                                    nowMs - lastLogMs,
+                                    &timingWindow,
+                                    "BASIC");
             frameCount = 0;
             lastLogMs = nowMs;
         }
@@ -1749,6 +1835,7 @@ void run_msx_cas(const uint8_t* casData, size_t casLen, const char* casName, SdS
     bool quitRequested = false;
     uint32_t frameCount = 0;
     uint32_t lastLogMs = millis();
+    MsxRuntimeTimingWindow timingWindow = {};
 
     while (!quitRequested) {
         MsxInputState input = {};
@@ -1786,6 +1873,7 @@ void run_msx_cas(const uint8_t* casData, size_t casLen, const char* casName, SdS
             size_t audioMixCapacity = 0;
             int16_t* audioMix = msx_sound_begin_mix(&audioMixCapacity);
             msx_core_step_frame(&core);
+            msx_runtime_timing_add(&timingWindow, &core);
             const size_t audioSampleCount = msx_core_drain_audio(&core, audioMix, audioMixCapacity);
             msx_sound_end_mix(audioSampleCount);
         }
@@ -1836,15 +1924,12 @@ void run_msx_cas(const uint8_t* casData, size_t casLen, const char* casName, SdS
         frameCount++;
         const uint32_t nowMs = millis();
         if (MSX_RUN_LOG_ENABLED && (nowMs - lastLogMs >= 1000)) {
-            const float fps = (frameCount * 1000.0f) / static_cast<float>(nowMs - lastLogMs);
-            MSX_RUN_LOG("[MSX] FPS %.1f | HEAP %u | CPU %s | PC %04X | VDP %s | MACHINE %s | AUDIOQ %u | CAS\n",
-                        fps,
-                        esp_get_free_heap_size(),
-                        msx_cpu_run_state_label(core.cpu.runState),
-                        core.cpu.pc,
-                        msx_vdp_mode_label(core.vdp.mode),
-                        msx_media_bios_target_label(core.biosTarget),
-                        static_cast<unsigned>(audioState.queuedBlocks));
+            msx_runtime_log_summary(&core,
+                                    &audioState,
+                                    frameCount,
+                                    nowMs - lastLogMs,
+                                    &timingWindow,
+                                    "CAS");
             frameCount = 0;
             lastLogMs = nowMs;
         }
