@@ -3,6 +3,14 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#ifndef MSX_PROFILE_LOG_ENABLED
+#define MSX_PROFILE_LOG_ENABLED 1
+#endif
+
+#ifndef MSX_PROFILE_LOG_INTERVAL_FRAMES
+#define MSX_PROFILE_LOG_INTERVAL_FRAMES 60u
+#endif
+
 enum class MsxInternalViewMode : uint8_t {
     PixelPerfect = 0,
     Wide = 1,

@@ -17,6 +17,25 @@
 #define MSX_VDP_TRACE_ENABLED 0
 #endif
 
+#ifndef MSX_VDP_G4_DISP_LOG_ENABLED
+#define MSX_VDP_G4_DISP_LOG_ENABLED 0
+#endif
+
+#ifndef MSX_VDP_SPRITE_LOG_ENABLED
+#define MSX_VDP_SPRITE_LOG_ENABLED 0
+#endif
+
+#ifndef MSX_VDP_DUALCORE_STATS_LOG_ENABLED
+#define MSX_VDP_DUALCORE_STATS_LOG_ENABLED 0
+#endif
+
+// Cardputer target without PSRAM: keep the VDP on the single-core path.
+// The dual-core renderer needs a full shadow VRAM copy to be safe, which
+// costs both heap and per-frame memcpy bandwidth.
+#ifndef MSX_VDP_DUALCORE_ENABLED
+#define MSX_VDP_DUALCORE_ENABLED 0
+#endif
+
 bool msx_vdp_render_internal(MsxVdpState* state);
 
 namespace {
@@ -451,10 +470,12 @@ static void msx_vdp_render_task(void* arg) {
             s_vdpStatRenderUs += static_cast<uint32_t>(t1 - t0);
             s_vdpStatFrames++;
             if (s_vdpStatFrames >= 60) {
+#if MSX_VDP_DUALCORE_STATS_LOG_ENABLED
                 std::printf("[MSX][VDP-CORE0] 60fps | RenderAvg: %u us | CopyAvg: %u us | Drops: %u\n",
                             static_cast<unsigned>(s_vdpStatRenderUs / 60u),
                             static_cast<unsigned>(s_vdpStatCopyUs / 60u),
                             static_cast<unsigned>(s_vdpStatDrops));
+#endif
                 s_vdpStatFrames = 0;
                 s_vdpStatRenderUs = 0;
                 s_vdpStatCopyUs = 0;
@@ -2165,7 +2186,7 @@ void msx_vdp_render_color_sprites_line(MsxVdpState* state, unsigned y, uint8_t* 
             lastIndex = index;
             break;
         }
-        const uint8_t spriteLine = static_cast<uint8_t>(scrolledScanY - rawSpriteY);
+        const uint8_t spriteLine = static_cast<uint8_t>(scrolledScanY - rawSpriteY - 1u);
         if (spriteLine < outputHeight) {
             if (count >= kMsxMaxSpritesLineMsx2) {
                 msx_vdp_record_sprite_overflow(state, index);
@@ -2192,7 +2213,7 @@ void msx_vdp_render_color_sprites_line(MsxVdpState* state, unsigned y, uint8_t* 
             msx_vdp_read_vram_fast(state->vram, state->vramMask, attrBase + attr);
         const uint8_t xRaw = msx_vdp_read_vram_fast(state->vram, state->vramMask, attrBase + attr + 1u);
         const uint8_t patternId = msx_vdp_read_vram_fast(state->vram, state->vramMask, attrBase + attr + 2u);
-        int lineIndex = static_cast<int>(static_cast<uint8_t>(scrolledScanY - spriteY));
+        int lineIndex = static_cast<int>(static_cast<uint8_t>(scrolledScanY - spriteY - 1u));
         if (lineIndex >= outputHeightInt) {
             continue;
         }
@@ -2909,6 +2930,7 @@ static void msx_vdp_render_bitmap4_range(MsxVdpState* state, unsigned yStart, un
     static uint32_t s_g4SpriteStatsFrames = 0;
 
     if (state->regs[2] != s_g4LastDispR2) {
+#if MSX_VDP_G4_DISP_LOG_ENABLED
         const uint32_t base = (static_cast<uint32_t>(state->regs[2] & 0x60u) << 10) & state->vramMask;
         const uint8_t vscroll = msx_vdp_vscroll(state);
         const unsigned probeY = height > 160u ? 160u : (height > 0u ? (height - 1u) : 0u);
@@ -2935,6 +2957,7 @@ static void msx_vdp_render_bitmap4_range(MsxVdpState* state, unsigned yStart, un
                     static_cast<unsigned>(vram[(altAddr + 2u) & mask]),
                     static_cast<unsigned>(vram[(altAddr + 3u) & mask]),
                     static_cast<unsigned long>(state->frameCounter));
+#endif
         s_g4LastDispR2 = state->regs[2];
     }
 
@@ -2961,6 +2984,7 @@ static void msx_vdp_render_bitmap4_range(MsxVdpState* state, unsigned yStart, un
     if (finalizeFrame) {
         s_g4SpriteStatsFrames++;
         if (s_g4SpriteStatsFrames >= 60u) {
+#if MSX_VDP_SPRITE_LOG_ENABLED
             const uint32_t attrBase = msx_vdp_sprite_attr_base(state) & state->vramMask;
             const uint32_t colorBase = (attrBase - 0x200u) & state->vramMask;
             const uint32_t patternBase = msx_vdp_sprite_pattern_base(state) & state->vramMask;
@@ -3005,6 +3029,7 @@ static void msx_vdp_render_bitmap4_range(MsxVdpState* state, unsigned yStart, un
                             static_cast<unsigned>(vram[(colorBase + 32u) & mask]),
                             static_cast<unsigned>(vram[(colorBase + 48u) & mask]));
             }
+#endif
             s_g4SpriteStatsFrames = 0;
             s_msxSpriteActiveLines = 0;
             s_msxSpriteSelectedCount = 0;
@@ -3522,9 +3547,11 @@ bool msx_vdp_init(MsxVdpState* state, MsxMachineMode machineMode)
         if (!msx_vdp_ensure_frame_buffer()) {
             std::printf("[MSX] vdp init: frame buffer alloc failed, keeping MSX2 line stream path\n");
         }
+#if MSX_VDP_DUALCORE_ENABLED
         if (!msx_vdp_ensure_msx2_shadow_buffer()) {
             std::printf("[MSX] vdp init: MSX2 shadow VRAM alloc failed, keeping single-core render path\n");
         }
+#endif
     } else {
         if (!msx_vdp_ensure_msx1_buffers()) {
             std::printf("[MSX] vdp init: MSX1 work buffer alloc failed frame=%u vram=%u snapshot=%u\n",
@@ -3534,11 +3561,14 @@ bool msx_vdp_init(MsxVdpState* state, MsxMachineMode machineMode)
             std::memset(state, 0, sizeof(*state));
             return false;
         }
+#if MSX_VDP_DUALCORE_ENABLED
         if (!msx_vdp_ensure_msx1_shadow_buffer()) {
             std::printf("[MSX] vdp init: MSX1 shadow VRAM alloc failed, keeping single-core render path\n");
         }
+#endif
         state->vram = s_msx1Vram;
         state->frameBuffer = s_msxFrameBuffer;
+#if MSX_VDP_DUALCORE_ENABLED
         if (!s_vdpRenderSem) {
             s_vdpRenderSem = xSemaphoreCreateBinary();
         }
@@ -3548,10 +3578,12 @@ bool msx_vdp_init(MsxVdpState* state, MsxMachineMode machineMode)
             s_vdpTaskBusy = false;
             xTaskCreatePinnedToCore(msx_vdp_render_task, "MSX_VDP", 4096, nullptr, 2, &s_vdpRenderTask, 0);
         }
+#endif
         msx_vdp_reset(state);
         return true;
     }
 
+#if MSX_VDP_DUALCORE_ENABLED
     if (!s_vdpRenderSem) {
         s_vdpRenderSem = xSemaphoreCreateBinary();
     }
@@ -3560,6 +3592,7 @@ bool msx_vdp_init(MsxVdpState* state, MsxMachineMode machineMode)
         s_vdpTaskBusy = false;
         xTaskCreatePinnedToCore(msx_vdp_render_task, "MSX_VDP", 4096, nullptr, 2, &s_vdpRenderTask, 0);
     }
+#endif
 
     state->frameBuffer = s_msxFrameBuffer;
 
@@ -3811,6 +3844,7 @@ void msx_vdp_render(MsxVdpState* state)
 
     msx_vdp_prepare_frame_render(state);
 
+#if MSX_VDP_DUALCORE_ENABLED
     uint8_t* shadowVram = nullptr;
     size_t shadowSize = state->vramSize;
     if (state->frameBuffer) {
@@ -3847,6 +3881,7 @@ void msx_vdp_render(MsxVdpState* state)
             s_vdpStatDrops++;
         }
     } else {
+#endif
         if (!msx_vdp_render_internal(state)) {
             return;
         }
@@ -3858,7 +3893,9 @@ void msx_vdp_render(MsxVdpState* state)
         if (frame.indexed8) {
             msx_video_present_frame(&frame);
         }
+#if MSX_VDP_DUALCORE_ENABLED
     }
+#endif
 }
 
 uint8_t msx_vdp_in_data(MsxVdpState* state)

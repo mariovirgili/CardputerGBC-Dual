@@ -15,6 +15,10 @@
 #include "msx_config.h"
 #include "msx_display.h"
 
+#ifndef MSX_VIDEO_PERF_LOG_ENABLED
+#define MSX_VIDEO_PERF_LOG_ENABLED 0
+#endif
+
 namespace {
 
 constexpr int kInternalTargetW = 240;
@@ -86,6 +90,7 @@ static MsxLineStreamState s_lineStream = {};
 
 static uint32_t s_spiPushFrames = 0;
 static uint32_t s_spiPushUs = 0;
+static MsxVideoPerfSummary s_videoPerfSummary = {};
 static SemaphoreHandle_t s_videoMutex = nullptr;
 
 bool msx_video_game_on_external(void)
@@ -942,6 +947,17 @@ bool msx_video_present_frame(const MsxDisplayFrame* frame)
                 s_autoFrameskipAccum256 = 0u;
             }
             const uint32_t frameskipPct = static_cast<uint32_t>((static_cast<uint32_t>(s_autoFrameskipStep256) * 100u + 128u) / 256u);
+            s_videoPerfSummary.valid = true;
+            s_videoPerfSummary.windowFrames = s_videoPerfWindowFrames;
+            s_videoPerfSummary.pushedFrames = s_spiPushFrames;
+            s_videoPerfSummary.avgPresentUs = avgUs;
+            s_videoPerfSummary.worstPresentUs = s_videoPerfWorstUs;
+            s_videoPerfSummary.overBudgetFrames = s_videoPerfOverBudgetFrames;
+            s_videoPerfSummary.overHalfRateFrames = s_videoPerfOverHalfRateFrames;
+            s_videoPerfSummary.presentFails = s_videoPerfPresentFails;
+            s_videoPerfSummary.skippedFrames = s_videoPerfSkippedFrames;
+            s_videoPerfSummary.frameskipPercent = static_cast<uint16_t>(frameskipPct);
+#if MSX_VIDEO_PERF_LOG_ENABLED
             std::printf("[MSX][VIDEO-PERF] 60f avg=%u us est=%u.%u fps >16.7ms=%u >33.3ms=%u worst=%u us fail=%u skip=%u fs=%u%%\n",
                         static_cast<unsigned>(avgUs),
                         static_cast<unsigned>(fps10 / 10u),
@@ -952,6 +968,7 @@ bool msx_video_present_frame(const MsxDisplayFrame* frame)
                         static_cast<unsigned>(s_videoPerfPresentFails),
                         static_cast<unsigned>(s_videoPerfSkippedFrames),
                         static_cast<unsigned>(frameskipPct));
+#endif
             s_videoPerfWindowFrames = 0;
             s_videoPerfSkippedFrames = 0;
             s_spiPushFrames = 0;
@@ -976,6 +993,11 @@ bool msx_video_present_frame(const MsxDisplayFrame* frame)
 
     msx_video_unlock();
     return result;
+}
+
+MsxVideoPerfSummary msx_video_get_perf_summary(void)
+{
+    return s_videoPerfSummary;
 }
 
 void msx_video_request_full_redraw(void)

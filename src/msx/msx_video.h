@@ -5,6 +5,19 @@
 struct MsxDisplayFrame;
 class TFT_eSPI;
 
+struct MsxVideoPerfSummary {
+    bool valid;
+    uint32_t windowFrames;
+    uint32_t pushedFrames;
+    uint32_t avgPresentUs;
+    uint32_t worstPresentUs;
+    uint32_t overBudgetFrames;
+    uint32_t overHalfRateFrames;
+    uint32_t presentFails;
+    uint32_t skippedFrames;
+    uint16_t frameskipPercent;
+};
+
 void msx_video_init(void);
 void msx_video_shutdown(void);
 void msx_video_lock(void);
@@ -20,3 +33,4 @@ void msx_video_set_runtime_menu_active(bool active);
 void msx_video_set_state_overlay_active(bool active);
 void msx_video_prepare_sd_access(void);
 void msx_video_request_full_redraw(void);
+MsxVideoPerfSummary msx_video_get_perf_summary(void);

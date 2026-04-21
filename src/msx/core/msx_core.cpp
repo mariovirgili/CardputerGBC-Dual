@@ -5,8 +5,11 @@
 #include <cstring>
 #include <SD.h>
 #include <esp_heap_caps.h>
+#include <esp_timer.h>
 
 #include "msx_disk.h"
+#include "../msx_config.h"
+#include "../msx_sound.h"
 #include "../msx_video.h"
 
 #ifndef MSX_CORE_LOG_ENABLED
@@ -58,6 +61,103 @@ constexpr uint16_t kMsxAddrExptbl = 0xFCC1u;
 constexpr uint16_t kMsxAddrSlttbl = 0xFCC5u;
 constexpr uint16_t kMsxAddrSltatr = 0xFCCCu;  // slot attribute table (60 bytes)
 constexpr uint16_t kMsxAddrSltwrk = 0xFD09u;  // slot work area (128 bytes)
+
+#if MSX_PROFILE_LOG_ENABLED
+struct MsxProfileWindow {
+    uint32_t frames;
+    uint32_t worstFrameUs;
+    uint64_t frameUs;
+    uint64_t cpuUs;
+    uint64_t vdpUs;
+    uint64_t presentUs;
+};
+
+static MsxProfileWindow s_msxProfileWindow = {};
+static uint32_t s_msxProfileLastAudioDrops = 0u;
+
+uint32_t msx_profile_avg_us(uint64_t totalUs, uint32_t frames)
+{
+    return frames != 0u ? static_cast<uint32_t>(totalUs / frames) : 0u;
+}
+
+uint32_t msx_profile_percent(uint64_t partUs, uint64_t totalUs)
+{
+    return totalUs != 0u
+               ? static_cast<uint32_t>((partUs * 100u + (totalUs / 2u)) / totalUs)
+               : 0u;
+}
+
+void msx_core_log_profile(MsxCoreState* state,
+                          uint32_t frameUs,
+                          uint32_t cpuUs,
+                          uint32_t vdpUs,
+                          uint32_t presentUs,
+                          bool vdpSliceMode)
+{
+    if (!state) {
+        return;
+    }
+
+    s_msxProfileWindow.frames++;
+    s_msxProfileWindow.frameUs += frameUs;
+    s_msxProfileWindow.cpuUs += cpuUs;
+    s_msxProfileWindow.vdpUs += vdpUs;
+    s_msxProfileWindow.presentUs += presentUs;
+    if (frameUs > s_msxProfileWindow.worstFrameUs) {
+        s_msxProfileWindow.worstFrameUs = frameUs;
+    }
+
+    if (s_msxProfileWindow.frames < MSX_PROFILE_LOG_INTERVAL_FRAMES) {
+        return;
+    }
+
+    const uint32_t avgFrameUs = msx_profile_avg_us(s_msxProfileWindow.frameUs, s_msxProfileWindow.frames);
+    const uint32_t avgCpuUs = msx_profile_avg_us(s_msxProfileWindow.cpuUs, s_msxProfileWindow.frames);
+    const uint32_t avgVdpUs = msx_profile_avg_us(s_msxProfileWindow.vdpUs, s_msxProfileWindow.frames);
+    const uint32_t avgPresentUs = msx_profile_avg_us(s_msxProfileWindow.presentUs, s_msxProfileWindow.frames);
+    const uint32_t accountedUs = avgCpuUs + avgVdpUs + avgPresentUs;
+    const uint32_t avgOtherUs = avgFrameUs > accountedUs ? (avgFrameUs - accountedUs) : 0u;
+    const MsxAudioHookState& audio = msx_sound_get_state();
+    const MsxVideoPerfSummary video = msx_video_get_perf_summary();
+    const uint32_t audioDropsDelta = audio.droppedFrames - s_msxProfileLastAudioDrops;
+    const uint32_t free8 = heap_caps_get_free_size(MALLOC_CAP_8BIT);
+    const uint32_t largest8 = heap_caps_get_largest_free_block(MALLOC_CAP_8BIT);
+    const uint32_t freeInternal = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
+    const uint32_t largestInternal = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL);
+
+    std::printf("[MSX][PROFILE] %uf frame=%u us cpu=%u(%u%%) vdp=%u(%u%%) present=%u(%u%%) other=%u(%u%%) max=%u us slice=%u mode=%s machine=%s heap8=%u largest8=%u int=%u largestInt=%u audioDrops=%lu(+%u) queued=%u samples=%u videoAvg=%u videoWorst=%u videoSkip=%u videoFail=%u fs=%u%%\n",
+                static_cast<unsigned>(s_msxProfileWindow.frames),
+                static_cast<unsigned>(avgFrameUs),
+                static_cast<unsigned>(avgCpuUs),
+                static_cast<unsigned>(msx_profile_percent(avgCpuUs, avgFrameUs)),
+                static_cast<unsigned>(avgVdpUs),
+                static_cast<unsigned>(msx_profile_percent(avgVdpUs, avgFrameUs)),
+                static_cast<unsigned>(avgPresentUs),
+                static_cast<unsigned>(msx_profile_percent(avgPresentUs, avgFrameUs)),
+                static_cast<unsigned>(avgOtherUs),
+                static_cast<unsigned>(msx_profile_percent(avgOtherUs, avgFrameUs)),
+                static_cast<unsigned>(s_msxProfileWindow.worstFrameUs),
+                static_cast<unsigned>(vdpSliceMode ? 1u : 0u),
+                msx_vdp_mode_label(state->vdp.mode),
+                msx_config_machine_mode_label(state->machineMode),
+                static_cast<unsigned>(free8),
+                static_cast<unsigned>(largest8),
+                static_cast<unsigned>(freeInternal),
+                static_cast<unsigned>(largestInternal),
+                static_cast<unsigned long>(audio.droppedFrames),
+                static_cast<unsigned>(audioDropsDelta),
+                static_cast<unsigned>(audio.queuedBlocks),
+                static_cast<unsigned>(state->lastAudioSamples),
+                static_cast<unsigned>(video.valid ? video.avgPresentUs : 0u),
+                static_cast<unsigned>(video.valid ? video.worstPresentUs : 0u),
+                static_cast<unsigned>(video.valid ? video.skippedFrames : 0u),
+                static_cast<unsigned>(video.valid ? video.presentFails : 0u),
+                static_cast<unsigned>(video.valid ? video.frameskipPercent : 0u));
+
+    s_msxProfileLastAudioDrops = audio.droppedFrames;
+    s_msxProfileWindow = {};
+}
+#endif
 constexpr uint16_t kMsxAddrDrvInv = 0xFB21u;
 constexpr uint16_t kMsxAddrRamAd0 = 0xF341u;
 constexpr uint16_t kMsxAddrMaster = 0xF348u;
@@ -727,6 +827,11 @@ void msx_core_step_frame(MsxCoreState* state)
         return;
     }
 
+    const int64_t frameStartUs = esp_timer_get_time();
+    uint32_t cpuRunUs = 0u;
+    uint32_t vdpRenderUs = 0u;
+    uint32_t presentUs = 0u;
+
     const bool vdpSliceMode = state->machineMode == MsxMachineMode::MSX2 &&
                               state->vdp.mode != MsxVdpMode::Unsupported &&
                               msx_vdp_display_enabled(&state->vdp);
@@ -747,7 +852,9 @@ void msx_core_step_frame(MsxCoreState* state)
         const unsigned totalLines = 262u;
         const unsigned vblankLine = visibleLines > 192u ? 230u : 220u;
         uint32_t executedCycles = 0u;
+        int64_t vdpStartUs = esp_timer_get_time();
         msx_vdp_prepare_frame_render(&state->vdp);
+        vdpRenderUs += static_cast<uint32_t>(esp_timer_get_time() - vdpStartUs);
         state->vdp.status[0] &= static_cast<uint8_t>(~0x80u);
         state->vdp.status[1] &= static_cast<uint8_t>(~0x01u);
         state->vdp.status[2] &= static_cast<uint8_t>(~0x60u);
@@ -755,7 +862,9 @@ void msx_core_step_frame(MsxCoreState* state)
             state->vdp.currentFrameCpuCycles = executedCycles;
             msx_vdp_advance_command_engine(&state->vdp, executedCycles);
             if (line < visibleLines) {
+                vdpStartUs = esp_timer_get_time();
                 msx_vdp_render_slice(&state->vdp, line, line + 1u, line + 1u == visibleLines);
+                vdpRenderUs += static_cast<uint32_t>(esp_timer_get_time() - vdpStartUs);
             }
             const uint32_t targetCycles =
                 static_cast<uint32_t>((static_cast<uint64_t>(line + 1u) *
@@ -764,7 +873,9 @@ void msx_core_step_frame(MsxCoreState* state)
             const int sliceBudget = targetCycles > executedCycles
                                         ? static_cast<int>(targetCycles - executedCycles)
                                         : 0;
+            const int64_t cpuStartUs = esp_timer_get_time();
             executedCycles += static_cast<uint32_t>(msx_cpu_run_cycles(&state->cpu, &state->memory, sliceBudget));
+            cpuRunUs += static_cast<uint32_t>(esp_timer_get_time() - cpuStartUs);
             state->vdp.currentFrameCpuCycles = executedCycles;
             if (line == static_cast<unsigned>(state->vdp.regs[19])) {
                 state->vdp.status[1] |= 0x01u;
@@ -788,12 +899,18 @@ void msx_core_step_frame(MsxCoreState* state)
         state->lastFrameCycles = executedCycles;
         state->vdp.dirty = false;
         state->vdp.frameReady = true;
+        vdpStartUs = esp_timer_get_time();
         msx_vdp_get_display_frame(&state->vdp, &state->displayFrame);
+        vdpRenderUs += static_cast<uint32_t>(esp_timer_get_time() - vdpStartUs);
         if (state->displayFrame.indexed8) {
+            const int64_t presentStartUs = esp_timer_get_time();
             msx_video_present_frame(&state->displayFrame);
+            presentUs += static_cast<uint32_t>(esp_timer_get_time() - presentStartUs);
         }
     } else {
+        const int64_t cpuStartUs = esp_timer_get_time();
         state->lastFrameCycles = static_cast<uint32_t>(msx_cpu_run_cycles(&state->cpu, &state->memory, kMsxFrameCycles60Hz));
+        cpuRunUs += static_cast<uint32_t>(esp_timer_get_time() - cpuStartUs);
     }
 
     // Log the first time the CPU enters a non-running state, and every 60 frames while stuck.
@@ -828,9 +945,15 @@ void msx_core_step_frame(MsxCoreState* state)
 #endif
 
     if (!vdpSliceMode) {
+        const int64_t vdpStartUs = esp_timer_get_time();
         msx_vdp_render(&state->vdp);
         msx_vdp_get_display_frame(&state->vdp, &state->displayFrame);
+        vdpRenderUs += static_cast<uint32_t>(esp_timer_get_time() - vdpStartUs);
     }
+#if MSX_PROFILE_LOG_ENABLED
+    const uint32_t frameUs = static_cast<uint32_t>(esp_timer_get_time() - frameStartUs);
+    msx_core_log_profile(state, frameUs, cpuRunUs, vdpRenderUs, presentUs, vdpSliceMode);
+#endif
     state->frameCounter++;
 
     if (msx_core_status_needs_refresh(state)) {
