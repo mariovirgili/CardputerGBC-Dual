@@ -3,6 +3,7 @@
 #include <esp_heap_caps.h>
 
 #include <cstdio>
+#include <ctime>
 #include <cstring>
 
 #include "../../share/emu_static_pool.h"
@@ -41,6 +42,15 @@ constexpr uint16_t kMsxAddrCartInitHi = 0xF7C6u;
 constexpr uint8_t kMsxPrimarySlotCartridge = 1u;
 constexpr uint16_t kMsxCartHeaderMirrorSize = 0x0010u;
 constexpr uint8_t kMsxPrimarySlotExpanded = 3u;
+constexpr uint8_t kMsxSecondarySlotSubRom = 0u;
+constexpr uint8_t kMsxSecondarySlotDiskRom = 1u;
+constexpr uint8_t kMsxSecondarySlotRam = 2u;
+constexpr uint8_t kMsxMsx2SecondarySlotDefault = 0xA4u;
+
+constexpr uint8_t kMsxRtcModeClock = 0u;
+constexpr uint8_t kMsxRtcModeAlarm = 1u;
+constexpr uint8_t kMsxRtcModeNvramLo = 2u;
+constexpr uint8_t kMsxRtcModeNvramHi = 3u;
 
 uint8_t msx_slot_for_page(uint8_t slotRegister, uint8_t pageIndex)
 {
@@ -78,6 +88,9 @@ uint8_t msx_memory_ram_segment(const MsxMemoryState* state, uint8_t pageIndex)
     }
 
     if (msx_memory_has_mapper(state)) {
+        if (state->machineMode == MsxMachineMode::MSX2) {
+            return state->mapperRegisters[pageIndex & 0x03u];
+        }
         return static_cast<uint8_t>(state->mapperRegisters[pageIndex & 0x03u] % state->ramSegmentCount);
     }
 
@@ -103,6 +116,34 @@ void msx_memory_bind_bios(MsxMemoryState* state, uint8_t pageIndex, uint8_t bank
 {
     const uint8_t subPage = static_cast<uint8_t>(bank & 0x01u);
     const uint8_t* ptr = msx_bios_page_ptr(&state->bios, pageIndex, subPage);
+    if (!ptr) {
+        msx_memory_bind_open_bus(state, bank);
+        return;
+    }
+
+    state->readMap[bank] = ptr;
+    state->writeMap[bank] = nullptr;
+}
+
+const uint8_t* msx_memory_sub_rom_page_ptr(const MsxMemoryState* state, uint8_t subPage)
+{
+    if (!state ||
+        state->machineMode != MsxMachineMode::MSX2 ||
+        !state->bios.ready ||
+        !state->bios.hasSubRom ||
+        !state->bios.subRom ||
+        state->bios.subSize == 0u) {
+        return nullptr;
+    }
+
+    const size_t offset = (static_cast<size_t>(subPage) * kMsxPageSize8K) % state->bios.subSize;
+    return state->bios.subRom + offset;
+}
+
+void msx_memory_bind_sub_rom(MsxMemoryState* state, uint8_t bank)
+{
+    const uint8_t subPage = static_cast<uint8_t>(bank & 0x01u);
+    const uint8_t* ptr = msx_memory_sub_rom_page_ptr(state, subPage);
     if (!ptr) {
         msx_memory_bind_open_bus(state, bank);
         return;
@@ -178,7 +219,8 @@ void msx_memory_bind_disk_rom(MsxMemoryState* state, uint8_t bank)
 }
 
 // Dispatch a single 8K bank within primary slot 3 using the secondary slot register.
-// Sub-slot layout mirrors fMSX: subslot1 = DiskROM (page1 only), subslot2 = RAM.
+// MSX2 uses subslot0 = Sub-ROM (page0 only), subslot1 = DiskROM (page1 only),
+// subslot2 = RAM. MSX1 keeps the existing DiskROM/RAM layout.
 void msx_memory_bind_slot3(MsxMemoryState* state, uint8_t pageIndex, uint8_t bank)
 {
     const uint8_t subSlot = msx_secondary_slot_for_page(
@@ -186,7 +228,14 @@ void msx_memory_bind_slot3(MsxMemoryState* state, uint8_t pageIndex, uint8_t ban
         pageIndex
     );
     switch (subSlot) {
-        case 1u:
+        case kMsxSecondarySlotSubRom:
+            if ((state->machineMode == MsxMachineMode::MSX2) && (pageIndex == 0u)) {
+                msx_memory_bind_sub_rom(state, bank);
+            } else {
+                msx_memory_bind_open_bus(state, bank);
+            }
+            break;
+        case kMsxSecondarySlotDiskRom:
             // DiskROM lives at page1 (0x4000-0x7FFF) only
             if (pageIndex == 1u) {
                 msx_memory_bind_disk_rom(state, bank);
@@ -194,11 +243,117 @@ void msx_memory_bind_slot3(MsxMemoryState* state, uint8_t pageIndex, uint8_t ban
                 msx_memory_bind_open_bus(state, bank);
             }
             break;
-        case 2u:
+        case kMsxSecondarySlotRam:
             msx_memory_bind_ram(state, pageIndex, bank);
             break;
         default:
             msx_memory_bind_open_bus(state, bank);
+            break;
+    }
+}
+
+void msx_memory_rtc_local_time(std::tm* outTime)
+{
+    if (!outTime) {
+        return;
+    }
+
+    std::memset(outTime, 0, sizeof(*outTime));
+    const std::time_t now = std::time(nullptr);
+    if (now == static_cast<std::time_t>(-1)) {
+        return;
+    }
+
+    localtime_r(&now, outTime);
+}
+
+uint8_t msx_memory_rtc_clock_nibble(uint8_t reg)
+{
+    std::tm localTime;
+    msx_memory_rtc_local_time(&localTime);
+    const unsigned month = static_cast<unsigned>(localTime.tm_mon + 1);
+    const unsigned year = static_cast<unsigned>((localTime.tm_year + 1900) % 100);
+    const unsigned weekday = static_cast<unsigned>(localTime.tm_wday);
+
+    switch (reg & 0x0Fu) {
+        case 0x0: return static_cast<uint8_t>(localTime.tm_sec % 10);
+        case 0x1: return static_cast<uint8_t>((localTime.tm_sec / 10) % 10);
+        case 0x2: return static_cast<uint8_t>(localTime.tm_min % 10);
+        case 0x3: return static_cast<uint8_t>((localTime.tm_min / 10) % 10);
+        case 0x4: return static_cast<uint8_t>(localTime.tm_hour % 10);
+        case 0x5: return static_cast<uint8_t>((localTime.tm_hour / 10) % 10);
+        case 0x6: return static_cast<uint8_t>(localTime.tm_mday % 10);
+        case 0x7: return static_cast<uint8_t>((localTime.tm_mday / 10) % 10);
+        case 0x8: return static_cast<uint8_t>(month % 10);
+        case 0x9: return static_cast<uint8_t>((month / 10) % 10);
+        case 0xA: return static_cast<uint8_t>(year % 10);
+        case 0xB: return static_cast<uint8_t>((year / 10) % 10);
+        case 0xC: return static_cast<uint8_t>(weekday & 0x0Fu);
+        default:
+            return 0x00u;
+    }
+}
+
+uint8_t msx_memory_rtc_read(const MsxMemoryState* state)
+{
+    if (!state || state->machineMode != MsxMachineMode::MSX2) {
+        return 0xFFu;
+    }
+
+    const uint8_t reg = static_cast<uint8_t>(state->rtcRegisterSelect & 0x0Fu);
+    if (reg == 0x0Du) {
+        return static_cast<uint8_t>(state->rtcModeReg & 0x0Fu);
+    }
+    if (reg >= 0x0Eu) {
+        return 0x00u;
+    }
+
+    switch (state->rtcModeReg & 0x03u) {
+        case kMsxRtcModeClock:
+            return msx_memory_rtc_clock_nibble(reg);
+        case kMsxRtcModeAlarm:
+            return 0x00u;
+        case kMsxRtcModeNvramLo:
+            return static_cast<uint8_t>(state->rtcNvram[reg] & 0x0Fu);
+        case kMsxRtcModeNvramHi: {
+            const size_t index = static_cast<size_t>(13u + reg);
+            return index < sizeof(state->rtcNvram)
+                       ? static_cast<uint8_t>(state->rtcNvram[index] & 0x0Fu)
+                       : 0x00u;
+        }
+        default:
+            return 0x00u;
+    }
+}
+
+void msx_memory_rtc_write(MsxMemoryState* state, uint8_t value)
+{
+    if (!state || state->machineMode != MsxMachineMode::MSX2) {
+        return;
+    }
+
+    const uint8_t reg = static_cast<uint8_t>(state->rtcRegisterSelect & 0x0Fu);
+    const uint8_t nibble = static_cast<uint8_t>(value & 0x0Fu);
+    if (reg == 0x0Du) {
+        state->rtcModeReg = nibble;
+        return;
+    }
+    if (reg >= 0x0Eu) {
+        return;
+    }
+
+    switch (state->rtcModeReg & 0x03u) {
+        case kMsxRtcModeNvramLo:
+            state->rtcNvram[reg] = nibble;
+            break;
+        case kMsxRtcModeNvramHi: {
+            const size_t index = static_cast<size_t>(13u + reg);
+            if (index < sizeof(state->rtcNvram)) {
+                state->rtcNvram[index] = nibble;
+            }
+            break;
+        }
+        default:
             break;
     }
 }
@@ -570,6 +725,12 @@ bool msx_memory_init(MsxMemoryState* state,
     msx_keyboard_init(&state->keyboard);
     state->slotRegister = kMsxDefaultSlotRegister;
     std::memset(state->secondarySlotRegs, 0, sizeof(state->secondarySlotRegs));
+    if (state->machineMode == MsxMachineMode::MSX2) {
+        state->secondarySlotRegs[3] = kMsxMsx2SecondarySlotDefault;
+    }
+    state->rtcRegisterSelect = 0u;
+    state->rtcModeReg = 0u;
+    std::memset(state->rtcNvram, 0, sizeof(state->rtcNvram));
     state->ppiPortC = 0u;
     state->lastPortA8 = state->slotRegister;
     state->lastPortAA = state->ppiPortC;
@@ -865,6 +1026,10 @@ uint8_t msx_memory_in(MsxMemoryState* state, uint8_t port)
         }
         case 0xAA:
             return state ? state->ppiPortC : 0xFFu;
+        case 0xB4:
+            return state ? static_cast<uint8_t>(state->rtcRegisterSelect & 0x0Fu) : 0xFFu;
+        case 0xB5:
+            return msx_memory_rtc_read(state);
         case 0xD0:
         case 0xD1:
         case 0xD2:
@@ -979,6 +1144,14 @@ void msx_memory_out(MsxMemoryState* state, uint8_t port, uint8_t value)
             state->lastPortAA = value;
             msx_keyboard_select_row(&state->keyboard, static_cast<uint8_t>(value & 0x0Fu));
             break;
+        case 0xB4:
+            if (state->machineMode == MsxMachineMode::MSX2) {
+                state->rtcRegisterSelect = static_cast<uint8_t>(value & 0x0Fu);
+            }
+            break;
+        case 0xB5:
+            msx_memory_rtc_write(state, value);
+            break;
         case 0xD0:
         case 0xD1:
         case 0xD2:
@@ -993,7 +1166,7 @@ void msx_memory_out(MsxMemoryState* state, uint8_t port, uint8_t value)
         case 0xFE:
         case 0xFF:
             if (msx_memory_has_mapper(state)) {
-                state->mapperRegisters[port - 0xFCu] = static_cast<uint8_t>(value % state->ramSegmentCount);
+                state->mapperRegisters[port - 0xFCu] = value;
                 msx_memory_refresh_maps(state);
             }
             break;

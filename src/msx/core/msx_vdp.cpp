@@ -138,8 +138,27 @@ static uint32_t msx_vdp_cycle_for_line(const MsxVdpState* state, unsigned y)
     }
 
     const unsigned clampedY = (y < activeHeight) ? y : (activeHeight - 1u);
-    return static_cast<uint32_t>((static_cast<uint64_t>(clampedY + 1u) * state->frameCycleBudget) /
+    return static_cast<uint32_t>((static_cast<uint64_t>(clampedY) * state->frameCycleBudget) /
                                  static_cast<uint64_t>(activeHeight));
+}
+
+static uint32_t msx_vdp_line_index_for_cycle(const MsxVdpState* state, uint32_t cycle)
+{
+    if (!state || state->frameCycleBudget == 0u) {
+        return 0u;
+    }
+
+    const unsigned activeHeight = state->activeHeight ? state->activeHeight : kMsxFrameHeightMsx2;
+    if (activeHeight == 0u) {
+        return 0u;
+    }
+
+    if (cycle >= state->frameCycleBudget) {
+        return activeHeight;
+    }
+
+    return static_cast<uint32_t>((static_cast<uint64_t>(cycle) * static_cast<uint64_t>(activeHeight)) /
+                                 static_cast<uint64_t>(state->frameCycleBudget));
 }
 
 static void msx_vdp_log_color_sprite_write(MsxVdpState* state,
@@ -239,10 +258,7 @@ static uint8_t msx_vdp_timeline_value_for_line(const MsxVdpState* state,
         return 0u;
     }
 
-    const uint32_t budget = state->frameCycleBudget != 0u ? state->frameCycleBudget : 59659u;
-    const uint32_t targetCycle = static_cast<uint32_t>(
-        (static_cast<uint64_t>(y) * static_cast<uint64_t>(budget)) /
-        static_cast<uint64_t>(state->activeHeight));
+    const uint32_t targetCycle = msx_vdp_cycle_for_line(state, y);
 
     uint8_t value = timeline[0].value;
     for (uint8_t i = 1u; i < count; ++i) {
@@ -704,21 +720,23 @@ uint32_t msx_vdp_name_base(const MsxVdpState* state)
     if (!state) {
         return 0u;
     }
-    if (!msx_vdp_is_msx2(state)) {
-        switch (state->mode) {
-            case MsxVdpMode::Text40:
-            case MsxVdpMode::Graphics1:
-            case MsxVdpMode::Multicolor:
-                return static_cast<uint32_t>(state->regs[2] & 0x0Fu) << 10;
-            default:
-                break;
-        }
-    }
     const MsxVdpTableMasks* masks = msx_vdp_table_masks(state->mode);
     if (!masks) {
         return 0u;
     }
     return static_cast<uint32_t>(state->regs[2] & masks->r2) << masks->nameShift;
+}
+
+static uint32_t msx_vdp_name_base_for_reg2(const MsxVdpState* state, uint8_t reg2)
+{
+    if (!state) {
+        return 0u;
+    }
+    const MsxVdpTableMasks* masks = msx_vdp_table_masks(state->mode);
+    if (!masks) {
+        return 0u;
+    }
+    return static_cast<uint32_t>(reg2 & masks->r2) << masks->nameShift;
 }
 
 uint32_t msx_vdp_color_base(const MsxVdpState* state)
@@ -805,26 +823,52 @@ inline uint8_t msx_vdp_vscroll(const MsxVdpState* state)
     return (state && msx_vdp_is_msx2(state)) ? state->regs[23] : 0u;
 }
 
-inline bool msx_vdp_sprites_disabled(const MsxVdpState* state)
+inline void msx_vdp_refresh_timing_flags(MsxVdpState* state)
 {
     if (!state || !msx_vdp_is_msx2(state)) {
-        return false;
+        return;
     }
 
-    switch (state->mode) {
-        case MsxVdpMode::Bitmap4:
-        case MsxVdpMode::Bitmap6:
-        case MsxVdpMode::Bitmap7:
-        case MsxVdpMode::Bitmap8:
-            // Games like Aleste can toggle SPD outside the visible region to
-            // speed up VDP access. Our frame renderer snapshots registers once
-            // per frame, so honoring SPD here can incorrectly suppress all
-            // sprites for the whole frame. Until we have per-line register
-            // timing, keep sprites enabled in bitmap modes.
-            return false;
-        default:
-            return (state->regs[8] & 0x02u) != 0u;
+    const uint32_t totalLines = 262u;
+    const uint32_t visibleLines = state->activeHeight != 0u ? state->activeHeight : 212u;
+    const uint32_t vblankLine = visibleLines > 192u ? 230u : 220u;
+    const uint32_t lineCycles =
+        state->frameCycleBudget != 0u ? (state->frameCycleBudget + totalLines - 1u) / totalLines : 1u;
+    const uint32_t scanline = (state->currentFrameCpuCycles / lineCycles) % totalLines;
+    const uint32_t linePhase = state->currentFrameCpuCycles % lineCycles;
+    const uint32_t hblankStart = (lineCycles * 5u) / 6u;
+
+    uint8_t status2 = static_cast<uint8_t>((state->status[2] & 0x91u) | 0x0Cu | ((state->frameCounter & 0x01u) << 1));
+    if (scanline >= vblankLine) {
+        status2 |= 0x40u;
     }
+    if (linePhase >= hblankStart) {
+        status2 |= 0x20u;
+    }
+    state->status[2] = status2;
+
+    const uint8_t compareLine = state->regs[19];
+    const bool lineReached =
+        (scanline > static_cast<uint32_t>(compareLine)) ||
+        ((scanline == static_cast<uint32_t>(compareLine)) && (linePhase >= hblankStart));
+    if (lineReached &&
+        ((state->lineInterruptFrameTag != state->frameCounter) ||
+         (state->lineInterruptLineTag != compareLine))) {
+        state->status[1] |= 0x01u;
+        state->lineInterruptFrameTag = state->frameCounter;
+        state->lineInterruptLineTag = compareLine;
+    }
+}
+
+inline bool msx_vdp_sprites_disabled_for_line(const MsxVdpState* state, unsigned y)
+{
+    if (!state) {
+        return false;
+    }
+    if (msx_vdp_is_msx2(state)) {
+        return (msx_vdp_reg8_for_line(state, y) & 0x02u) != 0u;
+    }
+    return (state->regs[8] & 0x02u) != 0u;
 }
 
 inline bool msx_vdp_mode_yjk(const MsxVdpState* state)
@@ -1340,6 +1384,19 @@ static bool msx_vdp_command_advance_step(MsxVdpState* state, uint8_t liveScreenM
     }
 }
 
+static uint32_t msx_vdp_command_steps_per_line(uint8_t liveScreenMode)
+{
+    switch (liveScreenMode & 0x03u) {
+        case 0u:
+        case 1u:
+            return 16u;
+        case 2u:
+        case 3u:
+        default:
+            return 8u;
+    }
+}
+
 void msx_vdp_command_continue(MsxVdpState* state)
 {
     MsxVdpCommandState& command = state->command;
@@ -1460,8 +1517,10 @@ void msx_vdp_advance_command_engine_internal(MsxVdpState* state, uint32_t target
         return;
     }
 
-    uint32_t steps = targetFrameCycles - command.cycleStamp;
-    if (steps == 0u) {
+    const uint32_t fromLine = msx_vdp_line_index_for_cycle(state, command.cycleStamp);
+    const uint32_t toLine = msx_vdp_line_index_for_cycle(state, targetFrameCycles);
+    if (toLine <= fromLine) {
+        command.cycleStamp = targetFrameCycles;
         return;
     }
 
@@ -1469,6 +1528,7 @@ void msx_vdp_advance_command_engine_internal(MsxVdpState* state, uint32_t target
     const int liveModeIndex = msx_vdp_command_mode_index(state);
     const uint8_t liveScreenMode =
         liveModeIndex >= 0 ? static_cast<uint8_t>(liveModeIndex) : command.screenMode;
+    uint32_t steps = (toLine - fromLine) * msx_vdp_command_steps_per_line(liveScreenMode);
 
     while (steps-- != 0u && msx_vdp_command_is_async_bulk(command.transfer)) {
         if (!msx_vdp_command_advance_step(state, liveScreenMode)) {
@@ -1938,7 +1998,7 @@ void msx_vdp_plot_sprite_bits(MsxVdpState* state,
 
 void msx_vdp_render_mono_sprites_line(MsxVdpState* state, unsigned y, uint8_t* dst)
 {
-    if (!state || !dst || msx_vdp_sprites_disabled(state)) {
+    if (!state || !dst || msx_vdp_sprites_disabled_for_line(state, y)) {
         return;
     }
 
@@ -2064,13 +2124,19 @@ void msx_vdp_render_color_sprites_line(MsxVdpState* state, unsigned y, uint8_t* 
 
     std::memset(line, 0, kMsxSpriteColorLineWidth);
     static constexpr uint8_t kSpriteHeights[4] = {8u, 16u, 16u, 32u};
-    const int scanY = static_cast<int>(y);
+    const uint8_t lineVScroll = msx_vdp_reg23_for_line(state, y);
+    const uint8_t scrolledScanY =
+        static_cast<uint8_t>(static_cast<uint32_t>(y) + static_cast<uint32_t>(lineVScroll));
     if (s_msxColorSpriteSnapshotFrameTag != state->frameCounter) {
         s_msxColorSpriteWriteLogApplyIndex = 0u;
         s_msxColorSpriteSnapshotFrameTag = state->frameCounter;
     }
 
     if (!s_msxColorSpriteSnapshotValid) {
+        return;
+    }
+
+    if (msx_vdp_sprites_disabled_for_line(state, y)) {
         return;
     }
 
@@ -2099,13 +2165,8 @@ void msx_vdp_render_color_sprites_line(MsxVdpState* state, unsigned y, uint8_t* 
             lastIndex = index;
             break;
         }
-        int spriteY = static_cast<int>(rawSpriteY);
-
-        if (spriteY > (256 - inputHeightInt)) {
-            spriteY -= 256;
-        }
-
-        if (scanY > spriteY && scanY <= spriteY + outputHeightInt) {
+        const uint8_t spriteLine = static_cast<uint8_t>(scrolledScanY - rawSpriteY);
+        if (spriteLine < outputHeight) {
             if (count >= kMsxMaxSpritesLineMsx2) {
                 msx_vdp_record_sprite_overflow(state, index);
                 lastIndex = index;
@@ -2127,15 +2188,14 @@ void msx_vdp_render_color_sprites_line(MsxVdpState* state, unsigned y, uint8_t* 
     for (int selectedIndex = static_cast<int>(count) - 1; selectedIndex >= 0; --selectedIndex) {
         const uint8_t index = selected[static_cast<size_t>(selectedIndex)];
         const uint32_t attr = static_cast<uint32_t>(index) * 4u;
-        int spriteY = static_cast<int>(
-            msx_vdp_read_vram_fast(state->vram, state->vramMask, attrBase + attr));
-        if (spriteY > (256 - inputHeightInt)) {
-            spriteY -= 256;
-        }
-
+        const uint8_t spriteY =
+            msx_vdp_read_vram_fast(state->vram, state->vramMask, attrBase + attr);
         const uint8_t xRaw = msx_vdp_read_vram_fast(state->vram, state->vramMask, attrBase + attr + 1u);
         const uint8_t patternId = msx_vdp_read_vram_fast(state->vram, state->vramMask, attrBase + attr + 2u);
-        int lineIndex = scanY - spriteY - 1;
+        int lineIndex = static_cast<int>(static_cast<uint8_t>(scrolledScanY - spriteY));
+        if (lineIndex >= outputHeightInt) {
+            continue;
+        }
         if (scale == 2u) {
             lineIndex >>= 1;
         }
@@ -2302,6 +2362,18 @@ void msx_vdp_clear_active_frame(MsxVdpState* state, uint8_t color)
         std::memset(dst, color, kMsxFrameWidth);
         msx_vdp_stream_line_if_needed(state, dst, y);
     }
+}
+
+static bool msx_vdp_slice_bounds(unsigned height, unsigned yStart, unsigned yEnd,
+                                 unsigned* startLine, unsigned* endLine)
+{
+    if (!startLine || !endLine || height == 0u) {
+        return false;
+    }
+
+    *startLine = yStart < height ? yStart : height;
+    *endLine = yEnd < height ? yEnd : height;
+    return *endLine > *startLine;
 }
 
 void msx_vdp_render_graphics1(MsxVdpState* state)
@@ -2538,6 +2610,278 @@ void msx_vdp_render_graphics3(MsxVdpState* state)
     }
 }
 
+static void msx_vdp_render_graphics1_range(MsxVdpState* state, unsigned yStart, unsigned yEnd)
+{
+    unsigned startLine = 0u;
+    unsigned endLine = 0u;
+    if (!state || !msx_vdp_slice_bounds(kMsxFrameHeightMsx1, yStart, yEnd, &startLine, &endLine)) {
+        return;
+    }
+
+    const uint32_t nameBase = msx_vdp_name_base(state);
+    const uint32_t colorBase = static_cast<uint32_t>(state->regs[3]) << 6;
+    const uint32_t patternBase = static_cast<uint32_t>(state->regs[4] & 0x07u) << 11;
+    const uint8_t* const vram = state->vram;
+    const uint32_t mask = state->vramMask;
+    const uint8_t vscroll = msx_vdp_vscroll(state);
+
+    for (unsigned y = startLine; y < endLine; ++y) {
+        const uint32_t scrolledY = static_cast<uint32_t>(y) + static_cast<uint32_t>(vscroll);
+        const unsigned row = scrolledY >> 3;
+        const unsigned line = scrolledY & 0x07u;
+        uint8_t* dst = msx_vdp_get_line_buffer(state, y);
+        if (!dst) {
+            continue;
+        }
+        const uint32_t nameRowBase = nameBase + row * 32u;
+
+        for (unsigned tileX = 0; tileX < 32; ++tileX) {
+            const uint8_t name = msx_vdp_read_vram_fast(vram, mask, nameRowBase + tileX);
+            const uint8_t pattern = msx_vdp_read_vram_fast(vram, mask, patternBase + name * 8u + line);
+            const uint8_t color = msx_vdp_read_vram_fast(vram, mask, colorBase + (name >> 3));
+            const uint8_t fg = msx_vdp_resolve_color(state, static_cast<uint8_t>(color >> 4));
+            const uint8_t bg = msx_vdp_resolve_color(state, static_cast<uint8_t>(color & 0x0Fu));
+            msx_vdp_write_pattern_pixels(dst + tileX * 8u, pattern, fg, bg);
+        }
+
+        msx_vdp_render_mono_sprites_line(state, y, dst);
+        msx_vdp_stream_line_if_needed(state, dst, y);
+    }
+}
+
+static void msx_vdp_render_text40_range(MsxVdpState* state, unsigned yStart, unsigned yEnd)
+{
+    unsigned startLine = 0u;
+    unsigned endLine = 0u;
+    if (!state || !msx_vdp_slice_bounds(kMsxFrameHeightMsx1, yStart, yEnd, &startLine, &endLine)) {
+        return;
+    }
+
+    const uint32_t nameBase = msx_vdp_name_base(state);
+    const uint32_t patternBase = static_cast<uint32_t>(state->regs[4] & 0x07u) << 11;
+    const uint8_t fg = msx_vdp_resolve_color(state, static_cast<uint8_t>(state->regs[7] >> 4));
+    const uint8_t bg = msx_vdp_resolve_color(state, static_cast<uint8_t>(state->regs[7] & 0x0Fu));
+    const uint8_t* const vram = state->vram;
+    const uint32_t mask = state->vramMask;
+
+    if (startLine == 0u && endLine == kMsxFrameHeightMsx1) {
+        msx_vdp_clear_active_frame(state, bg);
+    }
+
+    for (unsigned y = startLine; y < endLine; ++y) {
+        const uint32_t scrolledY = static_cast<uint32_t>(y) + static_cast<uint32_t>(msx_vdp_vscroll(state));
+        const unsigned row = scrolledY >> 3;
+        const unsigned line = scrolledY & 0x07u;
+        uint8_t* dst = msx_vdp_get_line_buffer(state, y);
+        if (!dst) {
+            continue;
+        }
+        uint8_t* lineDst = dst + 8u;
+
+        for (unsigned col = 0; col < 40; ++col) {
+            const uint8_t name = msx_vdp_read_vram_fast(vram, mask, nameBase + row * 40u + col);
+            const uint8_t pattern = msx_vdp_read_vram_fast(vram, mask, patternBase + name * 8u + line);
+            const unsigned pixelBase = col * 6u;
+
+            for (unsigned bit = 0; bit < 6; ++bit) {
+                lineDst[pixelBase + bit] = ((pattern << bit) & 0x80u) != 0 ? fg : bg;
+            }
+        }
+
+        msx_vdp_stream_line_if_needed(state, dst, y);
+    }
+}
+
+static void msx_vdp_render_graphics2_like_range(MsxVdpState* state, unsigned yStart, unsigned yEnd)
+{
+    unsigned startLine = 0u;
+    unsigned endLine = 0u;
+    if (!state || !msx_vdp_slice_bounds(kMsxFrameHeightMsx1, yStart, yEnd, &startLine, &endLine)) {
+        return;
+    }
+
+    const bool isMsx2 = msx_vdp_is_msx2(state);
+    const uint32_t nameBase = msx_vdp_name_base(state);
+    const uint32_t colorBase = msx_vdp_color_base(state);
+    const uint32_t patternBase = msx_vdp_graphics2_pattern_base(state);
+    const uint32_t colorMask = msx_vdp_color_mask(state);
+    const uint32_t patternMask = msx_vdp_pattern_mask(state);
+    const uint8_t* const vram = state->vram;
+    const uint32_t mask = state->vramMask;
+    const uint8_t vscroll = msx_vdp_vscroll(state);
+
+    for (unsigned y = startLine; y < endLine; ++y) {
+        const uint8_t scrolledY = static_cast<uint8_t>(y + vscroll);
+        const uint32_t nameIndex = static_cast<uint32_t>(scrolledY & 0xF8u) << 2;
+        const uint32_t patternIndex = (static_cast<uint32_t>(scrolledY & 0xC0u) << 5)
+                                    | static_cast<uint32_t>(scrolledY & 0x07u);
+        uint8_t* dst = isMsx2
+            ? msx_vdp_get_line_buffer(state, y)
+            : (state->frameBuffer + static_cast<size_t>(y) * kMsxFrameWidth);
+        if (!dst) {
+            continue;
+        }
+        const uint32_t nameLineBase = nameBase + nameIndex;
+
+        for (unsigned tileX = 0; tileX < 32; ++tileX) {
+            const uint8_t name = msx_vdp_read_vram_fast(vram, mask, nameLineBase + tileX);
+            const uint32_t tileIndex = patternIndex + static_cast<uint32_t>(name) * 8u;
+            const uint8_t pattern = msx_vdp_read_vram_fast(vram, mask, patternBase + (tileIndex & patternMask));
+            const uint8_t color = msx_vdp_read_vram_fast(vram, mask, colorBase + (tileIndex & colorMask));
+            const uint8_t fg = msx_vdp_resolve_color(state, static_cast<uint8_t>(color >> 4));
+            const uint8_t bg = msx_vdp_resolve_color(state, static_cast<uint8_t>(color & 0x0Fu));
+            msx_vdp_write_pattern_pixels(dst + tileX * 8u, pattern, fg, bg);
+        }
+
+        msx_vdp_render_mono_sprites_line(state, y, dst);
+        if (isMsx2) {
+            msx_vdp_stream_line_if_needed(state, dst, y);
+        }
+    }
+}
+
+static void msx_vdp_render_text80_range(MsxVdpState* state, unsigned yStart, unsigned yEnd)
+{
+    unsigned startLine = 0u;
+    unsigned endLine = 0u;
+    if (!state || !msx_vdp_slice_bounds(kMsxFrameHeightMsx1, yStart, yEnd, &startLine, &endLine)) {
+        return;
+    }
+
+    const uint32_t nameBase = msx_vdp_name_base(state);
+    const uint32_t nameMask = msx_vdp_name_mask(state);
+    const uint32_t colorBase = msx_vdp_color_base(state);
+    const uint32_t colorMask = msx_vdp_color_mask(state);
+    const uint32_t patternBase = msx_vdp_pattern_base(state);
+    const uint8_t fg = msx_vdp_resolve_color(state, static_cast<uint8_t>(state->regs[7] >> 4));
+    const uint8_t bg = msx_vdp_resolve_color(state, static_cast<uint8_t>(state->regs[7] & 0x0Fu));
+    const uint8_t altFg = msx_vdp_resolve_color(state, static_cast<uint8_t>(state->regs[12] >> 4));
+    const uint8_t altBg = msx_vdp_resolve_color(state, static_cast<uint8_t>(state->regs[12] & 0x0Fu));
+    const uint8_t* const vram = state->vram;
+    const uint32_t mask = state->vramMask;
+
+    if (startLine == 0u && endLine == kMsxFrameHeightMsx1) {
+        msx_vdp_clear_active_frame(state, bg);
+    }
+
+    for (unsigned y = startLine; y < endLine; ++y) {
+        const uint32_t scrolledY = static_cast<uint32_t>(y) + static_cast<uint32_t>(msx_vdp_vscroll(state));
+        const uint32_t patternLine = static_cast<uint32_t>(scrolledY & 0x07u);
+        const uint32_t nameOffset = (static_cast<uint32_t>(80u) * (scrolledY >> 3)) & nameMask;
+        const uint32_t colorOffset = (static_cast<uint32_t>(10u) * (scrolledY >> 3)) & colorMask;
+        uint8_t* dst = msx_vdp_get_line_buffer(state, y);
+        if (!dst) {
+            continue;
+        }
+        uint8_t* lineDst = dst + 8u;
+
+        for (unsigned col = 0; col < 80u; ++col) {
+            const uint8_t glyph = msx_vdp_read_vram_fast(vram, mask, nameBase + nameOffset + col);
+            const uint8_t attrMask = msx_vdp_read_vram_fast(vram, mask, colorBase + colorOffset + (col >> 3));
+            const bool useAlt = (attrMask & static_cast<uint8_t>(0x80u >> (col & 0x07u))) != 0u;
+            const uint8_t pixel = msx_vdp_read_vram_fast(vram, mask, patternBase + static_cast<uint32_t>(glyph) * 8u + patternLine);
+            const uint8_t drawFg = useAlt ? altFg : fg;
+            const uint8_t drawBg = useAlt ? altBg : bg;
+            const unsigned pixelBase = col * 3u;
+            lineDst[pixelBase + 0u] = (pixel & 0xC0u) != 0u ? drawFg : drawBg;
+            lineDst[pixelBase + 1u] = (pixel & 0x30u) != 0u ? drawFg : drawBg;
+            lineDst[pixelBase + 2u] = (pixel & 0x0Cu) != 0u ? drawFg : drawBg;
+        }
+
+        msx_vdp_stream_line_if_needed(state, dst, y);
+    }
+}
+
+static void msx_vdp_render_multicolor_range(MsxVdpState* state, unsigned yStart, unsigned yEnd)
+{
+    unsigned startLine = 0u;
+    unsigned endLine = 0u;
+    if (!state || !msx_vdp_slice_bounds(kMsxFrameHeightMsx1, yStart, yEnd, &startLine, &endLine)) {
+        return;
+    }
+
+    const uint32_t nameBase = msx_vdp_name_base(state);
+    const uint32_t patternBase = static_cast<uint32_t>(state->regs[4] & 0x07u) << 11;
+    const uint8_t* const vram = state->vram;
+    const uint32_t mask = state->vramMask;
+
+    for (unsigned y = startLine; y < endLine; ++y) {
+        const uint32_t scrolledY = static_cast<uint32_t>(y) + static_cast<uint32_t>(msx_vdp_vscroll(state));
+        const unsigned row = scrolledY >> 3;
+        const unsigned lineBlock = (scrolledY & 0x04u) != 0 ? 4u : 0u;
+        uint8_t* dst = msx_vdp_get_line_buffer(state, y);
+        if (!dst) {
+            continue;
+        }
+
+        for (unsigned tileX = 0; tileX < 32; ++tileX) {
+            const uint8_t name = msx_vdp_read_vram_fast(vram, mask, nameBase + row * 32u + tileX);
+            const uint8_t color = msx_vdp_read_vram_fast(vram, mask, patternBase + name * 8u + lineBlock);
+            const uint8_t fg = msx_vdp_resolve_color(state, static_cast<uint8_t>(color >> 4));
+            const uint8_t bg = msx_vdp_resolve_color(state, static_cast<uint8_t>(color & 0x0Fu));
+            const unsigned pixelBase = tileX * 8u;
+
+            for (unsigned bit = 0; bit < 4; ++bit) {
+                dst[pixelBase + bit] = fg;
+                dst[pixelBase + 4u + bit] = bg;
+            }
+        }
+
+        msx_vdp_render_mono_sprites_line(state, y, dst);
+        msx_vdp_stream_line_if_needed(state, dst, y);
+    }
+}
+
+static void msx_vdp_render_graphics3_range(MsxVdpState* state, unsigned yStart, unsigned yEnd)
+{
+    unsigned startLine = 0u;
+    unsigned endLine = 0u;
+    const unsigned height = state ? state->activeHeight : 0u;
+    if (!state || !msx_vdp_slice_bounds(height, yStart, yEnd, &startLine, &endLine)) {
+        return;
+    }
+
+    const uint32_t nameBase = msx_vdp_name_base(state);
+    const uint32_t colorBase = msx_vdp_color_base(state);
+    const uint32_t patternBase = msx_vdp_pattern_base(state);
+    const uint32_t colorMask = msx_vdp_color_mask(state);
+    const uint32_t patternMask = msx_vdp_pattern_mask(state);
+    const uint8_t* const vram = state->vram;
+    const uint32_t mask = state->vramMask;
+
+    for (unsigned y = startLine; y < endLine; ++y) {
+        msx_vdp_render_color_sprites_line(state, y, s_msxColorSpriteLine);
+        const uint8_t* const spriteLine = s_msxColorSpriteLine + 32u;
+        const uint32_t scrolledY = static_cast<uint32_t>(y) + static_cast<uint32_t>(msx_vdp_vscroll(state));
+        const uint32_t nameIndex = static_cast<uint32_t>(scrolledY & 0xF8u) << 2;
+        const uint32_t patternIndex = (static_cast<uint32_t>(scrolledY & 0xC0u) << 5)
+                                    | static_cast<uint32_t>(scrolledY & 0x07u);
+        uint8_t* dst = msx_vdp_get_line_buffer(state, y);
+        if (!dst) {
+            continue;
+        }
+
+        for (unsigned tileX = 0; tileX < 32; ++tileX) {
+            const uint8_t name = msx_vdp_read_vram_fast(vram, mask, nameBase + nameIndex + tileX);
+            const uint32_t tileIndex = patternIndex + static_cast<uint32_t>(name) * 8u;
+            const uint8_t pattern = msx_vdp_read_vram_fast(vram, mask, patternBase + (tileIndex & patternMask));
+            const uint8_t color = msx_vdp_read_vram_fast(vram, mask, colorBase + (tileIndex & colorMask));
+            const uint8_t fg = msx_vdp_resolve_color(state, static_cast<uint8_t>(color >> 4));
+            const uint8_t bg = msx_vdp_resolve_color(state, static_cast<uint8_t>(color & 0x0Fu));
+            const unsigned pixelBase = tileX * 8u;
+
+            for (unsigned bit = 0; bit < 8u; ++bit) {
+                const unsigned px = pixelBase + bit;
+                const uint8_t spriteColor = spriteLine[px];
+                dst[px] = spriteColor != 0u
+                    ? msx_vdp_resolve_color(state, spriteColor)
+                    : (((pattern << bit) & 0x80u) != 0 ? fg : bg);
+            }
+        }
+        msx_vdp_stream_line_if_needed(state, dst, y);
+    }
+}
+
 static void msx_vdp_render_bitmap4_range(MsxVdpState* state, unsigned yStart, unsigned yEnd, bool finalizeFrame)
 {
     if (!state) {
@@ -2555,10 +2899,10 @@ static void msx_vdp_render_bitmap4_range(MsxVdpState* state, unsigned yStart, un
         return;
     }
 
-    // SCREEN 5 uses a 256x512 logical display plane (64KB).
-    // R#2 bit 6 selects the visible plane; bit 5 must not flip the renderer
-    // between the lower/upper 32KB halves.
-    const uint32_t lineMask = 0xFFFFu;
+    // SCREEN 5 display fetch wraps within the selected 0x8000-byte page.
+    // R#2 bits 6:5 select the display page; R#23 selects the first displayed line
+    // within that same page.
+    const uint32_t lineMask = 0x7FFFu;
     const uint8_t* const vram = state->vram;
     const uint32_t mask = state->vramMask;
     static uint8_t s_g4LastDispR2 = 0xFFu;
@@ -2684,7 +3028,6 @@ void msx_vdp_render_bitmap4(MsxVdpState* state)
 void msx_vdp_render_bitmap6(MsxVdpState* state)
 {
     const unsigned height = state->activeHeight;
-    const uint32_t base = static_cast<uint32_t>(state->regs[2] & 0x40u) << 10;
     const uint32_t lineMask = 0xFFFFu;
     const uint8_t* const vram = state->vram;
     const uint32_t mask = state->vramMask;
@@ -2692,8 +3035,11 @@ void msx_vdp_render_bitmap6(MsxVdpState* state)
     for (unsigned y = 0; y < height; ++y) {
         msx_vdp_render_color_sprites_line(state, y, s_msxColorSpriteLine);
         const uint8_t* const spriteLine = s_msxColorSpriteLine + 32u;
-        const uint32_t scrolledY = static_cast<uint32_t>(y) + static_cast<uint32_t>(msx_vdp_vscroll(state));
-        const uint32_t lineBase = base + ((scrolledY << 7) & lineMask);
+        const uint8_t lineReg2 = msx_vdp_reg2_for_line(state, y);
+        const uint8_t lineVScroll = msx_vdp_reg23_for_line(state, y);
+        const uint32_t scrolledY = static_cast<uint32_t>(y) + static_cast<uint32_t>(lineVScroll);
+        const uint32_t lineBase = (((static_cast<uint32_t>(lineReg2 & 0x40u) << 10) +
+                                    ((scrolledY << 7) & lineMask))) & mask;
         uint8_t* dst = msx_vdp_get_line_buffer(state, y);
         if (!dst) {
             continue;
@@ -2710,7 +3056,6 @@ void msx_vdp_render_bitmap6(MsxVdpState* state)
 void msx_vdp_render_bitmap7(MsxVdpState* state)
 {
     const unsigned height = state->activeHeight;
-    const uint32_t base = msx_vdp_name_base(state);
     const uint32_t lineMask = msx_vdp_name_mask(state) & 0xFFFFu;
     const uint8_t* const vram = state->vram;
     const uint32_t mask = state->vramMask;
@@ -2718,8 +3063,11 @@ void msx_vdp_render_bitmap7(MsxVdpState* state)
     for (unsigned y = 0; y < height; ++y) {
         msx_vdp_render_color_sprites_line(state, y, s_msxColorSpriteLine);
         const uint8_t* const spriteLine = s_msxColorSpriteLine + 32u;
-        const uint32_t scrolledY = static_cast<uint32_t>(y) + static_cast<uint32_t>(msx_vdp_vscroll(state));
-        const uint32_t lineBase = base + ((scrolledY << 8) & lineMask);
+        const uint8_t lineReg2 = msx_vdp_reg2_for_line(state, y);
+        const uint8_t lineVScroll = msx_vdp_reg23_for_line(state, y);
+        const uint32_t scrolledY = static_cast<uint32_t>(y) + static_cast<uint32_t>(lineVScroll);
+        const uint32_t lineBase = (msx_vdp_name_base_for_reg2(state, lineReg2) +
+                                   ((scrolledY << 8) & lineMask)) & mask;
         uint8_t* dst = msx_vdp_get_line_buffer(state, y);
         if (!dst) {
             continue;
@@ -2736,7 +3084,6 @@ void msx_vdp_render_bitmap7(MsxVdpState* state)
 void msx_vdp_render_bitmap8(MsxVdpState* state)
 {
     const unsigned height = state->activeHeight;
-    const uint32_t base = msx_vdp_name_base(state);
     const uint32_t lineMask = msx_vdp_name_mask(state) & 0xFFFFu;
     const uint8_t* const vram = state->vram;
     const uint32_t mask = state->vramMask;
@@ -2744,8 +3091,11 @@ void msx_vdp_render_bitmap8(MsxVdpState* state)
     for (unsigned y = 0; y < height; ++y) {
         msx_vdp_render_color_sprites_line(state, y, s_msxColorSpriteLine);
         const uint8_t* const spriteLine = s_msxColorSpriteLine + 32u;
-        const uint32_t scrolledY = static_cast<uint32_t>(y) + static_cast<uint32_t>(msx_vdp_vscroll(state));
-        const uint32_t lineBase = base + ((scrolledY << 8) & lineMask);
+        const uint8_t lineReg2 = msx_vdp_reg2_for_line(state, y);
+        const uint8_t lineVScroll = msx_vdp_reg23_for_line(state, y);
+        const uint32_t scrolledY = static_cast<uint32_t>(y) + static_cast<uint32_t>(lineVScroll);
+        const uint32_t lineBase = (msx_vdp_name_base_for_reg2(state, lineReg2) +
+                                   ((scrolledY << 8) & lineMask)) & mask;
         uint8_t* dst = msx_vdp_get_line_buffer(state, y);
         if (!dst) {
             continue;
@@ -2765,7 +3115,6 @@ void msx_vdp_render_bitmap8(MsxVdpState* state)
 void msx_vdp_render_yjk(MsxVdpState* state, bool yae)
 {
     const unsigned height = state->activeHeight;
-    uint32_t base = msx_vdp_name_base(state);
     const uint32_t lineMask = msx_vdp_name_mask(state) & 0xFFFFu;
     const uint8_t* const vram = state->vram;
     const uint32_t mask = state->vramMask;
@@ -2776,8 +3125,190 @@ void msx_vdp_render_yjk(MsxVdpState* state, bool yae)
     for (unsigned y = 0; y < height; ++y) {
         msx_vdp_render_color_sprites_line(state, y, s_msxColorSpriteLine);
         const uint8_t* const spriteLine = s_msxColorSpriteLine + 32u;
-        const uint32_t scrolledY = static_cast<uint32_t>(y) + static_cast<uint32_t>(msx_vdp_vscroll(state));
-        uint32_t lineBase = base + ((scrolledY << 8) & lineMask);
+        const uint8_t lineReg2 = msx_vdp_reg2_for_line(state, y);
+        const uint8_t lineVScroll = msx_vdp_reg23_for_line(state, y);
+        const uint32_t scrolledY = static_cast<uint32_t>(y) + static_cast<uint32_t>(lineVScroll);
+        uint32_t lineBase = (msx_vdp_name_base_for_reg2(state, lineReg2) +
+                             ((scrolledY << 8) & lineMask)) & mask;
+        if (hscroll512) {
+            lineBase += 0x10000u;
+        }
+        lineBase += static_cast<uint32_t>(hscroll & 0xFCu);
+        uint8_t* dst = msx_vdp_get_line_buffer(state, y);
+        if (!dst) {
+            continue;
+        }
+
+        for (unsigned i = 0; i < 4u; ++i) {
+            const uint8_t sprite = spriteLine[i];
+            dst[i] = sprite != 0u ? sprite : backdrop;
+        }
+
+        for (unsigned group = 0; group < 63u; ++group) {
+            const uint32_t groupBase = lineBase + group * 4u;
+            const uint8_t t0 = msx_vdp_read_vram_fast(vram, mask, groupBase + 0u);
+            const uint8_t t1 = msx_vdp_read_vram_fast(vram, mask, groupBase + 1u);
+            const uint8_t t2 = msx_vdp_read_vram_fast(vram, mask, groupBase + 2u);
+            const uint8_t t3 = msx_vdp_read_vram_fast(vram, mask, groupBase + 3u);
+            int k = static_cast<int>((t0 & 0x07u) | ((t1 & 0x07u) << 3));
+            int j = static_cast<int>((t2 & 0x07u) | ((t3 & 0x07u) << 3));
+            if ((k & 0x20) != 0) {
+                k -= 64;
+            }
+            if ((j & 0x20) != 0) {
+                j -= 64;
+            }
+
+            const uint8_t pixels[4] = {t0, t1, t2, t3};
+            const unsigned pixelBase = 4u + group * 4u;
+            for (unsigned i = 0; i < 4u; ++i) {
+                const uint8_t sprite = spriteLine[pixelBase + i];
+                if (sprite != 0u) {
+                    dst[pixelBase + i] = sprite;
+                    continue;
+                }
+
+                const uint8_t yv = static_cast<uint8_t>(pixels[i] >> 3);
+                if (yae && (yv & 0x01u) != 0u) {
+                    dst[pixelBase + i] = static_cast<uint8_t>(yv >> 1);
+                } else {
+                    dst[pixelBase + i] = msx_vdp_yjk_color_index(static_cast<int>(yv), j, k);
+                }
+            }
+        }
+        msx_vdp_stream_line_if_needed(state, dst, y);
+    }
+}
+
+static void msx_vdp_render_bitmap6_range(MsxVdpState* state, unsigned yStart, unsigned yEnd)
+{
+    unsigned startLine = 0u;
+    unsigned endLine = 0u;
+    const unsigned height = state ? state->activeHeight : 0u;
+    if (!state || !msx_vdp_slice_bounds(height, yStart, yEnd, &startLine, &endLine)) {
+        return;
+    }
+
+    const uint32_t lineMask = 0xFFFFu;
+    const uint8_t* const vram = state->vram;
+    const uint32_t mask = state->vramMask;
+
+    for (unsigned y = startLine; y < endLine; ++y) {
+        msx_vdp_render_color_sprites_line(state, y, s_msxColorSpriteLine);
+        const uint8_t* const spriteLine = s_msxColorSpriteLine + 32u;
+        const uint8_t lineReg2 = msx_vdp_reg2_for_line(state, y);
+        const uint8_t lineVScroll = msx_vdp_reg23_for_line(state, y);
+        const uint32_t scrolledY = static_cast<uint32_t>(y) + static_cast<uint32_t>(lineVScroll);
+        const uint32_t lineBase = (((static_cast<uint32_t>(lineReg2 & 0x40u) << 10) +
+                                    ((scrolledY << 7) & lineMask))) & mask;
+        uint8_t* dst = msx_vdp_get_line_buffer(state, y);
+        if (!dst) {
+            continue;
+        }
+
+        for (unsigned x = 0; x < kMsxFrameWidth; ++x) {
+            const uint8_t pixel = msx_vdp_bitmap6_read_pixel(vram, mask, lineBase, x * 2u);
+            dst[x] = spriteLine[x] != 0u ? spriteLine[x] : pixel;
+        }
+        msx_vdp_stream_line_if_needed(state, dst, y);
+    }
+}
+
+static void msx_vdp_render_bitmap7_range(MsxVdpState* state, unsigned yStart, unsigned yEnd)
+{
+    unsigned startLine = 0u;
+    unsigned endLine = 0u;
+    const unsigned height = state ? state->activeHeight : 0u;
+    if (!state || !msx_vdp_slice_bounds(height, yStart, yEnd, &startLine, &endLine)) {
+        return;
+    }
+
+    const uint32_t lineMask = msx_vdp_name_mask(state) & 0xFFFFu;
+    const uint8_t* const vram = state->vram;
+    const uint32_t mask = state->vramMask;
+
+    for (unsigned y = startLine; y < endLine; ++y) {
+        msx_vdp_render_color_sprites_line(state, y, s_msxColorSpriteLine);
+        const uint8_t* const spriteLine = s_msxColorSpriteLine + 32u;
+        const uint8_t lineReg2 = msx_vdp_reg2_for_line(state, y);
+        const uint8_t lineVScroll = msx_vdp_reg23_for_line(state, y);
+        const uint32_t scrolledY = static_cast<uint32_t>(y) + static_cast<uint32_t>(lineVScroll);
+        const uint32_t lineBase = (msx_vdp_name_base_for_reg2(state, lineReg2) +
+                                   ((scrolledY << 8) & lineMask)) & mask;
+        uint8_t* dst = msx_vdp_get_line_buffer(state, y);
+        if (!dst) {
+            continue;
+        }
+
+        for (unsigned x = 0; x < kMsxFrameWidth; ++x) {
+            const uint8_t pixel = msx_vdp_bitmap7_read_pixel(vram, mask, lineBase, x * 2u);
+            dst[x] = spriteLine[x] != 0u ? spriteLine[x] : pixel;
+        }
+        msx_vdp_stream_line_if_needed(state, dst, y);
+    }
+}
+
+static void msx_vdp_render_bitmap8_range(MsxVdpState* state, unsigned yStart, unsigned yEnd)
+{
+    unsigned startLine = 0u;
+    unsigned endLine = 0u;
+    const unsigned height = state ? state->activeHeight : 0u;
+    if (!state || !msx_vdp_slice_bounds(height, yStart, yEnd, &startLine, &endLine)) {
+        return;
+    }
+
+    const uint32_t lineMask = msx_vdp_name_mask(state) & 0xFFFFu;
+    const uint8_t* const vram = state->vram;
+    const uint32_t mask = state->vramMask;
+
+    for (unsigned y = startLine; y < endLine; ++y) {
+        msx_vdp_render_color_sprites_line(state, y, s_msxColorSpriteLine);
+        const uint8_t* const spriteLine = s_msxColorSpriteLine + 32u;
+        const uint8_t lineReg2 = msx_vdp_reg2_for_line(state, y);
+        const uint8_t lineVScroll = msx_vdp_reg23_for_line(state, y);
+        const uint32_t scrolledY = static_cast<uint32_t>(y) + static_cast<uint32_t>(lineVScroll);
+        const uint32_t lineBase = (msx_vdp_name_base_for_reg2(state, lineReg2) +
+                                   ((scrolledY << 8) & lineMask)) & mask;
+        uint8_t* dst = msx_vdp_get_line_buffer(state, y);
+        if (!dst) {
+            continue;
+        }
+
+        for (unsigned x = 0; x < kMsxFrameWidth; ++x) {
+            const uint8_t sprite = spriteLine[x];
+            const uint8_t pixel = msx_vdp_bitmap8_read_pixel(vram, mask, lineBase, x);
+            dst[x] = sprite != 0u
+                ? msx_vdp_screen8_mapped_color(sprite)
+                : pixel;
+        }
+        msx_vdp_stream_line_if_needed(state, dst, y);
+    }
+}
+
+static void msx_vdp_render_yjk_range(MsxVdpState* state, unsigned yStart, unsigned yEnd, bool yae)
+{
+    unsigned startLine = 0u;
+    unsigned endLine = 0u;
+    const unsigned height = state ? state->activeHeight : 0u;
+    if (!state || !msx_vdp_slice_bounds(height, yStart, yEnd, &startLine, &endLine)) {
+        return;
+    }
+
+    const uint32_t lineMask = msx_vdp_name_mask(state) & 0xFFFFu;
+    const uint8_t* const vram = state->vram;
+    const uint32_t mask = state->vramMask;
+    const uint8_t backdrop = msx_vdp_reg_backdrop(state);
+    const uint16_t hscroll = yae ? 0u : msx_vdp_hscroll(state);
+    const bool hscroll512 = !yae && msx_vdp_hscroll512(state) && (hscroll > 255u);
+
+    for (unsigned y = startLine; y < endLine; ++y) {
+        msx_vdp_render_color_sprites_line(state, y, s_msxColorSpriteLine);
+        const uint8_t* const spriteLine = s_msxColorSpriteLine + 32u;
+        const uint8_t lineReg2 = msx_vdp_reg2_for_line(state, y);
+        const uint8_t lineVScroll = msx_vdp_reg23_for_line(state, y);
+        const uint32_t scrolledY = static_cast<uint32_t>(y) + static_cast<uint32_t>(lineVScroll);
+        uint32_t lineBase = (msx_vdp_name_base_for_reg2(state, lineReg2) +
+                             ((scrolledY << 8) & lineMask)) & mask;
         if (hscroll512) {
             lineBase += 0x10000u;
         }
@@ -2888,6 +3419,57 @@ void msx_vdp_advance_command_engine(MsxVdpState* state, uint32_t targetFrameCycl
 void msx_vdp_render_bitmap4_slice(MsxVdpState* state, unsigned yStart, unsigned yEnd, bool finalizeFrame)
 {
     msx_vdp_render_bitmap4_slice_internal(state, yStart, yEnd, finalizeFrame);
+}
+
+void msx_vdp_render_slice(MsxVdpState* state, unsigned yStart, unsigned yEnd, bool finalizeFrame)
+{
+    if (!state) {
+        return;
+    }
+
+    switch (state->mode) {
+        case MsxVdpMode::Graphics1:
+            msx_vdp_render_graphics1_range(state, yStart, yEnd);
+            break;
+        case MsxVdpMode::Text40:
+            msx_vdp_render_text40_range(state, yStart, yEnd);
+            break;
+        case MsxVdpMode::Graphics2:
+            msx_vdp_render_graphics2_like_range(state, yStart, yEnd);
+            break;
+        case MsxVdpMode::Multicolor:
+            msx_vdp_render_multicolor_range(state, yStart, yEnd);
+            break;
+        case MsxVdpMode::Graphics3:
+            msx_vdp_render_graphics3_range(state, yStart, yEnd);
+            break;
+        case MsxVdpMode::Bitmap4:
+            msx_vdp_render_bitmap4_range(state, yStart, yEnd, finalizeFrame);
+            break;
+        case MsxVdpMode::Bitmap6:
+            msx_vdp_render_bitmap6_range(state, yStart, yEnd);
+            break;
+        case MsxVdpMode::Bitmap7:
+            if (msx_vdp_is_msx2(state) && msx_vdp_mode_yjk(state)) {
+                msx_vdp_render_yjk_range(state, yStart, yEnd, msx_vdp_mode_yae(state));
+            } else {
+                msx_vdp_render_bitmap7_range(state, yStart, yEnd);
+            }
+            break;
+        case MsxVdpMode::Bitmap8:
+            if (msx_vdp_is_msx2(state) && msx_vdp_mode_yjk(state)) {
+                msx_vdp_render_yjk_range(state, yStart, yEnd, msx_vdp_mode_yae(state));
+            } else {
+                msx_vdp_render_bitmap8_range(state, yStart, yEnd);
+            }
+            break;
+        case MsxVdpMode::Text80:
+            msx_vdp_render_text80_range(state, yStart, yEnd);
+            break;
+        case MsxVdpMode::Unsupported:
+        default:
+            break;
+    }
 }
 
 bool msx_vdp_init(MsxVdpState* state, MsxMachineMode machineMode)
@@ -3076,6 +3658,8 @@ void msx_vdp_reset(MsxVdpState* state)
     s_msxVdpR2TimelineCount = 0u;
     s_msxVdpR23TimelineCount = 0u;
     state->frameCounter = 0;
+    state->lineInterruptFrameTag = 0xFFFFFFFFu;
+    state->lineInterruptLineTag = 0xFFu;
     if (msx_vdp_is_msx2(state)) {
         state->regs[8] = 0x08u;
         state->regs[16] = 0u;
@@ -3125,8 +3709,11 @@ bool msx_vdp_begin_frame(MsxVdpState* state)
         s_msxColorSpriteWriteLogApplyIndex = 0u;
     }
     state->status[0] |= 0x80u;
+    state->status[1] &= 0xFEu;
     state->status[2] = 0x5Cu;
     state->frameCounter++;
+    state->lineInterruptFrameTag = 0xFFFFFFFFu;
+    state->lineInterruptLineTag = 0xFFu;
     return (state->regs[1] & 0x20u) != 0u;
 }
 
@@ -3296,6 +3883,7 @@ uint8_t msx_vdp_in_status(MsxVdpState* state)
     uint8_t index = 0u;
     if (msx_vdp_is_msx2(state)) {
         msx_vdp_advance_command_engine_internal(state, state->currentFrameCpuCycles);
+        msx_vdp_refresh_timing_flags(state);
         index = static_cast<uint8_t>(state->regs[15] & 0x0Fu);
         if (index >= sizeof(state->status)) {
             index = 0u;
@@ -3303,23 +3891,6 @@ uint8_t msx_vdp_in_status(MsxVdpState* state)
     }
 
     uint8_t value = state->status[index];
-    if (index == 2u && msx_vdp_is_msx2(state)) {
-        const uint32_t totalLines = 262u;
-        const uint32_t visibleLines = state->activeHeight != 0u ? state->activeHeight : 212u;
-        const uint32_t vblankLine = visibleLines > 192u ? 230u : 220u;
-        const uint32_t lineCycles =
-            state->frameCycleBudget != 0u ? (state->frameCycleBudget + totalLines - 1u) / totalLines : 1u;
-        const uint32_t scanline = state->currentFrameCpuCycles / lineCycles;
-        const uint32_t linePhase = state->currentFrameCpuCycles % lineCycles;
-        const uint32_t hblankStart = (lineCycles * 5u) / 6u;
-        value = static_cast<uint8_t>((value & 0x91u) | 0x0Cu | ((state->frameCounter & 0x01u) << 1));
-        if (scanline >= vblankLine) {
-            value |= 0x40u;
-        }
-        if (linePhase >= hblankStart) {
-            value |= 0x20u;
-        }
-    }
     if (index == 0u) {
         state->status[0] &= 0x5Fu;
     } else if (index == 1u) {

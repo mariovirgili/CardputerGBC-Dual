@@ -76,6 +76,8 @@ struct MsxVdpState {
     uint32_t frameStartCpuCycles;
     uint32_t currentFrameCpuCycles;
     uint32_t frameCycleBudget;
+    uint32_t lineInterruptFrameTag;
+    uint8_t lineInterruptLineTag;
     unsigned activeWidth;
     unsigned activeHeight;
     MsxVdpMode mode;
@@ -88,6 +90,7 @@ void msx_vdp_reset(MsxVdpState* state);
 bool msx_vdp_begin_frame(MsxVdpState* state);
 void msx_vdp_prepare_frame_render(MsxVdpState* state);
 void msx_vdp_render(MsxVdpState* state);
+void msx_vdp_render_slice(MsxVdpState* state, unsigned yStart, unsigned yEnd, bool finalizeFrame);
 void msx_vdp_render_bitmap4_slice(MsxVdpState* state, unsigned yStart, unsigned yEnd, bool finalizeFrame);
 void msx_vdp_advance_command_engine(MsxVdpState* state, uint32_t targetFrameCycles);
 uint8_t msx_vdp_in_data(MsxVdpState* state);

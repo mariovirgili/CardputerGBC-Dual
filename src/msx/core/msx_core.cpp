@@ -38,6 +38,14 @@ constexpr uint8_t kMsxBootSlotDisk = 0xFC;
 constexpr uint8_t kMsxBootSecondaryDisk = 0xA4;
 constexpr uint16_t kMsxDefaultStack = 0xF380;
 constexpr uint16_t kMsxDiskBootAddress = 0xC000;
+
+uint8_t msx_core_default_secondary_slot_reg(MsxMachineMode machineMode, bool directBoot)
+{
+    if (machineMode == MsxMachineMode::MSX2) {
+        return kMsxBootSecondaryDisk;
+    }
+    return directBoot ? kMsxBootSecondaryCart : kMsxBootSecondaryBios;
+}
 constexpr uint32_t kMsxStatusRefreshPeriod = 8u;
 constexpr size_t kMsxCartRamSizeMsx1 = 0x8000u;
 constexpr uint8_t kMsxSlotIdMainRam = 0x8Bu;   // expanded slot 3-2
@@ -355,7 +363,9 @@ void msx_core_apply_boot_mapping(MsxCoreState* state,
 void msx_core_finish_no_cart_init(MsxCoreState* state)
 {
     msx_core_attach_runtime_devices(state);
-    msx_core_apply_boot_mapping(state, kMsxBootSlotBios, kMsxBootSecondaryBios);
+    msx_core_apply_boot_mapping(state,
+                                kMsxBootSlotBios,
+                                msx_core_default_secondary_slot_reg(state->machineMode, false));
 
     state->bootPc = 0x0000u;
     state->directBoot = false;
@@ -546,7 +556,7 @@ bool msx_core_init(MsxCoreState* state,
     state->bootPc = msx_core_select_boot_pc(&state->cart, &state->directBoot);
     msx_core_apply_boot_mapping(state,
                                 state->directBoot ? kMsxBootSlotCart : kMsxBootSlotBios,
-                                state->directBoot ? kMsxBootSecondaryCart : kMsxBootSecondaryBios);
+                                msx_core_default_secondary_slot_reg(state->machineMode, state->directBoot));
 
     msx_cpu_init(&state->cpu);
     msx_cpu_reset(&state->cpu, state->bootPc, kMsxDefaultStack);
@@ -717,9 +727,9 @@ void msx_core_step_frame(MsxCoreState* state)
         return;
     }
 
-    const bool bitmap4SliceMode = state->machineMode == MsxMachineMode::MSX2 &&
-                                  state->vdp.mode == MsxVdpMode::Bitmap4 &&
-                                  msx_vdp_display_enabled(&state->vdp);
+    const bool vdpSliceMode = state->machineMode == MsxMachineMode::MSX2 &&
+                              state->vdp.mode != MsxVdpMode::Unsupported &&
+                              msx_vdp_display_enabled(&state->vdp);
     if (state->machineMode == MsxMachineMode::MSX2) {
         state->memory.cpu = &state->cpu;
         state->vdp.frameStartCpuCycles = state->cpu.totalCycles;
@@ -727,12 +737,12 @@ void msx_core_step_frame(MsxCoreState* state)
         state->vdp.frameCycleBudget = static_cast<uint32_t>(kMsxFrameCycles60Hz);
     }
     const bool irqEnabled = msx_vdp_begin_frame(&state->vdp);
-    if (irqEnabled && !bitmap4SliceMode) {
+    if (irqEnabled && !vdpSliceMode) {
         msx_cpu_request_irq(&state->cpu);
     }
 
     const MsxCpuRunState prevRunState = state->cpu.runState;
-    if (bitmap4SliceMode) {
+    if (vdpSliceMode) {
         const unsigned visibleLines = state->vdp.activeHeight != 0u ? state->vdp.activeHeight : 212u;
         const unsigned totalLines = 262u;
         const unsigned vblankLine = visibleLines > 192u ? 230u : 220u;
@@ -745,7 +755,7 @@ void msx_core_step_frame(MsxCoreState* state)
             state->vdp.currentFrameCpuCycles = executedCycles;
             msx_vdp_advance_command_engine(&state->vdp, executedCycles);
             if (line < visibleLines) {
-                msx_vdp_render_bitmap4_slice(&state->vdp, line, line + 1u, line + 1u == visibleLines);
+                msx_vdp_render_slice(&state->vdp, line, line + 1u, line + 1u == visibleLines);
             }
             const uint32_t targetCycles =
                 static_cast<uint32_t>((static_cast<uint64_t>(line + 1u) *
@@ -817,7 +827,7 @@ void msx_core_step_frame(MsxCoreState* state)
     }
 #endif
 
-    if (!bitmap4SliceMode) {
+    if (!vdpSliceMode) {
         msx_vdp_render(&state->vdp);
         msx_vdp_get_display_frame(&state->vdp, &state->displayFrame);
     }
