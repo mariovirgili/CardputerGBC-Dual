@@ -22,6 +22,18 @@ enum class MsxMachineMode : uint8_t {
     MSX2 = 2,
 };
 
+enum class MsxPerformanceMode : uint8_t {
+    Accurate = 0,
+    Performance = 1,
+};
+
+enum class MsxPerformanceFlag : uint8_t {
+    DisableSliceRendering = 0x01,
+    DisableSpriteCollision = 0x02,
+    SimplifySpriteOverflow = 0x04,
+    InstantVdpCommands = 0x08,
+};
+
 MsxInternalViewMode msx_config_load_internal_view_mode(void);
 MsxInternalViewMode msx_config_get_internal_view_mode(void);
 MsxInternalViewMode msx_config_get_active_view_mode(void);
@@ -39,6 +51,19 @@ MsxMachineMode msx_config_get_machine_mode(void);
 const char* msx_config_machine_mode_label(MsxMachineMode mode);
 const char* msx_config_get_machine_mode_label(void);
 void msx_config_set_machine_mode(MsxMachineMode mode, bool persist);
+
+MsxPerformanceMode msx_config_load_performance_mode(void);
+MsxPerformanceMode msx_config_get_performance_mode_value(void);
+bool msx_config_get_performance_mode(void);
+const char* msx_config_performance_mode_label(MsxPerformanceMode mode);
+const char* msx_config_get_performance_mode_label(void);
+uint8_t msx_config_load_performance_flags(void);
+uint8_t msx_config_get_performance_flags(void);
+bool msx_config_get_performance_flag(MsxPerformanceFlag flag);
+void msx_config_set_performance_flags(uint8_t flags, bool persist);
+void msx_config_set_performance_flag(MsxPerformanceFlag flag, bool enabled, bool persist);
+void msx_config_set_performance_mode(bool enabled, bool persist);
+void msx_config_toggle_performance_mode(void);
 
 const char* msx_config_load_bios_path(void);
 const char* msx_config_get_bios_path(void);

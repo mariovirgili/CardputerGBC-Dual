@@ -1002,6 +1002,7 @@ void run_msx(const uint8_t* romData, size_t romLen, const char* romName, SdServi
     }
 
     msx_config_load_internal_view_mode();
+    msx_config_load_performance_mode();
     viewModeGuard.configureForTarget(useExternal);
     const MsxMachineMode configuredMode = msx_config_load_machine_mode();
     msx_config_load_bios_path();
@@ -1059,6 +1060,7 @@ void run_msx(const uint8_t* romData, size_t romLen, const char* romName, SdServi
         msx_request_quit_to_launcher();
         return;
     }
+    msx_input_set_runtime_machine_mode(core.machineMode);
 
     bool audioInitOk = false;
 #if MSX_AUDIO_ENABLED
@@ -1234,6 +1236,7 @@ void run_msx_disk(const uint8_t* dskData, size_t dskLen, const char* dskName, Sd
     }
 
     msx_config_load_internal_view_mode();
+    msx_config_load_performance_mode();
     viewModeGuard.configureForTarget(useExternal);
     const MsxMachineMode configuredMode = msx_config_load_machine_mode();
     msx_config_load_bios_path();
@@ -1296,6 +1299,7 @@ void run_msx_disk(const uint8_t* dskData, size_t dskLen, const char* dskName, Sd
         msx_request_quit_to_launcher();
         return;
     }
+    msx_input_set_runtime_machine_mode(core.machineMode);
 
     bool audioInitOk = false;
 #if MSX_AUDIO_ENABLED
@@ -1455,6 +1459,7 @@ void run_msx_basic(const char* name, SdService& sd)
     }
 
     msx_config_load_internal_view_mode();
+    msx_config_load_performance_mode();
     viewModeGuard.configureForTarget(useExternal);
     const MsxMachineMode configuredMode = msx_config_load_machine_mode();
     msx_config_load_bios_path();
@@ -1502,6 +1507,7 @@ void run_msx_basic(const char* name, SdService& sd)
         msx_request_quit_to_launcher();
         return;
     }
+    msx_input_set_runtime_machine_mode(core.machineMode);
 
     bool audioInitOk = false;
 #if MSX_AUDIO_ENABLED
@@ -1670,6 +1676,7 @@ void run_msx_cas(const uint8_t* casData, size_t casLen, const char* casName, SdS
     }
 
     msx_config_load_internal_view_mode();
+    msx_config_load_performance_mode();
     viewModeGuard.configureForTarget(useExternal);
     const MsxMachineMode configuredMode = msx_config_load_machine_mode();
     msx_config_load_bios_path();
@@ -1718,6 +1725,7 @@ void run_msx_cas(const uint8_t* casData, size_t casLen, const char* casName, SdS
         msx_request_quit_to_launcher();
         return;
     }
+    msx_input_set_runtime_machine_mode(core.machineMode);
 
     bool audioInitOk = false;
 #if MSX_AUDIO_ENABLED

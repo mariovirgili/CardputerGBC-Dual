@@ -834,7 +834,9 @@ void msx_core_step_frame(MsxCoreState* state)
     uint32_t presentUs = 0u;
 #endif
 
-    const bool vdpSliceMode = state->machineMode == MsxMachineMode::MSX2 &&
+    const bool vdpSliceMode =
+                              !msx_config_get_performance_flag(MsxPerformanceFlag::DisableSliceRendering) &&
+                              state->machineMode == MsxMachineMode::MSX2 &&
                               state->vdp.mode != MsxVdpMode::Unsupported &&
                               msx_vdp_display_enabled(&state->vdp);
     if (state->machineMode == MsxMachineMode::MSX2) {

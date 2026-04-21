@@ -15,6 +15,7 @@
 
 #include <cstdio>
 #include <cctype>
+#include <cstring>
 #include <string>
 #include <cmath>
 
@@ -181,6 +182,17 @@ static void msx_display_draw_placeholder(const MsxDisplayStatus* status)
 
 static const char* msx_display_runtime_menu_label(const MsxInputOverlayState& overlay, uint8_t index)
 {
+    if (overlay.performanceSubmenuVisible) {
+        switch (index) {
+            case 0u: return "SLICE RENDER";
+            case 1u: return "SPR COLL";
+            case 2u: return "8-SPR FLAGS";
+            case 3u: return "INSTANT CMD";
+            case 4u: return "BACK";
+            default: return "";
+        }
+    }
+
     if (msx_display_game_on_external()) {
         switch (index) {
             case 0u: return "JOY";
@@ -188,11 +200,12 @@ static const char* msx_display_runtime_menu_label(const MsxInputOverlayState& ov
             case 2u: return "BASIC KBD";
             case 3u: return "VAUS";
             case 4u: return "VIEW";
-            case 5u: return "SELECT SLOT";
-            case 6u: return "SAVE SLOT";
-            case 7u: return "LOAD SLOT";
-            case 8u: return overlay.casChangeAvailable ? "CHANGE CAS" : "CLOSE";
-            case 9u: return overlay.casChangeAvailable ? "CLOSE" : "";
+            case 5u: return "PERF TUNE";
+            case 6u: return "SELECT SLOT";
+            case 7u: return "SAVE SLOT";
+            case 8u: return "LOAD SLOT";
+            case 9u: return overlay.casChangeAvailable ? "CHANGE CAS" : "CLOSE";
+            case 10u: return overlay.casChangeAvailable ? "CLOSE" : "";
             default: return "";
         }
     } else {
@@ -202,19 +215,43 @@ static const char* msx_display_runtime_menu_label(const MsxInputOverlayState& ov
             case 2u: return "BASIC KBD";
             case 3u: return "VAUS";
             case 4u: return "VIEW";
-            case 5u: return "STATE SLOT";
-            case 6u: return "SAVE STATE";
-            case 7u: return "LOAD STATE";
-            case 8u: return overlay.casChangeAvailable ? "CHANGE CAS" : "CLOSE";
-            case 9u: return overlay.casChangeAvailable ? "CLOSE" : "";
+            case 5u: return "PERF TUNE";
+            case 6u: return "STATE SLOT";
+            case 7u: return "SAVE STATE";
+            case 8u: return "LOAD STATE";
+            case 9u: return overlay.casChangeAvailable ? "CHANGE CAS" : "CLOSE";
+            case 10u: return overlay.casChangeAvailable ? "CLOSE" : "";
             default: return "";
         }
     }
 }
 
-static const char* msx_display_runtime_menu_value(const MsxInputOverlayState& overlay, uint8_t index)
+static const char* msx_display_runtime_menu_value(const MsxInputOverlayState& overlay,
+                                                  uint8_t index,
+                                                  uint8_t stateSlot)
 {
     static char slotStr[8];
+    if (overlay.performanceSubmenuVisible) {
+        switch (index) {
+            case 0u:
+                if (!overlay.machineIsMsx2) {
+                    return "N/A";
+                }
+                return overlay.perfDisableSliceRendering ? "OFF" : "ON";
+            case 1u:
+                return overlay.perfDisableSpriteCollision ? "OFF" : "ON";
+            case 2u:
+                return overlay.perfSimplifySpriteOverflow ? "OFF" : "ON";
+            case 3u:
+                if (!overlay.machineIsMsx2) {
+                    return "N/A";
+                }
+                return overlay.perfInstantVdpCommands ? "ON" : "OFF";
+            default:
+                return nullptr;
+        }
+    }
+
     switch (index) {
         case 0u:
             return overlay.joystickEnabled ? "ON" : "OFF";
@@ -227,7 +264,9 @@ static const char* msx_display_runtime_menu_value(const MsxInputOverlayState& ov
         case 4u:
             return msx_display_game_on_external() ? "1:1" : msx_config_get_active_view_mode_label();
         case 5u:
-            std::snprintf(slotStr, sizeof(slotStr), "< %u >", static_cast<unsigned>(msx_input_get_state_slot()));
+            return msx_config_get_performance_mode_label();
+        case 6u:
+            std::snprintf(slotStr, sizeof(slotStr), "< %u >", static_cast<unsigned>(stateSlot));
             return slotStr;
         default:
             return nullptr;
@@ -239,11 +278,18 @@ static int msx_display_runtime_menu_box_x(void)
     return (msx_display_active_width() - kRuntimeMenuBoxW) / 2;
 }
 
-static void msx_display_draw_runtime_menu_shell(void)
+static void msx_display_draw_runtime_menu_shell(const MsxInputOverlayState& overlay)
 {
     const int boxX = msx_display_runtime_menu_box_x();
     const int boxY = msx_display_runtime_menu_box_y();
     const int innerX = boxX + kRuntimeMenuInnerPad;
+    const char* title = overlay.performanceSubmenuVisible ? "PERF TUNING" : "MSX MENU";
+    const char* hint1 = overlay.performanceSubmenuVisible
+                            ? "GO toggle  DEL back"
+                            : (msx_display_game_on_external() ? "EXT TFT fixed 1:1" : "\\ quick view  GO toggle");
+    const char* hint2 = overlay.performanceSubmenuVisible
+                            ? "Hold GO closes menu"
+                            : "Hold GO closes menu";
 
     if (msx_display_game_on_external()) {
         msx_display_prepare_external_tft();
@@ -254,13 +300,11 @@ static void msx_display_draw_runtime_menu_shell(void)
         tft.drawRoundRect(boxX + 2, boxY + 2, kRuntimeMenuBoxW - 4, kRuntimeMenuBoxH - 4, DEFAULT_ROUND_RECT, RECT_COLOR_DARK);
         tft.setTextDatum(TL_DATUM);
         tft.setTextColor(PRIMARY_COLOR, TFT_BLACK);
-        const char* title = "MSX MENU";
         const int titleX = boxX + (kRuntimeMenuBoxW - tft.textWidth(title, 2)) / 2;
         tft.drawString(title, titleX, boxY + 6, 2);
         tft.setTextColor(TEXT_COLOR, TFT_BLACK);
-        tft.drawString(msx_display_game_on_external() ? "EXT TFT fixed 1:1" : "\\ quick view  GO toggle",
-                       innerX, boxY + kRuntimeMenuBoxH - 19, 1);
-        tft.drawString("Hold GO closes menu", innerX, boxY + kRuntimeMenuBoxH - 10, 1);
+        tft.drawString(hint1, innerX, boxY + kRuntimeMenuBoxH - 19, 1);
+        tft.drawString(hint2, innerX, boxY + kRuntimeMenuBoxH - 10, 1);
         return;
     }
 
@@ -272,18 +316,18 @@ static void msx_display_draw_runtime_menu_shell(void)
     display.setTextDatum(top_left);
     display.setFont(&fonts::Font2);
     display.setTextColor(PRIMARY_COLOR, TFT_BLACK);
-    const char* title = "MSX MENU";
     const int titleX = boxX + (kRuntimeMenuBoxW - display.textWidth(title)) / 2;
     display.drawString(title, titleX, boxY + 6);
     display.setFont(&fonts::Font0);
     display.setTextColor(TEXT_COLOR, TFT_BLACK);
-    display.drawString("\\ quick view  GO toggle", innerX, boxY + kRuntimeMenuBoxH - 19);
-    display.drawString("Hold GO closes menu", innerX, boxY + kRuntimeMenuBoxH - 10);
+    display.drawString(hint1, innerX, boxY + kRuntimeMenuBoxH - 19);
+    display.drawString(hint2, innerX, boxY + kRuntimeMenuBoxH - 10);
 }
 
 static void msx_display_draw_runtime_menu_row_state(const MsxInputOverlayState& overlay, uint8_t index, bool selected)
 {
     const uint8_t scrollIndex = msx_input_get_scroll_index();
+    const uint8_t stateSlot = msx_input_get_state_slot();
     const int displayIndex = static_cast<int>(index) - static_cast<int>(scrollIndex);
     if (displayIndex < 0 || displayIndex >= kRuntimeMenuRowCount) {
         return;
@@ -298,7 +342,7 @@ static void msx_display_draw_runtime_menu_row_state(const MsxInputOverlayState& 
     const int rowW = kRuntimeMenuBoxW - 16;
     const int rowH = kRuntimeMenuRowH - 1;
     const char* label = msx_display_runtime_menu_label(overlay, index);
-    const char* value = msx_display_runtime_menu_value(overlay, index);
+    const char* value = msx_display_runtime_menu_value(overlay, index, stateSlot);
 
     if (msx_display_game_on_external()) {
         msx_display_prepare_external_tft();
@@ -345,10 +389,56 @@ static void msx_display_draw_runtime_menu(const MsxInputOverlayState& overlay)
         return;
     }
 
-    msx_display_draw_runtime_menu_shell();
+    msx_display_draw_runtime_menu_shell(overlay);
     for (uint8_t i = 0; i < kRuntimeMenuRowCount; ++i) {
         msx_display_draw_runtime_menu_row(overlay, msx_input_get_scroll_index() + i);
     }
+}
+
+static bool msx_display_runtime_menu_overlay_equals(const MsxInputOverlayState& a,
+                                                    const MsxInputOverlayState& b)
+{
+    return a.menuVisible == b.menuVisible &&
+           a.performanceSubmenuVisible == b.performanceSubmenuVisible &&
+           a.machineIsMsx2 == b.machineIsMsx2 &&
+           a.joystickEnabled == b.joystickEnabled &&
+           a.keyboardEnabled == b.keyboardEnabled &&
+           a.basicKeyboardEnabled == b.basicKeyboardEnabled &&
+           a.vausEnabled == b.vausEnabled &&
+           a.performanceMode == b.performanceMode &&
+           a.perfDisableSliceRendering == b.perfDisableSliceRendering &&
+           a.perfDisableSpriteCollision == b.perfDisableSpriteCollision &&
+           a.perfSimplifySpriteOverflow == b.perfSimplifySpriteOverflow &&
+           a.perfInstantVdpCommands == b.perfInstantVdpCommands &&
+           a.casChangeAvailable == b.casChangeAvailable &&
+           a.selectedIndex == b.selectedIndex;
+}
+
+static bool msx_display_runtime_menu_row_changed(const MsxInputOverlayState& previousOverlay,
+                                                 uint8_t previousStateSlot,
+                                                 const MsxInputOverlayState& currentOverlay,
+                                                 uint8_t currentStateSlot,
+                                                 uint8_t index)
+{
+    const bool previousSelected = previousOverlay.selectedIndex == index;
+    const bool currentSelected = currentOverlay.selectedIndex == index;
+    if (previousSelected != currentSelected) {
+        return true;
+    }
+
+    const char* previousLabel = msx_display_runtime_menu_label(previousOverlay, index);
+    const char* currentLabel = msx_display_runtime_menu_label(currentOverlay, index);
+    if (std::strcmp(previousLabel ? previousLabel : "", currentLabel ? currentLabel : "") != 0) {
+        return true;
+    }
+
+    const char* previousValue = msx_display_runtime_menu_value(previousOverlay, index, previousStateSlot);
+    const char* currentValue = msx_display_runtime_menu_value(currentOverlay, index, currentStateSlot);
+    if (previousValue == nullptr || currentValue == nullptr) {
+        return previousValue != currentValue;
+    }
+
+    return std::strcmp(previousValue, currentValue) != 0;
 }
 
 void msx_display_init(void)
@@ -388,35 +478,33 @@ void msx_display_submit_frame(const MsxDisplayFrame* frame, const MsxDisplayStat
         msx_video_lock();
         msx_video_set_runtime_menu_active(true);
         const uint8_t scrollIndex = msx_input_get_scroll_index();
-        
-        if (!s_lastMenuVisible || scrollIndex != s_lastScrollIndex) {
-            msx_display_draw_runtime_menu(overlay);
-        } else {
-            if (overlay.selectedIndex != s_lastMenuOverlay.selectedIndex) {
-                msx_display_draw_runtime_menu_row_state(overlay, s_lastMenuOverlay.selectedIndex, false);
-                msx_display_draw_runtime_menu_row(overlay, overlay.selectedIndex);
-            }
+        const bool fullMenuRedraw =
+            !s_lastMenuVisible ||
+            overlay.performanceSubmenuVisible != s_lastMenuOverlay.performanceSubmenuVisible;
+        const bool overlayChanged =
+            !msx_display_runtime_menu_overlay_equals(overlay, s_lastMenuOverlay);
+        const bool scrollChanged = scrollIndex != s_lastScrollIndex;
+        const bool stateSlotChanged = currentStateSlot != s_lastStateSlot;
 
-            if (overlay.joystickEnabled != s_lastMenuOverlay.joystickEnabled) {
-                msx_display_draw_runtime_menu_row(overlay, 0u);
-            }
-            if (overlay.keyboardEnabled != s_lastMenuOverlay.keyboardEnabled) {
-                msx_display_draw_runtime_menu_row(overlay, 1u);
-            }
-            if (overlay.basicKeyboardEnabled != s_lastMenuOverlay.basicKeyboardEnabled) {
-                msx_display_draw_runtime_menu_row(overlay, 2u);
-            }
-            if (overlay.vausEnabled != s_lastMenuOverlay.vausEnabled) {
-                msx_display_draw_runtime_menu_row(overlay, 3u);
-            }
-            if (currentViewMode != s_lastViewMode) {
-                msx_display_draw_runtime_menu_row(overlay, 4u);
-            }
-            if (currentStateSlot != s_lastStateSlot) {
-                msx_display_draw_runtime_menu_row(overlay, 5u);
-            }
-            if (overlay.casChangeAvailable != s_lastMenuOverlay.casChangeAvailable) {
-                msx_display_draw_runtime_menu(overlay);
+        if (fullMenuRedraw) {
+            msx_display_draw_runtime_menu(overlay);
+        } else if (overlayChanged || scrollChanged || stateSlotChanged) {
+            if (scrollChanged || stateSlotChanged) {
+                for (uint8_t i = 0; i < kRuntimeMenuRowCount; ++i) {
+                    msx_display_draw_runtime_menu_row(overlay, scrollIndex + i);
+                }
+            } else {
+                for (uint8_t i = 0; i < kRuntimeMenuRowCount; ++i) {
+                    const uint8_t rowIndex = scrollIndex + i;
+                    if (msx_display_runtime_menu_row_changed(
+                            s_lastMenuOverlay,
+                            s_lastStateSlot,
+                            overlay,
+                            currentStateSlot,
+                            rowIndex)) {
+                        msx_display_draw_runtime_menu_row(overlay, rowIndex);
+                    }
+                }
             }
         }
 

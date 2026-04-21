@@ -10,6 +10,7 @@
 #include <freertos/semphr.h>
 #include <esp_timer.h>
 
+#include "../msx_config.h"
 #include "../msx_display.h"
 #include "../msx_video.h"
 
@@ -1409,6 +1410,20 @@ static bool msx_vdp_command_advance_step(MsxVdpState* state, uint8_t liveScreenM
     }
 }
 
+static void msx_vdp_command_complete_async_bulk(MsxVdpState* state, uint8_t liveScreenMode)
+{
+    if (!state) {
+        return;
+    }
+
+    while (msx_vdp_command_is_async_bulk(state->command.transfer)) {
+        if (!msx_vdp_command_advance_step(state, liveScreenMode)) {
+            break;
+        }
+    }
+    state->command.cycleStamp = state->currentFrameCpuCycles;
+}
+
 static uint32_t msx_vdp_command_steps_per_line(uint8_t liveScreenMode)
 {
     switch (liveScreenMode & 0x03u) {
@@ -1538,6 +1553,16 @@ void msx_vdp_advance_command_engine_internal(MsxVdpState* state, uint32_t target
         command.cycleStamp = targetFrameCycles;
     }
     if (!msx_vdp_is_msx2(state) || !msx_vdp_command_is_async_bulk(command.transfer)) {
+        command.cycleStamp = targetFrameCycles;
+        return;
+    }
+
+    if (msx_config_get_performance_flag(MsxPerformanceFlag::InstantVdpCommands)) {
+        msx_vdp_update_mode_geometry(state);
+        const int liveModeIndex = msx_vdp_command_mode_index(state);
+        const uint8_t liveScreenMode =
+            liveModeIndex >= 0 ? static_cast<uint8_t>(liveModeIndex) : command.screenMode;
+        msx_vdp_command_complete_async_bulk(state, liveScreenMode);
         command.cycleStamp = targetFrameCycles;
         return;
     }
@@ -1804,6 +1829,9 @@ void msx_vdp_command_execute(MsxVdpState* state, uint8_t opcode)
                                            screenMode,
                                            logicOp,
                                            false);
+            if (msx_config_get_performance_flag(MsxPerformanceFlag::InstantVdpCommands)) {
+                msx_vdp_command_complete_async_bulk(state, screenMode);
+            }
             return;
         }
         case 0x9: {
@@ -1813,6 +1841,9 @@ void msx_vdp_command_execute(MsxVdpState* state, uint8_t opcode)
                                            screenMode,
                                            logicOp,
                                            false);
+            if (msx_config_get_performance_flag(MsxPerformanceFlag::InstantVdpCommands)) {
+                msx_vdp_command_complete_async_bulk(state, screenMode);
+            }
             return;
         }
         case 0xA:
@@ -1830,6 +1861,9 @@ void msx_vdp_command_execute(MsxVdpState* state, uint8_t opcode)
                                            screenMode,
                                            logicOp,
                                            true);
+            if (msx_config_get_performance_flag(MsxPerformanceFlag::InstantVdpCommands)) {
+                msx_vdp_command_complete_async_bulk(state, screenMode);
+            }
             return;
         }
         case 0xD: {
@@ -1839,6 +1873,9 @@ void msx_vdp_command_execute(MsxVdpState* state, uint8_t opcode)
                                            screenMode,
                                            logicOp,
                                            true);
+            if (msx_config_get_performance_flag(MsxPerformanceFlag::InstantVdpCommands)) {
+                msx_vdp_command_complete_async_bulk(state, screenMode);
+            }
             return;
         }
         case 0xE: {
@@ -1848,6 +1885,9 @@ void msx_vdp_command_execute(MsxVdpState* state, uint8_t opcode)
                                            screenMode,
                                            logicOp,
                                            true);
+            if (msx_config_get_performance_flag(MsxPerformanceFlag::InstantVdpCommands)) {
+                msx_vdp_command_complete_async_bulk(state, screenMode);
+            }
             return;
         }
         case 0xF:
@@ -1999,7 +2039,8 @@ void msx_vdp_plot_sprite_bits(MsxVdpState* state,
                               int x,
                               uint8_t pattern,
                               uint8_t color,
-                              unsigned scale)
+                              unsigned scale,
+                              bool detectCollision)
 {
     for (unsigned bit = 0; bit < 8u; ++bit) {
         if ((pattern & static_cast<uint8_t>(0x80u >> bit)) == 0u) {
@@ -2012,10 +2053,12 @@ void msx_vdp_plot_sprite_bits(MsxVdpState* state,
             if (px < 0 || px >= static_cast<int>(kMsxFrameWidth)) {
                 continue;
             }
-            if (occupancy[px] != 0u) {
-                msx_vdp_record_sprite_collision(state);
+            if (detectCollision) {
+                if (occupancy[px] != 0u) {
+                    msx_vdp_record_sprite_collision(state);
+                }
+                occupancy[px] = 1u;
             }
-            occupancy[px] = 1u;
             dst[px] = color;
         }
     }
@@ -2038,6 +2081,10 @@ void msx_vdp_render_mono_sprites_line(MsxVdpState* state, unsigned y, uint8_t* d
     uint8_t count = 0u;
     uint8_t lastIndex = 31u;
     const unsigned spriteLimit = kMsxMaxSpritesLineMsx1;
+    const bool accurateSpriteOverflow =
+        !msx_config_get_performance_flag(MsxPerformanceFlag::SimplifySpriteOverflow);
+    const bool detectSpriteCollision =
+        !msx_config_get_performance_flag(MsxPerformanceFlag::DisableSpriteCollision);
 
     for (uint8_t index = 0; index < 32u; ++index) {
         const uint32_t attr = attrBase + static_cast<uint32_t>(index) * 4u;
@@ -2053,7 +2100,9 @@ void msx_vdp_render_mono_sprites_line(MsxVdpState* state, unsigned y, uint8_t* d
         const int scanY = static_cast<int>(y);
         if (scanY > spriteY && scanY <= spriteY + outputHeight) {
             if (count >= spriteLimit) {
-                msx_vdp_record_sprite_overflow(state, index);
+                if (accurateSpriteOverflow) {
+                    msx_vdp_record_sprite_overflow(state, index);
+                }
                 lastIndex = index;
                 break;
             }
@@ -2064,7 +2113,9 @@ void msx_vdp_render_mono_sprites_line(MsxVdpState* state, unsigned y, uint8_t* d
     }
 
     msx_vdp_record_sprite_index(state, lastIndex);
-    std::memset(s_msxSpriteOccupancy, 0, sizeof(s_msxSpriteOccupancy));
+    if (detectSpriteCollision) {
+        std::memset(s_msxSpriteOccupancy, 0, sizeof(s_msxSpriteOccupancy));
+    }
 
     const unsigned scale = (outputHeight > inputHeight) ? 2u : 1u;
     for (int selectedIndex = static_cast<int>(count) - 1; selectedIndex >= 0; --selectedIndex) {
@@ -2103,11 +2154,25 @@ void msx_vdp_render_mono_sprites_line(MsxVdpState* state, unsigned y, uint8_t* d
                                             : basePattern) * 8u
                + static_cast<uint32_t>(line & 0x07u));
         const uint8_t leftBits = msx_vdp_read_vram_fast(vram, mask, patternRow);
-        msx_vdp_plot_sprite_bits(state, dst, s_msxSpriteOccupancy, x, leftBits, spriteColor, scale);
+        msx_vdp_plot_sprite_bits(state,
+                                 dst,
+                                 s_msxSpriteOccupancy,
+                                 x,
+                                 leftBits,
+                                 spriteColor,
+                                 scale,
+                                 detectSpriteCollision);
 
         if (largeSprite) {
             const uint8_t rightBits = msx_vdp_read_vram_fast(vram, mask, patternRow + (msx_vdp_is_msx2(state) ? 8u : 16u));
-            msx_vdp_plot_sprite_bits(state, dst, s_msxSpriteOccupancy, x + static_cast<int>(8u * scale), rightBits, spriteColor, scale);
+            msx_vdp_plot_sprite_bits(state,
+                                     dst,
+                                     s_msxSpriteOccupancy,
+                                     x + static_cast<int>(8u * scale),
+                                     rightBits,
+                                     spriteColor,
+                                     scale,
+                                     detectSpriteCollision);
         }
     }
 }
@@ -2118,7 +2183,8 @@ void msx_vdp_plot_color_sprite_bits(MsxVdpState* state,
                                     uint8_t pattern,
                                     uint8_t color,
                                     unsigned scale,
-                                    bool mergeColors)
+                                    bool mergeColors,
+                                    bool detectCollision)
 {
     for (unsigned bit = 0; bit < 8u; ++bit) {
         if ((pattern & static_cast<uint8_t>(0x80u >> bit)) == 0u) {
@@ -2132,7 +2198,7 @@ void msx_vdp_plot_color_sprite_bits(MsxVdpState* state,
                 continue;
             }
             uint8_t& dst = line[static_cast<size_t>(px + 32)];
-            if (dst != 0u) {
+            if (detectCollision && dst != 0u) {
                 msx_vdp_record_sprite_collision(state);
             }
             dst = mergeColors ? static_cast<uint8_t>(dst | color) : color;
@@ -2182,6 +2248,10 @@ void msx_vdp_render_color_sprites_line(MsxVdpState* state, unsigned y, uint8_t* 
     uint8_t count = 0u;
     uint8_t lastIndex = 31u;
     uint8_t orMask = 0u;
+    const bool accurateSpriteOverflow =
+        !msx_config_get_performance_flag(MsxPerformanceFlag::SimplifySpriteOverflow);
+    const bool detectSpriteCollision =
+        !msx_config_get_performance_flag(MsxPerformanceFlag::DisableSpriteCollision);
 
     for (uint8_t index = 0; index < 32u; ++index) {
         const uint32_t attr = static_cast<uint32_t>(index) * 4u;
@@ -2193,7 +2263,9 @@ void msx_vdp_render_color_sprites_line(MsxVdpState* state, unsigned y, uint8_t* 
         const uint8_t spriteLine = static_cast<uint8_t>(scrolledScanY - rawSpriteY - 1u);
         if (spriteLine < outputHeight) {
             if (count >= kMsxMaxSpritesLineMsx2) {
-                msx_vdp_record_sprite_overflow(state, index);
+                if (accurateSpriteOverflow) {
+                    msx_vdp_record_sprite_overflow(state, index);
+                }
                 lastIndex = index;
                 break;
             }
@@ -2250,7 +2322,8 @@ void msx_vdp_render_color_sprites_line(MsxVdpState* state, unsigned y, uint8_t* 
                                       msx_vdp_read_vram_fast(state->vram, state->vramMask, patternBase + patternRow),
                                       color,
                                       scale,
-                                      mergeColors);
+                                      mergeColors,
+                                      detectSpriteCollision);
 
         if (largeSprite) {
             msx_vdp_plot_color_sprite_bits(state,
@@ -2259,7 +2332,8 @@ void msx_vdp_render_color_sprites_line(MsxVdpState* state, unsigned y, uint8_t* 
                                       msx_vdp_read_vram_fast(state->vram, state->vramMask, patternBase + patternRow + 16u),
                                            color,
                                            scale,
-                                           mergeColors);
+                                           mergeColors,
+                                           detectSpriteCollision);
         }
     }
 }

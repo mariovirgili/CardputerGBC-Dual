@@ -41,15 +41,11 @@ static MsxMachineMode selectMsxLaunchSystem(CardputerView& display, CardputerInp
   VerticalSelector selector(display, input);
   const MsxMachineMode persistedMode = msx_config_load_machine_mode();
   const std::vector<std::string> options = {
-      "AUTO",
       "MSX1",
       "MSX2",
   };
 
-  int initialIndex = static_cast<int>(persistedMode);
-  if (initialIndex < 0 || initialIndex > 2) {
-    initialIndex = 0;
-  }
+  const int initialIndex = (persistedMode == MsxMachineMode::MSX1) ? 0 : 1;
 
   const int selected = selector.select("MSX launch system",
                                        options,
@@ -63,7 +59,32 @@ static MsxMachineMode selectMsxLaunchSystem(CardputerView& display, CardputerInp
                                        initialIndex);
 
   const int chosen = selected >= 0 ? selected : initialIndex;
-  return static_cast<MsxMachineMode>(chosen);
+  return chosen == 0 ? MsxMachineMode::MSX1 : MsxMachineMode::MSX2;
+}
+
+static bool selectMsxPerformanceMode(CardputerView& display, CardputerInput& input)
+{
+  VerticalSelector selector(display, input);
+  const bool persistedMode = msx_config_load_performance_mode() == MsxPerformanceMode::Performance;
+  const std::vector<std::string> options = {
+      "Accurate / Compatible",
+      "Performance / Fast",
+  };
+
+  const int initialIndex = persistedMode ? 1 : 0;
+  const int selected = selector.select("MSX performance mode",
+                                       options,
+                                       false,
+                                       false,
+                                       {},
+                                       {},
+                                       false,
+                                       true,
+                                       true,
+                                       initialIndex);
+
+  const int chosen = selected >= 0 ? selected : initialIndex;
+  return chosen == 1;
 }
 
 static void welcomeExternalTft()
@@ -463,6 +484,15 @@ void setup() {
       }
     } else {
       g_emu_color_depth = EMU_COLOR_16BIT;
+    }
+
+    if (hasProfile) {
+      const bool savedPerformanceMode =
+        msx_config_load_performance_mode() == MsxPerformanceMode::Performance;
+      const bool chosenPerformanceMode = selectMsxPerformanceMode(display, input);
+      if (chosenPerformanceMode != savedPerformanceMode) {
+        msx_config_set_performance_mode(chosenPerformanceMode, true);
+      }
     }
 
     display.initialize();
