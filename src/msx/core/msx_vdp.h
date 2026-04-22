@@ -26,6 +26,7 @@ enum class MsxVdpMode : uint8_t {
 
 enum class MsxVdpTransferCommand : uint8_t {
     None = 0,
+    Line,
     Lmcm,
     Lmmc,
     Hmmc,
@@ -52,6 +53,7 @@ struct MsxVdpCommandState {
     uint16_t mx;
     int16_t tx;
     int16_t ty;
+    bool lineYMajor;
     uint32_t cycleStamp;
 };
 

@@ -34,6 +34,10 @@
 #define MSX_VDP_DUALCORE_STATS_LOG_ENABLED 0
 #endif
 
+#ifndef MSX_VDP_BOOT_DIAG_ENABLED
+#define MSX_VDP_BOOT_DIAG_ENABLED 1
+#endif
+
 // Cardputer target without PSRAM: keep the VDP on the single-core path.
 // The dual-core renderer needs a full shadow VRAM copy to be safe, which
 // costs both heap and per-frame memcpy bandwidth.
@@ -51,6 +55,11 @@ void msx_vdp_update_mode_geometry(MsxVdpState* state);
 uint32_t msx_vdp_sprite_attr_base(const MsxVdpState* state);
 uint32_t msx_vdp_sprite_pattern_base(const MsxVdpState* state);
 uint8_t msx_vdp_vscroll(const MsxVdpState* state);
+MsxVdpMode msx_vdp_decode_mode(const MsxVdpState* state);
+uint8_t msx_vdp_vram_page_mask(const MsxVdpState* state);
+bool msx_vdp_cpu_port_carries_into_r14(const MsxVdpState* state);
+uint32_t msx_vdp_compose_address(const MsxVdpState* state, uint16_t low14);
+void msx_vdp_advance_address(MsxVdpState* state);
 
 constexpr size_t kMsx1VramSize = 0x4000;
 constexpr size_t kMsx2VramSize = 0x20000;
@@ -149,6 +158,10 @@ static uint32_t s_msxSpriteTransparentEntries = 0;
 static uint32_t s_msxSpritePixelsDrawn = 0;
 static MsxDisplayFrame s_msx2StreamVideoFrame = {};
 static bool s_msx2StreamActive = false;
+#if MSX_VDP_BOOT_DIAG_ENABLED
+static uint32_t s_msxBootDiagLastFrame = 0xFFFFFFFFu;
+static uint16_t s_msxBootDiagCount = 0u;
+#endif
 
 static bool msx_vdp_color_sprite_snapshot_is_empty(const uint8_t* spriteAttr)
 {
@@ -810,6 +823,80 @@ uint32_t msx_vdp_pattern_base(const MsxVdpState* state)
     return static_cast<uint32_t>(state->regs[4] & masks->r4) << 11;
 }
 
+static void msx_vdp_log_boot_text_probe(const MsxVdpState* state)
+{
+#if MSX_VDP_BOOT_DIAG_ENABLED
+    if (!state || !msx_vdp_is_msx2(state)) {
+        return;
+    }
+
+    if (state->mode != MsxVdpMode::Graphics1 && state->mode != MsxVdpMode::Text40) {
+        return;
+    }
+
+    if (state->frameCounter > 96u || s_msxBootDiagCount >= 24u) {
+        return;
+    }
+
+    if (s_msxBootDiagLastFrame == state->frameCounter) {
+        return;
+    }
+
+    s_msxBootDiagLastFrame = state->frameCounter;
+    ++s_msxBootDiagCount;
+
+    const uint8_t* const vram = state->vram;
+    const uint32_t mask = state->vramMask;
+    const uint32_t nameBase = msx_vdp_name_base(state);
+    const uint32_t colorBase = msx_vdp_color_base(state);
+    const uint32_t patternBase = msx_vdp_pattern_base(state);
+    const uint32_t colorBaseRaw = static_cast<uint32_t>(state->regs[3]) << 6;
+    const uint32_t patternBaseRaw = static_cast<uint32_t>(state->regs[4] & 0x07u) << 11;
+
+    uint8_t names[8] = {0};
+    for (unsigned i = 0; i < 8u; ++i) {
+        names[i] = msx_vdp_read_vram_fast(vram, mask, nameBase + i);
+    }
+
+    const uint8_t name0 = names[0];
+    const uint8_t patt0Raw = msx_vdp_read_vram_fast(vram, mask, patternBaseRaw + static_cast<uint32_t>(name0) * 8u);
+    const uint8_t patt0 = msx_vdp_read_vram_fast(vram, mask, patternBase + static_cast<uint32_t>(name0) * 8u);
+    const uint8_t color0Raw = msx_vdp_read_vram_fast(vram, mask, colorBaseRaw + static_cast<uint32_t>(name0 >> 3));
+    const uint8_t color0 = msx_vdp_read_vram_fast(vram, mask, colorBase + static_cast<uint32_t>(name0 >> 3));
+
+    std::printf("[MSX][BOOTTXT] #%u frame=%lu mode=%s disp=%u irq=%u R2=%02X R3=%02X R4=%02X R7=%02X R10=%02X NB=%05lX CBraw=%05lX CB=%05lX PBraw=%05lX PB=%05lX names=%02X %02X %02X %02X %02X %02X %02X %02X patt0raw=%02X patt0=%02X color0raw=%02X color0=%02X\n",
+                static_cast<unsigned>(s_msxBootDiagCount),
+                static_cast<unsigned long>(state->frameCounter),
+                msx_vdp_mode_label(state->mode),
+                static_cast<unsigned>((state->regs[1] & 0x40u) != 0u),
+                static_cast<unsigned>((state->regs[1] & 0x20u) != 0u),
+                static_cast<unsigned>(state->regs[2]),
+                static_cast<unsigned>(state->regs[3]),
+                static_cast<unsigned>(state->regs[4]),
+                static_cast<unsigned>(state->regs[7]),
+                static_cast<unsigned>(state->regs[10]),
+                static_cast<unsigned long>(nameBase),
+                static_cast<unsigned long>(colorBaseRaw),
+                static_cast<unsigned long>(colorBase),
+                static_cast<unsigned long>(patternBaseRaw),
+                static_cast<unsigned long>(patternBase),
+                static_cast<unsigned>(names[0]),
+                static_cast<unsigned>(names[1]),
+                static_cast<unsigned>(names[2]),
+                static_cast<unsigned>(names[3]),
+                static_cast<unsigned>(names[4]),
+                static_cast<unsigned>(names[5]),
+                static_cast<unsigned>(names[6]),
+                static_cast<unsigned>(names[7]),
+                static_cast<unsigned>(patt0Raw),
+                static_cast<unsigned>(patt0),
+                static_cast<unsigned>(color0Raw),
+                static_cast<unsigned>(color0));
+#else
+    (void)state;
+#endif
+}
+
 uint32_t msx_vdp_graphics2_pattern_base(const MsxVdpState* state)
 {
     if (!state) {
@@ -1245,10 +1332,11 @@ void msx_vdp_command_prepare_engine(MsxVdpState* state,
     command.ny = nyRaw == 0u ? 1024u : nyRaw;
     command.ty = (state->regs[45] & 0x08u) != 0u ? -1 : 1;
     command.mx = ppl;
+    command.lineYMajor = false;
     if (byteTransfer) {
-        const uint16_t nxBytes = nxRaw == 0u ? 1024u : nxRaw;
+        const uint16_t nxBytes = nxRaw;
         command.tx = (state->regs[45] & 0x04u) != 0u ? -static_cast<int16_t>(ppb) : static_cast<int16_t>(ppb);
-        command.nx = static_cast<uint16_t>((nxBytes + ppb - 1u) / ppb);
+        command.nx = static_cast<uint16_t>(nxBytes / ppb);
     } else {
         command.tx = (state->regs[45] & 0x04u) != 0u ? -1 : 1;
         command.nx = nxRaw == 0u ? 1024u : nxRaw;
@@ -1273,6 +1361,7 @@ void msx_vdp_command_prepare_transfer(MsxVdpState* state, MsxVdpTransferCommand 
 static bool msx_vdp_command_is_async_bulk(MsxVdpTransferCommand transfer)
 {
     switch (transfer) {
+        case MsxVdpTransferCommand::Line:
         case MsxVdpTransferCommand::Hmmv:
         case MsxVdpTransferCommand::Lmmv:
         case MsxVdpTransferCommand::Lmmm:
@@ -1288,25 +1377,42 @@ static bool msx_vdp_command_is_async_bulk(MsxVdpTransferCommand transfer)
     }
 }
 
+static void msx_vdp_command_finish_line(MsxVdpState* state, MsxVdpCommandState& command)
+{
+    msx_vdp_write_reg10(state, 38u, command.dy);
+    msx_vdp_command_finish(state);
+}
+
 static void msx_vdp_command_finish_hmmv(MsxVdpState* state, MsxVdpCommandState& command)
 {
+    const uint16_t finalDy =
+        command.ny == 0u ? static_cast<uint16_t>(command.dy + command.ty) : command.dy;
     msx_vdp_write_reg10(state, 42u, command.ny);
-    msx_vdp_write_reg10(state, 38u, command.dy);
+    msx_vdp_write_reg10(state, 38u, finalDy);
     msx_vdp_command_finish(state);
 }
 
 static void msx_vdp_command_finish_lmmv(MsxVdpState* state, MsxVdpCommandState& command)
 {
+    const uint16_t finalDy =
+        command.ny == 0u ? static_cast<uint16_t>(command.dy + command.ty) : command.dy;
     msx_vdp_write_reg10(state, 42u, command.ny);
-    msx_vdp_write_reg10(state, 38u, command.dy);
+    msx_vdp_write_reg10(state, 38u, finalDy);
     msx_vdp_command_finish(state);
 }
 
 static void msx_vdp_command_finish_lmmm(MsxVdpState* state, MsxVdpCommandState& command)
 {
+    const bool sourceWrapped = command.sy == 0xFFFFu;
+    const uint16_t finalSy =
+        command.ny == 0u ? static_cast<uint16_t>(command.sy + command.ty) : command.sy;
+    uint16_t finalDy = command.dy;
+    if (command.ny == 0u || sourceWrapped) {
+        finalDy = static_cast<uint16_t>(command.dy + command.ty);
+    }
     msx_vdp_write_reg10(state, 42u, command.ny);
-    msx_vdp_write_reg10(state, 34u, command.sy);
-    msx_vdp_write_reg10(state, 38u, command.dy);
+    msx_vdp_write_reg10(state, 34u, finalSy);
+    msx_vdp_write_reg10(state, 38u, finalDy);
     msx_vdp_command_finish(state);
 }
 
@@ -1314,6 +1420,34 @@ static bool msx_vdp_command_advance_step(MsxVdpState* state, uint8_t liveScreenM
 {
     MsxVdpCommandState& command = state->command;
     switch (command.transfer) {
+        case MsxVdpTransferCommand::Line: {
+            msx_vdp_command_pset(state,
+                                 liveScreenMode,
+                                 command.dx,
+                                 command.dy,
+                                 state->regs[44],
+                                 command.logicOp);
+            int accum = command.asx == 0xFFFFu ? -1 : static_cast<int>(command.asx);
+            accum -= static_cast<int>(command.ny);
+            if (!command.lineYMajor) {
+                command.dx = static_cast<uint16_t>(command.dx + command.tx);
+                if (accum < 0) {
+                    accum += static_cast<int>(command.nx);
+                    command.dy = static_cast<uint16_t>(command.dy + command.ty);
+                }
+            } else {
+                command.dy = static_cast<uint16_t>(command.dy + command.ty);
+                if (accum < 0) {
+                    accum += static_cast<int>(command.nx);
+                    command.dx = static_cast<uint16_t>(command.dx + command.tx);
+                }
+            }
+            command.asx = static_cast<uint16_t>(accum & 1023);
+            if (command.adx++ == command.nx || (command.dx & command.mx) != 0u) {
+                msx_vdp_command_finish_line(state, command);
+            }
+            return true;
+        }
         case MsxVdpTransferCommand::Hmmv: {
             const uint32_t addr =
                 msx_vdp_command_addr(liveScreenMode, command.adx, command.dy) & state->vramMask;
@@ -1485,8 +1619,10 @@ void msx_vdp_command_continue(MsxVdpState* state)
             state->status[2] |= 0x80u;
             if (--command.anx == 0u || ((command.asx = static_cast<uint16_t>(command.asx + command.tx)) & command.mx) != 0u) {
                 if (--command.ny == 0u || (command.sy = static_cast<uint16_t>(command.sy + command.ty)) == 0xFFFFu) {
+                    const uint16_t finalSy =
+                        command.ny == 0u ? static_cast<uint16_t>(command.sy + command.ty) : command.sy;
                     msx_vdp_write_reg10(state, 42u, command.ny);
-                    msx_vdp_write_reg10(state, 34u, command.sy);
+                    msx_vdp_write_reg10(state, 34u, finalSy);
                     msx_vdp_command_finish(state);
                 } else {
                     command.asx = command.sx;
@@ -1518,8 +1654,10 @@ void msx_vdp_command_continue(MsxVdpState* state)
             state->status[2] |= 0x80u;
             if (--command.anx == 0u || ((command.adx = static_cast<uint16_t>(command.adx + command.tx)) & command.mx) != 0u) {
                 if (--command.ny == 0u || (command.dy = static_cast<uint16_t>(command.dy + command.ty)) == 0xFFFFu) {
+                    const uint16_t finalDy =
+                        command.ny == 0u ? static_cast<uint16_t>(command.dy + command.ty) : command.dy;
                     msx_vdp_write_reg10(state, 42u, command.ny);
-                    msx_vdp_write_reg10(state, 38u, command.dy);
+                    msx_vdp_write_reg10(state, 38u, finalDy);
                     msx_vdp_command_finish(state);
                 } else {
                     command.adx = command.dx;
@@ -1551,8 +1689,10 @@ void msx_vdp_command_continue(MsxVdpState* state)
             state->status[2] |= 0x80u;
             if (--command.anx == 0u || ((command.adx = static_cast<uint16_t>(command.adx + command.tx)) & command.mx) != 0u) {
                 if (--command.ny == 0u || (command.dy = static_cast<uint16_t>(command.dy + command.ty)) == 0xFFFFu) {
+                    const uint16_t finalDy =
+                        command.ny == 0u ? static_cast<uint16_t>(command.dy + command.ty) : command.dy;
                     msx_vdp_write_reg10(state, 42u, command.ny);
-                    msx_vdp_write_reg10(state, 38u, command.dy);
+                    msx_vdp_write_reg10(state, 38u, finalDy);
                     msx_vdp_command_finish(state);
                 } else {
                     command.adx = command.dx;
@@ -1816,36 +1956,28 @@ void msx_vdp_command_execute(MsxVdpState* state, uint8_t opcode)
             return;
         }
         case 0x7: {
-            const int major = nx == 0u ? 1024 : nx;
-            const int minor = ny == 0u ? 1024 : ny;
-            int acc = ((major - 1) >> 1);
-            int count = 0;
-            int x = dx;
-            int y = dy;
-
-            if (!lineYMajor) {
-                while (count++ != major && (x & ppl) == 0) {
-                    msx_vdp_command_pset(state, screenMode, x, y, state->regs[44], logicOp);
-                    x += txDot;
-                    if ((acc -= minor) < 0) {
-                        acc += major;
-                        y += ty;
-                    }
-                    acc &= 1023;
-                }
-            } else {
-                while (count++ != major && (x & ppl) == 0) {
-                    msx_vdp_command_pset(state, screenMode, x, y, state->regs[44], logicOp);
-                    y += ty;
-                    if ((acc -= minor) < 0) {
-                        acc += major;
-                        x += txDot;
-                    }
-                    acc &= 1023;
-                }
+            MsxVdpCommandState& line = state->command;
+            line.transfer = MsxVdpTransferCommand::Line;
+            line.screenMode = screenMode;
+            line.logicOp = logicOp;
+            line.sx = sx;
+            line.sy = sy;
+            line.dx = dx;
+            line.dy = dy;
+            line.nx = nx;
+            line.ny = ny;
+            line.asx = nx == 0u ? 0xFFFFu : static_cast<uint16_t>((nx - 1u) >> 1);
+            line.adx = 0u;
+            line.anx = nx;
+            line.tx = static_cast<int16_t>(txDot);
+            line.ty = static_cast<int16_t>(ty);
+            line.mx = ppl;
+            line.lineYMajor = lineYMajor;
+            line.cycleStamp = state->currentFrameCpuCycles;
+            state->status[2] |= 0x01u;
+            if (msx_config_get_performance_flag(MsxPerformanceFlag::InstantVdpCommands)) {
+                msx_vdp_command_complete_async_bulk(state, screenMode);
             }
-
-            msx_vdp_write_reg10(state, 38u, static_cast<uint16_t>(y));
             return;
         }
         case 0x8: {
@@ -1930,6 +2062,10 @@ void msx_vdp_write_register(MsxVdpState* state, uint8_t reg, uint8_t value)
         return;
     }
 
+    if (reg == 14u && msx_vdp_is_msx2(state)) {
+        value &= msx_vdp_vram_page_mask(state);
+    }
+
     if (reg == 44u && msx_vdp_is_msx2(state)) {
         msx_vdp_command_write(state, value);
         return;
@@ -2004,8 +2140,7 @@ void msx_vdp_write_register(MsxVdpState* state, uint8_t reg, uint8_t value)
         state->palettePending = false;
     }
     if (reg == 14u) {
-        state->address = (state->address & 0x3FFFu) | (static_cast<uint32_t>(state->regs[14] & 0x07u) << 14);
-        state->address &= state->vramMask;
+        state->address = msx_vdp_compose_address(state, static_cast<uint16_t>(state->address & 0x3FFFu));
     }
     if (reg == 46u && msx_vdp_is_msx2(state)) {
         msx_vdp_command_execute(state, value);
@@ -2665,8 +2800,8 @@ static bool msx_vdp_slice_bounds(unsigned height, unsigned yStart, unsigned yEnd
 void msx_vdp_render_graphics1(MsxVdpState* state)
 {
     const uint32_t nameBase = msx_vdp_name_base(state);
-    const uint32_t colorBase = static_cast<uint32_t>(state->regs[3]) << 6;
-    const uint32_t patternBase = static_cast<uint32_t>(state->regs[4] & 0x07u) << 11;
+    const uint32_t colorBase = msx_vdp_color_base(state);
+    const uint32_t patternBase = msx_vdp_pattern_base(state);
     const uint8_t* const vram = state->vram;
     const uint32_t mask = state->vramMask;
     const uint8_t vscroll = msx_vdp_vscroll(state);
@@ -2698,7 +2833,7 @@ void msx_vdp_render_graphics1(MsxVdpState* state)
 void msx_vdp_render_text40(MsxVdpState* state)
 {
     const uint32_t nameBase = msx_vdp_name_base(state);
-    const uint32_t patternBase = static_cast<uint32_t>(state->regs[4] & 0x07u) << 11;
+    const uint32_t patternBase = msx_vdp_pattern_base(state);
     const uint8_t fg = msx_vdp_resolve_color(state, static_cast<uint8_t>(state->regs[7] >> 4));
     const uint8_t bg = msx_vdp_resolve_color(state, static_cast<uint8_t>(state->regs[7] & 0x0Fu));
     const uint8_t* const vram = state->vram;
@@ -2905,8 +3040,8 @@ static void msx_vdp_render_graphics1_range(MsxVdpState* state, unsigned yStart, 
     }
 
     const uint32_t nameBase = msx_vdp_name_base(state);
-    const uint32_t colorBase = static_cast<uint32_t>(state->regs[3]) << 6;
-    const uint32_t patternBase = static_cast<uint32_t>(state->regs[4] & 0x07u) << 11;
+    const uint32_t colorBase = msx_vdp_color_base(state);
+    const uint32_t patternBase = msx_vdp_pattern_base(state);
     const uint8_t* const vram = state->vram;
     const uint32_t mask = state->vramMask;
     const uint8_t vscroll = msx_vdp_vscroll(state);
@@ -2944,7 +3079,7 @@ static void msx_vdp_render_text40_range(MsxVdpState* state, unsigned yStart, uns
     }
 
     const uint32_t nameBase = msx_vdp_name_base(state);
-    const uint32_t patternBase = static_cast<uint32_t>(state->regs[4] & 0x07u) << 11;
+    const uint32_t patternBase = msx_vdp_pattern_base(state);
     const uint8_t fg = msx_vdp_resolve_color(state, static_cast<uint8_t>(state->regs[7] >> 4));
     const uint8_t bg = msx_vdp_resolve_color(state, static_cast<uint8_t>(state->regs[7] & 0x0Fu));
     const uint8_t* const vram = state->vram;
@@ -3678,11 +3813,38 @@ bool msx_vdp_register_affects_output(uint8_t reg)
     }
 }
 
+uint8_t msx_vdp_vram_page_mask(const MsxVdpState* state)
+{
+    if (!state || !msx_vdp_is_msx2(state) || state->vramSize <= 0x4000u) {
+        return 0u;
+    }
+
+    const uint32_t pageCount = static_cast<uint32_t>(state->vramSize >> 14);
+    return static_cast<uint8_t>((pageCount - 1u) & 0x07u);
+}
+
+bool msx_vdp_cpu_port_carries_into_r14(const MsxVdpState* state)
+{
+    if (!state || !msx_vdp_is_msx2(state) || state->vramSize <= 0x4000u) {
+        return false;
+    }
+
+    switch (msx_vdp_decode_mode(state)) {
+        case MsxVdpMode::Graphics1:
+        case MsxVdpMode::Text40:
+        case MsxVdpMode::Graphics2:
+        case MsxVdpMode::Multicolor:
+            return false;
+        default:
+            return true;
+    }
+}
+
 uint32_t msx_vdp_compose_address(const MsxVdpState* state, uint16_t low14)
 {
     uint32_t address = static_cast<uint32_t>(low14 & 0x3FFFu);
     if (msx_vdp_is_msx2(state)) {
-        address |= static_cast<uint32_t>(state->regs[14] & 0x07u) << 14;
+        address |= static_cast<uint32_t>(state->regs[14] & msx_vdp_vram_page_mask(state)) << 14;
     }
     return address & state->vramMask;
 }
@@ -3693,10 +3855,21 @@ void msx_vdp_advance_address(MsxVdpState* state)
         return;
     }
 
-    state->address = (state->address + 1u) & state->vramMask;
-    if (msx_vdp_is_msx2(state) && state->vramSize > 0x4000u) {
-        state->regs[14] = static_cast<uint8_t>((state->address >> 14) & 0x07u);
+    const uint16_t low14 = static_cast<uint16_t>((state->address + 1u) & 0x3FFFu);
+    if (!msx_vdp_is_msx2(state)) {
+        state->address = static_cast<uint32_t>(low14) & state->vramMask;
+        return;
     }
+
+    uint8_t page = static_cast<uint8_t>(state->regs[14] & msx_vdp_vram_page_mask(state));
+    // On V9938, R14 always selects the CPU-side VRAM page, but the carry from
+    // A13 only increments that page outside of the four MSX1-compatible modes.
+    if ((state->address & 0x3FFFu) == 0x3FFFu && msx_vdp_cpu_port_carries_into_r14(state)) {
+        page = static_cast<uint8_t>((page + 1u) & msx_vdp_vram_page_mask(state));
+        state->regs[14] = page;
+    }
+
+    state->address = msx_vdp_compose_address(state, low14);
 }
 
 } // namespace
@@ -3959,6 +4132,10 @@ void msx_vdp_reset(MsxVdpState* state)
     s_msxVdpR11TimelineCount = 0u;
     s_msxVdpR2TimelineCount = 0u;
     s_msxVdpR23TimelineCount = 0u;
+#if MSX_VDP_BOOT_DIAG_ENABLED
+    s_msxBootDiagLastFrame = 0xFFFFFFFFu;
+    s_msxBootDiagCount = 0u;
+#endif
     state->frameCounter = 0;
     state->lineInterruptFrameTag = 0xFFFFFFFFu;
     state->lineInterruptLineTag = 0xFFu;
@@ -4027,6 +4204,7 @@ void msx_vdp_prepare_frame_render(MsxVdpState* state)
     }
 
     msx_vdp_update_mode_geometry(state);
+    msx_vdp_log_boot_text_probe(state);
     msx_vdp_reset_sprite_status(state);
     if (msx_vdp_is_msx2(state)) {
         msx_vdp_invalidate_mono_sprite_cache();
