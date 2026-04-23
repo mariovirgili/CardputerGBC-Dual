@@ -1,4 +1,6 @@
 .pio
+bios/private/*
+!bios/private/.gitkeep
 .claude/
 .vscode/
 .vscode/.browse.c_cpp.db*

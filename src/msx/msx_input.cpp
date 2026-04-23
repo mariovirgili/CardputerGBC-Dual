@@ -36,7 +36,7 @@ struct MsxInputBindingCache {
 
 static constexpr uint32_t kBacktickLongPressMs = 700;
 static constexpr uint32_t kGoLongPressMs = 700;
-static constexpr uint32_t kViewToggleDebounceMs = 1000;
+static constexpr uint32_t kViewToggleDebounceMs = 250;
 static uint32_t s_backtickPressedMs = 0;
 static bool s_backtickLongHandled = false;
 static bool s_goLongHandled = false;
@@ -200,6 +200,42 @@ static inline bool msx_key_pressed_any(char a, char b)
 static inline bool msx_is_view_toggle_key(char ch)
 {
     return ch == CARDPUTER_SCREEN_TOGGLE || ch == '|';
+}
+
+static bool msx_keys_contain_view_toggle_char(const Keyboard_Class::KeysState& keys)
+{
+    for (char ch : keys.word) {
+        if (msx_is_view_toggle_key(ch)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool msx_poll_view_toggle_request(const Keyboard_Class::KeysState& keys)
+{
+    if (!msx_view_toggle_allowed()) {
+        s_viewToggleHeld = false;
+        return false;
+    }
+
+    const bool viewTogglePressed = msx_key_pressed_any(CARDPUTER_SCREEN_TOGGLE, '|');
+    const bool viewToggleTyped = msx_keys_contain_view_toggle_char(keys);
+    const bool typedEdge = viewToggleTyped && (!viewTogglePressed || !s_viewToggleHeld);
+    const bool pressedEdge = viewTogglePressed && !s_viewToggleHeld;
+
+    bool toggleRequested = false;
+    if (typedEdge || pressedEdge) {
+        const uint32_t nowMs = millis();
+        if (s_lastViewToggleMs == 0u ||
+            static_cast<uint32_t>(nowMs - s_lastViewToggleMs) >= kViewToggleDebounceMs) {
+            toggleRequested = true;
+            s_lastViewToggleMs = nowMs;
+        }
+    }
+
+    s_viewToggleHeld = viewTogglePressed;
+    return toggleRequested;
 }
 
 static char msx_normalize_char(char ch)
@@ -1207,23 +1243,7 @@ void msx_input_poll(MsxInputState* state)
         s_backtickLongHandled = false;
     }
 
-    if (msx_view_toggle_allowed()) {
-        const bool viewTogglePressed = msx_key_pressed_any(CARDPUTER_SCREEN_TOGGLE, '|');
-        if (viewTogglePressed) {
-            const uint32_t nowMs = millis();
-            if (!s_viewToggleHeld &&
-                (s_lastViewToggleMs == 0u ||
-                 static_cast<uint32_t>(nowMs - s_lastViewToggleMs) >= kViewToggleDebounceMs)) {
-                state->toggleViewRequested = true;
-                s_lastViewToggleMs = nowMs;
-            }
-            s_viewToggleHeld = true;
-        } else {
-            s_viewToggleHeld = false;
-        }
-    } else {
-        s_viewToggleHeld = false;
-    }
+    state->toggleViewRequested = msx_poll_view_toggle_request(keys);
 
     const bool menuWasVisible = s_runtimeMenu.visible;
     if (menuWasVisible) {

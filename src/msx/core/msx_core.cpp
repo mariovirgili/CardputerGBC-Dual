@@ -898,11 +898,12 @@ void msx_core_step_frame(MsxCoreState* state)
             cpuRunUs += static_cast<uint32_t>(esp_timer_get_time() - cpuStartUs);
 #endif
             state->vdp.currentFrameCpuCycles = executedCycles;
-            if (line == static_cast<unsigned>(state->vdp.regs[19])) {
-                state->vdp.status[1] |= 0x01u;
-                if ((state->vdp.regs[0] & 0x10u) != 0u) {
-                    msx_cpu_request_irq(&state->cpu);
-                }
+            const uint8_t status1Before = state->vdp.status[1];
+            msx_vdp_refresh_timing(&state->vdp);
+            if (((status1Before & 0x01u) == 0u) &&
+                ((state->vdp.status[1] & 0x01u) != 0u) &&
+                ((state->vdp.regs[0] & 0x10u) != 0u)) {
+                msx_cpu_request_irq(&state->cpu);
             }
             if (line + 1u == vblankLine) {
                 state->vdp.status[0] |= 0x80u;

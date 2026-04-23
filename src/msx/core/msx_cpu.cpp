@@ -10,6 +10,10 @@
 #define MSX_CPU_TRACE_ENABLED 0
 #endif
 
+#ifndef MSX_CPU_BIOS_CALL_LOG_ENABLED
+#define MSX_CPU_BIOS_CALL_LOG_ENABLED 1
+#endif
+
 namespace {
 
 constexpr uint8_t kMsxPrimarySlotCartridge = 1u;
@@ -192,6 +196,131 @@ inline bool msx_cpu_trace_context_pc(uint16_t)
 inline bool msx_cpu_trace_stack_value(uint16_t)
 {
     return false;
+}
+#endif
+
+#if MSX_CPU_BIOS_CALL_LOG_ENABLED
+const char* msx_cpu_bios_entry_label(uint16_t address)
+{
+    switch (address) {
+        case 0x001Cu: return "CALSLT";
+        case 0x0024u: return "ENASLT";
+        case 0x0030u: return "RST30";
+        case 0x0047u: return "WRTVDP";
+        case 0x004Au: return "RDVRM";
+        case 0x004Du: return "WRTVRM";
+        case 0x0050u: return "SETRD";
+        case 0x0053u: return "SETWRT";
+        case 0x0056u: return "FILVRM";
+        case 0x0059u: return "LDIRMV";
+        case 0x005Cu: return "LDIRVM";
+        case 0x005Fu: return "CHGMOD";
+        case 0x0062u: return "CHGCLR";
+        case 0x0069u: return "CLRSPR";
+        case 0x006Cu: return "INITXT";
+        case 0x006Fu: return "INIT32";
+        case 0x0072u: return "INIGRP";
+        case 0x0075u: return "SETTXT";
+        case 0x0078u: return "SETT32";
+        case 0x007Bu: return "SETGRP";
+        case 0x00A2u: return "CHPUT";
+        default:
+            return nullptr;
+    }
+}
+
+bool msx_cpu_should_log_bios_entry(uint16_t address)
+{
+    return msx_cpu_bios_entry_label(address) != nullptr;
+}
+
+void msx_cpu_log_bios_entry(const char* kind,
+                            const MsxCpuState* state,
+                            const MsxMemoryState* memory,
+                            uint16_t from,
+                            uint16_t to,
+                            uint16_t returnAddress)
+{
+    if (!kind || !state || !memory || !msx_cpu_should_log_bios_entry(to)) {
+        return;
+    }
+
+    static uint32_t s_biosCallLogCount = 0u;
+    if (s_biosCallLogCount >= 256u) {
+        return;
+    }
+
+    const char* const label = msx_cpu_bios_entry_label(to);
+    std::printf("[MSX][BIOS-CALL] %s %s from=%04X to=%04X ret=%04X sp=%04X af=%04X bc=%04X de=%04X hl=%04X A8=%02X SSL3=%02X #%lu\n",
+                kind,
+                label ? label : "?",
+                static_cast<unsigned>(from),
+                static_cast<unsigned>(to),
+                static_cast<unsigned>(returnAddress),
+                static_cast<unsigned>(state->sp),
+                static_cast<unsigned>(state->af),
+                static_cast<unsigned>(state->bc),
+                static_cast<unsigned>(state->de),
+                static_cast<unsigned>(state->hl),
+                static_cast<unsigned>(memory->slotRegister),
+                static_cast<unsigned>(memory->secondarySlotRegs[3]),
+                static_cast<unsigned long>(s_biosCallLogCount));
+    ++s_biosCallLogCount;
+}
+
+void msx_cpu_log_rst30(const MsxCpuState* state,
+                       const MsxMemoryState* memory,
+                       uint16_t from,
+                       uint16_t returnAddress)
+{
+    if (!state || !memory) {
+        return;
+    }
+
+    static uint32_t s_rst30LogCount = 0u;
+    if (s_rst30LogCount >= 96u) {
+        return;
+    }
+
+    const uint8_t b0 = msx_memory_read8(memory, returnAddress);
+    const uint8_t b1 = msx_memory_read8(memory, static_cast<uint16_t>(returnAddress + 1u));
+    const uint8_t b2 = msx_memory_read8(memory, static_cast<uint16_t>(returnAddress + 2u));
+    std::printf("[MSX][BIOS-CALL] RST30 from=%04X ret=%04X raw=%02X %02X %02X sp=%04X af=%04X bc=%04X de=%04X hl=%04X A8=%02X SSL3=%02X #%lu\n",
+                static_cast<unsigned>(from),
+                static_cast<unsigned>(returnAddress),
+                static_cast<unsigned>(b0),
+                static_cast<unsigned>(b1),
+                static_cast<unsigned>(b2),
+                static_cast<unsigned>(state->sp),
+                static_cast<unsigned>(state->af),
+                static_cast<unsigned>(state->bc),
+                static_cast<unsigned>(state->de),
+                static_cast<unsigned>(state->hl),
+                static_cast<unsigned>(memory->slotRegister),
+                static_cast<unsigned>(memory->secondarySlotRegs[3]),
+                static_cast<unsigned long>(s_rst30LogCount));
+    ++s_rst30LogCount;
+}
+#else
+const char* msx_cpu_bios_entry_label(uint16_t)
+{
+    return nullptr;
+}
+
+void msx_cpu_log_bios_entry(const char*,
+                            const MsxCpuState*,
+                            const MsxMemoryState*,
+                            uint16_t,
+                            uint16_t,
+                            uint16_t)
+{
+}
+
+void msx_cpu_log_rst30(const MsxCpuState*,
+                       const MsxMemoryState*,
+                       uint16_t,
+                       uint16_t)
+{
 }
 #endif
 
@@ -1907,6 +2036,7 @@ int msx_cpu_step_opcode(MsxCpuState* state, MsxMemoryState* memory)
         const uint16_t address = msx_cpu_fetch16(state, memory);
         if (msx_cpu_condition(state, static_cast<uint8_t>((opcode >> 3) & 0x07u))) {
             msx_cpu_restore_cart_boot_mapping(memory, address, state->lastPc);
+            msx_cpu_log_bios_entry("JPcc", state, memory, state->lastPc, address, state->pc);
             if (msx_cpu_trace_pc(state->lastPc) || msx_cpu_trace_pc(address)) {
                 msx_cpu_log_flow("JPcc", state, memory, state->lastPc, address);
             }
@@ -1918,6 +2048,7 @@ int msx_cpu_step_opcode(MsxCpuState* state, MsxMemoryState* memory)
     if ((opcode & 0xC7u) == 0xC4u) {
         const uint16_t address = msx_cpu_fetch16(state, memory);
         if (msx_cpu_condition(state, static_cast<uint8_t>((opcode >> 3) & 0x07u))) {
+            msx_cpu_log_bios_entry("CALLcc", state, memory, state->lastPc, address, state->pc);
             msx_cpu_push16(state, memory, state->pc);
             if (msx_cpu_trace_pc(state->lastPc) || msx_cpu_trace_pc(address)) {
                 msx_cpu_log_flow("CALLcc", state, memory, state->lastPc, address);
@@ -1941,6 +2072,10 @@ int msx_cpu_step_opcode(MsxCpuState* state, MsxMemoryState* memory)
     if ((opcode & 0xC7u) == 0xC7u) {
         msx_cpu_push16(state, memory, state->pc);
         state->pc = static_cast<uint16_t>(opcode & 0x38u);
+        if (state->pc == 0x0030u) {
+            msx_cpu_log_rst30(state, memory, state->lastPc, state->sp ? msx_cpu_mem_read16(memory, state->sp) : 0u);
+        }
+        msx_cpu_log_bios_entry("RST", state, memory, state->lastPc, state->pc, msx_cpu_mem_read16(memory, state->sp));
         if (msx_cpu_trace_pc(state->lastPc) || msx_cpu_trace_pc(state->pc)) {
             msx_cpu_log_flow("RST", state, memory, state->lastPc, state->pc);
         }
@@ -2062,6 +2197,7 @@ int msx_cpu_step_opcode(MsxCpuState* state, MsxMemoryState* memory)
         {
             const uint16_t address = msx_cpu_fetch16(state, memory);
             msx_cpu_restore_cart_boot_mapping(memory, address, state->lastPc);
+            msx_cpu_log_bios_entry("JP", state, memory, state->lastPc, address, state->pc);
             state->pc = address;
             if (msx_cpu_trace_pc(state->lastPc) || msx_cpu_trace_pc(state->pc)) {
                 msx_cpu_log_flow("JP", state, memory, state->lastPc, state->pc);
@@ -2081,6 +2217,7 @@ int msx_cpu_step_opcode(MsxCpuState* state, MsxMemoryState* memory)
             return msx_cpu_step_cb(state, memory);
         case 0xCD: {
             const uint16_t address = msx_cpu_fetch16(state, memory);
+            msx_cpu_log_bios_entry("CALL", state, memory, state->lastPc, address, state->pc);
             msx_cpu_push16(state, memory, state->pc);
             if (msx_cpu_trace_pc(state->lastPc) || msx_cpu_trace_pc(address)) {
                 msx_cpu_log_flow("CALL", state, memory, state->lastPc, address);
@@ -2120,6 +2257,7 @@ int msx_cpu_step_opcode(MsxCpuState* state, MsxMemoryState* memory)
             return 7;
         case 0xE9:
             msx_cpu_restore_cart_boot_mapping(memory, state->hl, state->lastPc);
+            msx_cpu_log_bios_entry("JP(HL)", state, memory, state->lastPc, state->hl, state->pc);
             if (msx_cpu_trace_pc(state->lastPc) || msx_cpu_trace_pc(state->hl)) {
                 msx_cpu_log_flow("JP(HL)", state, memory, state->lastPc, state->hl);
             }

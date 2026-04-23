@@ -63,6 +63,7 @@ struct MsxVdpState {
     size_t vramSize;
     uint32_t vramMask;
     uint8_t* frameBuffer;
+    void* renderContext;
     bool ownsVram;
     uint8_t regs[64];
     uint8_t status[10];
@@ -74,6 +75,7 @@ struct MsxVdpState {
     uint8_t latchedControl;
     uint8_t paletteLatch;
     MsxVdpWriteVramFn writeVram;
+    bool vramWriteMode;
     bool palettePending;
     bool controlPending;
     bool dirty;
@@ -99,6 +101,7 @@ void msx_vdp_render(MsxVdpState* state);
 void msx_vdp_render_slice(MsxVdpState* state, unsigned yStart, unsigned yEnd, bool finalizeFrame);
 void msx_vdp_render_bitmap4_slice(MsxVdpState* state, unsigned yStart, unsigned yEnd, bool finalizeFrame);
 void msx_vdp_advance_command_engine(MsxVdpState* state, uint32_t targetFrameCycles);
+void msx_vdp_refresh_timing(MsxVdpState* state);
 uint8_t msx_vdp_in_data(MsxVdpState* state);
 uint8_t msx_vdp_in_status(MsxVdpState* state);
 void msx_vdp_out_data(MsxVdpState* state, uint8_t value);

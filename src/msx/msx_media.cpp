@@ -13,9 +13,25 @@ extern const uint8_t cbios_main_msx1_rom_start[] asm("_binary_bios_cbios_0_29a_r
 extern const uint8_t cbios_main_msx1_rom_end[] asm("_binary_bios_cbios_0_29a_roms_cbios_main_msx1_rom_end");
 extern const uint8_t cbios_sub_rom_start[] asm("_binary_bios_cbios_0_29a_roms_cbios_sub_rom_start");
 extern const uint8_t cbios_sub_rom_end[] asm("_binary_bios_cbios_0_29a_roms_cbios_sub_rom_end");
+#if MSX_EMBED_OFFICIAL_MSX2
+extern const uint8_t official_msx2_rom_start[] asm("_binary_bios_private_MSX2_ROM_start");
+extern const uint8_t official_msx2_rom_end[] asm("_binary_bios_private_MSX2_ROM_end");
+#endif
+#if MSX_EMBED_OFFICIAL_MSX2EXT
+extern const uint8_t official_msx2ext_rom_start[] asm("_binary_bios_private_MSX2EXT_ROM_start");
+extern const uint8_t official_msx2ext_rom_end[] asm("_binary_bios_private_MSX2EXT_ROM_end");
+#endif
 
 #ifndef MSX_BIOS_LOG_ENABLED
 #define MSX_BIOS_LOG_ENABLED 1
+#endif
+
+#ifndef MSX_EMBED_OFFICIAL_MSX2EXT
+#define MSX_EMBED_OFFICIAL_MSX2EXT 0
+#endif
+
+#ifndef MSX_EMBED_OFFICIAL_MSX2
+#define MSX_EMBED_OFFICIAL_MSX2 0
 #endif
 
 #if MSX_BIOS_LOG_ENABLED
@@ -43,6 +59,8 @@ constexpr const char* kMsxEmbeddedCbiosName = "C-BIOS MSX1";
 constexpr const char* kMsxEmbeddedCbiosPath = "[embedded]/cbios_main_msx1.rom";
 constexpr const char* kMsxEmbeddedCbiosSubName = "C-BIOS MSX2 SUB";
 constexpr const char* kMsxEmbeddedCbiosSubPath = "[embedded]/cbios_sub.rom";
+constexpr const char* kMsxEmbeddedOfficialMainPath = "[embedded]/MSX2.ROM";
+constexpr const char* kMsxEmbeddedOfficialSubPath = "[embedded]/MSX2EXT.ROM";
 constexpr size_t kMsxMainBiosStaticOffset = EMU_STATIC_POOL_SIZE - kMsxMainBiosStaticSize;
 
 static_assert(EMU_STATIC_POOL_SIZE >= (kMsxMainBiosStaticSize + kMsxPageSize8K),
@@ -577,6 +595,122 @@ bool msx_load_embedded_cbios_msx2_subrom(MsxBiosImage* image,
     return true;
 }
 
+bool msx_load_embedded_official_msx2_mainrom(MsxBiosImage* image,
+                                             char* detailMessage,
+                                             size_t detailMessageSize)
+{
+#if !MSX_EMBED_OFFICIAL_MSX2
+    (void)image;
+    (void)detailMessage;
+    (void)detailMessageSize;
+    return false;
+#else
+    if (!image) {
+        return false;
+    }
+
+    const uintptr_t startAddr = reinterpret_cast<uintptr_t>(official_msx2_rom_start);
+    const uintptr_t endAddr = reinterpret_cast<uintptr_t>(official_msx2_rom_end);
+    const size_t size = (endAddr > startAddr) ? static_cast<size_t>(endAddr - startAddr) : 0u;
+    if (!msx_is_valid_main_bios_size(size)) {
+        if (detailMessage && detailMessageSize > 0) {
+            std::snprintf(detailMessage, detailMessageSize, "embedded official MSX2 size invalid");
+        }
+        MSX_BIOS_LOG("[MSX][BIOS] embedded official MSX2 reject size=%u\n",
+                     static_cast<unsigned>(size));
+        return false;
+    }
+
+    uint8_t* data = const_cast<uint8_t*>(official_msx2_rom_start);
+    MSX_BIOS_LOG("[MSX][BIOS] embedded official MSX2 using flash-backed image size=%u\n",
+                 static_cast<unsigned>(size));
+
+    char md5Hex[33] = {0};
+    if (!msx_compute_md5_hex(data, size, md5Hex)) {
+        if (detailMessage && detailMessageSize > 0) {
+            std::snprintf(detailMessage, detailMessageSize, "embedded official MSX2 md5 failed");
+        }
+        return false;
+    }
+
+    msx_release_image(image);
+    image->data = data;
+    image->size = size;
+    image->status = MsxImageLoadStatus::Loaded;
+    image->ownsData = false;
+    msx_copy_string(image->path, sizeof(image->path), kMsxEmbeddedOfficialMainPath);
+    msx_copy_string(image->expectedName, sizeof(image->expectedName), kMsx2BiosName);
+    image->expectedMd5[0] = '\0';
+    msx_copy_string(image->foundMd5, sizeof(image->foundMd5), md5Hex);
+
+    if (detailMessage && detailMessageSize > 0) {
+        std::snprintf(detailMessage, detailMessageSize, "Embedded official MSX2 loaded");
+    }
+    MSX_BIOS_LOG("[MSX][BIOS] accept embedded official MSX2 size=%u md5=%s\n",
+                 static_cast<unsigned>(size),
+                 md5Hex);
+    return true;
+#endif
+}
+
+bool msx_load_embedded_official_msx2_subrom(MsxBiosImage* image,
+                                            char* detailMessage,
+                                            size_t detailMessageSize)
+{
+#if !MSX_EMBED_OFFICIAL_MSX2EXT
+    (void)image;
+    (void)detailMessage;
+    (void)detailMessageSize;
+    return false;
+#else
+    if (!image) {
+        return false;
+    }
+
+    const uintptr_t startAddr = reinterpret_cast<uintptr_t>(official_msx2ext_rom_start);
+    const uintptr_t endAddr = reinterpret_cast<uintptr_t>(official_msx2ext_rom_end);
+    const size_t size = (endAddr > startAddr) ? static_cast<size_t>(endAddr - startAddr) : 0u;
+    if (!msx_is_valid_subrom_size(size)) {
+        if (detailMessage && detailMessageSize > 0) {
+            std::snprintf(detailMessage, detailMessageSize, "embedded official MSX2EXT size invalid");
+        }
+        MSX_BIOS_LOG("[MSX][BIOS] embedded official MSX2EXT reject size=%u\n",
+                     static_cast<unsigned>(size));
+        return false;
+    }
+
+    uint8_t* data = const_cast<uint8_t*>(official_msx2ext_rom_start);
+    MSX_BIOS_LOG("[MSX][BIOS] embedded official MSX2EXT using flash-backed image size=%u\n",
+                 static_cast<unsigned>(size));
+
+    char md5Hex[33] = {0};
+    if (!msx_compute_md5_hex(data, size, md5Hex)) {
+        if (detailMessage && detailMessageSize > 0) {
+            std::snprintf(detailMessage, detailMessageSize, "embedded official MSX2EXT md5 failed");
+        }
+        return false;
+    }
+
+    msx_release_image(image);
+    image->data = data;
+    image->size = size;
+    image->status = MsxImageLoadStatus::Loaded;
+    image->ownsData = false;
+    msx_copy_string(image->path, sizeof(image->path), kMsxEmbeddedOfficialSubPath);
+    msx_copy_string(image->expectedName, sizeof(image->expectedName), kMsx2ExtBiosName);
+    image->expectedMd5[0] = '\0';
+    msx_copy_string(image->foundMd5, sizeof(image->foundMd5), md5Hex);
+
+    if (detailMessage && detailMessageSize > 0) {
+        std::snprintf(detailMessage, detailMessageSize, "Embedded official MSX2EXT loaded");
+    }
+    MSX_BIOS_LOG("[MSX][BIOS] accept embedded official MSX2EXT size=%u md5=%s\n",
+                 static_cast<unsigned>(size),
+                 md5Hex);
+    return true;
+#endif
+}
+
 size_t msx_find_header_offset(const uint8_t* data, size_t size)
 {
     const size_t probeLimit = size < kMsxMaxHeaderProbe ? size : kMsxMaxHeaderProbe;
@@ -712,13 +846,17 @@ bool msx_load_for_target(MsxBiosBundle* bundle, MsxBiosTarget target, const MsxB
         return false;
     }
 
-    const bool ok = msx_try_candidates(&bundle->mainRom,
-                                       mainCandidates,
-                                       msx_is_valid_main_bios_size,
-                                       "MSX2.ROM not found",
-                                       detailMessage,
-                                       sizeof(detailMessage));
-    if (!ok) {
+    bool mainEmbedded = false;
+    if (msx_load_embedded_official_msx2_mainrom(&bundle->mainRom,
+                                                detailMessage,
+                                                sizeof(detailMessage))) {
+        mainEmbedded = true;
+    } else if (!msx_try_candidates(&bundle->mainRom,
+                                   mainCandidates,
+                                   msx_is_valid_main_bios_size,
+                                   "MSX2.ROM not found",
+                                   detailMessage,
+                                   sizeof(detailMessage))) {
         msx_set_message(bundle, detailMessage[0] != '\0' ? detailMessage : "MSX2.ROM not found");
         return false;
     }
@@ -728,22 +866,43 @@ bool msx_load_for_target(MsxBiosBundle* bundle, MsxBiosTarget target, const MsxB
     msx_append_candidate(&subCandidates, config->msx2SubRomPath, kMsx2ExtBiosName, kMsx2ExtBiosMd5);
     msx_append_candidate(&subCandidates, "/sd/bios/msx/MSX2EXT.ROM", kMsx2ExtBiosName, kMsx2ExtBiosMd5);
     msx_append_candidate(&subCandidates, "/sd/msx/MSX2EXT.ROM", kMsx2ExtBiosName, kMsx2ExtBiosMd5);
-    if (msx_try_candidates(&bundle->subRom,
-                          subCandidates,
-                          msx_is_valid_subrom_size,
-                          "MSX2EXT.ROM not found",
-                          subDetailMessage,
-                          sizeof(subDetailMessage))) {
+    bool subEmbeddedOfficial = false;
+    bool subEmbeddedCbios = false;
+    if (msx_load_embedded_official_msx2_subrom(&bundle->subRom,
+                                               subDetailMessage,
+                                               sizeof(subDetailMessage))) {
+        subEmbeddedOfficial = true;
+    } else if (msx_try_candidates(&bundle->subRom,
+                                  subCandidates,
+                                  msx_is_valid_subrom_size,
+                                  "MSX2EXT.ROM not found",
+                                  subDetailMessage,
+                                  sizeof(subDetailMessage))) {
         bundle->compatible = true;
-        msx_set_message(bundle, "MSX2 BIOS and sub-ROM loaded");
+        msx_set_message(bundle,
+                        mainEmbedded ? "Embedded MSX2 BIOS and sub-ROM loaded"
+                                     : "MSX2 BIOS and sub-ROM loaded");
+        return true;
+    } else if (msx_load_embedded_cbios_msx2_subrom(&bundle->subRom,
+                                                   subDetailMessage,
+                                                   sizeof(subDetailMessage))) {
+        subEmbeddedCbios = true;
+        bundle->compatible = true;
+        msx_set_message(bundle,
+                        mainEmbedded ? "Embedded MSX2 BIOS and embedded sub-ROM loaded"
+                                     : "MSX2 BIOS and embedded sub-ROM loaded");
         return true;
     }
 
-    if (msx_load_embedded_cbios_msx2_subrom(&bundle->subRom, subDetailMessage, sizeof(subDetailMessage))) {
+    if (subEmbeddedOfficial) {
         bundle->compatible = true;
-        msx_set_message(bundle, "MSX2 BIOS and embedded sub-ROM loaded");
+        msx_set_message(bundle,
+                        mainEmbedded ? "Embedded MSX2 BIOS and embedded MSX2EXT loaded"
+                                     : "MSX2 BIOS and embedded MSX2EXT loaded");
         return true;
     }
+
+    (void)subEmbeddedCbios;
 
     msx_set_message(bundle, subDetailMessage[0] != '\0' ? subDetailMessage : "MSX2EXT.ROM not found");
     return false;
