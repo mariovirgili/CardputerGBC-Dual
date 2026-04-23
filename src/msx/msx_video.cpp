@@ -27,9 +27,7 @@ constexpr int kExternalTargetW = 320;
 constexpr int kExternalTargetH = 240;
 constexpr int kExternalFastTargetW = 240;
 constexpr int kExternalFastTargetH = 180;
-constexpr int kExternalFastPlusCropH = 192;
 constexpr int kExternalFastPlusTargetW = 192;
-constexpr int kExternalFastPlusTargetH = 144;
 constexpr int kWideAspectW = 4;
 constexpr int kWideAspectH = 3;
 constexpr int kBatchLines = 6;
@@ -344,18 +342,19 @@ void msx_video_compute_plan(unsigned srcW, unsigned srcH, MsxVideoPlan* plan)
     }
 
     if (msx_video_game_on_external() && mode == MsxInternalViewMode::FastPlus) {
-        const unsigned fastPlusSrcH =
-            effectiveSrcH > kExternalFastPlusCropH ? kExternalFastPlusCropH : effectiveSrcH;
-        const unsigned fastPlusSrcY0 =
-            effectiveSrcY0 +
-            ((effectiveSrcH > fastPlusSrcH) ? ((effectiveSrcH - fastPlusSrcH) / 2u) : 0u);
-
         plan->srcX0 = 0;
-        plan->srcY0 = static_cast<int>(fastPlusSrcY0);
+        plan->srcY0 = static_cast<int>(effectiveSrcY0);
         plan->roiW = static_cast<int>(srcW);
-        plan->roiH = static_cast<int>(fastPlusSrcH);
+        plan->roiH = static_cast<int>(effectiveSrcH);
         plan->dstW = kExternalFastPlusTargetW;
-        plan->dstH = kExternalFastPlusTargetH;
+        plan->dstH = static_cast<int>(
+            (static_cast<uint64_t>(plan->dstW) * static_cast<uint64_t>(effectiveSrcH) +
+             (static_cast<uint64_t>(srcW) / 2u)) /
+            static_cast<uint64_t>(srcW)
+        );
+        if (plan->dstH <= 0) {
+            plan->dstH = 1;
+        }
         if (plan->dstW > targetW) {
             plan->dstW = targetW;
         }

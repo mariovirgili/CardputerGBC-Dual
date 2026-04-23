@@ -1179,10 +1179,10 @@ inline void msx_vdp_refresh_timing_flags(MsxVdpState* state)
             static_cast<uint8_t>(((scanline + static_cast<uint32_t>(vscroll)) - state->regs[19]) & 0xFFu);
         const uint8_t scanlineTag = static_cast<uint8_t>(scanline & 0xFFu);
         
-        const bool inIrqWindow = (lineDelta >= 2u && lineDelta <= 8u);
+        const bool inIrqWindow = (lineDelta >= 2u && lineDelta <= 10u);
         if (inIrqWindow &&
             ((state->lineInterruptFrameTag != state->frameCounter) ||
-             (state->lineInterruptLineTag != scanlineTag))) {
+             (static_cast<uint8_t>(scanlineTag - state->lineInterruptLineTag) > 10u))) {
             state->status[1] |= 0x01u;
             state->lineInterruptFrameTag = state->frameCounter;
             state->lineInterruptLineTag = scanlineTag;
