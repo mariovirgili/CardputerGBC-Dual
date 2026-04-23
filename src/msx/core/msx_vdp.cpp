@@ -158,11 +158,14 @@ static bool s_msxColorSpriteSnapshotValid = false;
 static uint32_t s_msxColorSpriteSnapshotFrameTag = 0u;
 static uint8_t s_msxColorSpriteSnapshotReg1 = 0u;
 static uint8_t s_msxColorSpriteSnapshotReg23 = 0u;
-struct MsxVdpRegTimelineEvent {
+
+// Ottimizzazione memoria: impacchetta la struttura (rimuove il padding, 5 byte invece di 8)
+struct __attribute__((packed)) MsxVdpRegTimelineEvent {
     uint32_t cycle;
     uint8_t value;
 };
-static constexpr uint8_t kMsxVdpRegTimelineMax = 16u;
+// Ridotto da 16 a 8. Difficilmente un gioco modifica lo STESSO registro più di 8 volte a frame.
+static constexpr uint8_t kMsxVdpRegTimelineMax = 8u;
 struct MsxVdpRenderAuxState {
     MsxVdpRegTimelineEvent r5Timeline[kMsxVdpRegTimelineMax];
     MsxVdpRegTimelineEvent r6Timeline[kMsxVdpRegTimelineMax];
@@ -2946,22 +2949,12 @@ void msx_vdp_render_color_sprites_line(MsxVdpState* state, unsigned y, uint8_t* 
     const uint8_t lineVScroll = msx_vdp_reg23_for_line(state, y);
     const uint8_t scrolledScanY =
         static_cast<uint8_t>(static_cast<uint32_t>(y) + static_cast<uint32_t>(lineVScroll));
-    if (s_msxColorSpriteSnapshotFrameTag != state->frameCounter) {
-        s_msxColorSpriteWriteLogApplyIndex = 0u;
-        s_msxColorSpriteSnapshotFrameTag = state->frameCounter;
-    }
-
-    if (!s_msxColorSpriteSnapshotValid) {
-        return;
-    }
 
     if (msx_vdp_sprites_disabled_for_line(state, y)) {
         return;
     }
 
-    msx_vdp_apply_color_sprite_writes_until(msx_vdp_cycle_for_line(state, y));
-
-    const uint8_t spriteReg1 = s_msxColorSpriteSnapshotReg1;
+    const uint8_t spriteReg1 = state->regs[1];
     const uint8_t spriteReg5 = msx_vdp_reg5_for_line(state, y);
     const uint8_t spriteReg6 = msx_vdp_reg6_for_line(state, y);
     const uint8_t spriteReg11 = msx_vdp_reg11_for_line(state, y);
@@ -4844,15 +4837,6 @@ void msx_vdp_reset(MsxVdpState* state)
     state->renderContext = nullptr;
     state->dirty = true;
     state->frameReady = false;
-    s_msxColorSpriteSnapshotValid = false;
-    s_msxColorSpriteSnapshotFrameTag = 0u;
-    s_msxColorSpriteSnapshotReg1 = 0u;
-    s_msxColorSpriteSnapshotReg23 = 0u;
-    std::memset(s_msxColorSpriteAttrSnapshot, 0x00, sizeof(s_msxColorSpriteAttrSnapshot));
-    std::memset(s_msxColorSpriteColorSnapshot, 0x00, sizeof(s_msxColorSpriteColorSnapshot));
-    std::memset(s_msxColorSpritePatternSnapshot, 0x00, sizeof(s_msxColorSpritePatternSnapshot));
-    s_msxColorSpriteWriteLogCount = 0u;
-    s_msxColorSpriteWriteLogApplyIndex = 0u;
     s_msxVdpR5TimelineCount = 0u;
     s_msxVdpR6TimelineCount = 0u;
     s_msxVdpR8TimelineCount = 0u;
@@ -4905,24 +4889,6 @@ bool msx_vdp_begin_frame(MsxVdpState* state)
     msx_vdp_timeline_reset(s_msxVdpR26Timeline, &s_msxVdpR26TimelineCount, state->regs[26]);
     msx_vdp_timeline_reset(s_msxVdpR27Timeline, &s_msxVdpR27TimelineCount, state->regs[27]);
     if (msx_vdp_is_msx2(state)) {
-        const uint32_t attrBase = msx_vdp_sprite_attr_base(state) & state->vramMask;
-        const uint32_t colorBase = static_cast<uint32_t>((attrBase - 0x200u) & state->vramMask);
-        const uint32_t patternBase = msx_vdp_sprite_pattern_base(state) & state->vramMask;
-        for (uint32_t i = 0; i < static_cast<uint32_t>(sizeof(s_msxColorSpriteAttrSnapshot)); ++i) {
-            s_msxColorSpriteAttrSnapshot[i] = msx_vdp_read_vram_fast(state->vram, state->vramMask, attrBase + i);
-        }
-        for (uint32_t i = 0; i < static_cast<uint32_t>(sizeof(s_msxColorSpriteColorSnapshot)); ++i) {
-            s_msxColorSpriteColorSnapshot[i] = msx_vdp_read_vram_fast(state->vram, state->vramMask, colorBase + i);
-        }
-        for (uint32_t i = 0; i < static_cast<uint32_t>(sizeof(s_msxColorSpritePatternSnapshot)); ++i) {
-            s_msxColorSpritePatternSnapshot[i] = msx_vdp_read_vram_fast(state->vram, state->vramMask, patternBase + i);
-        }
-        s_msxColorSpriteSnapshotValid = true;
-        s_msxColorSpriteSnapshotReg1 = state->regs[1];
-        s_msxColorSpriteSnapshotReg23 = msx_vdp_vscroll(state);
-        s_msxColorSpriteSnapshotFrameTag = 0u;
-        s_msxColorSpriteWriteLogCount = 0u;
-        s_msxColorSpriteWriteLogApplyIndex = 0u;
     }
     state->status[0] |= 0x80u;
     state->status[1] &= 0xFEu;
