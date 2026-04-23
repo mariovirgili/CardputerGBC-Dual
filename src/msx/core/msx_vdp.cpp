@@ -35,11 +35,31 @@
 #endif
 
 #ifndef MSX_VDP_BOOT_DIAG_ENABLED
-#define MSX_VDP_BOOT_DIAG_ENABLED 1
+#define MSX_VDP_BOOT_DIAG_ENABLED 0
 #endif
 
 #ifndef MSX_VDP_VERBOSE_DIAG_ENABLED
-#define MSX_VDP_VERBOSE_DIAG_ENABLED 1
+#define MSX_VDP_VERBOSE_DIAG_ENABLED 0
+#endif
+
+#ifndef MSX_VDP_CMD_LOG_ENABLED
+#define MSX_VDP_CMD_LOG_ENABLED 0
+#endif
+
+#ifndef MSX_VDP_FIN_LOG_ENABLED
+#define MSX_VDP_FIN_LOG_ENABLED 0
+#endif
+
+#ifndef MSX_VDP_XFER_LOG_ENABLED
+#define MSX_VDP_XFER_LOG_ENABLED 0
+#endif
+
+#ifndef MSX_VDP_G4_ADDR_LOG_ENABLED
+#define MSX_VDP_G4_ADDR_LOG_ENABLED 0
+#endif
+
+#ifndef MSX_VDP_INIT_LOG_ENABLED
+#define MSX_VDP_INIT_LOG_ENABLED 0
 #endif
 
 // Cardputer target without PSRAM: keep the VDP on the single-core path.
@@ -150,12 +170,18 @@ struct MsxVdpRenderAuxState {
     MsxVdpRegTimelineEvent r11Timeline[kMsxVdpRegTimelineMax];
     MsxVdpRegTimelineEvent r2Timeline[kMsxVdpRegTimelineMax];
     MsxVdpRegTimelineEvent r23Timeline[kMsxVdpRegTimelineMax];
+    MsxVdpRegTimelineEvent r25Timeline[kMsxVdpRegTimelineMax];
+    MsxVdpRegTimelineEvent r26Timeline[kMsxVdpRegTimelineMax];
+    MsxVdpRegTimelineEvent r27Timeline[kMsxVdpRegTimelineMax];
     uint8_t r5TimelineCount;
     uint8_t r6TimelineCount;
     uint8_t r8TimelineCount;
     uint8_t r11TimelineCount;
     uint8_t r2TimelineCount;
     uint8_t r23TimelineCount;
+    uint8_t r25TimelineCount;
+    uint8_t r26TimelineCount;
+    uint8_t r27TimelineCount;
 };
 static MsxVdpRegTimelineEvent s_msxVdpR5Timeline[kMsxVdpRegTimelineMax];
 static MsxVdpRegTimelineEvent s_msxVdpR6Timeline[kMsxVdpRegTimelineMax];
@@ -163,12 +189,18 @@ static MsxVdpRegTimelineEvent s_msxVdpR8Timeline[kMsxVdpRegTimelineMax];
 static MsxVdpRegTimelineEvent s_msxVdpR11Timeline[kMsxVdpRegTimelineMax];
 static MsxVdpRegTimelineEvent s_msxVdpR2Timeline[kMsxVdpRegTimelineMax];
 static MsxVdpRegTimelineEvent s_msxVdpR23Timeline[kMsxVdpRegTimelineMax];
+static MsxVdpRegTimelineEvent s_msxVdpR25Timeline[kMsxVdpRegTimelineMax];
+static MsxVdpRegTimelineEvent s_msxVdpR26Timeline[kMsxVdpRegTimelineMax];
+static MsxVdpRegTimelineEvent s_msxVdpR27Timeline[kMsxVdpRegTimelineMax];
 static uint8_t s_msxVdpR5TimelineCount = 0u;
 static uint8_t s_msxVdpR6TimelineCount = 0u;
 static uint8_t s_msxVdpR8TimelineCount = 0u;
 static uint8_t s_msxVdpR11TimelineCount = 0u;
 static uint8_t s_msxVdpR2TimelineCount = 0u;
 static uint8_t s_msxVdpR23TimelineCount = 0u;
+static uint8_t s_msxVdpR25TimelineCount = 0u;
+static uint8_t s_msxVdpR26TimelineCount = 0u;
+static uint8_t s_msxVdpR27TimelineCount = 0u;
 static MsxVdpRenderAuxState s_vdpRenderAuxSnapshot = {};
 static uint8_t s_msx2LineBuffer[kMsxWideFrameWidth];
 static uint32_t s_msxSpriteActiveLines = 0;
@@ -221,6 +253,24 @@ static uint32_t msx_vdp_cycle_for_line(const MsxVdpState* state, unsigned y)
     return static_cast<uint32_t>((static_cast<uint64_t>(clampedY) * state->frameCycleBudget) /
                                  static_cast<uint64_t>(kFrameScanlines));
 }
+
+#if MSX_VDP_G4_DISP_LOG_ENABLED
+static uint32_t msx_vdp_cycle_for_line_visible_legacy(const MsxVdpState* state, unsigned y)
+{
+    if (!state || state->frameCycleBudget == 0u) {
+        return 0u;
+    }
+
+    const unsigned visibleHeight = state->activeHeight ? state->activeHeight : kMsxFrameHeightMsx2;
+    if (visibleHeight == 0u) {
+        return 0u;
+    }
+
+    const unsigned clampedY = (y < visibleHeight) ? y : (visibleHeight - 1u);
+    return static_cast<uint32_t>((static_cast<uint64_t>(clampedY) * state->frameCycleBudget) /
+                                 static_cast<uint64_t>(visibleHeight));
+}
+#endif
 
 static uint32_t msx_vdp_line_index_for_cycle(const MsxVdpState* state, uint32_t cycle)
 {
@@ -350,6 +400,26 @@ static uint8_t msx_vdp_timeline_value_for_line(const MsxVdpState* state,
     return value;
 }
 
+#if MSX_VDP_G4_DISP_LOG_ENABLED
+static uint8_t msx_vdp_timeline_value_for_cycle(const MsxVdpRegTimelineEvent* timeline,
+                                                uint8_t count,
+                                                uint32_t targetCycle)
+{
+    if (!timeline || count == 0u) {
+        return 0u;
+    }
+
+    uint8_t value = timeline[0].value;
+    for (uint8_t i = 1u; i < count; ++i) {
+        if (timeline[i].cycle > targetCycle) {
+            break;
+        }
+        value = timeline[i].value;
+    }
+    return value;
+}
+#endif
+
 static const MsxVdpRenderAuxState* msx_vdp_render_aux(const MsxVdpState* state)
 {
     return state ? static_cast<const MsxVdpRenderAuxState*>(state->renderContext) : nullptr;
@@ -424,6 +494,42 @@ static uint8_t msx_vdp_reg23_for_line(const MsxVdpState* state, unsigned y)
     return msx_vdp_timeline_value_for_line(state,
                                            aux ? aux->r23Timeline : s_msxVdpR23Timeline,
                                            aux ? aux->r23TimelineCount : s_msxVdpR23TimelineCount,
+                                           y);
+}
+
+static uint8_t msx_vdp_reg25_for_line(const MsxVdpState* state, unsigned y)
+{
+    if (!state || !msx_vdp_is_msx2(state)) {
+        return state ? state->regs[25] : 0u;
+    }
+    const MsxVdpRenderAuxState* aux = msx_vdp_render_aux(state);
+    return msx_vdp_timeline_value_for_line(state,
+                                           aux ? aux->r25Timeline : s_msxVdpR25Timeline,
+                                           aux ? aux->r25TimelineCount : s_msxVdpR25TimelineCount,
+                                           y);
+}
+
+static uint8_t msx_vdp_reg26_for_line(const MsxVdpState* state, unsigned y)
+{
+    if (!state || !msx_vdp_is_msx2(state)) {
+        return state ? state->regs[26] : 0u;
+    }
+    const MsxVdpRenderAuxState* aux = msx_vdp_render_aux(state);
+    return msx_vdp_timeline_value_for_line(state,
+                                           aux ? aux->r26Timeline : s_msxVdpR26Timeline,
+                                           aux ? aux->r26TimelineCount : s_msxVdpR26TimelineCount,
+                                           y);
+}
+
+static uint8_t msx_vdp_reg27_for_line(const MsxVdpState* state, unsigned y)
+{
+    if (!state || !msx_vdp_is_msx2(state)) {
+        return state ? state->regs[27] : 0u;
+    }
+    const MsxVdpRenderAuxState* aux = msx_vdp_render_aux(state);
+    return msx_vdp_timeline_value_for_line(state,
+                                           aux ? aux->r27Timeline : s_msxVdpR27Timeline,
+                                           aux ? aux->r27TimelineCount : s_msxVdpR27TimelineCount,
                                            y);
 }
 
@@ -1072,13 +1178,15 @@ inline void msx_vdp_refresh_timing_flags(MsxVdpState* state)
         const uint8_t lineDelta =
             static_cast<uint8_t>(((scanline + static_cast<uint32_t>(vscroll)) - state->regs[19]) & 0xFFu);
         const uint8_t scanlineTag = static_cast<uint8_t>(scanline & 0xFFu);
-        if (lineDelta == 2u &&
+        
+        const bool inIrqWindow = (lineDelta >= 2u && lineDelta <= 8u);
+        if (inIrqWindow &&
             ((state->lineInterruptFrameTag != state->frameCounter) ||
              (state->lineInterruptLineTag != scanlineTag))) {
             state->status[1] |= 0x01u;
             state->lineInterruptFrameTag = state->frameCounter;
             state->lineInterruptLineTag = scanlineTag;
-        } else if ((lineDelta != 2u) && ((state->regs[0] & 0x10u) == 0u)) {
+        } else if (!inIrqWindow && ((state->regs[0] & 0x10u) == 0u)) {
             state->status[1] &= static_cast<uint8_t>(~0x01u);
         }
     }
@@ -1105,9 +1213,19 @@ inline bool msx_vdp_mode_yae(const MsxVdpState* state)
     return msx_vdp_mode_yjk(state) && (state->regs[25] & 0x10u) != 0u;
 }
 
+inline bool msx_vdp_hscroll512_for_regs(uint8_t reg25)
+{
+    return (reg25 & 0x01u) != 0u;
+}
+
 inline bool msx_vdp_hscroll512(const MsxVdpState* state)
 {
-    return state && msx_vdp_is_msx2(state) && (state->regs[25] & 0x01u) != 0u;
+    return state && msx_vdp_is_msx2(state) && msx_vdp_hscroll512_for_regs(state->regs[25]);
+}
+
+inline uint16_t msx_vdp_hscroll_for_regs(uint8_t reg26, uint8_t reg27)
+{
+    return static_cast<uint16_t>((reg27 & 0x07u) | ((reg26 & 0x3Fu) << 3));
 }
 
 inline uint16_t msx_vdp_hscroll(const MsxVdpState* state)
@@ -1116,7 +1234,7 @@ inline uint16_t msx_vdp_hscroll(const MsxVdpState* state)
         return 0u;
     }
 
-    return static_cast<uint16_t>((state->regs[27] & 0x07u) | ((state->regs[26] & 0x3Fu) << 3));
+    return msx_vdp_hscroll_for_regs(state->regs[26], state->regs[27]);
 }
 
 struct MsxBitmapFetchAddress {
@@ -1501,6 +1619,17 @@ void msx_vdp_diag_log_command_start(const MsxVdpState* state,
                                     uint16_t nx,
                                     uint16_t ny)
 {
+#if !MSX_VDP_CMD_LOG_ENABLED
+    (void)state;
+    (void)opcode;
+    (void)sx;
+    (void)sy;
+    (void)dx;
+    (void)dy;
+    (void)nx;
+    (void)ny;
+    return;
+#else
     static uint32_t s_cmdStartLogCount = 0u;
     if (!state || !msx_vdp_diag_take(&s_cmdStartLogCount, 192u)) {
         return;
@@ -1524,18 +1653,31 @@ void msx_vdp_diag_log_command_start(const MsxVdpState* state,
                 static_cast<unsigned>(state->regs[15]),
                 static_cast<unsigned long>(state->frameCounter),
                 static_cast<unsigned long>(state->currentFrameCpuCycles));
+#endif
 }
 
 void msx_vdp_diag_log_transfer(const MsxVdpState* state,
                                const char* phase,
                                uint8_t payload)
 {
+#if !MSX_VDP_XFER_LOG_ENABLED
+    (void)state;
+    (void)phase;
+    (void)payload;
+    return;
+#else
     static uint32_t s_transferLogCount = 0u;
-    if (!state || !phase || !msx_vdp_diag_take(&s_transferLogCount, 320u)) {
+    if (!state || !phase) {
         return;
     }
 
     const MsxVdpCommandState& command = state->command;
+    if (command.transfer == MsxVdpTransferCommand::None) {
+        return;
+    }
+    if (!msx_vdp_diag_take(&s_transferLogCount, 320u)) {
+        return;
+    }
     std::printf("[MSX][VDP-XFER] #%lu %s cmd=%s mode=%s val=%02X sx=%u sy=%u dx=%u dy=%u anx=%u nx=%u ny=%u tx=%d ty=%d s2=%02X frame=%lu cyc=%lu\n",
                 static_cast<unsigned long>(s_transferLogCount),
                 phase,
@@ -1554,22 +1696,42 @@ void msx_vdp_diag_log_transfer(const MsxVdpState* state,
                 static_cast<unsigned>(state->status[2]),
                 static_cast<unsigned long>(state->frameCounter),
                 static_cast<unsigned long>(state->currentFrameCpuCycles));
+#endif
 }
 
 void msx_vdp_diag_log_status_read(const MsxVdpState* state, uint8_t index, uint8_t value)
 {
     static uint32_t s_statusLogCount = 0u;
+    static bool s_statusSeen[2] = { false, false };
+    static uint8_t s_lastStatusValue[2] = { 0u, 0u };
+    static uint8_t s_lastStatusCommand[2] = { 0u, 0u };
     if (!state) {
         return;
     }
-    if (index != 2u && index != 7u && state->command.transfer == MsxVdpTransferCommand::None) {
+    if (index != 2u && index != 7u) {
+        return;
+    }
+
+    const MsxVdpCommandState& command = state->command;
+    if (command.transfer == MsxVdpTransferCommand::None) {
+        return;
+    }
+
+    const uint8_t slot = index == 7u ? 1u : 0u;
+    const uint8_t commandTag = static_cast<uint8_t>(command.transfer);
+    if (s_statusSeen[slot] &&
+        s_lastStatusValue[slot] == value &&
+        s_lastStatusCommand[slot] == commandTag) {
         return;
     }
     if (!msx_vdp_diag_take(&s_statusLogCount, 256u)) {
         return;
     }
 
-    const MsxVdpCommandState& command = state->command;
+    s_statusSeen[slot] = true;
+    s_lastStatusValue[slot] = value;
+    s_lastStatusCommand[slot] = commandTag;
+
     std::printf("[MSX][VDP-STS] #%lu s%u=%02X cmd=%s r15=%02X r44=%02X sx=%u sy=%u dx=%u dy=%u anx=%u ny=%u s2=%02X frame=%lu cyc=%lu\n",
                 static_cast<unsigned long>(s_statusLogCount),
                 static_cast<unsigned>(index),
@@ -1592,6 +1754,12 @@ void msx_vdp_diag_log_command_finish(const MsxVdpState* state,
                                      const char* phase,
                                      const MsxVdpCommandState& command)
 {
+#if !MSX_VDP_FIN_LOG_ENABLED
+    (void)state;
+    (void)phase;
+    (void)command;
+    return;
+#else
     static uint32_t s_finishLogCount = 0u;
     if (!state || !phase || !msx_vdp_diag_take(&s_finishLogCount, 128u)) {
         return;
@@ -1615,6 +1783,7 @@ void msx_vdp_diag_log_command_finish(const MsxVdpState* state,
                 static_cast<unsigned>(state->regs[44]),
                 static_cast<unsigned long>(state->frameCounter),
                 static_cast<unsigned long>(state->currentFrameCpuCycles));
+#endif
 }
 #else
 void msx_vdp_diag_log_command_start(const MsxVdpState*,
@@ -1867,8 +2036,6 @@ static uint32_t msx_vdp_command_steps_per_line(uint8_t liveScreenMode)
 void msx_vdp_command_continue(MsxVdpState* state)
 {
     MsxVdpCommandState& command = state->command;
-    static uint32_t s_g4LmmcWriteLogCount = 0u;
-    static uint32_t s_g4HmmcWriteLogCount = 0u;
     if (!state || command.transfer == MsxVdpTransferCommand::None || (state->status[2] & 0x80u) != 0u) {
         return;
     }
@@ -1906,21 +2073,6 @@ void msx_vdp_command_continue(MsxVdpState* state)
             state->regs[44] = value;
             state->status[7] = value;
             msx_vdp_diag_log_transfer(state, "lmmc-store", value);
-            if (false && liveScreenMode == 0u && s_g4LmmcWriteLogCount < 48u) {
-                const uint32_t addr = msx_vdp_command_addr(liveScreenMode, command.adx, command.dy) & state->vramMask;
-                const uint8_t prev = state->vram[addr];
-                ++s_g4LmmcWriteLogCount;
-                std::printf("[MSX][G4-LMMC] #%lu dx=%u dy=%u val=%02X prev=%02X addr=%05lX nx=%u ny=%u frame=%lu\n",
-                            static_cast<unsigned long>(s_g4LmmcWriteLogCount),
-                            static_cast<unsigned>(command.adx),
-                            static_cast<unsigned>(command.dy),
-                            static_cast<unsigned>(value),
-                            static_cast<unsigned>(prev),
-                            static_cast<unsigned long>(addr),
-                            static_cast<unsigned>(command.anx),
-                            static_cast<unsigned>(command.ny),
-                            static_cast<unsigned long>(state->frameCounter));
-            }
             msx_vdp_command_pset(state, liveScreenMode, command.adx, command.dy, value, command.logicOp);
             state->status[2] |= 0x80u;
             if (--command.anx == 0u || ((command.adx = static_cast<uint16_t>(command.adx + command.tx)) & command.mx) != 0u) {
@@ -1942,20 +2094,6 @@ void msx_vdp_command_continue(MsxVdpState* state)
             const uint32_t addr = msx_vdp_command_addr(liveScreenMode, command.adx, command.dy) & state->vramMask;
             const uint8_t value = state->regs[44];
             msx_vdp_diag_log_transfer(state, "hmmc-store", value);
-            if (false && liveScreenMode == 0u &&
-                s_g4HmmcWriteLogCount < 64u &&
-                command.dy >= 448u) {
-                ++s_g4HmmcWriteLogCount;
-                std::printf("[MSX][G4-HMMC] #%lu dx=%u dy=%u val=%02X addr=%05lX nx=%u ny=%u frame=%lu\n",
-                            static_cast<unsigned long>(s_g4HmmcWriteLogCount),
-                            static_cast<unsigned>(command.adx),
-                            static_cast<unsigned>(command.dy),
-                            static_cast<unsigned>(value),
-                            static_cast<unsigned long>(addr),
-                            static_cast<unsigned>(command.anx),
-                            static_cast<unsigned>(command.ny),
-                            static_cast<unsigned long>(state->frameCounter));
-            }
             state->vram[addr] = value;
             state->status[7] = value;
             state->dirty = true;
@@ -2056,11 +2194,6 @@ void msx_vdp_command_write(MsxVdpState* state, uint8_t value)
 
 void msx_vdp_command_execute(MsxVdpState* state, uint8_t opcode)
 {
-    static uint32_t s_cmdLogCount = 0u;
-    static uint32_t s_g4CmdLogCount = 0u;
-    static uint32_t s_g4AddrLogCount = 0u;
-    static uint8_t s_g4LastR2 = 0xFFu;
-
     if (!state || !msx_vdp_is_msx2(state)) {
         return;
     }
@@ -2089,6 +2222,9 @@ void msx_vdp_command_execute(MsxVdpState* state, uint8_t opcode)
     const bool lineYMajor = (state->regs[45] & 0x01u) != 0u;
     const uint16_t ppl = msx_vdp_command_ppl(screenMode);
     const uint16_t ppb = msx_vdp_command_ppb(screenMode);
+#if MSX_VDP_G4_ADDR_LOG_ENABLED
+    static uint32_t s_g4AddrLogCount = 0u;
+    static uint8_t s_g4LastR2 = 0xFFu;
     const auto g4_visible_band = [&](uint16_t coord) {
         const uint16_t height = static_cast<uint16_t>(state->activeHeight);
         return (coord < height) ||
@@ -2134,12 +2270,15 @@ void msx_vdp_command_execute(MsxVdpState* state, uint8_t opcode)
         const uint8_t d1 = hasDest ? state->vram[(dstAddr + 1u) & state->vramMask] : 0u;
         const uint8_t d2 = hasDest ? state->vram[(dstAddr + 2u) & state->vramMask] : 0u;
         const uint8_t d3 = hasDest ? state->vram[(dstAddr + 3u) & state->vramMask] : 0u;
-        std::printf("[MSX][G4-ADDR] #%lu %s sx=%u sy=%u src=%05lX s=%02X%02X%02X%02X dx=%u dy=%u dst=%05lX d=%02X%02X%02X%02X nx=%u ny=%u r2=%02X frame=%lu\n",
+        const unsigned srcPage = static_cast<unsigned>((srcAddr >> 15) & 0x03u);
+        const unsigned dstPage = static_cast<unsigned>((dstAddr >> 15) & 0x03u);
+        std::printf("[MSX][G4-ADDR] #%lu %s sx=%u sy=%u src=%05lX sp=%u s=%02X%02X%02X%02X dx=%u dy=%u dst=%05lX dp=%u d=%02X%02X%02X%02X nx=%u ny=%u r2=%02X frame=%lu\n",
                     static_cast<unsigned long>(s_g4AddrLogCount),
                     tag,
                     static_cast<unsigned>(srcX),
                     static_cast<unsigned>(srcY),
                     static_cast<unsigned long>(srcAddr),
+                    srcPage,
                     static_cast<unsigned>(s0),
                     static_cast<unsigned>(s1),
                     static_cast<unsigned>(s2),
@@ -2147,6 +2286,7 @@ void msx_vdp_command_execute(MsxVdpState* state, uint8_t opcode)
                     static_cast<unsigned>(dstX),
                     static_cast<unsigned>(dstY),
                     static_cast<unsigned long>(dstAddr),
+                    dstPage,
                     static_cast<unsigned>(d0),
                     static_cast<unsigned>(d1),
                     static_cast<unsigned>(d2),
@@ -2156,6 +2296,17 @@ void msx_vdp_command_execute(MsxVdpState* state, uint8_t opcode)
                     static_cast<unsigned>(state->regs[2]),
                     static_cast<unsigned long>(state->frameCounter));
     };
+#else
+    const auto log_g4_addrs = [](const char*,
+                                 uint16_t,
+                                 uint16_t,
+                                 uint16_t,
+                                 uint16_t,
+                                 uint16_t,
+                                 uint16_t,
+                                 bool,
+                                 bool) {};
+#endif
 
     if ((command & 0x0Cu) != 0x0Cu && command != 0u) {
         state->regs[44] = static_cast<uint8_t>(state->regs[44] & colorMask);
@@ -2163,45 +2314,6 @@ void msx_vdp_command_execute(MsxVdpState* state, uint8_t opcode)
     }
 
     msx_vdp_diag_log_command_start(state, opcode, sx, sy, dx, dy, nx, ny);
-
-    if (false && s_cmdLogCount < 96u) {
-        ++s_cmdLogCount;
-        std::printf("[MSX][CMD] #%lu op=%02X %s mode=%s sx=%u sy=%u dx=%u dy=%u nx=%u ny=%u clr=%02X arg45=%02X r2=%02X r14=%02X frame=%lu\n",
-                    static_cast<unsigned long>(s_cmdLogCount),
-                    static_cast<unsigned>(opcode),
-                    msx_vdp_command_label(command),
-                    msx_vdp_mode_label(state->mode),
-                    static_cast<unsigned>(sx),
-                    static_cast<unsigned>(sy),
-                    static_cast<unsigned>(dx),
-                    static_cast<unsigned>(dy),
-                    static_cast<unsigned>(nx),
-                    static_cast<unsigned>(ny),
-                    static_cast<unsigned>(state->regs[44]),
-                    static_cast<unsigned>(state->regs[45]),
-                    static_cast<unsigned>(state->regs[2]),
-                    static_cast<unsigned>(state->regs[14]),
-                    static_cast<unsigned long>(state->frameCounter));
-    }
-
-    if (false && g4InterestingCmd && s_g4CmdLogCount < 96u) {
-        ++s_g4CmdLogCount;
-        std::printf("[MSX][G4-CMD] #%lu op=%02X %s sx=%u sy=%u dx=%u dy=%u nx=%u ny=%u clr=%02X arg45=%02X r2=%02X r14=%02X frame=%lu\n",
-                    static_cast<unsigned long>(s_g4CmdLogCount),
-                    static_cast<unsigned>(opcode),
-                    msx_vdp_command_label(command),
-                    static_cast<unsigned>(sx),
-                    static_cast<unsigned>(sy),
-                    static_cast<unsigned>(dx),
-                    static_cast<unsigned>(dy),
-                    static_cast<unsigned>(nx),
-                    static_cast<unsigned>(ny),
-                    static_cast<unsigned>(state->regs[44]),
-                    static_cast<unsigned>(state->regs[45]),
-                    static_cast<unsigned>(state->regs[2]),
-                    static_cast<unsigned>(state->regs[14]),
-                    static_cast<unsigned long>(state->frameCounter));
-    }
 
     switch (command) {
         case 0x0:
@@ -2365,8 +2477,9 @@ void msx_vdp_write_register(MsxVdpState* state, uint8_t reg, uint8_t value)
 #endif
 
     if (state->regs[reg] != value) {
+ #if MSX_VDP_VERBOSE_DIAG_ENABLED
         static uint32_t s_msx2KeyRegLogCount = 0u;
-        if (MSX_VDP_VERBOSE_DIAG_ENABLED && msx_vdp_is_msx2(state) && msx_vdp_is_traced_register(reg) && s_msx2KeyRegLogCount < 192u) {
+        if (msx_vdp_is_msx2(state) && msx_vdp_is_traced_register(reg) && s_msx2KeyRegLogCount < 192u) {
             ++s_msx2KeyRegLogCount;
             std::printf("[MSX][REG] #%lu R%02u=%02X prev=%02X mode=%s frame=%lu\n",
                         static_cast<unsigned long>(s_msx2KeyRegLogCount),
@@ -2376,6 +2489,7 @@ void msx_vdp_write_register(MsxVdpState* state, uint8_t reg, uint8_t value)
                         msx_vdp_mode_label(state->mode),
                         static_cast<unsigned long>(state->frameCounter));
         }
+#endif
         state->regs[reg] = value;
         if (msx_vdp_is_msx2(state)) {
             if (reg == 5u) {
@@ -2406,6 +2520,21 @@ void msx_vdp_write_register(MsxVdpState* state, uint8_t reg, uint8_t value)
             } else if (reg == 23u) {
                 msx_vdp_timeline_append(s_msxVdpR23Timeline,
                                         &s_msxVdpR23TimelineCount,
+                                        state->currentFrameCpuCycles,
+                                        value);
+            } else if (reg == 25u) {
+                msx_vdp_timeline_append(s_msxVdpR25Timeline,
+                                        &s_msxVdpR25TimelineCount,
+                                        state->currentFrameCpuCycles,
+                                        value);
+            } else if (reg == 26u) {
+                msx_vdp_timeline_append(s_msxVdpR26Timeline,
+                                        &s_msxVdpR26TimelineCount,
+                                        state->currentFrameCpuCycles,
+                                        value);
+            } else if (reg == 27u) {
+                msx_vdp_timeline_append(s_msxVdpR27Timeline,
+                                        &s_msxVdpR27TimelineCount,
                                         state->currentFrameCpuCycles,
                                         value);
             }
@@ -2799,7 +2928,9 @@ void msx_vdp_plot_color_sprite_bits(MsxVdpState* state,
                 msx_vdp_record_sprite_collision(state);
             }
             dst = mergeColors ? static_cast<uint8_t>(dst | color) : color;
+#if MSX_VDP_SPRITE_LOG_ENABLED
             s_msxSpritePixelsDrawn++;
+#endif
         }
     }
 }
@@ -2873,10 +3004,12 @@ void msx_vdp_render_color_sprites_line(MsxVdpState* state, unsigned y, uint8_t* 
     }
 
     msx_vdp_record_sprite_index(state, lastIndex);
+#if MSX_VDP_SPRITE_LOG_ENABLED
     if (count != 0u) {
         s_msxSpriteActiveLines++;
         s_msxSpriteSelectedCount += count;
     }
+#endif
 
     const unsigned scale = (outputHeight > inputHeight) ? 2u : 1u;
     for (int selectedIndex = static_cast<int>(count) - 1; selectedIndex >= 0; --selectedIndex) {
@@ -2901,11 +3034,15 @@ void msx_vdp_render_color_sprites_line(MsxVdpState* state, unsigned y, uint8_t* 
         const uint8_t colorAttr = msx_vdp_read_vram_fast(state->vram, state->vramMask, colorBase + colorOffset);
         const uint8_t color = static_cast<uint8_t>(colorAttr & 0x0Fu);
         if (color == 0u) {
+#if MSX_VDP_SPRITE_LOG_ENABLED
             s_msxSpriteTransparentEntries++;
+#endif
             orMask = static_cast<uint8_t>((orMask | (colorAttr & 0x40u)) >> 1);
             continue;
         }
+#if MSX_VDP_SPRITE_LOG_ENABLED
         s_msxSpriteColoredEntries++;
+#endif
 
         const bool mergeColors = (orMask & 0x20u) != 0u;
         orMask = static_cast<uint8_t>((orMask | (colorAttr & 0x40u)) >> 1);
@@ -3602,52 +3739,47 @@ static void msx_vdp_render_bitmap4_range(MsxVdpState* state, unsigned yStart, un
     // SCREEN 5 display fetch wraps within the selected 0x8000-byte page.
     // R#2 bits 6:5 select the display page; R#23 selects the first displayed line
     // within that same page.
+    // Do not infer alternate pages from write patterns: the VDP fetches only
+    // from the page selected by the live registers.
     const uint32_t lineMask = 0x7FFFu;
     const uint8_t* const vram = state->vram;
     const uint32_t mask = state->vramMask;
-    const uint16_t hscroll = msx_vdp_hscroll(state);
-    const bool useHScroll = hscroll != 0u;
-    const bool dualPage = msx_vdp_hscroll512(state);
-    static uint8_t s_g4LastDispR2 = 0xFFu;
-    static uint32_t s_g4SpriteStatsFrames = 0;
-
-    if (state->regs[2] != s_g4LastDispR2) {
 #if MSX_VDP_G4_DISP_LOG_ENABLED
-        const uint32_t base = (static_cast<uint32_t>(state->regs[2] & 0x60u) << 10) & state->vramMask;
-        const uint8_t vscroll = msx_vdp_vscroll(state);
-        const unsigned probeY = height > 160u ? 160u : (height > 0u ? (height - 1u) : 0u);
-        const uint32_t scrolledY = static_cast<uint32_t>(probeY) + static_cast<uint32_t>(vscroll);
-        const uint32_t probeOffset = (scrolledY << 7) & lineMask;
-        const uint32_t curAddr = (base + probeOffset) & mask;
-        const uint32_t altBase = (base ^ 0x08000u) & state->vramMask;
-        const uint32_t altAddr = (altBase + probeOffset) & mask;
-        std::printf("[MSX][G4-DISP] r2=%02X vs=%u base=%05lX alt=%05lX y=%u sy=%u cur=%05lX %02X%02X%02X%02X alt=%05lX %02X%02X%02X%02X frame=%lu\n",
-                    static_cast<unsigned>(state->regs[2]),
-                    static_cast<unsigned>(vscroll),
-                    static_cast<unsigned long>(base & state->vramMask),
-                    static_cast<unsigned long>(altBase),
-                    static_cast<unsigned>(probeY),
-                    static_cast<unsigned>(scrolledY),
-                    static_cast<unsigned long>(curAddr),
-                    static_cast<unsigned>(vram[(curAddr + 0u) & mask]),
-                    static_cast<unsigned>(vram[(curAddr + 1u) & mask]),
-                    static_cast<unsigned>(vram[(curAddr + 2u) & mask]),
-                    static_cast<unsigned>(vram[(curAddr + 3u) & mask]),
-                    static_cast<unsigned long>(altAddr),
-                    static_cast<unsigned>(vram[(altAddr + 0u) & mask]),
-                    static_cast<unsigned>(vram[(altAddr + 1u) & mask]),
-                    static_cast<unsigned>(vram[(altAddr + 2u) & mask]),
-                    static_cast<unsigned>(vram[(altAddr + 3u) & mask]),
-                    static_cast<unsigned long>(state->frameCounter));
-#endif
+    const unsigned probeY = height > 160u ? 160u : (height > 0u ? (height - 1u) : 0u);
+    static uint32_t s_g4DispLogCount = 0u;
+    static uint32_t s_g4DispLastFrame = 0xFFFFFFFFu;
+    static uint8_t s_g4LastDispR2 = 0xFFu;
+    static uint8_t s_g4LastDispR23 = 0xFFu;
+    static uint8_t s_g4LastDispR25 = 0xFFu;
+    static uint8_t s_g4LastDispR26 = 0xFFu;
+    static uint8_t s_g4LastDispR27 = 0xFFu;
+    static uint8_t s_g4DispBudget = 0u;
+
+    if (state->regs[2] != s_g4LastDispR2 ||
+        state->regs[23] != s_g4LastDispR23 ||
+        state->regs[25] != s_g4LastDispR25 ||
+        state->regs[26] != s_g4LastDispR26 ||
+        state->regs[27] != s_g4LastDispR27) {
         s_g4LastDispR2 = state->regs[2];
+        s_g4LastDispR23 = state->regs[23];
+        s_g4LastDispR25 = state->regs[25];
+        s_g4LastDispR26 = state->regs[26];
+        s_g4LastDispR27 = state->regs[27];
+        s_g4DispBudget = 1u;
     }
+#endif
 
     for (unsigned y = startLine; y < endLine; ++y) {
         msx_vdp_render_color_sprites_line(state, y, s_msxColorSpriteLine);
         const uint8_t* const spriteLine = s_msxColorSpriteLine + 32u;
         const uint8_t lineReg2 = msx_vdp_reg2_for_line(state, y);
+        const uint8_t lineReg25 = msx_vdp_reg25_for_line(state, y);
+        const uint8_t lineReg26 = msx_vdp_reg26_for_line(state, y);
+        const uint8_t lineReg27 = msx_vdp_reg27_for_line(state, y);
         const uint8_t lineVScroll = msx_vdp_reg23_for_line(state, y);
+        const uint16_t lineHScroll = msx_vdp_hscroll_for_regs(lineReg26, lineReg27);
+        const bool useHScroll = lineHScroll != 0u;
+        const bool dualPage = msx_vdp_hscroll512_for_regs(lineReg25);
         const uint32_t scrolledY = static_cast<uint32_t>(y) + static_cast<uint32_t>(lineVScroll);
         const uint32_t pageBase = (static_cast<uint32_t>(lineReg2 & 0x60u) << 10) & mask;
         const uint32_t rowOffset = (scrolledY << 7) & lineMask;
@@ -3656,6 +3788,89 @@ static void msx_vdp_render_bitmap4_range(MsxVdpState* state, unsigned yStart, un
         if (!dst) {
             continue;
         }
+
+#if MSX_VDP_G4_DISP_LOG_ENABLED
+        if (y == probeY &&
+            s_g4DispBudget != 0u &&
+            s_g4DispLastFrame != state->frameCounter) {
+            ++s_g4DispLogCount;
+            s_g4DispLastFrame = state->frameCounter;
+            s_g4DispBudget = 0u;
+
+            const MsxVdpRenderAuxState* aux = msx_vdp_render_aux(state);
+            const MsxVdpRegTimelineEvent* const r2Timeline =
+                aux ? aux->r2Timeline : s_msxVdpR2Timeline;
+            const uint8_t r2TimelineCount = aux ? aux->r2TimelineCount : s_msxVdpR2TimelineCount;
+            const MsxVdpRegTimelineEvent* const r23Timeline =
+                aux ? aux->r23Timeline : s_msxVdpR23Timeline;
+            const uint8_t r23TimelineCount =
+                aux ? aux->r23TimelineCount : s_msxVdpR23TimelineCount;
+            const uint32_t probeCycle262 = msx_vdp_cycle_for_line(state, y);
+            const uint32_t probeCycleVis = msx_vdp_cycle_for_line_visible_legacy(state, y);
+            const uint8_t probeReg2Legacy =
+                msx_vdp_timeline_value_for_cycle(r2Timeline, r2TimelineCount, probeCycleVis);
+            const uint8_t probeReg23Legacy =
+                msx_vdp_timeline_value_for_cycle(r23Timeline, r23TimelineCount, probeCycleVis);
+            const uint8_t pageIndex = static_cast<uint8_t>((pageBase >> 15) & 0x03u);
+            const uint32_t altBase = (pageBase ^ 0x08000u) & state->vramMask;
+            const uint8_t altPageIndex = static_cast<uint8_t>((altBase >> 15) & 0x03u);
+            const uint32_t altAddr = (altBase + rowOffset) & mask;
+            const MsxBitmapFetchAddress fetch0 = msx_vdp_bitmap_fetch_address(pageBase,
+                                                                              rowOffset,
+                                                                              lineHScroll,
+                                                                              0u,
+                                                                              256u,
+                                                                              dualPage,
+                                                                              0x8000u);
+            const MsxBitmapFetchAddress fetch128 = msx_vdp_bitmap_fetch_address(pageBase,
+                                                                                rowOffset,
+                                                                                lineHScroll,
+                                                                                128u,
+                                                                                256u,
+                                                                                dualPage,
+                                                                                0x8000u);
+            std::printf("[MSX][G4-DISP] #%lu frame=%lu line=%u now=%lu r2=%02X r23=%02X r25=%02X r26=%02X r27=%02X r9=%02X legacy=%02X/%02X cyc=%lu/%lu live=%02X/%02X/%02X/%02X/%02X hs=%u hs512=%u sy=%u page=%u base=%05lX cur=%05lX %02X%02X%02X%02X altp=%u alt=%05lX %02X%02X%02X%02X fx0=%05lX/%u fx128=%05lX/%u\n",
+                        static_cast<unsigned long>(s_g4DispLogCount),
+                        static_cast<unsigned long>(state->frameCounter),
+                        static_cast<unsigned>(y),
+                        static_cast<unsigned long>(state->currentFrameCpuCycles),
+                        static_cast<unsigned>(lineReg2),
+                        static_cast<unsigned>(lineVScroll),
+                        static_cast<unsigned>(lineReg25),
+                        static_cast<unsigned>(lineReg26),
+                        static_cast<unsigned>(lineReg27),
+                        static_cast<unsigned>(state->regs[9]),
+                        static_cast<unsigned>(probeReg2Legacy),
+                        static_cast<unsigned>(probeReg23Legacy),
+                        static_cast<unsigned long>(probeCycle262),
+                        static_cast<unsigned long>(probeCycleVis),
+                        static_cast<unsigned>(state->regs[2]),
+                        static_cast<unsigned>(state->regs[23]),
+                        static_cast<unsigned>(state->regs[25]),
+                        static_cast<unsigned>(state->regs[26]),
+                        static_cast<unsigned>(state->regs[27]),
+                        static_cast<unsigned>(lineHScroll),
+                        static_cast<unsigned>(dualPage ? 1u : 0u),
+                        static_cast<unsigned>(scrolledY),
+                        static_cast<unsigned>(pageIndex),
+                        static_cast<unsigned long>(pageBase & state->vramMask),
+                        static_cast<unsigned long>(lineBase),
+                        static_cast<unsigned>(vram[(lineBase + 0u) & mask]),
+                        static_cast<unsigned>(vram[(lineBase + 1u) & mask]),
+                        static_cast<unsigned>(vram[(lineBase + 2u) & mask]),
+                        static_cast<unsigned>(vram[(lineBase + 3u) & mask]),
+                        static_cast<unsigned>(altPageIndex),
+                        static_cast<unsigned long>(altAddr),
+                        static_cast<unsigned>(vram[(altAddr + 0u) & mask]),
+                        static_cast<unsigned>(vram[(altAddr + 1u) & mask]),
+                        static_cast<unsigned>(vram[(altAddr + 2u) & mask]),
+                        static_cast<unsigned>(vram[(altAddr + 3u) & mask]),
+                        static_cast<unsigned long>(fetch0.lineBase & mask),
+                        static_cast<unsigned>(fetch0.pixelX),
+                        static_cast<unsigned long>(fetch128.lineBase & mask),
+                        static_cast<unsigned>(fetch128.pixelX));
+        }
+#endif
 
         if (!useHScroll) {
             for (unsigned x = 0; x < kMsxFrameWidth; ++x) {
@@ -3666,7 +3881,7 @@ static void msx_vdp_render_bitmap4_range(MsxVdpState* state, unsigned yStart, un
             for (unsigned x = 0; x < kMsxFrameWidth; ++x) {
                 const MsxBitmapFetchAddress fetch = msx_vdp_bitmap_fetch_address(pageBase,
                                                                                  rowOffset,
-                                                                                 hscroll,
+                                                                                 lineHScroll,
                                                                                  x,
                                                                                  256u,
                                                                                  dualPage,
@@ -3682,9 +3897,10 @@ static void msx_vdp_render_bitmap4_range(MsxVdpState* state, unsigned yStart, un
     }
 
     if (finalizeFrame) {
+#if MSX_VDP_SPRITE_LOG_ENABLED
+        static uint32_t s_g4SpriteStatsFrames = 0u;
         s_g4SpriteStatsFrames++;
         if (s_g4SpriteStatsFrames >= 60u) {
-#if MSX_VDP_SPRITE_LOG_ENABLED
             const uint32_t attrBase = msx_vdp_sprite_attr_base(state) & state->vramMask;
             const uint32_t colorBase = (attrBase - 0x200u) & state->vramMask;
             const uint32_t patternBase = msx_vdp_sprite_pattern_base(state) & state->vramMask;
@@ -3729,7 +3945,6 @@ static void msx_vdp_render_bitmap4_range(MsxVdpState* state, unsigned yStart, un
                             static_cast<unsigned>(vram[(colorBase + 32u) & mask]),
                             static_cast<unsigned>(vram[(colorBase + 48u) & mask]));
             }
-#endif
             s_g4SpriteStatsFrames = 0;
             s_msxSpriteActiveLines = 0;
             s_msxSpriteSelectedCount = 0;
@@ -3737,6 +3952,7 @@ static void msx_vdp_render_bitmap4_range(MsxVdpState* state, unsigned yStart, un
             s_msxSpriteTransparentEntries = 0;
             s_msxSpritePixelsDrawn = 0;
         }
+#endif
     }
 }
 
@@ -3759,15 +3975,17 @@ void msx_vdp_render_bitmap6(MsxVdpState* state)
     const uint32_t lineMask = 0x7FFFu;
     const uint8_t* const vram = state->vram;
     const uint32_t mask = state->vramMask;
-    const uint16_t hscroll = msx_vdp_hscroll(state);
-    const bool useHScroll = hscroll != 0u;
-    const bool dualPage = msx_vdp_hscroll512(state);
-
     for (unsigned y = 0; y < height; ++y) {
         msx_vdp_render_color_sprites_line(state, y, s_msxColorSpriteLine);
         const uint8_t* const spriteLine = s_msxColorSpriteLine + 32u;
         const uint8_t lineReg2 = msx_vdp_reg2_for_line(state, y);
+        const uint8_t lineReg25 = msx_vdp_reg25_for_line(state, y);
+        const uint8_t lineReg26 = msx_vdp_reg26_for_line(state, y);
+        const uint8_t lineReg27 = msx_vdp_reg27_for_line(state, y);
         const uint8_t lineVScroll = msx_vdp_reg23_for_line(state, y);
+        const uint16_t lineHScroll = msx_vdp_hscroll_for_regs(lineReg26, lineReg27);
+        const bool useHScroll = lineHScroll != 0u;
+        const bool dualPage = msx_vdp_hscroll512_for_regs(lineReg25);
         const uint32_t scrolledY = static_cast<uint32_t>(y) + static_cast<uint32_t>(lineVScroll);
         const uint32_t pageBase = msx_vdp_name_base_for_reg2(state, lineReg2) & mask;
         const uint32_t rowOffset = (scrolledY << 7) & lineMask;
@@ -3792,7 +4010,7 @@ void msx_vdp_render_bitmap6(MsxVdpState* state)
                 const unsigned sourceX = wideStream ? x : (x * 2u);
                 const MsxBitmapFetchAddress fetch = msx_vdp_bitmap_fetch_address(pageBase,
                                                                                  rowOffset,
-                                                                                 hscroll,
+                                                                                 lineHScroll,
                                                                                  sourceX,
                                                                                  512u,
                                                                                  dualPage,
@@ -3817,15 +4035,17 @@ void msx_vdp_render_bitmap7(MsxVdpState* state)
     const uint32_t lineMask = msx_vdp_name_mask(state) & 0xFFFFu;
     const uint8_t* const vram = state->vram;
     const uint32_t mask = state->vramMask;
-    const uint16_t hscroll = msx_vdp_hscroll(state);
-    const bool useHScroll = hscroll != 0u;
-    const bool dualPage = msx_vdp_hscroll512(state);
-
     for (unsigned y = 0; y < height; ++y) {
         msx_vdp_render_color_sprites_line(state, y, s_msxColorSpriteLine);
         const uint8_t* const spriteLine = s_msxColorSpriteLine + 32u;
         const uint8_t lineReg2 = msx_vdp_reg2_for_line(state, y);
+        const uint8_t lineReg25 = msx_vdp_reg25_for_line(state, y);
+        const uint8_t lineReg26 = msx_vdp_reg26_for_line(state, y);
+        const uint8_t lineReg27 = msx_vdp_reg27_for_line(state, y);
         const uint8_t lineVScroll = msx_vdp_reg23_for_line(state, y);
+        const uint16_t lineHScroll = msx_vdp_hscroll_for_regs(lineReg26, lineReg27);
+        const bool useHScroll = lineHScroll != 0u;
+        const bool dualPage = msx_vdp_hscroll512_for_regs(lineReg25);
         const uint32_t scrolledY = static_cast<uint32_t>(y) + static_cast<uint32_t>(lineVScroll);
         const uint32_t pageBase = msx_vdp_name_base_for_reg2(state, lineReg2) & mask;
         const uint32_t rowOffset = (scrolledY << 8) & lineMask;
@@ -3850,7 +4070,7 @@ void msx_vdp_render_bitmap7(MsxVdpState* state)
                 const unsigned sourceX = wideStream ? x : (x * 2u);
                 const MsxBitmapFetchAddress fetch = msx_vdp_bitmap_fetch_address(pageBase,
                                                                                  rowOffset,
-                                                                                 hscroll,
+                                                                                 lineHScroll,
                                                                                  sourceX,
                                                                                  512u,
                                                                                  dualPage,
@@ -3873,15 +4093,17 @@ void msx_vdp_render_bitmap8(MsxVdpState* state)
     const uint32_t lineMask = msx_vdp_name_mask(state) & 0xFFFFu;
     const uint8_t* const vram = state->vram;
     const uint32_t mask = state->vramMask;
-    const uint16_t hscroll = msx_vdp_hscroll(state);
-    const bool useHScroll = hscroll != 0u;
-    const bool dualPage = msx_vdp_hscroll512(state);
-
     for (unsigned y = 0; y < height; ++y) {
         msx_vdp_render_color_sprites_line(state, y, s_msxColorSpriteLine);
         const uint8_t* const spriteLine = s_msxColorSpriteLine + 32u;
         const uint8_t lineReg2 = msx_vdp_reg2_for_line(state, y);
+        const uint8_t lineReg25 = msx_vdp_reg25_for_line(state, y);
+        const uint8_t lineReg26 = msx_vdp_reg26_for_line(state, y);
+        const uint8_t lineReg27 = msx_vdp_reg27_for_line(state, y);
         const uint8_t lineVScroll = msx_vdp_reg23_for_line(state, y);
+        const uint16_t lineHScroll = msx_vdp_hscroll_for_regs(lineReg26, lineReg27);
+        const bool useHScroll = lineHScroll != 0u;
+        const bool dualPage = msx_vdp_hscroll512_for_regs(lineReg25);
         const uint32_t scrolledY = static_cast<uint32_t>(y) + static_cast<uint32_t>(lineVScroll);
         const uint32_t pageBase = msx_vdp_name_base_for_reg2(state, lineReg2) & mask;
         const uint32_t rowOffset = (scrolledY << 8) & lineMask;
@@ -3903,7 +4125,7 @@ void msx_vdp_render_bitmap8(MsxVdpState* state)
             for (unsigned x = 0; x < kMsxFrameWidth; ++x) {
                 const MsxBitmapFetchAddress fetch = msx_vdp_bitmap_fetch_address(pageBase,
                                                                                  rowOffset,
-                                                                                 hscroll,
+                                                                                 lineHScroll,
                                                                                  x,
                                                                                  256u,
                                                                                  dualPage,
@@ -3929,21 +4151,24 @@ void msx_vdp_render_yjk(MsxVdpState* state, bool yae)
     const uint8_t* const vram = state->vram;
     const uint32_t mask = state->vramMask;
     const uint8_t backdrop = msx_vdp_reg_backdrop(state);
-    const uint16_t hscroll = yae ? 0u : msx_vdp_hscroll(state);
-    const bool hscroll512 = !yae && msx_vdp_hscroll512(state) && (hscroll > 255u);
-
     for (unsigned y = 0; y < height; ++y) {
         msx_vdp_render_color_sprites_line(state, y, s_msxColorSpriteLine);
         const uint8_t* const spriteLine = s_msxColorSpriteLine + 32u;
         const uint8_t lineReg2 = msx_vdp_reg2_for_line(state, y);
+        const uint8_t lineReg25 = msx_vdp_reg25_for_line(state, y);
+        const uint8_t lineReg26 = msx_vdp_reg26_for_line(state, y);
+        const uint8_t lineReg27 = msx_vdp_reg27_for_line(state, y);
         const uint8_t lineVScroll = msx_vdp_reg23_for_line(state, y);
+        const uint16_t lineHScroll = yae ? 0u : msx_vdp_hscroll_for_regs(lineReg26, lineReg27);
+        const bool hscroll512 =
+            !yae && msx_vdp_hscroll512_for_regs(lineReg25) && (lineHScroll > 255u);
         const uint32_t scrolledY = static_cast<uint32_t>(y) + static_cast<uint32_t>(lineVScroll);
         uint32_t lineBase = (msx_vdp_name_base_for_reg2(state, lineReg2) +
                              ((scrolledY << 8) & lineMask)) & mask;
         if (hscroll512) {
             lineBase += 0x10000u;
         }
-        lineBase += static_cast<uint32_t>(hscroll & 0xFCu);
+        lineBase += static_cast<uint32_t>(lineHScroll & 0xFCu);
         uint8_t* dst = msx_vdp_get_line_buffer(state, y);
         if (!dst) {
             continue;
@@ -4005,15 +4230,17 @@ static void msx_vdp_render_bitmap6_range(MsxVdpState* state, unsigned yStart, un
     const uint32_t lineMask = 0x7FFFu;
     const uint8_t* const vram = state->vram;
     const uint32_t mask = state->vramMask;
-    const uint16_t hscroll = msx_vdp_hscroll(state);
-    const bool useHScroll = hscroll != 0u;
-    const bool dualPage = msx_vdp_hscroll512(state);
-
     for (unsigned y = startLine; y < endLine; ++y) {
         msx_vdp_render_color_sprites_line(state, y, s_msxColorSpriteLine);
         const uint8_t* const spriteLine = s_msxColorSpriteLine + 32u;
         const uint8_t lineReg2 = msx_vdp_reg2_for_line(state, y);
+        const uint8_t lineReg25 = msx_vdp_reg25_for_line(state, y);
+        const uint8_t lineReg26 = msx_vdp_reg26_for_line(state, y);
+        const uint8_t lineReg27 = msx_vdp_reg27_for_line(state, y);
         const uint8_t lineVScroll = msx_vdp_reg23_for_line(state, y);
+        const uint16_t lineHScroll = msx_vdp_hscroll_for_regs(lineReg26, lineReg27);
+        const bool useHScroll = lineHScroll != 0u;
+        const bool dualPage = msx_vdp_hscroll512_for_regs(lineReg25);
         const uint32_t scrolledY = static_cast<uint32_t>(y) + static_cast<uint32_t>(lineVScroll);
         const uint32_t pageBase = msx_vdp_name_base_for_reg2(state, lineReg2) & mask;
         const uint32_t rowOffset = (scrolledY << 7) & lineMask;
@@ -4038,7 +4265,7 @@ static void msx_vdp_render_bitmap6_range(MsxVdpState* state, unsigned yStart, un
                 const unsigned sourceX = wideStream ? x : (x * 2u);
                 const MsxBitmapFetchAddress fetch = msx_vdp_bitmap_fetch_address(pageBase,
                                                                                  rowOffset,
-                                                                                 hscroll,
+                                                                                 lineHScroll,
                                                                                  sourceX,
                                                                                  512u,
                                                                                  dualPage,
@@ -4069,15 +4296,17 @@ static void msx_vdp_render_bitmap7_range(MsxVdpState* state, unsigned yStart, un
     const uint32_t lineMask = msx_vdp_name_mask(state) & 0xFFFFu;
     const uint8_t* const vram = state->vram;
     const uint32_t mask = state->vramMask;
-    const uint16_t hscroll = msx_vdp_hscroll(state);
-    const bool useHScroll = hscroll != 0u;
-    const bool dualPage = msx_vdp_hscroll512(state);
-
     for (unsigned y = startLine; y < endLine; ++y) {
         msx_vdp_render_color_sprites_line(state, y, s_msxColorSpriteLine);
         const uint8_t* const spriteLine = s_msxColorSpriteLine + 32u;
         const uint8_t lineReg2 = msx_vdp_reg2_for_line(state, y);
+        const uint8_t lineReg25 = msx_vdp_reg25_for_line(state, y);
+        const uint8_t lineReg26 = msx_vdp_reg26_for_line(state, y);
+        const uint8_t lineReg27 = msx_vdp_reg27_for_line(state, y);
         const uint8_t lineVScroll = msx_vdp_reg23_for_line(state, y);
+        const uint16_t lineHScroll = msx_vdp_hscroll_for_regs(lineReg26, lineReg27);
+        const bool useHScroll = lineHScroll != 0u;
+        const bool dualPage = msx_vdp_hscroll512_for_regs(lineReg25);
         const uint32_t scrolledY = static_cast<uint32_t>(y) + static_cast<uint32_t>(lineVScroll);
         const uint32_t pageBase = msx_vdp_name_base_for_reg2(state, lineReg2) & mask;
         const uint32_t rowOffset = (scrolledY << 8) & lineMask;
@@ -4102,7 +4331,7 @@ static void msx_vdp_render_bitmap7_range(MsxVdpState* state, unsigned yStart, un
                 const unsigned sourceX = wideStream ? x : (x * 2u);
                 const MsxBitmapFetchAddress fetch = msx_vdp_bitmap_fetch_address(pageBase,
                                                                                  rowOffset,
-                                                                                 hscroll,
+                                                                                 lineHScroll,
                                                                                  sourceX,
                                                                                  512u,
                                                                                  dualPage,
@@ -4131,15 +4360,17 @@ static void msx_vdp_render_bitmap8_range(MsxVdpState* state, unsigned yStart, un
     const uint32_t lineMask = msx_vdp_name_mask(state) & 0xFFFFu;
     const uint8_t* const vram = state->vram;
     const uint32_t mask = state->vramMask;
-    const uint16_t hscroll = msx_vdp_hscroll(state);
-    const bool useHScroll = hscroll != 0u;
-    const bool dualPage = msx_vdp_hscroll512(state);
-
     for (unsigned y = startLine; y < endLine; ++y) {
         msx_vdp_render_color_sprites_line(state, y, s_msxColorSpriteLine);
         const uint8_t* const spriteLine = s_msxColorSpriteLine + 32u;
         const uint8_t lineReg2 = msx_vdp_reg2_for_line(state, y);
+        const uint8_t lineReg25 = msx_vdp_reg25_for_line(state, y);
+        const uint8_t lineReg26 = msx_vdp_reg26_for_line(state, y);
+        const uint8_t lineReg27 = msx_vdp_reg27_for_line(state, y);
         const uint8_t lineVScroll = msx_vdp_reg23_for_line(state, y);
+        const uint16_t lineHScroll = msx_vdp_hscroll_for_regs(lineReg26, lineReg27);
+        const bool useHScroll = lineHScroll != 0u;
+        const bool dualPage = msx_vdp_hscroll512_for_regs(lineReg25);
         const uint32_t scrolledY = static_cast<uint32_t>(y) + static_cast<uint32_t>(lineVScroll);
         const uint32_t pageBase = msx_vdp_name_base_for_reg2(state, lineReg2) & mask;
         const uint32_t rowOffset = (scrolledY << 8) & lineMask;
@@ -4161,7 +4392,7 @@ static void msx_vdp_render_bitmap8_range(MsxVdpState* state, unsigned yStart, un
             for (unsigned x = 0; x < kMsxFrameWidth; ++x) {
                 const MsxBitmapFetchAddress fetch = msx_vdp_bitmap_fetch_address(pageBase,
                                                                                  rowOffset,
-                                                                                 hscroll,
+                                                                                 lineHScroll,
                                                                                  x,
                                                                                  256u,
                                                                                  dualPage,
@@ -4193,21 +4424,24 @@ static void msx_vdp_render_yjk_range(MsxVdpState* state, unsigned yStart, unsign
     const uint8_t* const vram = state->vram;
     const uint32_t mask = state->vramMask;
     const uint8_t backdrop = msx_vdp_reg_backdrop(state);
-    const uint16_t hscroll = yae ? 0u : msx_vdp_hscroll(state);
-    const bool hscroll512 = !yae && msx_vdp_hscroll512(state) && (hscroll > 255u);
-
     for (unsigned y = startLine; y < endLine; ++y) {
         msx_vdp_render_color_sprites_line(state, y, s_msxColorSpriteLine);
         const uint8_t* const spriteLine = s_msxColorSpriteLine + 32u;
         const uint8_t lineReg2 = msx_vdp_reg2_for_line(state, y);
+        const uint8_t lineReg25 = msx_vdp_reg25_for_line(state, y);
+        const uint8_t lineReg26 = msx_vdp_reg26_for_line(state, y);
+        const uint8_t lineReg27 = msx_vdp_reg27_for_line(state, y);
         const uint8_t lineVScroll = msx_vdp_reg23_for_line(state, y);
+        const uint16_t lineHScroll = yae ? 0u : msx_vdp_hscroll_for_regs(lineReg26, lineReg27);
+        const bool hscroll512 =
+            !yae && msx_vdp_hscroll512_for_regs(lineReg25) && (lineHScroll > 255u);
         const uint32_t scrolledY = static_cast<uint32_t>(y) + static_cast<uint32_t>(lineVScroll);
         uint32_t lineBase = (msx_vdp_name_base_for_reg2(state, lineReg2) +
                              ((scrolledY << 8) & lineMask)) & mask;
         if (hscroll512) {
             lineBase += 0x10000u;
         }
-        lineBase += static_cast<uint32_t>(hscroll & 0xFCu);
+        lineBase += static_cast<uint32_t>(lineHScroll & 0xFCu);
         uint8_t* dst = msx_vdp_get_line_buffer(state, y);
         if (!dst) {
             continue;
@@ -4436,12 +4670,15 @@ bool msx_vdp_init(MsxVdpState* state, MsxMachineMode machineMode)
             }
 
             const uint32_t nextVram = selectedVram >> 1;
+#if MSX_VDP_INIT_LOG_ENABLED
             std::printf("[MSX] vdp init: vram size fallback from %u to %u\n",
                         static_cast<unsigned>(selectedVram),
                         static_cast<unsigned>(nextVram));
+#endif
             selectedVram = nextVram;
         }
         if (!state->vram) {
+#if MSX_VDP_INIT_LOG_ENABLED
             const uint32_t freeInternal = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
             const uint32_t freeSpiRam = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
             const uint32_t free8 = heap_caps_get_free_size(MALLOC_CAP_8BIT);
@@ -4452,34 +4689,45 @@ bool msx_vdp_init(MsxVdpState* state, MsxMachineMode machineMode)
                         static_cast<unsigned>(freeSpiRam),
                         static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL)),
                         static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM)));
+#endif
             std::memset(state, 0, sizeof(*state));
             return false;
         }
         if (selectedVram != requestedVram) {
+#if MSX_VDP_INIT_LOG_ENABLED
             std::printf("[MSX] vdp init: vram downgraded to %u bytes for MSX2\n",
                         static_cast<unsigned>(selectedVram));
+#endif
         }
         state->ownsVram = true;
         if (!msx_vdp_ensure_frame_buffer()) {
+#if MSX_VDP_INIT_LOG_ENABLED
             std::printf("[MSX] vdp init: frame buffer alloc failed, keeping MSX2 line stream path\n");
+#endif
         }
 #if MSX_VDP_DUALCORE_ENABLED
         if (!msx_vdp_ensure_msx2_shadow_buffer()) {
+#if MSX_VDP_INIT_LOG_ENABLED
             std::printf("[MSX] vdp init: MSX2 shadow VRAM alloc failed, keeping single-core render path\n");
+#endif
         }
 #endif
     } else {
         if (!msx_vdp_ensure_msx1_buffers()) {
+#if MSX_VDP_INIT_LOG_ENABLED
             std::printf("[MSX] vdp init: MSX1 work buffer alloc failed frame=%u vram=%u snapshot=%u\n",
                         static_cast<unsigned>(kMsxFramePixels),
                         static_cast<unsigned>(kMsx1VramSize),
                         static_cast<unsigned>(kMsx1VramSize));
+#endif
             std::memset(state, 0, sizeof(*state));
             return false;
         }
 #if MSX_VDP_DUALCORE_ENABLED
         if (!msx_vdp_ensure_msx1_shadow_buffer()) {
+#if MSX_VDP_INIT_LOG_ENABLED
             std::printf("[MSX] vdp init: MSX1 shadow VRAM alloc failed, keeping single-core render path\n");
+#endif
         }
 #endif
         state->vram = s_msx1Vram;
@@ -4611,6 +4859,9 @@ void msx_vdp_reset(MsxVdpState* state)
     s_msxVdpR11TimelineCount = 0u;
     s_msxVdpR2TimelineCount = 0u;
     s_msxVdpR23TimelineCount = 0u;
+    s_msxVdpR25TimelineCount = 0u;
+    s_msxVdpR26TimelineCount = 0u;
+    s_msxVdpR27TimelineCount = 0u;
 #if MSX_VDP_BOOT_DIAG_ENABLED
     s_msxBootDiagLastFrame = 0xFFFFFFFFu;
     s_msxBootDiagCount = 0u;
@@ -4650,6 +4901,9 @@ bool msx_vdp_begin_frame(MsxVdpState* state)
     msx_vdp_timeline_reset(s_msxVdpR11Timeline, &s_msxVdpR11TimelineCount, state->regs[11]);
     msx_vdp_timeline_reset(s_msxVdpR2Timeline, &s_msxVdpR2TimelineCount, state->regs[2]);
     msx_vdp_timeline_reset(s_msxVdpR23Timeline, &s_msxVdpR23TimelineCount, state->regs[23]);
+    msx_vdp_timeline_reset(s_msxVdpR25Timeline, &s_msxVdpR25TimelineCount, state->regs[25]);
+    msx_vdp_timeline_reset(s_msxVdpR26Timeline, &s_msxVdpR26TimelineCount, state->regs[26]);
+    msx_vdp_timeline_reset(s_msxVdpR27Timeline, &s_msxVdpR27TimelineCount, state->regs[27]);
     if (msx_vdp_is_msx2(state)) {
         const uint32_t attrBase = msx_vdp_sprite_attr_base(state) & state->vramMask;
         const uint32_t colorBase = static_cast<uint32_t>((attrBase - 0x200u) & state->vramMask);
@@ -4813,12 +5067,18 @@ void msx_vdp_render(MsxVdpState* state)
         std::memcpy(s_vdpRenderAuxSnapshot.r11Timeline, s_msxVdpR11Timeline, sizeof(s_msxVdpR11Timeline));
         std::memcpy(s_vdpRenderAuxSnapshot.r2Timeline, s_msxVdpR2Timeline, sizeof(s_msxVdpR2Timeline));
         std::memcpy(s_vdpRenderAuxSnapshot.r23Timeline, s_msxVdpR23Timeline, sizeof(s_msxVdpR23Timeline));
+        std::memcpy(s_vdpRenderAuxSnapshot.r25Timeline, s_msxVdpR25Timeline, sizeof(s_msxVdpR25Timeline));
+        std::memcpy(s_vdpRenderAuxSnapshot.r26Timeline, s_msxVdpR26Timeline, sizeof(s_msxVdpR26Timeline));
+        std::memcpy(s_vdpRenderAuxSnapshot.r27Timeline, s_msxVdpR27Timeline, sizeof(s_msxVdpR27Timeline));
         s_vdpRenderAuxSnapshot.r5TimelineCount = s_msxVdpR5TimelineCount;
         s_vdpRenderAuxSnapshot.r6TimelineCount = s_msxVdpR6TimelineCount;
         s_vdpRenderAuxSnapshot.r8TimelineCount = s_msxVdpR8TimelineCount;
         s_vdpRenderAuxSnapshot.r11TimelineCount = s_msxVdpR11TimelineCount;
         s_vdpRenderAuxSnapshot.r2TimelineCount = s_msxVdpR2TimelineCount;
         s_vdpRenderAuxSnapshot.r23TimelineCount = s_msxVdpR23TimelineCount;
+        s_vdpRenderAuxSnapshot.r25TimelineCount = s_msxVdpR25TimelineCount;
+        s_vdpRenderAuxSnapshot.r26TimelineCount = s_msxVdpR26TimelineCount;
+        s_vdpRenderAuxSnapshot.r27TimelineCount = s_msxVdpR27TimelineCount;
         int64_t t1 = esp_timer_get_time();
         s_vdpStatCopyUs += static_cast<uint32_t>(t1 - t0);
 
@@ -4974,18 +5234,51 @@ void msx_vdp_out_indirect(MsxVdpState* state, uint8_t value)
         return;
     }
 
-    uint8_t reg = static_cast<uint8_t>(state->regs[17] & 0x3Fu);
+#if MSX_VDP_VERBOSE_DIAG_ENABLED
+    static constexpr uint32_t kMsx2IndirectG4LogLimit = 12u;
     static uint32_t s_msx2IndirectLogCount = 0u;
-    if (MSX_VDP_VERBOSE_DIAG_ENABLED && msx_vdp_is_traced_register(reg) && s_msx2IndirectLogCount < 192u) {
-        ++s_msx2IndirectLogCount;
-        std::printf("[MSX][IND] #%lu R%02u=%02X ptr=%02X mode=%s frame=%lu\n",
-                    static_cast<unsigned long>(s_msx2IndirectLogCount),
-                    static_cast<unsigned>(reg),
-                    static_cast<unsigned>(value),
-                    static_cast<unsigned>(state->regs[17]),
-                    msx_vdp_mode_label(state->mode),
-                    static_cast<unsigned long>(state->frameCounter));
+    static uint32_t s_msx2IndirectG4LogCount = 0u;
+    static uint32_t s_msx2IndirectG4FrameTag = 0xFFFFFFFFu;
+    uint8_t reg = static_cast<uint8_t>(state->regs[17] & 0x3Fu);
+    if (state->mode == MsxVdpMode::Bitmap4 && s_msx2IndirectG4FrameTag != state->frameCounter) {
+        s_msx2IndirectG4FrameTag = state->frameCounter;
+        s_msx2IndirectG4LogCount = 0u;
     }
+    if (msx_vdp_is_traced_register(reg)) {
+        const bool g4CommandReg = state->mode == MsxVdpMode::Bitmap4 && reg >= 32u && reg <= 46u;
+        if (g4CommandReg) {
+            if (s_msx2IndirectG4LogCount < kMsx2IndirectG4LogLimit) {
+                ++s_msx2IndirectG4LogCount;
+                std::printf("[MSX][IND-G4] #%lu R%02u=%02X ptr=%02X r2=%02X r23=%02X mode=%s frame=%lu cyc=%lu\n",
+                            static_cast<unsigned long>(s_msx2IndirectG4LogCount),
+                            static_cast<unsigned>(reg),
+                            static_cast<unsigned>(value),
+                            static_cast<unsigned>(state->regs[17]),
+                            static_cast<unsigned>(state->regs[2]),
+                            static_cast<unsigned>(state->regs[23]),
+                            msx_vdp_mode_label(state->mode),
+                            static_cast<unsigned long>(state->frameCounter),
+                            static_cast<unsigned long>(state->currentFrameCpuCycles));
+            } else if (s_msx2IndirectG4LogCount == kMsx2IndirectG4LogLimit) {
+                ++s_msx2IndirectG4LogCount;
+                std::printf("[MSX][IND-G4] frame=%lu further indirect command writes suppressed after %lu entries\n",
+                            static_cast<unsigned long>(state->frameCounter),
+                            static_cast<unsigned long>(kMsx2IndirectG4LogLimit));
+            }
+        } else if (s_msx2IndirectLogCount < 192u) {
+            ++s_msx2IndirectLogCount;
+            std::printf("[MSX][IND] #%lu R%02u=%02X ptr=%02X mode=%s frame=%lu\n",
+                        static_cast<unsigned long>(s_msx2IndirectLogCount),
+                        static_cast<unsigned>(reg),
+                        static_cast<unsigned>(value),
+                        static_cast<unsigned>(state->regs[17]),
+                        msx_vdp_mode_label(state->mode),
+                        static_cast<unsigned long>(state->frameCounter));
+        }
+    }
+#else
+    uint8_t reg = static_cast<uint8_t>(state->regs[17] & 0x3Fu);
+#endif
     if (reg != 17u && reg < sizeof(state->regs)) {
         msx_vdp_write_register(state, reg, value);
     }

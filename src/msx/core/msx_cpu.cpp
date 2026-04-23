@@ -11,7 +11,7 @@
 #endif
 
 #ifndef MSX_CPU_BIOS_CALL_LOG_ENABLED
-#define MSX_CPU_BIOS_CALL_LOG_ENABLED 1
+#define MSX_CPU_BIOS_CALL_LOG_ENABLED 0
 #endif
 
 namespace {
