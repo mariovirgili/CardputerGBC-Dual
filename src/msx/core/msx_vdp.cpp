@@ -1172,9 +1172,9 @@ inline void msx_vdp_refresh_timing_flags(MsxVdpState* state)
     }
 
     if (scanline < lineIrqActiveEnd) {
-        const unsigned timelineLine =
-            scanline < visibleLines ? static_cast<unsigned>(scanline) : static_cast<unsigned>(visibleLines - 1u);
-        const uint8_t vscroll = msx_vdp_reg23_for_line(state, timelineLine);
+        // Il contatore delle linee per gli interrupt viene inizializzato con R#23 
+        // solo all'inizio del frame (linea 0). I cambi mid-frame di R#23 non lo influenzano!
+        const uint8_t vscroll = msx_vdp_reg23_for_line(state, 0);
         const uint8_t lineDelta =
             static_cast<uint8_t>(((scanline + static_cast<uint32_t>(vscroll)) - state->regs[19]) & 0xFFu);
         const uint8_t scanlineTag = static_cast<uint8_t>(scanline & 0xFFu);
