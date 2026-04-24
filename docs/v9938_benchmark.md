@@ -15,7 +15,7 @@ That environment adds:
 
 ```ini
 -DENABLE_V9938_BENCH
--DV9938_BENCH_FRAMES=800
+-DV9938_BENCH_FRAMES=1000
 -DV9938_BENCH_SERIAL_OUTPUT=1
 -DV9938_BENCH_VERBOSE=1
 ```
@@ -43,7 +43,7 @@ When `V9938_BENCH_VERBOSE=1`, progress is printed every 60 frames:
 [V9938Bench] frame=300 fps=58.9 read=1.42MB/s write=0.31MB/s cmd=HMMM:12 LMMM:2 HMMC:4 LMMC:1 LINE:3 FILL:8
 ```
 
-At `V9938_BENCH_FRAMES`, default 800 in the benchmark environment, the benchmark prints:
+At `V9938_BENCH_FRAMES`, default 1000 in the benchmark environment, the benchmark prints:
 
 - the original compact summary lines;
 - a human-readable `[V9938Bench][REPORT]` block for manual comparisons;
@@ -51,7 +51,7 @@ At `V9938_BENCH_FRAMES`, default 800 in the benchmark environment, the benchmark
 
 ```text
 [V9938Bench][REPORT] begin
-[V9938Bench][REPORT] test rom=Aleste.rom backend=msx-vdp mode=passive frames=800 wall_ms=42123
+[V9938Bench][REPORT] test rom=Aleste.rom backend=msx-vdp mode=passive frames=1000 wall_ms=42123
 [V9938Bench][REPORT] speed fps=18.99 avg_frame_ms=51.240 p99_frame_ms=67.880 realtime_vs_60fps=31.7%
 [V9938Bench][REPORT] vram total_MBps=0.880 read_MBps=0.866 write_MBps=0.014 total_bytes_per_frame=48576.1 reads_per_frame=47120.3 writes_per_frame=774.8
 [V9938Bench][REPORT] commands total=2400 per_frame=3.00 bytes_per_command=159.3 dominant=HMMM dominant_pct=63.4%
