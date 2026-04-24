@@ -3790,14 +3790,10 @@ static void msx_vdp_render_bitmap4_range(MsxVdpState* state, unsigned yStart, un
             s_g4DispLastFrame = state->frameCounter;
             s_g4DispBudget = 0u;
 
-            const MsxVdpRenderAuxState* aux = msx_vdp_render_aux(state);
-            const MsxVdpRegTimelineEvent* const r2Timeline =
-                aux ? aux->r2Timeline : s_msxVdpR2Timeline;
-            const uint8_t r2TimelineCount = aux ? aux->r2TimelineCount : s_msxVdpR2TimelineCount;
-            const MsxVdpRegTimelineEvent* const r23Timeline =
-                aux ? aux->r23Timeline : s_msxVdpR23Timeline;
-            const uint8_t r23TimelineCount =
-                aux ? aux->r23TimelineCount : s_msxVdpR23TimelineCount;
+            const MsxVdpRegTimelineEvent* const r2Timeline = s_msxVdpR2Timeline;
+            const uint8_t r2TimelineCount = s_msxVdpR2TimelineCount;
+            const MsxVdpRegTimelineEvent* const r23Timeline = s_msxVdpR23Timeline;
+            const uint8_t r23TimelineCount = s_msxVdpR23TimelineCount;
             const uint32_t probeCycle262 = msx_vdp_cycle_for_line(state, y);
             const uint32_t probeCycleVis = msx_vdp_cycle_for_line_visible_legacy(state, y);
             const uint8_t probeReg2Legacy =
@@ -4698,13 +4694,6 @@ bool msx_vdp_init(MsxVdpState* state, MsxMachineMode machineMode)
             std::printf("[MSX] vdp init: frame buffer alloc failed, keeping MSX2 line stream path\n");
 #endif
         }
-#if MSX_VDP_DUALCORE_ENABLED
-        if (!msx_vdp_ensure_msx2_shadow_buffer()) {
-#if MSX_VDP_INIT_LOG_ENABLED
-            std::printf("[MSX] vdp init: MSX2 shadow VRAM alloc failed, keeping single-core render path\n");
-#endif
-        }
-#endif
     } else {
         if (!msx_vdp_ensure_msx1_buffers()) {
 #if MSX_VDP_INIT_LOG_ENABLED
@@ -4716,40 +4705,12 @@ bool msx_vdp_init(MsxVdpState* state, MsxMachineMode machineMode)
             std::memset(state, 0, sizeof(*state));
             return false;
         }
-#if MSX_VDP_DUALCORE_ENABLED
-        if (!msx_vdp_ensure_msx1_shadow_buffer()) {
-#if MSX_VDP_INIT_LOG_ENABLED
-            std::printf("[MSX] vdp init: MSX1 shadow VRAM alloc failed, keeping single-core render path\n");
-#endif
-        }
-#endif
         state->vram = s_msx1Vram;
         state->frameBuffer = s_msxFrameBuffer;
-#if MSX_VDP_DUALCORE_ENABLED
-        if (!s_vdpRenderSem) {
-            s_vdpRenderSem = xSemaphoreCreateBinary();
-        }
-        if (!s_vdpRenderTask && s_vdpRenderSem &&
-            (s_msx1VramB != nullptr || s_msx2VramB != nullptr)) {
-            s_vdpTaskRunning = true;
-            s_vdpTaskBusy = false;
-            xTaskCreatePinnedToCore(msx_vdp_render_task, "MSX_VDP", 4096, nullptr, 2, &s_vdpRenderTask, 0);
-        }
-#endif
         msx_vdp_reset(state);
         return true;
     }
 
-#if MSX_VDP_DUALCORE_ENABLED
-    if (!s_vdpRenderSem) {
-        s_vdpRenderSem = xSemaphoreCreateBinary();
-    }
-    if (!s_vdpRenderTask && s_vdpRenderSem && s_msx2VramB != nullptr) {
-        s_vdpTaskRunning = true;
-        s_vdpTaskBusy = false;
-        xTaskCreatePinnedToCore(msx_vdp_render_task, "MSX_VDP", 4096, nullptr, 2, &s_vdpRenderTask, 0);
-    }
-#endif
 
     state->frameBuffer = s_msxFrameBuffer;
 
@@ -4761,18 +4722,6 @@ void msx_vdp_shutdown(MsxVdpState* state)
 {
     if (!state) {
         return;
-    }
-
-    if (s_vdpRenderTask) {
-        s_vdpTaskRunning = false;
-        s_vdpTaskBusy = false;
-        xSemaphoreGive(s_vdpRenderSem);
-        vTaskDelay(pdMS_TO_TICKS(50));
-        s_vdpRenderTask = nullptr;
-    }
-    if (s_vdpRenderSem) {
-        vSemaphoreDelete(s_vdpRenderSem);
-        s_vdpRenderSem = nullptr;
     }
 
     if (state->ownsVram && state->vram) {
@@ -5000,65 +4949,6 @@ void msx_vdp_render(MsxVdpState* state)
 
     msx_vdp_prepare_frame_render(state);
 
-#if MSX_VDP_DUALCORE_ENABLED
-    uint8_t* shadowVram = nullptr;
-    size_t shadowSize = state->vramSize;
-    if (state->frameBuffer) {
-        if (state->machineMode == MsxMachineMode::MSX1 && s_msx1VramB) {
-            shadowVram = s_msx1VramB;
-            shadowSize = kMsx1VramSize;
-        } else if (state->machineMode == MsxMachineMode::MSX2 && s_msx2VramB) {
-            shadowVram = s_msx2VramB;
-            shadowSize = state->vramSize;
-        }
-    }
-
-    if (s_vdpRenderSem && shadowVram) {
-        if (s_vdpTaskBusy) {
-            state->dirty = false;
-            state->frameReady = true;
-            s_vdpStatDrops++;
-            return;
-        }
-
-        int64_t t0 = esp_timer_get_time();
-        s_vdpTaskBusy = true;
-        std::memcpy(shadowVram, state->vram, shadowSize);
-        std::memcpy(&s_vdpStateSnapshot, state, sizeof(MsxVdpState));
-        // Keep the render worker on a coherent per-frame snapshot instead of
-        // reading live timelines while the emulation thread advances.
-        std::memcpy(s_vdpRenderAuxSnapshot.r5Timeline, s_msxVdpR5Timeline, sizeof(s_msxVdpR5Timeline));
-        std::memcpy(s_vdpRenderAuxSnapshot.r6Timeline, s_msxVdpR6Timeline, sizeof(s_msxVdpR6Timeline));
-        std::memcpy(s_vdpRenderAuxSnapshot.r8Timeline, s_msxVdpR8Timeline, sizeof(s_msxVdpR8Timeline));
-        std::memcpy(s_vdpRenderAuxSnapshot.r11Timeline, s_msxVdpR11Timeline, sizeof(s_msxVdpR11Timeline));
-        std::memcpy(s_vdpRenderAuxSnapshot.r2Timeline, s_msxVdpR2Timeline, sizeof(s_msxVdpR2Timeline));
-        std::memcpy(s_vdpRenderAuxSnapshot.r23Timeline, s_msxVdpR23Timeline, sizeof(s_msxVdpR23Timeline));
-        std::memcpy(s_vdpRenderAuxSnapshot.r25Timeline, s_msxVdpR25Timeline, sizeof(s_msxVdpR25Timeline));
-        std::memcpy(s_vdpRenderAuxSnapshot.r26Timeline, s_msxVdpR26Timeline, sizeof(s_msxVdpR26Timeline));
-        std::memcpy(s_vdpRenderAuxSnapshot.r27Timeline, s_msxVdpR27Timeline, sizeof(s_msxVdpR27Timeline));
-        s_vdpRenderAuxSnapshot.r5TimelineCount = s_msxVdpR5TimelineCount;
-        s_vdpRenderAuxSnapshot.r6TimelineCount = s_msxVdpR6TimelineCount;
-        s_vdpRenderAuxSnapshot.r8TimelineCount = s_msxVdpR8TimelineCount;
-        s_vdpRenderAuxSnapshot.r11TimelineCount = s_msxVdpR11TimelineCount;
-        s_vdpRenderAuxSnapshot.r2TimelineCount = s_msxVdpR2TimelineCount;
-        s_vdpRenderAuxSnapshot.r23TimelineCount = s_msxVdpR23TimelineCount;
-        s_vdpRenderAuxSnapshot.r25TimelineCount = s_msxVdpR25TimelineCount;
-        s_vdpRenderAuxSnapshot.r26TimelineCount = s_msxVdpR26TimelineCount;
-        s_vdpRenderAuxSnapshot.r27TimelineCount = s_msxVdpR27TimelineCount;
-        int64_t t1 = esp_timer_get_time();
-        s_vdpStatCopyUs += static_cast<uint32_t>(t1 - t0);
-
-        s_vdpStateSnapshot.vram = shadowVram;
-        s_vdpStateSnapshot.renderContext = &s_vdpRenderAuxSnapshot;
-        s_vdpOriginalState = state;
-        state->dirty = false;
-        state->frameReady = true;
-        if (xSemaphoreGive(s_vdpRenderSem) != pdTRUE) {
-            s_vdpTaskBusy = false;
-            s_vdpStatDrops++;
-        }
-    } else {
-#endif
         if (!msx_vdp_render_internal(state)) {
             return;
         }
@@ -5070,9 +4960,6 @@ void msx_vdp_render(MsxVdpState* state)
         if (frame.indexed8) {
             msx_video_present_frame(&frame);
         }
-#if MSX_VDP_DUALCORE_ENABLED
-    }
-#endif
 }
 
 uint8_t msx_vdp_in_data(MsxVdpState* state)
