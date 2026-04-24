@@ -7,3 +7,10 @@ bios/private/*
 .vscode/c_cpp_properties.json
 .vscode/launch.json
 .vscode/ipch
+
+/.codex-esplay-fmsx/
+/.codex-fullflash-xip/
+/temp_esp8bit/
+/temp_esp8bit2/
+/temp_espmcume/
+/temp_retro_go/
