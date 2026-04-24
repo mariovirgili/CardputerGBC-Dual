@@ -1225,7 +1225,9 @@ inline MsxBitmapFetchAddress msx_vdp_bitmap_fetch_address(uint32_t base,
     const unsigned totalWidth = dualPage ? (sourceWidth * 2u) : sourceWidth;
     unsigned absX = visibleX + static_cast<unsigned>(scroll);
     if (totalWidth != 0u) {
-        absX %= totalWidth;
+        // Current bitmap HScroll call sites only use power-of-two widths
+        // (256/512/1024), so masking is equivalent to modulo here.
+        absX &= (totalWidth - 1u);
     }
 
     const bool secondPage = dualPage && absX >= sourceWidth;
