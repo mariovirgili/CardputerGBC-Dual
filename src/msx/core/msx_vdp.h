@@ -89,6 +89,22 @@ struct MsxVdpState {
     unsigned activeWidth;
     unsigned activeHeight;
     MsxVdpMode mode;
+    uint32_t cachedNameBase;
+    uint32_t cachedColorBase;
+    uint32_t cachedPatternBase;
+    uint32_t cachedGraphics2PatternBase;
+    uint32_t cachedNameMask;
+    uint32_t cachedColorMask;
+    uint32_t cachedPatternMask;
+    uint32_t cachedSpriteAttrBase;
+    uint32_t cachedSpritePatternBase;
+    uint8_t cachedVramPageMask;
+    uint8_t cachedR2Mask;
+    uint8_t cachedR3Mask;
+    uint8_t cachedR4Mask;
+    uint8_t cachedR5Mask;
+    uint8_t cachedNameShift;
+    bool cachedCpuPortCarryIntoR14;
     MsxVdpCommandState command;
 };
 

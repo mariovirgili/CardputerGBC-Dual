@@ -76,6 +76,7 @@ namespace {
 bool msx_vdp_is_msx2(const MsxVdpState* state);
 bool msx_vdp_mode_yjk(const MsxVdpState* state);
 void msx_vdp_update_mode_geometry(MsxVdpState* state);
+void msx_vdp_refresh_cached_tables(MsxVdpState* state);
 uint32_t msx_vdp_sprite_attr_base(const MsxVdpState* state);
 uint32_t msx_vdp_sprite_pattern_base(const MsxVdpState* state);
 uint8_t msx_vdp_vscroll(const MsxVdpState* state);
@@ -841,6 +842,78 @@ const MsxVdpTableMasks* msx_vdp_table_masks(MsxVdpMode mode)
     }
 }
 
+void msx_vdp_refresh_cached_tables(MsxVdpState* state)
+{
+    if (!state) {
+        return;
+    }
+
+    const MsxVdpTableMasks* masks = msx_vdp_table_masks(state->mode);
+    state->cachedR2Mask = masks ? masks->r2 : 0u;
+    state->cachedR3Mask = masks ? masks->r3 : 0u;
+    state->cachedR4Mask = masks ? masks->r4 : 0u;
+    state->cachedR5Mask = masks ? masks->r5 : 0u;
+    state->cachedNameShift = masks ? masks->nameShift : 0u;
+
+    state->cachedNameBase = masks
+        ? (static_cast<uint32_t>(state->regs[2] & masks->r2) << masks->nameShift)
+        : 0u;
+
+    const uint32_t colorHigh = msx_vdp_is_msx2(state)
+        ? (static_cast<uint32_t>(state->regs[10] & 0x07u) << 14)
+        : 0u;
+    state->cachedColorBase = masks
+        ? (colorHigh | (static_cast<uint32_t>(state->regs[3] & masks->r3) << 6))
+        : 0u;
+
+    state->cachedPatternBase = masks
+        ? (static_cast<uint32_t>(state->regs[4] & masks->r4) << 11)
+        : 0u;
+    state->cachedGraphics2PatternBase = static_cast<uint32_t>(state->regs[4] & 0x3Cu) << 11;
+
+    state->cachedNameMask = masks
+        ? (((static_cast<uint32_t>(state->regs[2]) | ~static_cast<uint32_t>(masks->m2)) << masks->nameShift)
+           | ((1u << masks->nameShift) - 1u))
+        : 0xFFFFFFFFu;
+    state->cachedColorMask = masks
+        ? (((static_cast<uint32_t>(state->regs[3]) | ~static_cast<uint32_t>(masks->m3)) << 6) | 0x1C03Fu)
+        : 0xFFFFFFFFu;
+    state->cachedPatternMask = masks
+        ? (((static_cast<uint32_t>(state->regs[4]) | ~static_cast<uint32_t>(masks->m4)) << 11) | 0x007FFu)
+        : 0xFFFFFFFFu;
+
+    const uint32_t spriteHigh = msx_vdp_is_msx2(state)
+        ? (static_cast<uint32_t>(state->regs[11] & 0x03u) << 15)
+        : 0u;
+    state->cachedSpriteAttrBase = masks
+        ? (spriteHigh | (static_cast<uint32_t>(state->regs[5] & masks->r5) << 7))
+        : 0u;
+    state->cachedSpritePatternBase = static_cast<uint32_t>(state->regs[6]) << 11;
+
+    if (!msx_vdp_is_msx2(state) || state->vramSize <= 0x4000u) {
+        state->cachedVramPageMask = 0u;
+    } else {
+        const uint32_t pageCount = static_cast<uint32_t>(state->vramSize >> 14);
+        state->cachedVramPageMask = static_cast<uint8_t>((pageCount - 1u) & 0x07u);
+    }
+
+    if (!msx_vdp_is_msx2(state) || state->vramSize <= 0x4000u) {
+        state->cachedCpuPortCarryIntoR14 = false;
+    } else {
+        switch (state->mode) {
+            case MsxVdpMode::Graphics1:
+            case MsxVdpMode::Text40:
+            case MsxVdpMode::Graphics2:
+            case MsxVdpMode::Multicolor:
+                state->cachedCpuPortCarryIntoR14 = false;
+                break;
+            default:
+                state->cachedCpuPortCarryIntoR14 = true;
+                break;
+        }
+    }
+}
+
 inline uint8_t msx_vdp_expand3(uint8_t value)
 {
     value &= 0x07u;
@@ -962,14 +1035,7 @@ inline void msx_vdp_write_vram_msx2(MsxVdpState* state, uint32_t address, uint8_
 
 uint32_t msx_vdp_name_base(const MsxVdpState* state)
 {
-    if (!state) {
-        return 0u;
-    }
-    const MsxVdpTableMasks* masks = msx_vdp_table_masks(state->mode);
-    if (!masks) {
-        return 0u;
-    }
-    return static_cast<uint32_t>(state->regs[2] & masks->r2) << masks->nameShift;
+    return state ? state->cachedNameBase : 0u;
 }
 
 static uint32_t msx_vdp_name_base_for_reg2(const MsxVdpState* state, uint8_t reg2)
@@ -977,31 +1043,17 @@ static uint32_t msx_vdp_name_base_for_reg2(const MsxVdpState* state, uint8_t reg
     if (!state) {
         return 0u;
     }
-    const MsxVdpTableMasks* masks = msx_vdp_table_masks(state->mode);
-    if (!masks) {
-        return 0u;
-    }
-    return static_cast<uint32_t>(reg2 & masks->r2) << masks->nameShift;
+    return static_cast<uint32_t>(reg2 & state->cachedR2Mask) << state->cachedNameShift;
 }
 
 uint32_t msx_vdp_color_base(const MsxVdpState* state)
 {
-    const MsxVdpTableMasks* masks = state ? msx_vdp_table_masks(state->mode) : nullptr;
-    if (!state || !masks) {
-        return 0u;
-    }
-    const uint32_t high = msx_vdp_is_msx2(state) ? static_cast<uint32_t>(state->regs[10] & 0x07u) << 14 : 0u;
-    const uint32_t low = static_cast<uint32_t>(state->regs[3] & masks->r3) << 6;
-    return high | low;
+    return state ? state->cachedColorBase : 0u;
 }
 
 uint32_t msx_vdp_pattern_base(const MsxVdpState* state)
 {
-    const MsxVdpTableMasks* masks = state ? msx_vdp_table_masks(state->mode) : nullptr;
-    if (!state || !masks) {
-        return 0u;
-    }
-    return static_cast<uint32_t>(state->regs[4] & masks->r4) << 11;
+    return state ? state->cachedPatternBase : 0u;
 }
 
 static void msx_vdp_log_boot_text_probe(const MsxVdpState* state)
@@ -1080,61 +1132,32 @@ static void msx_vdp_log_boot_text_probe(const MsxVdpState* state)
 
 uint32_t msx_vdp_graphics2_pattern_base(const MsxVdpState* state)
 {
-    if (!state) {
-        return 0u;
-    }
-
-    // SCREEN 2 style modes use the wider pattern-table selection used by fMSX.
-    // Restricting MSX1 to bit 2 only causes visible tile corruption in games
-    // such as Arkanoid because the BIOS/game can relocate the 6KB pattern area.
-    return static_cast<uint32_t>(state->regs[4] & 0x3Cu) << 11;
+    return state ? state->cachedGraphics2PatternBase : 0u;
 }
 
 uint32_t msx_vdp_name_mask(const MsxVdpState* state)
 {
-    const MsxVdpTableMasks* masks = state ? msx_vdp_table_masks(state->mode) : nullptr;
-    if (!state || !masks) {
-        return 0xFFFFFFFFu;
-    }
-
-    return (((static_cast<uint32_t>(state->regs[2]) | ~static_cast<uint32_t>(masks->m2)) << masks->nameShift)
-          | ((1u << masks->nameShift) - 1u));
+    return state ? state->cachedNameMask : 0xFFFFFFFFu;
 }
 
 uint32_t msx_vdp_color_mask(const MsxVdpState* state)
 {
-    const MsxVdpTableMasks* masks = state ? msx_vdp_table_masks(state->mode) : nullptr;
-    if (!state || !masks) {
-        return 0xFFFFFFFFu;
-    }
-
-    return (((static_cast<uint32_t>(state->regs[3]) | ~static_cast<uint32_t>(masks->m3)) << 6) | 0x1C03Fu);
+    return state ? state->cachedColorMask : 0xFFFFFFFFu;
 }
 
 uint32_t msx_vdp_pattern_mask(const MsxVdpState* state)
 {
-    const MsxVdpTableMasks* masks = state ? msx_vdp_table_masks(state->mode) : nullptr;
-    if (!state || !masks) {
-        return 0xFFFFFFFFu;
-    }
-
-    return (((static_cast<uint32_t>(state->regs[4]) | ~static_cast<uint32_t>(masks->m4)) << 11) | 0x007FFu);
+    return state ? state->cachedPatternMask : 0xFFFFFFFFu;
 }
 
 uint32_t msx_vdp_sprite_attr_base(const MsxVdpState* state)
 {
-    const MsxVdpTableMasks* masks = state ? msx_vdp_table_masks(state->mode) : nullptr;
-    if (!state || !masks) {
-        return 0u;
-    }
-
-    const uint32_t high = msx_vdp_is_msx2(state) ? static_cast<uint32_t>(state->regs[11] & 0x03u) << 15 : 0u;
-    return high | (static_cast<uint32_t>(state->regs[5] & masks->r5) << 7);
+    return state ? state->cachedSpriteAttrBase : 0u;
 }
 
 uint32_t msx_vdp_sprite_pattern_base(const MsxVdpState* state)
 {
-    return state ? static_cast<uint32_t>(state->regs[6]) << 11 : 0u;
+    return state ? state->cachedSpritePatternBase : 0u;
 }
 
 inline uint8_t msx_vdp_vscroll(const MsxVdpState* state)
@@ -2494,6 +2517,12 @@ void msx_vdp_write_register(MsxVdpState* state, uint8_t reg, uint8_t value)
         }
 #endif
         state->regs[reg] = value;
+        if (reg == 0u || reg == 1u) {
+            msx_vdp_update_mode_geometry(state);
+        } else if (reg == 2u || reg == 3u || reg == 4u || reg == 5u ||
+                   reg == 6u || reg == 10u || reg == 11u) {
+            msx_vdp_refresh_cached_tables(state);
+        }
         if (msx_vdp_is_msx2(state)) {
             if (reg == 5u) {
                 msx_vdp_timeline_append(s_msxVdpR5Timeline,
@@ -3144,6 +3173,8 @@ void msx_vdp_update_mode_geometry(MsxVdpState* state)
         (state->regs[9] & 0x80u) != 0u) {
         state->activeHeight = kMsxFrameHeightMsx2;
     }
+
+    msx_vdp_refresh_cached_tables(state);
 
 #if MSX_VDP_MODE_LOG_ENABLED
     if (msx_vdp_is_msx2(state) &&
@@ -4508,29 +4539,12 @@ bool msx_vdp_register_affects_output(uint8_t reg)
 
 uint8_t msx_vdp_vram_page_mask(const MsxVdpState* state)
 {
-    if (!state || !msx_vdp_is_msx2(state) || state->vramSize <= 0x4000u) {
-        return 0u;
-    }
-
-    const uint32_t pageCount = static_cast<uint32_t>(state->vramSize >> 14);
-    return static_cast<uint8_t>((pageCount - 1u) & 0x07u);
+    return state ? state->cachedVramPageMask : 0u;
 }
 
 bool msx_vdp_cpu_port_carries_into_r14(const MsxVdpState* state)
 {
-    if (!state || !msx_vdp_is_msx2(state) || state->vramSize <= 0x4000u) {
-        return false;
-    }
-
-    switch (msx_vdp_decode_mode(state)) {
-        case MsxVdpMode::Graphics1:
-        case MsxVdpMode::Text40:
-        case MsxVdpMode::Graphics2:
-        case MsxVdpMode::Multicolor:
-            return false;
-        default:
-            return true;
-    }
+    return state ? state->cachedCpuPortCarryIntoR14 : false;
 }
 
 uint32_t msx_vdp_compose_address(const MsxVdpState* state, uint16_t low14)
