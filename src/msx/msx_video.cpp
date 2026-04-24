@@ -56,6 +56,7 @@ struct MsxLineStreamState {
     int dstH;
     const uint16_t* palette;
     uint16_t paletteEntries;
+    int nextDstY;
 };
 
 void msx_video_pack_indexed_rgb444_line(const uint8_t* src,
@@ -182,6 +183,14 @@ constexpr uint32_t msx_pack_rgb444_pair(uint16_t c0, uint16_t c1)
     return static_cast<uint32_t>((c0 >> 4) & 0xFFu)
          | (static_cast<uint32_t>(((c0 & 0x0Fu) << 4) | ((c1 >> 8) & 0x0Fu)) << 8)
          | (static_cast<uint32_t>(c1 & 0x00FFu) << 16);
+}
+
+inline void msx_store_rgb444_pair(uint8_t*& dst, uint32_t packed)
+{
+    dst[0] = static_cast<uint8_t>(packed & 0xFFu);
+    dst[1] = static_cast<uint8_t>((packed >> 8) & 0xFFu);
+    dst[2] = static_cast<uint8_t>((packed >> 16) & 0xFFu);
+    dst += 3;
 }
 
 void msx_video_init_palette(void)
@@ -636,6 +645,7 @@ bool msx_video_begin_line_stream_impl(const MsxDisplayFrame* frame)
     s_lineStream.dstH = plan.dstH;
     s_lineStream.palette = palette;
     s_lineStream.paletteEntries = frame->paletteEntryCount;
+    s_lineStream.nextDstY = 0;
 
     msx_video_begin_active_write(plan);
     return true;
@@ -661,11 +671,31 @@ bool msx_video_stream_line_impl(const MsxDisplayFrame* frame, const uint8_t* src
         return emitted;
     }
 
-    for (int y = 0; y < s_lineStream.dstH; ++y) {
-        if (s_ymap[y] == static_cast<int16_t>(srcLineIndex)) {
-            msx_video_emit_stream_line(s_lineStream, srcLine);
-            emitted = true;
+    if (!s_ymap) {
+        return false;
+    }
+
+    const int16_t mappedSrcLine = static_cast<int16_t>(srcLineIndex);
+    if (s_lineStream.nextDstY > 0 &&
+        mappedSrcLine < s_ymap[s_lineStream.nextDstY - 1]) {
+        for (int y = 0; y < s_lineStream.dstH; ++y) {
+            if (s_ymap[y] == mappedSrcLine) {
+                msx_video_emit_stream_line(s_lineStream, srcLine);
+                emitted = true;
+            }
         }
+        return emitted;
+    }
+
+    while (s_lineStream.nextDstY < s_lineStream.dstH &&
+           s_ymap[s_lineStream.nextDstY] < mappedSrcLine) {
+        ++s_lineStream.nextDstY;
+    }
+    while (s_lineStream.nextDstY < s_lineStream.dstH &&
+           s_ymap[s_lineStream.nextDstY] == mappedSrcLine) {
+        msx_video_emit_stream_line(s_lineStream, srcLine);
+        emitted = true;
+        ++s_lineStream.nextDstY;
     }
 
     return emitted;
@@ -948,36 +978,42 @@ void msx_video_pack_indexed_rgb444_line(const uint8_t* src,
 
     if (paletteEntries <= 16u) {
         int x = 0;
-        int j = 0;
-        for (; x + 1 < pixelCount; x += 2, j += 3) {
+        uint8_t* out = dst;
+        for (; x + 3 < pixelCount; x += 4) {
+            const uint8_t key0 = static_cast<uint8_t>((src[x] & 0x0Fu) | ((src[x + 1] & 0x0Fu) << 4));
+            const uint8_t key1 = static_cast<uint8_t>((src[x + 2] & 0x0Fu) | ((src[x + 3] & 0x0Fu) << 4));
+            msx_store_rgb444_pair(out, s_palettePairs444[key0]);
+            msx_store_rgb444_pair(out, s_palettePairs444[key1]);
+        }
+        if (x + 1 < pixelCount) {
             const uint8_t key = static_cast<uint8_t>((src[x] & 0x0Fu) | ((src[x + 1] & 0x0Fu) << 4));
-            const uint32_t packed = s_palettePairs444[key];
-            dst[j] = static_cast<uint8_t>(packed & 0xFFu);
-            dst[j + 1] = static_cast<uint8_t>((packed >> 8) & 0xFFu);
-            dst[j + 2] = static_cast<uint8_t>((packed >> 16) & 0xFFu);
+            msx_store_rgb444_pair(out, s_palettePairs444[key]);
+            x += 2;
         }
         if (x < pixelCount) {
             const uint16_t color = s_palette444[src[x] & 0x0Fu];
-            dst[j] = static_cast<uint8_t>((color >> 4) & 0xFFu);
-            dst[j + 1] = static_cast<uint8_t>((color & 0x0Fu) << 4);
-            dst[j + 2] = 0u;
+            out[0] = static_cast<uint8_t>((color >> 4) & 0xFFu);
+            out[1] = static_cast<uint8_t>((color & 0x0Fu) << 4);
+            out[2] = 0u;
         }
         return;
     }
 
     int x = 0;
-    int j = 0;
-    for (; x + 1 < pixelCount; x += 2, j += 3) {
-        const uint32_t packed = msx_pack_rgb444_pair(s_palette444[src[x]], s_palette444[src[x + 1]]);
-        dst[j] = static_cast<uint8_t>(packed & 0xFFu);
-        dst[j + 1] = static_cast<uint8_t>((packed >> 8) & 0xFFu);
-        dst[j + 2] = static_cast<uint8_t>((packed >> 16) & 0xFFu);
+    uint8_t* out = dst;
+    for (; x + 3 < pixelCount; x += 4) {
+        msx_store_rgb444_pair(out, msx_pack_rgb444_pair(s_palette444[src[x]], s_palette444[src[x + 1]]));
+        msx_store_rgb444_pair(out, msx_pack_rgb444_pair(s_palette444[src[x + 2]], s_palette444[src[x + 3]]));
+    }
+    if (x + 1 < pixelCount) {
+        msx_store_rgb444_pair(out, msx_pack_rgb444_pair(s_palette444[src[x]], s_palette444[src[x + 1]]));
+        x += 2;
     }
     if (x < pixelCount) {
         const uint16_t color = s_palette444[src[x]];
-        dst[j] = static_cast<uint8_t>((color >> 4) & 0xFFu);
-        dst[j + 1] = static_cast<uint8_t>((color & 0x0Fu) << 4);
-        dst[j + 2] = 0u;
+        out[0] = static_cast<uint8_t>((color >> 4) & 0xFFu);
+        out[1] = static_cast<uint8_t>((color & 0x0Fu) << 4);
+        out[2] = 0u;
     }
 }
 
@@ -993,38 +1029,48 @@ void msx_video_pack_mapped_rgb444_line(const uint8_t* src,
 
     if (paletteEntries <= 16u) {
         int x = 0;
-        int j = 0;
-        for (; x + 1 < pixelCount; x += 2, j += 3) {
+        uint8_t* out = dst;
+        for (; x + 3 < pixelCount; x += 4) {
+            const uint8_t key0 = static_cast<uint8_t>((src[xmap[x]] & 0x0Fu) |
+                                                      ((src[xmap[x + 1]] & 0x0Fu) << 4));
+            const uint8_t key1 = static_cast<uint8_t>((src[xmap[x + 2]] & 0x0Fu) |
+                                                      ((src[xmap[x + 3]] & 0x0Fu) << 4));
+            msx_store_rgb444_pair(out, s_palettePairs444[key0]);
+            msx_store_rgb444_pair(out, s_palettePairs444[key1]);
+        }
+        if (x + 1 < pixelCount) {
             const uint8_t key = static_cast<uint8_t>((src[xmap[x]] & 0x0Fu) |
                                                      ((src[xmap[x + 1]] & 0x0Fu) << 4));
-            const uint32_t packed = s_palettePairs444[key];
-            dst[j] = static_cast<uint8_t>(packed & 0xFFu);
-            dst[j + 1] = static_cast<uint8_t>((packed >> 8) & 0xFFu);
-            dst[j + 2] = static_cast<uint8_t>((packed >> 16) & 0xFFu);
+            msx_store_rgb444_pair(out, s_palettePairs444[key]);
+            x += 2;
         }
         if (x < pixelCount) {
             const uint16_t color = s_palette444[src[xmap[x]] & 0x0Fu];
-            dst[j] = static_cast<uint8_t>((color >> 4) & 0xFFu);
-            dst[j + 1] = static_cast<uint8_t>((color & 0x0Fu) << 4);
-            dst[j + 2] = 0u;
+            out[0] = static_cast<uint8_t>((color >> 4) & 0xFFu);
+            out[1] = static_cast<uint8_t>((color & 0x0Fu) << 4);
+            out[2] = 0u;
         }
         return;
     }
 
     int x = 0;
-    int j = 0;
-    for (; x + 1 < pixelCount; x += 2, j += 3) {
-        const uint32_t packed = msx_pack_rgb444_pair(s_palette444[src[xmap[x]]],
-                                                     s_palette444[src[xmap[x + 1]]]);
-        dst[j] = static_cast<uint8_t>(packed & 0xFFu);
-        dst[j + 1] = static_cast<uint8_t>((packed >> 8) & 0xFFu);
-        dst[j + 2] = static_cast<uint8_t>((packed >> 16) & 0xFFu);
+    uint8_t* out = dst;
+    for (; x + 3 < pixelCount; x += 4) {
+        msx_store_rgb444_pair(out, msx_pack_rgb444_pair(s_palette444[src[xmap[x]]],
+                                                        s_palette444[src[xmap[x + 1]]]));
+        msx_store_rgb444_pair(out, msx_pack_rgb444_pair(s_palette444[src[xmap[x + 2]]],
+                                                        s_palette444[src[xmap[x + 3]]]));
+    }
+    if (x + 1 < pixelCount) {
+        msx_store_rgb444_pair(out, msx_pack_rgb444_pair(s_palette444[src[xmap[x]]],
+                                                        s_palette444[src[xmap[x + 1]]]));
+        x += 2;
     }
     if (x < pixelCount) {
         const uint16_t color = s_palette444[src[xmap[x]]];
-        dst[j] = static_cast<uint8_t>((color >> 4) & 0xFFu);
-        dst[j + 1] = static_cast<uint8_t>((color & 0x0Fu) << 4);
-        dst[j + 2] = 0u;
+        out[0] = static_cast<uint8_t>((color >> 4) & 0xFFu);
+        out[1] = static_cast<uint8_t>((color & 0x0Fu) << 4);
+        out[2] = 0u;
     }
 }
 
