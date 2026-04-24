@@ -557,7 +557,8 @@ void msx_cpu_log_opcode(const MsxCpuState* state,
 inline uint8_t msx_cpu_mem_read8(const MsxMemoryState* memory, uint16_t address)
 {
     uint8_t mirroredValue = 0xFFu;
-    if (msx_memory_try_cart_header_mirror_read(memory, address, &mirroredValue)) {
+    if (address < 0x0010u &&
+        msx_memory_try_cart_header_mirror_read(memory, address, &mirroredValue)) {
         msx_cpu_log_ram_access("RD", memory, address, mirroredValue);
         return mirroredValue;
     }

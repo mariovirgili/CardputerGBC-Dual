@@ -3398,8 +3398,6 @@ void msx_vdp_render_text40(MsxVdpState* state)
     const uint8_t* const vram = state->vram;
     const uint32_t mask = state->vramMask;
 
-    msx_vdp_clear_active_frame(state, bg);
-
     for (unsigned y = 0; y < kMsxFrameHeightMsx1; ++y) {
         const uint32_t scrolledY = static_cast<uint32_t>(y) + static_cast<uint32_t>(msx_vdp_vscroll(state));
         const unsigned row = scrolledY >> 3;
@@ -3408,6 +3406,7 @@ void msx_vdp_render_text40(MsxVdpState* state)
         if (!dst) {
             continue;
         }
+        std::memset(dst, bg, kMsxFrameWidth);
         uint8_t* lineDst = dst + 8u;
 
         for (unsigned col = 0; col < 40; ++col) {
@@ -3483,8 +3482,6 @@ void msx_vdp_render_text80(MsxVdpState* state)
     const uint8_t* const vram = state->vram;
     const uint32_t mask = state->vramMask;
 
-    msx_vdp_clear_active_frame(state, bg);
-
     for (unsigned y = 0; y < kMsxFrameHeightMsx1; ++y) {
         const uint32_t scrolledY = static_cast<uint32_t>(y) + static_cast<uint32_t>(msx_vdp_vscroll(state));
         const uint32_t patternLine = static_cast<uint32_t>(scrolledY & 0x07u);
@@ -3494,6 +3491,7 @@ void msx_vdp_render_text80(MsxVdpState* state)
         if (!dst) {
             continue;
         }
+        std::memset(dst, bg, kMsxFrameWidth);
         uint8_t* lineDst = dst + 8u;
 
         for (unsigned col = 0; col < 80u; ++col) {
@@ -3650,10 +3648,6 @@ static void msx_vdp_render_text40_range(MsxVdpState* state, unsigned yStart, uns
     const uint8_t* const vram = state->vram;
     const uint32_t mask = state->vramMask;
 
-    if (startLine == 0u && endLine == kMsxFrameHeightMsx1) {
-        msx_vdp_clear_active_frame(state, bg);
-    }
-
     for (unsigned y = startLine; y < endLine; ++y) {
         const uint32_t scrolledY = static_cast<uint32_t>(y) + static_cast<uint32_t>(msx_vdp_vscroll(state));
         const unsigned row = scrolledY >> 3;
@@ -3662,6 +3656,7 @@ static void msx_vdp_render_text40_range(MsxVdpState* state, unsigned yStart, uns
         if (!dst) {
             continue;
         }
+        std::memset(dst, bg, kMsxFrameWidth);
         uint8_t* lineDst = dst + 8u;
 
         for (unsigned col = 0; col < 40; ++col) {
@@ -3746,10 +3741,6 @@ static void msx_vdp_render_text80_range(MsxVdpState* state, unsigned yStart, uns
     const uint8_t* const vram = state->vram;
     const uint32_t mask = state->vramMask;
 
-    if (startLine == 0u && endLine == kMsxFrameHeightMsx1) {
-        msx_vdp_clear_active_frame(state, bg);
-    }
-
     for (unsigned y = startLine; y < endLine; ++y) {
         const uint32_t scrolledY = static_cast<uint32_t>(y) + static_cast<uint32_t>(msx_vdp_vscroll(state));
         const uint32_t patternLine = static_cast<uint32_t>(scrolledY & 0x07u);
@@ -3759,6 +3750,7 @@ static void msx_vdp_render_text80_range(MsxVdpState* state, unsigned yStart, uns
         if (!dst) {
             continue;
         }
+        std::memset(dst, bg, kMsxFrameWidth);
         uint8_t* lineDst = dst + 8u;
 
         for (unsigned col = 0; col < 80u; ++col) {
