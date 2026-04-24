@@ -30,7 +30,7 @@ constexpr int kExternalFastTargetH = 180;
 constexpr int kExternalFastPlusTargetW = 192;
 constexpr int kWideAspectW = 4;
 constexpr int kWideAspectH = 3;
-constexpr int kBatchLines = 6;
+constexpr int kBatchLines = 8;
 constexpr unsigned kMsxVisibleSafeHeight = 212u;
 
 struct MsxVideoPlan {
