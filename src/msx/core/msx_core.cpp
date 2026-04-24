@@ -11,6 +11,7 @@
 #include "../msx_config.h"
 #include "../msx_sound.h"
 #include "../msx_video.h"
+#include "../../bench/v9938_bench_trace.hpp"
 
 #ifndef MSX_CORE_LOG_ENABLED
 #define MSX_CORE_LOG_ENABLED 1
@@ -831,6 +832,8 @@ void msx_core_step_frame(MsxCoreState* state)
         return;
     }
 
+    V9938_BENCH_FRAME_START(state->romName);
+
 #if MSX_CORE_TIMING_ENABLED || MSX_PROFILE_LOG_ENABLED
     const int64_t frameStartUs = esp_timer_get_time();
     uint32_t cpuRunUs = 0u;
@@ -1005,6 +1008,7 @@ void msx_core_step_frame(MsxCoreState* state)
 #if MSX_PROFILE_LOG_ENABLED
     msx_core_log_profile(state, frameUs, cpuRunUs, vdpRenderUs, presentUs, vdpSliceMode);
 #endif
+    V9938_BENCH_FRAME_END();
     state->frameCounter++;
 
     if (msx_core_status_needs_refresh(state)) {

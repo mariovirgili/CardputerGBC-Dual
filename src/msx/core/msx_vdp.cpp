@@ -13,6 +13,7 @@
 #include "../msx_config.h"
 #include "../msx_display.h"
 #include "../msx_video.h"
+#include "../../bench/v9938_bench_trace.hpp"
 
 #ifndef MSX_VDP_TRACE_ENABLED
 #define MSX_VDP_TRACE_ENABLED 0
@@ -849,7 +850,9 @@ inline uint8_t msx_vdp_expand3(uint8_t value)
 
 inline uint8_t msx_vdp_read_vram_fast(const uint8_t* vram, uint32_t mask, uint32_t address)
 {
-    return vram[address & mask];
+    const uint32_t wrapped = address & mask;
+    V9938_BENCH_VRAM_READ(wrapped, 1u);
+    return vram[wrapped];
 }
 
 void msx_vdp_apply_palette_entry(MsxVdpState* state, uint8_t index)
@@ -919,6 +922,7 @@ inline uint8_t msx_vdp_resolve_color(const MsxVdpState* state, uint8_t color)
 inline void msx_vdp_write_vram_msx1(MsxVdpState* state, uint32_t address, uint8_t value)
 {
     const uint32_t wrapped = address & state->vramMask;
+    V9938_BENCH_VRAM_WRITE(wrapped, 1u);
     if (state->vram[wrapped] != value) {
         state->vram[wrapped] = value;
         state->dirty = true;
@@ -928,6 +932,7 @@ inline void msx_vdp_write_vram_msx1(MsxVdpState* state, uint32_t address, uint8_
 inline void msx_vdp_write_vram_msx2(MsxVdpState* state, uint32_t address, uint8_t value)
 {
     const uint32_t wrapped = address & state->vramMask;
+    V9938_BENCH_VRAM_WRITE(wrapped, 1u);
     if (state->vram[wrapped] != value) {
         state->vram[wrapped] = value;
         state->dirty = true;
@@ -1337,6 +1342,35 @@ const char* msx_vdp_command_label(uint8_t command)
     }
 }
 
+uint32_t msx_vdp_command_estimated_bytes(uint8_t command, uint16_t nxRaw, uint16_t nyRaw, uint16_t ppb)
+{
+    const uint32_t width = nxRaw == 0u ? 1024u : static_cast<uint32_t>(nxRaw);
+    const uint32_t height = nyRaw == 0u ? 1024u : static_cast<uint32_t>(nyRaw);
+    const uint32_t bytesPerPixelRow = ppb != 0u ? ((width + ppb - 1u) / ppb) : width;
+
+    switch (command & 0x0Fu) {
+        case 0x4: // POINT
+        case 0x5: // PSET
+            return 1u;
+        case 0x6: // SRCH
+        case 0x7: // LINE
+            return width;
+        case 0x8: // LMMV
+        case 0x9: // LMMM
+        case 0xA: // LMCM
+        case 0xB: // LMMC
+            return width * height;
+        case 0xC: // HMMV
+        case 0xD: // HMMM
+        case 0xE: // YMMM
+        case 0xF: // HMMC
+            return bytesPerPixelRow * height;
+        case 0x0:
+        default:
+            return 0u;
+    }
+}
+
 bool msx_vdp_is_traced_register(uint8_t reg)
 {
     return reg == 17u || reg == 23u || reg == 25u || reg == 26u || reg == 27u ||
@@ -1399,6 +1433,7 @@ uint32_t msx_vdp_command_addr(uint8_t screenMode, int x, int y)
 uint8_t msx_vdp_command_point(const MsxVdpState* state, uint8_t screenMode, int x, int y)
 {
     const uint32_t addr = msx_vdp_command_addr(screenMode, x, y) & state->vramMask;
+    V9938_BENCH_VRAM_READ(addr, 1u);
     const uint8_t value = state->vram[addr];
 
     switch (screenMode & 0x03u) {
@@ -1466,6 +1501,7 @@ void msx_vdp_command_pset(MsxVdpState* state, uint8_t screenMode, int x, int y, 
 {
     const uint32_t addr = msx_vdp_command_addr(screenMode, x, y) & state->vramMask;
     uint8_t* const dst = state->vram + addr;
+    V9938_BENCH_VRAM_WRITE(addr, 1u);
 
     switch (screenMode & 0x03u) {
         case 0: {
@@ -1892,6 +1928,7 @@ static bool msx_vdp_command_advance_step(MsxVdpState* state, uint8_t liveScreenM
             const uint32_t addr =
                 msx_vdp_command_addr(liveScreenMode, command.adx, command.dy) & state->vramMask;
             const uint8_t value = state->regs[44];
+            V9938_BENCH_VRAM_WRITE(addr, 1u);
             state->vram[addr] = value;
             state->status[7] = value;
             state->dirty = true;
@@ -1959,7 +1996,9 @@ static bool msx_vdp_command_advance_step(MsxVdpState* state, uint8_t liveScreenM
                 msx_vdp_command_addr(liveScreenMode, command.asx, command.sy) & state->vramMask;
             const uint32_t dstAddr =
                 msx_vdp_command_addr(liveScreenMode, command.adx, command.dy) & state->vramMask;
+            V9938_BENCH_VRAM_READ(srcAddr, 1u);
             const uint8_t value = state->vram[srcAddr];
+            V9938_BENCH_VRAM_WRITE(dstAddr, 1u);
             state->vram[dstAddr] = value;
             state->status[7] = value;
             state->dirty = true;
@@ -1983,7 +2022,9 @@ static bool msx_vdp_command_advance_step(MsxVdpState* state, uint8_t liveScreenM
                 msx_vdp_command_addr(liveScreenMode, command.adx, command.sy) & state->vramMask;
             const uint32_t dstAddr =
                 msx_vdp_command_addr(liveScreenMode, command.adx, command.dy) & state->vramMask;
+            V9938_BENCH_VRAM_READ(srcAddr, 1u);
             const uint8_t value = state->vram[srcAddr];
+            V9938_BENCH_VRAM_WRITE(dstAddr, 1u);
             state->vram[dstAddr] = value;
             state->status[7] = value;
             state->dirty = true;
@@ -2097,6 +2138,7 @@ void msx_vdp_command_continue(MsxVdpState* state)
             const uint32_t addr = msx_vdp_command_addr(liveScreenMode, command.adx, command.dy) & state->vramMask;
             const uint8_t value = state->regs[44];
             msx_vdp_diag_log_transfer(state, "hmmc-store", value);
+            V9938_BENCH_VRAM_WRITE(addr, 1u);
             state->vram[addr] = value;
             state->status[7] = value;
             state->dirty = true;
@@ -2317,6 +2359,19 @@ void msx_vdp_command_execute(MsxVdpState* state, uint8_t opcode)
     }
 
     msx_vdp_diag_log_command_start(state, opcode, sx, sy, dx, dy, nx, ny);
+    if (command != 0u) {
+        const bool hasSource = command == 0x4u || command == 0x6u || command == 0x9u ||
+                               command == 0xAu || command == 0xDu || command == 0xEu;
+        const bool hasDest = command == 0x5u || command == 0x7u || command == 0x8u ||
+                             command == 0x9u || command == 0xBu || command == 0xCu ||
+                             command == 0xDu || command == 0xEu || command == 0xFu;
+        const uint32_t srcAddr = hasSource ? (msx_vdp_command_addr(screenMode, sx, sy) & state->vramMask) : 0u;
+        const uint32_t dstAddr = hasDest ? (msx_vdp_command_addr(screenMode, dx, dy) & state->vramMask) : 0u;
+        V9938_BENCH_VDP_COMMAND(msx_vdp_command_label(command),
+                                srcAddr,
+                                dstAddr,
+                                msx_vdp_command_estimated_bytes(command, nx, ny, ppb));
+    }
 
     switch (command) {
         case 0x0:
