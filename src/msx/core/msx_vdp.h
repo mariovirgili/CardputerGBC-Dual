@@ -8,8 +8,6 @@
 struct MsxDisplayFrame;
 struct MsxVdpState;
 
-using MsxVdpWriteVramFn = void (*)(MsxVdpState* state, uint32_t address, uint8_t value);
-
 enum class MsxVdpMode : uint8_t {
     Graphics1 = 0,
     Text40,
@@ -74,7 +72,6 @@ struct MsxVdpState {
     uint32_t address;
     uint8_t latchedControl;
     uint8_t paletteLatch;
-    MsxVdpWriteVramFn writeVram;
     bool vramWriteMode;
     bool palettePending;
     bool controlPending;
@@ -111,5 +108,3 @@ void msx_vdp_out_indirect(MsxVdpState* state, uint8_t value);
 void msx_vdp_get_display_frame(const MsxVdpState* state, MsxDisplayFrame* frame);
 const char* msx_vdp_mode_label(MsxVdpMode mode);
 bool msx_vdp_display_enabled(const MsxVdpState* state);
-
-

@@ -919,49 +919,13 @@ inline uint8_t msx_vdp_resolve_color(const MsxVdpState* state, uint8_t color)
     return static_cast<uint8_t>(color & 0x0Fu);
 }
 
-inline void msx_vdp_write_vram_msx1(MsxVdpState* state, uint32_t address, uint8_t value)
+inline void msx_vdp_write_vram_fast(MsxVdpState* state, uint32_t address, uint8_t value)
 {
     const uint32_t wrapped = address & state->vramMask;
     V9938_BENCH_VRAM_WRITE(wrapped, 1u);
     if (state->vram[wrapped] != value) {
         state->vram[wrapped] = value;
         state->dirty = true;
-    }
-}
-
-inline void msx_vdp_write_vram_msx2(MsxVdpState* state, uint32_t address, uint8_t value)
-{
-    const uint32_t wrapped = address & state->vramMask;
-    V9938_BENCH_VRAM_WRITE(wrapped, 1u);
-    if (state->vram[wrapped] != value) {
-        state->vram[wrapped] = value;
-        state->dirty = true;
-
-        const uint32_t attrBase = msx_vdp_sprite_attr_base(state) & state->vramMask;
-        const uint32_t colorBase = static_cast<uint32_t>((attrBase - 0x200u) & state->vramMask);
-        const uint32_t patternBase = msx_vdp_sprite_pattern_base(state) & state->vramMask;
-        const uint32_t attrOffset = (wrapped - attrBase) & state->vramMask;
-        const uint32_t colorOffset = (wrapped - colorBase) & state->vramMask;
-        const uint32_t patternOffset = (wrapped - patternBase) & state->vramMask;
-
-        if (attrOffset < sizeof(s_msxColorSpriteAttrSnapshot)) {
-            msx_vdp_log_color_sprite_write(state,
-                                           kMsxColorSpriteWriteAttr,
-                                           static_cast<uint16_t>(attrOffset),
-                                           value);
-        }
-        if (colorOffset < sizeof(s_msxColorSpriteColorSnapshot)) {
-            msx_vdp_log_color_sprite_write(state,
-                                           kMsxColorSpriteWriteColor,
-                                           static_cast<uint16_t>(colorOffset),
-                                           value);
-        }
-        if (patternOffset < sizeof(s_msxColorSpritePatternSnapshot)) {
-            msx_vdp_log_color_sprite_write(state,
-                                           kMsxColorSpriteWritePattern,
-                                           static_cast<uint16_t>(patternOffset),
-                                           value);
-        }
     }
 }
 
@@ -4726,9 +4690,6 @@ bool msx_vdp_init(MsxVdpState* state, MsxMachineMode machineMode)
 
     std::memset(state, 0, sizeof(*state));
     state->machineMode = machineMode;
-    state->writeVram = (machineMode == MsxMachineMode::MSX2)
-                           ? &msx_vdp_write_vram_msx2
-                           : &msx_vdp_write_vram_msx1;
     state->vramSize = (machineMode == MsxMachineMode::MSX2) ? kMsx2VramSize : kMsx1VramSize;
     state->vramMask = static_cast<uint32_t>(state->vramSize - 1u);
     state->ownsVram = false;
@@ -5100,12 +5061,12 @@ void msx_vdp_out_data(MsxVdpState* state, uint8_t value)
         // prefetched read/advance, then stores to the advanced address.
         state->readBuffer = msx_vdp_read_vram_fast(state->vram, state->vramMask, state->address);
         msx_vdp_advance_address(state);
-        state->writeVram(state, state->address, value);
+        msx_vdp_write_vram_fast(state, state->address, value);
         state->controlPending = false;
         return;
     }
 
-    state->writeVram(state, state->address, value);
+    msx_vdp_write_vram_fast(state, state->address, value);
     msx_vdp_advance_address(state);
     state->readBuffer = value;
     state->controlPending = false;
