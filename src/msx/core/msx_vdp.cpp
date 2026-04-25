@@ -1,5 +1,6 @@
 #include "msx_vdp.h"
 
+#include <array>
 #include <esp_heap_caps.h>
 
 #include <cstdio>
@@ -121,20 +122,33 @@ static uint8_t* s_msx1VramB = nullptr;
 static uint8_t* s_msx2VramB = nullptr;
 static uint8_t s_msxSpriteOccupancy[kMsxFrameWidth];
 static uint8_t s_msxColorSpriteLine[kMsxSpriteColorLineWidth];
-struct MsxMonoSpriteCachedAttr {
-    int16_t y;
+using MsxPatternExpandLut = std::array<std::array<uint8_t, 8>, 256>;
+static const MsxPatternExpandLut s_msxPatternExpandLut = []() {
+    MsxPatternExpandLut lut = {};
+    for (size_t pattern = 0; pattern < lut.size(); ++pattern) {
+        for (size_t bit = 0; bit < 8u; ++bit) {
+            lut[pattern][bit] =
+                ((pattern & (0x80u >> bit)) != 0u) ? 0xFFu : 0x00u;
+        }
+    }
+    return lut;
+}();
+
+struct MsxMonoSpriteDrawEntry {
     int16_t x;
-    uint8_t patternId;
-    uint8_t attrColor;
+    uint8_t color;
+    uint8_t leftBits;
+    uint8_t rightBits;
+    bool hasRight;
+    bool visible;
 };
 struct MsxMonoSpriteLineCache {
-    uint8_t selected[kMsxMaxSpritesLineMsx1];
+    MsxMonoSpriteDrawEntry entries[kMsxMaxSpritesLineMsx1];
     uint8_t count;
     uint8_t lastIndex;
     uint8_t overflowIndex;
     bool hasOverflow;
 };
-static MsxMonoSpriteCachedAttr s_msxMonoSpriteAttrs[32u];
 static MsxMonoSpriteLineCache s_msxMonoSpriteLines[kMsxFrameHeightMsx1];
 static bool s_msxMonoSpriteCacheValid = false;
 static uint8_t s_msxMonoSpriteInputHeight = 8u;
@@ -901,6 +915,34 @@ inline void msx_vdp_write_pattern_pixels(uint8_t* dst, uint8_t pattern, uint8_t 
     dst[5] = (pattern & 0x04u) != 0u ? fg : bg;
     dst[6] = (pattern & 0x02u) != 0u ? fg : bg;
     dst[7] = (pattern & 0x01u) != 0u ? fg : bg;
+}
+
+inline void msx_vdp_write_pattern_pixels_msx1(uint8_t* dst, uint8_t pattern, uint8_t fg, uint8_t bg)
+{
+    const std::array<uint8_t, 8>& selector = s_msxPatternExpandLut[pattern];
+    const uint8_t fgXorBg = static_cast<uint8_t>(fg ^ bg);
+
+    dst[0] = static_cast<uint8_t>(bg ^ (selector[0] & fgXorBg));
+    dst[1] = static_cast<uint8_t>(bg ^ (selector[1] & fgXorBg));
+    dst[2] = static_cast<uint8_t>(bg ^ (selector[2] & fgXorBg));
+    dst[3] = static_cast<uint8_t>(bg ^ (selector[3] & fgXorBg));
+    dst[4] = static_cast<uint8_t>(bg ^ (selector[4] & fgXorBg));
+    dst[5] = static_cast<uint8_t>(bg ^ (selector[5] & fgXorBg));
+    dst[6] = static_cast<uint8_t>(bg ^ (selector[6] & fgXorBg));
+    dst[7] = static_cast<uint8_t>(bg ^ (selector[7] & fgXorBg));
+}
+
+inline void msx_vdp_write_text40_pixels(uint8_t* dst, uint8_t pattern, uint8_t fg, uint8_t bg)
+{
+    const std::array<uint8_t, 8>& selector = s_msxPatternExpandLut[pattern];
+    const uint8_t fgXorBg = static_cast<uint8_t>(fg ^ bg);
+
+    dst[0] = static_cast<uint8_t>(bg ^ (selector[0] & fgXorBg));
+    dst[1] = static_cast<uint8_t>(bg ^ (selector[1] & fgXorBg));
+    dst[2] = static_cast<uint8_t>(bg ^ (selector[2] & fgXorBg));
+    dst[3] = static_cast<uint8_t>(bg ^ (selector[3] & fgXorBg));
+    dst[4] = static_cast<uint8_t>(bg ^ (selector[4] & fgXorBg));
+    dst[5] = static_cast<uint8_t>(bg ^ (selector[5] & fgXorBg));
 }
 
 inline uint8_t msx_vdp_reg_backdrop(const MsxVdpState* state)
@@ -2750,8 +2792,11 @@ static void msx_vdp_prepare_mono_sprite_cache(MsxVdpState* state)
     s_msxMonoSpriteScale = (outputHeight > s_msxMonoSpriteInputHeight) ? 2u : 1u;
 
     const uint32_t attrBase = msx_vdp_sprite_attr_base(state);
+    const uint32_t patternBase = msx_vdp_sprite_pattern_base(state);
     const uint8_t* const vram = state->vram;
     const uint32_t mask = state->vramMask;
+    const uint8_t* const attrPtr = vram + (attrBase & mask);
+    const bool largeSprite = s_msxMonoSpriteInputHeight > 8u;
     uint8_t scanEndIndex = 31u;
 
     for (unsigned line = 0u; line < kMsxFrameHeightMsx1; ++line) {
@@ -2763,27 +2808,29 @@ static void msx_vdp_prepare_mono_sprite_cache(MsxVdpState* state)
     }
 
     for (uint8_t index = 0u; index < 32u; ++index) {
-        const uint32_t attr = attrBase + static_cast<uint32_t>(index) * 4u;
-        const uint8_t rawY = msx_vdp_read_vram_fast(vram, mask, attr);
+        const size_t attrOffset = static_cast<size_t>(index) * 4u;
+        const uint8_t rawY = attrPtr[attrOffset];
         if (rawY == 208u) {
             scanEndIndex = index;
             break;
         }
 
-        MsxMonoSpriteCachedAttr& sprite = s_msxMonoSpriteAttrs[index];
-        sprite.y = static_cast<int16_t>(rawY);
-        if (sprite.y > static_cast<int16_t>(256 - s_msxMonoSpriteInputHeight)) {
-            sprite.y = static_cast<int16_t>(sprite.y - 256);
+        int16_t spriteY = static_cast<int16_t>(rawY);
+        if (spriteY > static_cast<int16_t>(256 - s_msxMonoSpriteInputHeight)) {
+            spriteY = static_cast<int16_t>(spriteY - 256);
         }
-        sprite.x = static_cast<int16_t>(msx_vdp_read_vram_fast(vram, mask, attr + 1u));
-        sprite.patternId = msx_vdp_read_vram_fast(vram, mask, attr + 2u);
-        sprite.attrColor = msx_vdp_read_vram_fast(vram, mask, attr + 3u);
-        if ((sprite.attrColor & 0x80u) != 0u) {
-            sprite.x = static_cast<int16_t>(sprite.x - 32);
+        int16_t spriteX = static_cast<int16_t>(attrPtr[attrOffset + 1u]);
+        const uint8_t patternId = attrPtr[attrOffset + 2u];
+        const uint8_t attrColor = attrPtr[attrOffset + 3u];
+        if ((attrColor & 0x80u) != 0u) {
+            spriteX = static_cast<int16_t>(spriteX - 32);
         }
+        const uint8_t color = static_cast<uint8_t>(attrColor & 0x0Fu);
+        const bool visible = color != 0u;
+        const uint8_t resolvedColor = visible ? msx_vdp_resolve_color(state, color) : 0u;
 
-        int startY = static_cast<int>(sprite.y) + 1;
-        int endY = static_cast<int>(sprite.y) + outputHeight;
+        int startY = static_cast<int>(spriteY) + 1;
+        int endY = static_cast<int>(spriteY) + outputHeight;
         if (endY < 0 || startY >= static_cast<int>(kMsxFrameHeightMsx1)) {
             continue;
         }
@@ -2798,7 +2845,30 @@ static void msx_vdp_prepare_mono_sprite_cache(MsxVdpState* state)
         for (int line = startY; line <= endY; ++line) {
             MsxMonoSpriteLineCache& cache = s_msxMonoSpriteLines[line];
             if (cache.count < kMsxMaxSpritesLineMsx1) {
-                cache.selected[cache.count++] = index;
+                MsxMonoSpriteDrawEntry& entry = cache.entries[cache.count++];
+                entry.x = spriteX;
+                entry.color = resolvedColor;
+                entry.hasRight = largeSprite;
+                entry.visible = visible;
+                entry.leftBits = 0u;
+                entry.rightBits = 0u;
+
+                if (!visible) {
+                    continue;
+                }
+
+                int spriteLine = line - static_cast<int>(spriteY) - 1;
+                if (s_msxMonoSpriteScale == 2u) {
+                    spriteLine >>= 1;
+                }
+                const uint8_t basePattern =
+                    largeSprite ? static_cast<uint8_t>(patternId & 0xFCu) : patternId;
+                const uint32_t patternRow =
+                    patternBase + static_cast<uint32_t>(basePattern) * 8u + static_cast<uint32_t>(spriteLine);
+                entry.leftBits = msx_vdp_read_vram_fast(vram, mask, patternRow);
+                if (largeSprite) {
+                    entry.rightBits = msx_vdp_read_vram_fast(vram, mask, patternRow + 16u);
+                }
             } else if (!cache.hasOverflow) {
                 cache.hasOverflow = true;
                 cache.overflowIndex = index;
@@ -2849,6 +2919,69 @@ inline void msx_vdp_record_sprite_collision(MsxVdpState* state)
     }
 }
 
+inline void msx_vdp_plot_mono_sprite_bits_scale1(MsxVdpState* state,
+                                                 uint8_t* dst,
+                                                 uint8_t* occupancy,
+                                                 int x,
+                                                 uint8_t pattern,
+                                                 uint8_t color,
+                                                 bool detectCollision)
+{
+    if (pattern == 0u) {
+        return;
+    }
+
+    if (x >= 0 && x <= static_cast<int>(kMsxFrameWidth - 8u)) {
+        uint8_t* const dstPtr = dst + static_cast<size_t>(x);
+
+        if (!detectCollision) {
+            if ((pattern & 0x80u) != 0u) { dstPtr[0] = color; }
+            if ((pattern & 0x40u) != 0u) { dstPtr[1] = color; }
+            if ((pattern & 0x20u) != 0u) { dstPtr[2] = color; }
+            if ((pattern & 0x10u) != 0u) { dstPtr[3] = color; }
+            if ((pattern & 0x08u) != 0u) { dstPtr[4] = color; }
+            if ((pattern & 0x04u) != 0u) { dstPtr[5] = color; }
+            if ((pattern & 0x02u) != 0u) { dstPtr[6] = color; }
+            if ((pattern & 0x01u) != 0u) { dstPtr[7] = color; }
+            return;
+        }
+
+        uint8_t* const occPtr = occupancy + static_cast<size_t>(x);
+        bool collided = false;
+        if ((pattern & 0x80u) != 0u) { collided = collided || (occPtr[0] != 0u); occPtr[0] = 1u; dstPtr[0] = color; }
+        if ((pattern & 0x40u) != 0u) { collided = collided || (occPtr[1] != 0u); occPtr[1] = 1u; dstPtr[1] = color; }
+        if ((pattern & 0x20u) != 0u) { collided = collided || (occPtr[2] != 0u); occPtr[2] = 1u; dstPtr[2] = color; }
+        if ((pattern & 0x10u) != 0u) { collided = collided || (occPtr[3] != 0u); occPtr[3] = 1u; dstPtr[3] = color; }
+        if ((pattern & 0x08u) != 0u) { collided = collided || (occPtr[4] != 0u); occPtr[4] = 1u; dstPtr[4] = color; }
+        if ((pattern & 0x04u) != 0u) { collided = collided || (occPtr[5] != 0u); occPtr[5] = 1u; dstPtr[5] = color; }
+        if ((pattern & 0x02u) != 0u) { collided = collided || (occPtr[6] != 0u); occPtr[6] = 1u; dstPtr[6] = color; }
+        if ((pattern & 0x01u) != 0u) { collided = collided || (occPtr[7] != 0u); occPtr[7] = 1u; dstPtr[7] = color; }
+        if (collided) {
+            msx_vdp_record_sprite_collision(state);
+        }
+        return;
+    }
+
+    const int clipStart = x < 0 ? -x : 0;
+    const int clipEnd = (x + 8) > static_cast<int>(kMsxFrameWidth)
+        ? static_cast<int>(kMsxFrameWidth) - x
+        : 8;
+    for (int bit = clipStart; bit < clipEnd; ++bit) {
+        if ((pattern & static_cast<uint8_t>(0x80u >> bit)) == 0u) {
+            continue;
+        }
+
+        const int px = x + bit;
+        if (detectCollision) {
+            if (occupancy[px] != 0u) {
+                msx_vdp_record_sprite_collision(state);
+            }
+            occupancy[px] = 1u;
+        }
+        dst[px] = color;
+    }
+}
+
 void msx_vdp_plot_sprite_bits(MsxVdpState* state,
                               uint8_t* dst,
                               uint8_t* occupancy,
@@ -2858,69 +2991,14 @@ void msx_vdp_plot_sprite_bits(MsxVdpState* state,
                               unsigned scale,
                               bool detectCollision)
 {
-    if (scale == 1u &&
-        pattern != 0u &&
-        x >= 0 &&
-        x <= static_cast<int>(kMsxFrameWidth - 8u)) {
-        uint8_t* const dstPtr = dst + static_cast<size_t>(x);
-
-        if (!detectCollision) {
-            if ((pattern & 0x80u) != 0u) dstPtr[0] = color;
-            if ((pattern & 0x40u) != 0u) dstPtr[1] = color;
-            if ((pattern & 0x20u) != 0u) dstPtr[2] = color;
-            if ((pattern & 0x10u) != 0u) dstPtr[3] = color;
-            if ((pattern & 0x08u) != 0u) dstPtr[4] = color;
-            if ((pattern & 0x04u) != 0u) dstPtr[5] = color;
-            if ((pattern & 0x02u) != 0u) dstPtr[6] = color;
-            if ((pattern & 0x01u) != 0u) dstPtr[7] = color;
-            return;
-        }
-
-        uint8_t* const occPtr = occupancy + static_cast<size_t>(x);
-        bool collided = false;
-        if ((pattern & 0x80u) != 0u) {
-            collided = collided || (occPtr[0] != 0u);
-            occPtr[0] = 1u;
-            dstPtr[0] = color;
-        }
-        if ((pattern & 0x40u) != 0u) {
-            collided = collided || (occPtr[1] != 0u);
-            occPtr[1] = 1u;
-            dstPtr[1] = color;
-        }
-        if ((pattern & 0x20u) != 0u) {
-            collided = collided || (occPtr[2] != 0u);
-            occPtr[2] = 1u;
-            dstPtr[2] = color;
-        }
-        if ((pattern & 0x10u) != 0u) {
-            collided = collided || (occPtr[3] != 0u);
-            occPtr[3] = 1u;
-            dstPtr[3] = color;
-        }
-        if ((pattern & 0x08u) != 0u) {
-            collided = collided || (occPtr[4] != 0u);
-            occPtr[4] = 1u;
-            dstPtr[4] = color;
-        }
-        if ((pattern & 0x04u) != 0u) {
-            collided = collided || (occPtr[5] != 0u);
-            occPtr[5] = 1u;
-            dstPtr[5] = color;
-        }
-        if ((pattern & 0x02u) != 0u) {
-            collided = collided || (occPtr[6] != 0u);
-            occPtr[6] = 1u;
-            dstPtr[6] = color;
-        }
-        if ((pattern & 0x01u) != 0u) {
-            collided = collided || (occPtr[7] != 0u);
-            occPtr[7] = 1u;
-            dstPtr[7] = color;
-        }
-        if (collided) {
-            msx_vdp_record_sprite_collision(state);
-        }
+    if (scale == 1u) {
+        msx_vdp_plot_mono_sprite_bits_scale1(state,
+                                             dst,
+                                             occupancy,
+                                             x,
+                                             pattern,
+                                             color,
+                                             detectCollision);
         return;
     }
 
@@ -2959,7 +3037,6 @@ void msx_vdp_render_mono_sprites_line(MsxVdpState* state, unsigned y, uint8_t* d
 
         if (s_msxMonoSpriteCacheValid) {
             const MsxMonoSpriteLineCache& cache = s_msxMonoSpriteLines[y];
-            const uint32_t patternBase = msx_vdp_sprite_pattern_base(state);
             const bool accurateSpriteOverflow =
                 !msx_config_get_performance_flag(MsxPerformanceFlag::SimplifySpriteOverflow);
             const bool detectSpriteCollision =
@@ -2975,51 +3052,49 @@ void msx_vdp_render_mono_sprites_line(MsxVdpState* state, unsigned y, uint8_t* d
                 std::memset(s_msxSpriteOccupancy, 0, sizeof(s_msxSpriteOccupancy));
             }
 
-            const bool largeSprite = s_msxMonoSpriteInputHeight > 8u;
             for (int selectedIndex = static_cast<int>(cache.count) - 1; selectedIndex >= 0; --selectedIndex) {
-                const uint8_t index = cache.selected[static_cast<size_t>(selectedIndex)];
-                const MsxMonoSpriteCachedAttr& sprite = s_msxMonoSpriteAttrs[index];
-                const uint8_t color = static_cast<uint8_t>(sprite.attrColor & 0x0Fu);
-                if (color == 0u) {
+                const MsxMonoSpriteDrawEntry& entry = cache.entries[static_cast<size_t>(selectedIndex)];
+                if (!entry.visible) {
                     continue;
                 }
 
-                int line = static_cast<int>(y) - static_cast<int>(sprite.y) - 1;
-                if (s_msxMonoSpriteScale == 2u) {
-                    line >>= 1;
-                }
-                if (line < 0) {
-                    continue;
-                }
-
-                const uint8_t spriteColor = msx_vdp_resolve_color(state, color);
-                const uint8_t basePattern =
-                    largeSprite ? static_cast<uint8_t>(sprite.patternId & 0xFCu) : sprite.patternId;
-                const uint32_t patternRow =
-                    patternBase + static_cast<uint32_t>(basePattern) * 8u + static_cast<uint32_t>(line);
-                const uint8_t leftBits =
-                    msx_vdp_read_vram_fast(state->vram, state->vramMask, patternRow);
-                msx_vdp_plot_sprite_bits(state,
-                                         dst,
-                                         s_msxSpriteOccupancy,
-                                         static_cast<int>(sprite.x),
-                                         leftBits,
-                                         spriteColor,
-                                         s_msxMonoSpriteScale,
-                                         detectSpriteCollision);
-
-                if (largeSprite) {
-                    const uint8_t rightBits =
-                        msx_vdp_read_vram_fast(state->vram, state->vramMask, patternRow + 16u);
+                if (s_msxMonoSpriteScale == 1u) {
+                    msx_vdp_plot_mono_sprite_bits_scale1(state,
+                                                         dst,
+                                                         s_msxSpriteOccupancy,
+                                                         static_cast<int>(entry.x),
+                                                         entry.leftBits,
+                                                         entry.color,
+                                                         detectSpriteCollision);
+                    if (entry.hasRight) {
+                        msx_vdp_plot_mono_sprite_bits_scale1(state,
+                                                             dst,
+                                                             s_msxSpriteOccupancy,
+                                                             static_cast<int>(entry.x) + 8,
+                                                             entry.rightBits,
+                                                             entry.color,
+                                                             detectSpriteCollision);
+                    }
+                } else {
                     msx_vdp_plot_sprite_bits(state,
                                              dst,
                                              s_msxSpriteOccupancy,
-                                             static_cast<int>(sprite.x)
-                                                 + static_cast<int>(8u * s_msxMonoSpriteScale),
-                                             rightBits,
-                                             spriteColor,
+                                             static_cast<int>(entry.x),
+                                             entry.leftBits,
+                                             entry.color,
                                              s_msxMonoSpriteScale,
                                              detectSpriteCollision);
+                    if (entry.hasRight) {
+                        msx_vdp_plot_sprite_bits(state,
+                                                 dst,
+                                                 s_msxSpriteOccupancy,
+                                                 static_cast<int>(entry.x)
+                                                     + static_cast<int>(8u * s_msxMonoSpriteScale),
+                                                 entry.rightBits,
+                                                 entry.color,
+                                                 s_msxMonoSpriteScale,
+                                                 detectSpriteCollision);
+                    }
                 }
             }
             return;
@@ -3737,7 +3812,7 @@ void msx_vdp_render_graphics1(MsxVdpState* state)
             const uint8_t color = msx_vdp_read_vram_fast(vram, mask, colorBase + (name >> 3));
             const uint8_t fg = msx_vdp_resolve_color(state, static_cast<uint8_t>(color >> 4));
             const uint8_t bg = msx_vdp_resolve_color(state, static_cast<uint8_t>(color & 0x0Fu));
-            msx_vdp_write_pattern_pixels(dst + tileX * 8u, pattern, fg, bg);
+            msx_vdp_write_pattern_pixels_msx1(dst + tileX * 8u, pattern, fg, bg);
         }
 
         msx_vdp_render_mono_sprites_line(state, y, dst);
@@ -3769,10 +3844,7 @@ void msx_vdp_render_text40(MsxVdpState* state)
             const uint8_t name = msx_vdp_read_vram_fast(vram, mask, nameBase + row * 40u + col);
             const uint8_t pattern = msx_vdp_read_vram_fast(vram, mask, patternBase + name * 8u + line);
             const unsigned pixelBase = col * 6u;
-
-            for (unsigned bit = 0; bit < 6; ++bit) {
-                lineDst[pixelBase + bit] = ((pattern << bit) & 0x80u) != 0 ? fg : bg;
-            }
+            msx_vdp_write_text40_pixels(lineDst + pixelBase, pattern, fg, bg);
         }
 
         msx_vdp_stream_line_if_needed(state, dst, y);
@@ -3814,7 +3886,11 @@ void msx_vdp_render_graphics2_like(MsxVdpState* state)
             const uint8_t color = msx_vdp_read_vram_fast(vram, mask, colorBase + (tileIndex & colorMask));
             const uint8_t fg = msx_vdp_resolve_color(state, static_cast<uint8_t>(color >> 4));
             const uint8_t bg = msx_vdp_resolve_color(state, static_cast<uint8_t>(color & 0x0Fu));
-            msx_vdp_write_pattern_pixels(dst + tileX * 8u, pattern, fg, bg);
+            if (isMsx2) {
+                msx_vdp_write_pattern_pixels(dst + tileX * 8u, pattern, fg, bg);
+            } else {
+                msx_vdp_write_pattern_pixels_msx1(dst + tileX * 8u, pattern, fg, bg);
+            }
         }
 
         msx_vdp_render_mono_sprites_line(state, y, dst);
@@ -3981,7 +4057,7 @@ static void msx_vdp_render_graphics1_range(MsxVdpState* state, unsigned yStart, 
             const uint8_t color = msx_vdp_read_vram_fast(vram, mask, colorBase + (name >> 3));
             const uint8_t fg = msx_vdp_resolve_color(state, static_cast<uint8_t>(color >> 4));
             const uint8_t bg = msx_vdp_resolve_color(state, static_cast<uint8_t>(color & 0x0Fu));
-            msx_vdp_write_pattern_pixels(dst + tileX * 8u, pattern, fg, bg);
+            msx_vdp_write_pattern_pixels_msx1(dst + tileX * 8u, pattern, fg, bg);
         }
 
         msx_vdp_render_mono_sprites_line(state, y, dst);
@@ -4019,10 +4095,7 @@ static void msx_vdp_render_text40_range(MsxVdpState* state, unsigned yStart, uns
             const uint8_t name = msx_vdp_read_vram_fast(vram, mask, nameBase + row * 40u + col);
             const uint8_t pattern = msx_vdp_read_vram_fast(vram, mask, patternBase + name * 8u + line);
             const unsigned pixelBase = col * 6u;
-
-            for (unsigned bit = 0; bit < 6; ++bit) {
-                lineDst[pixelBase + bit] = ((pattern << bit) & 0x80u) != 0 ? fg : bg;
-            }
+            msx_vdp_write_text40_pixels(lineDst + pixelBase, pattern, fg, bg);
         }
 
         msx_vdp_stream_line_if_needed(state, dst, y);
@@ -4067,7 +4140,11 @@ static void msx_vdp_render_graphics2_like_range(MsxVdpState* state, unsigned ySt
             const uint8_t color = msx_vdp_read_vram_fast(vram, mask, colorBase + (tileIndex & colorMask));
             const uint8_t fg = msx_vdp_resolve_color(state, static_cast<uint8_t>(color >> 4));
             const uint8_t bg = msx_vdp_resolve_color(state, static_cast<uint8_t>(color & 0x0Fu));
-            msx_vdp_write_pattern_pixels(dst + tileX * 8u, pattern, fg, bg);
+            if (isMsx2) {
+                msx_vdp_write_pattern_pixels(dst + tileX * 8u, pattern, fg, bg);
+            } else {
+                msx_vdp_write_pattern_pixels_msx1(dst + tileX * 8u, pattern, fg, bg);
+            }
         }
 
         msx_vdp_render_mono_sprites_line(state, y, dst);
