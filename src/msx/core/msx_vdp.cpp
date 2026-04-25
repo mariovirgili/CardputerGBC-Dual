@@ -4582,17 +4582,22 @@ static void msx_vdp_render_bitmap6_range(MsxVdpState* state, unsigned yStart, un
         } else {
             for (unsigned x = 0; x < renderWidth; ++x) {
                 const unsigned sourceX = wideStream ? x : (x * 2u);
-                const MsxBitmapFetchAddress fetch = msx_vdp_bitmap_fetch_address(pageBase,
-                                                                                 rowOffset,
-                                                                                 lineHScroll,
-                                                                                 sourceX,
-                                                                                 512u,
-                                                                                 dualPage,
-                                                                                 0x8000u);
-                const uint8_t pixel = msx_vdp_bitmap6_read_pixel(vram,
-                                                                 mask,
-                                                                 fetch.lineBase & mask,
-                                                                 fetch.pixelX);
+                uint8_t pixel = 0u;
+                if (!useHScroll) {
+                    pixel = msx_vdp_bitmap6_read_pixel(vram, mask, lineBase, static_cast<uint16_t>(sourceX));
+                } else {
+                    const MsxBitmapFetchAddress fetch = msx_vdp_bitmap_fetch_address(pageBase,
+                                                                                     rowOffset,
+                                                                                     lineHScroll,
+                                                                                     sourceX,
+                                                                                     512u,
+                                                                                     dualPage,
+                                                                                     0x8000u);
+                    pixel = msx_vdp_bitmap6_read_pixel(vram,
+                                                       mask,
+                                                       fetch.lineBase & mask,
+                                                       fetch.pixelX);
+                }
                 const uint8_t sprite = spriteLine[wideStream ? (x >> 1) : x];
                 dst[x] = hasSprites && sprite != 0u ? sprite : pixel;
             }
@@ -4674,17 +4679,22 @@ static void msx_vdp_render_bitmap7_range(MsxVdpState* state, unsigned yStart, un
         } else {
             for (unsigned x = 0; x < renderWidth; ++x) {
                 const unsigned sourceX = wideStream ? x : (x * 2u);
-                const MsxBitmapFetchAddress fetch = msx_vdp_bitmap_fetch_address(pageBase,
-                                                                                 rowOffset,
-                                                                                 lineHScroll,
-                                                                                 sourceX,
-                                                                                 512u,
-                                                                                 dualPage,
-                                                                                 0x10000u);
-                const uint8_t pixel = msx_vdp_bitmap7_read_pixel(vram,
-                                                                 mask,
-                                                                 fetch.lineBase & mask,
-                                                                 fetch.pixelX);
+                uint8_t pixel = 0u;
+                if (!useHScroll) {
+                    pixel = msx_vdp_bitmap7_read_pixel(vram, mask, lineBase, static_cast<uint16_t>(sourceX));
+                } else {
+                    const MsxBitmapFetchAddress fetch = msx_vdp_bitmap_fetch_address(pageBase,
+                                                                                     rowOffset,
+                                                                                     lineHScroll,
+                                                                                     sourceX,
+                                                                                     512u,
+                                                                                     dualPage,
+                                                                                     0x10000u);
+                    pixel = msx_vdp_bitmap7_read_pixel(vram,
+                                                       mask,
+                                                       fetch.lineBase & mask,
+                                                       fetch.pixelX);
+                }
                 const uint8_t sprite = spriteLine[wideStream ? (x >> 1) : x];
                 dst[x] = hasSprites && sprite != 0u ? sprite : pixel;
             }

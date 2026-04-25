@@ -103,8 +103,8 @@ static bool s_extTftColorModeLogged = false;
 static bool s_externalUiActive = false;
 static bool s_runtimeMenuActive = false;
 static bool s_stateOverlayActive = false;
-static bool s_externalFrameskipState = false;
 static MsxLineStreamState s_lineStream = {};
+static bool s_externalFixedSkipNextPresent = false;
 
 static uint32_t s_spiPushFrames = 0;
 static uint32_t s_spiPushUs = 0;
@@ -233,6 +233,11 @@ void msx_video_reset_layout_cache(void)
     s_lastRoiH = -1;
     s_lastXOff = -1;
     s_lastYOff = -1;
+}
+
+void msx_video_reset_external_pacing(void)
+{
+    s_externalFixedSkipNextPresent = false;
 }
 
 void msx_video_release_scratch_buffers(void)
@@ -942,7 +947,7 @@ void msx_video_init(void)
     s_autoFrameskipStep256 = 0;
     s_autoFrameskipAccum256 = 0;
     s_lastPresentUs = 0;
-    s_externalFrameskipState = false;
+    msx_video_reset_external_pacing();
     msx_video_reset_layout_cache();
     msx_video_clear_target();
 }
@@ -954,6 +959,7 @@ void msx_video_shutdown(void)
     s_externalUiActive = false;
     s_stateOverlayActive = false;
     s_lastPresentUs = 0;
+    msx_video_reset_external_pacing();
     msx_video_reset_layout_cache();
 }
 
@@ -1199,7 +1205,7 @@ void msx_video_prepare_sd_access(void)
     s_autoFrameskipStep256 = 0;
     s_autoFrameskipAccum256 = 0;
     s_lastPresentUs = 0;
-    s_externalFrameskipState = false;
+    msx_video_reset_external_pacing();
 
     msx_video_unlock();
 }
@@ -1228,13 +1234,13 @@ bool msx_video_present_frame(const MsxDisplayFrame* frame)
     bool skipPresent = false;
     if (msx_video_game_on_external()) {
         if (msx_config_get_performance_flag(MsxPerformanceFlag::ExternalFixed30Fps)) {
-            s_externalFrameskipState = !s_externalFrameskipState;
-            skipPresent = s_externalFrameskipState;
+            skipPresent = s_externalFixedSkipNextPresent;
+            s_externalFixedSkipNextPresent = !s_externalFixedSkipNextPresent;
         } else {
-            s_externalFrameskipState = false;
+            msx_video_reset_external_pacing();
         }
     } else {
-        s_externalFrameskipState = false;
+        msx_video_reset_external_pacing();
         if (s_autoFrameskipStep256 != 0u) {
             s_autoFrameskipAccum256 = static_cast<uint16_t>(s_autoFrameskipAccum256 + s_autoFrameskipStep256);
             if (s_autoFrameskipAccum256 >= 256u) {
@@ -1246,11 +1252,12 @@ bool msx_video_present_frame(const MsxDisplayFrame* frame)
 
     bool result = true;
     uint32_t frameUs = 0;
+    int64_t presentStartUs = 0;
     if (!skipPresent) {
-        int64_t t0 = esp_timer_get_time();
+        presentStartUs = esp_timer_get_time();
         result = msx_video_render_frame_now(frame);
-        int64_t t1 = esp_timer_get_time();
-        frameUs = static_cast<uint32_t>(t1 - t0);
+        const int64_t t1 = esp_timer_get_time();
+        frameUs = static_cast<uint32_t>(t1 - presentStartUs);
     }
 
     if (result) {
@@ -1351,5 +1358,6 @@ void msx_video_request_full_redraw(void)
 {
     msx_video_lock();
     msx_video_reset_layout_cache();
+    msx_video_reset_external_pacing();
     msx_video_unlock();
 }

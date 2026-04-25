@@ -201,12 +201,12 @@ static const char* msx_display_runtime_menu_label(const MsxInputOverlayState& ov
 
     if (msx_display_game_on_external()) {
         switch (index) {
-            case 0u: return "JOY";
-            case 1u: return "KEYBOARD";
-            case 2u: return "BASIC KBD";
-            case 3u: return "VAUS";
-            case 4u: return "VIEW";
-            case 5u: return "PERF TUNE";
+            case 0u: return "PERF TUNE";
+            case 1u: return "JOY";
+            case 2u: return "KEYBOARD";
+            case 3u: return "BASIC KBD";
+            case 4u: return "VAUS";
+            case 5u: return "VIEW";
             case 6u: return "SELECT SLOT";
             case 7u: return "SAVE SLOT";
             case 8u: return "LOAD SLOT";
@@ -216,12 +216,12 @@ static const char* msx_display_runtime_menu_label(const MsxInputOverlayState& ov
         }
     } else {
         switch (index) {
-            case 0u: return "JOY";
-            case 1u: return "KEYBOARD";
-            case 2u: return "BASIC KBD";
-            case 3u: return "VAUS";
-            case 4u: return "VIEW";
-            case 5u: return "PERF TUNE";
+            case 0u: return "PERF TUNE";
+            case 1u: return "JOY";
+            case 2u: return "KEYBOARD";
+            case 3u: return "BASIC KBD";
+            case 4u: return "VAUS";
+            case 5u: return "VIEW";
             case 6u: return "STATE SLOT";
             case 7u: return "SAVE STATE";
             case 8u: return "LOAD STATE";
@@ -262,17 +262,17 @@ static const char* msx_display_runtime_menu_value(const MsxInputOverlayState& ov
 
     switch (index) {
         case 0u:
-            return overlay.joystickEnabled ? "ON" : "OFF";
-        case 1u:
-            return overlay.keyboardEnabled ? "ON" : "OFF";
-        case 2u:
-            return overlay.basicKeyboardEnabled ? "ON" : "OFF";
-        case 3u:
-            return overlay.vausEnabled ? "ON" : "OFF";
-        case 4u:
-            return msx_display_active_view_label();
-        case 5u:
             return msx_config_get_performance_mode_label();
+        case 1u:
+            return overlay.joystickEnabled ? "ON" : "OFF";
+        case 2u:
+            return overlay.keyboardEnabled ? "ON" : "OFF";
+        case 3u:
+            return overlay.basicKeyboardEnabled ? "ON" : "OFF";
+        case 4u:
+            return overlay.vausEnabled ? "ON" : "OFF";
+        case 5u:
+            return msx_display_active_view_label();
         case 6u:
             std::snprintf(slotStr, sizeof(slotStr), "< %u >", static_cast<unsigned>(stateSlot));
             return slotStr;

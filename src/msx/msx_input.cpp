@@ -58,12 +58,12 @@ struct MsxRuntimeOptions {
 };
 
 enum class MsxRuntimeMenuItem : uint8_t {
-    Joystick = 0,
+    Performance = 0,
+    Joystick,
     Keyboard,
     BasicKeyboard,
     Vaus,
     View,
-    Performance,
     StateSlot,
     SaveState,
     LoadState,
@@ -160,12 +160,12 @@ static uint8_t msx_get_menu_item_count(void)
 static MsxRuntimeMenuItem msx_get_menu_item(uint8_t index)
 {
     switch (index) {
-        case 0: return MsxRuntimeMenuItem::Joystick;
-        case 1: return MsxRuntimeMenuItem::Keyboard;
-        case 2: return MsxRuntimeMenuItem::BasicKeyboard;
-        case 3: return MsxRuntimeMenuItem::Vaus;
-        case 4: return MsxRuntimeMenuItem::View;
-        case 5: return MsxRuntimeMenuItem::Performance;
+        case 0: return MsxRuntimeMenuItem::Performance;
+        case 1: return MsxRuntimeMenuItem::Joystick;
+        case 2: return MsxRuntimeMenuItem::Keyboard;
+        case 3: return MsxRuntimeMenuItem::BasicKeyboard;
+        case 4: return MsxRuntimeMenuItem::Vaus;
+        case 5: return MsxRuntimeMenuItem::View;
         case 6: return MsxRuntimeMenuItem::StateSlot;
         case 7: return MsxRuntimeMenuItem::SaveState;
         case 8: return MsxRuntimeMenuItem::LoadState;

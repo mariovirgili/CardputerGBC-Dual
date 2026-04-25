@@ -87,6 +87,32 @@ static bool selectMsxPerformanceMode(CardputerView& display, CardputerInput& inp
   return chosen == 1;
 }
 
+static bool selectMsxExternalFpsLock(CardputerView& display,
+                                     CardputerInput& input,
+                                     bool persistedLocked)
+{
+  VerticalSelector selector(display, input);
+  const std::vector<std::string> options = {
+      "Unlocked / 60 FPS if possible",
+      "Lock external TFT to 30 FPS",
+  };
+
+  const int initialIndex = persistedLocked ? 1 : 0;
+  const int selected = selector.select("MSX external FPS lock",
+                                       options,
+                                       false,
+                                       false,
+                                       {},
+                                       {},
+                                       false,
+                                       true,
+                                       true,
+                                       initialIndex);
+
+  const int chosen = selected >= 0 ? selected : initialIndex;
+  return chosen == 1;
+}
+
 static void welcomeExternalTft()
 {
   emu_set_aux_screen_locked(false);
@@ -492,6 +518,18 @@ void setup() {
       const bool chosenPerformanceMode = selectMsxPerformanceMode(display, input);
       if (chosenPerformanceMode != savedPerformanceMode) {
         msx_config_set_performance_mode(chosenPerformanceMode, true);
+      }
+
+      if (chosen == EMU_DISPLAY_EXTERNAL) {
+        const bool savedExternalFpsLock =
+          msx_config_get_performance_flag(MsxPerformanceFlag::ExternalFixed30Fps);
+        const bool chosenExternalFpsLock =
+          selectMsxExternalFpsLock(display, input, savedExternalFpsLock);
+        if (chosenExternalFpsLock != savedExternalFpsLock) {
+          msx_config_set_performance_flag(MsxPerformanceFlag::ExternalFixed30Fps,
+                                          chosenExternalFpsLock,
+                                          true);
+        }
       }
     }
 
