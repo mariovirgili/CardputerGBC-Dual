@@ -78,7 +78,8 @@ enum class MsxRuntimeMenuPage : uint8_t {
 };
 
 enum class MsxPerformanceMenuItem : uint8_t {
-    SliceRendering = 0,
+    ExternalFixed30Fps = 0,
+    SliceRendering,
     SpriteCollision,
     SpriteOverflow,
     InstantCommands,
@@ -101,6 +102,7 @@ struct MsxRuntimeMenuState {
     bool rightHeld;
 };
 
+static constexpr uint8_t kRuntimeMenuVisibleRows = 5u;
 static MsxRuntimeOptions s_runtimeOptions = {false, true, false, false, 0, false, false, false, false};
 static MsxRuntimeMenuState s_runtimeMenu = {
     false,
@@ -178,11 +180,12 @@ static MsxRuntimeMenuItem msx_get_menu_item(uint8_t index)
 static MsxPerformanceMenuItem msx_get_performance_menu_item(uint8_t index)
 {
     switch (index) {
-        case 0: return MsxPerformanceMenuItem::SliceRendering;
-        case 1: return MsxPerformanceMenuItem::SpriteCollision;
-        case 2: return MsxPerformanceMenuItem::SpriteOverflow;
-        case 3: return MsxPerformanceMenuItem::InstantCommands;
-        case 4: return MsxPerformanceMenuItem::Back;
+        case 0: return MsxPerformanceMenuItem::ExternalFixed30Fps;
+        case 1: return MsxPerformanceMenuItem::SliceRendering;
+        case 2: return MsxPerformanceMenuItem::SpriteCollision;
+        case 3: return MsxPerformanceMenuItem::SpriteOverflow;
+        case 4: return MsxPerformanceMenuItem::InstantCommands;
+        case 5: return MsxPerformanceMenuItem::Back;
         default: return MsxPerformanceMenuItem::Back;
     }
 }
@@ -374,7 +377,10 @@ static void msx_runtime_menu_open_performance_page(void)
 {
     s_runtimeMenu.page = MsxRuntimeMenuPage::Performance;
     s_runtimeMenu.selectedIndex = s_runtimeMenu.performanceSelectedIndex;
-    s_runtimeMenu.scroll = 0u;
+    s_runtimeMenu.scroll =
+        s_runtimeMenu.selectedIndex >= kRuntimeMenuVisibleRows
+            ? static_cast<uint8_t>(s_runtimeMenu.selectedIndex - (kRuntimeMenuVisibleRows - 1u))
+            : 0u;
 }
 
 static void msx_toggle_runtime_menu(void)
@@ -397,13 +403,19 @@ static void msx_runtime_menu_move(int delta)
 
     if (msx_runtime_menu_in_performance_page()) {
         s_runtimeMenu.performanceSelectedIndex = s_runtimeMenu.selectedIndex;
-        s_runtimeMenu.scroll = 0u;
+        if (selected < s_runtimeMenu.scroll) {
+            s_runtimeMenu.scroll = static_cast<uint8_t>(selected);
+        } else if (selected >= s_runtimeMenu.scroll + kRuntimeMenuVisibleRows) {
+            s_runtimeMenu.scroll =
+                static_cast<uint8_t>(selected - (kRuntimeMenuVisibleRows - 1u));
+        }
     } else {
         s_runtimeMenu.mainSelectedIndex = s_runtimeMenu.selectedIndex;
         if (selected < s_runtimeMenu.scroll) {
-            s_runtimeMenu.scroll = selected;
-        } else if (selected >= s_runtimeMenu.scroll + 5) {
-            s_runtimeMenu.scroll = selected - 4;
+            s_runtimeMenu.scroll = static_cast<uint8_t>(selected);
+        } else if (selected >= s_runtimeMenu.scroll + kRuntimeMenuVisibleRows) {
+            s_runtimeMenu.scroll =
+                static_cast<uint8_t>(selected - (kRuntimeMenuVisibleRows - 1u));
         }
     }
 }
@@ -418,6 +430,13 @@ static void msx_runtime_toggle_performance_item(MsxPerformanceMenuItem item)
     }
 
     switch (item) {
+        case MsxPerformanceMenuItem::ExternalFixed30Fps:
+            msx_config_set_performance_flag(
+                MsxPerformanceFlag::ExternalFixed30Fps,
+                !msx_config_get_performance_flag(MsxPerformanceFlag::ExternalFixed30Fps),
+                true
+            );
+            break;
         case MsxPerformanceMenuItem::SliceRendering:
             msx_config_set_performance_flag(
                 MsxPerformanceFlag::DisableSliceRendering,
@@ -477,7 +496,13 @@ static void msx_clamp_runtime_menu_selection(void)
 
     if (msx_runtime_menu_in_performance_page()) {
         s_runtimeMenu.performanceSelectedIndex = s_runtimeMenu.selectedIndex;
-        s_runtimeMenu.scroll = 0u;
+        if (s_runtimeMenu.scroll > s_runtimeMenu.selectedIndex) {
+            s_runtimeMenu.scroll = s_runtimeMenu.selectedIndex;
+        }
+        if (s_runtimeMenu.selectedIndex >= s_runtimeMenu.scroll + kRuntimeMenuVisibleRows) {
+            s_runtimeMenu.scroll =
+                static_cast<uint8_t>(s_runtimeMenu.selectedIndex - (kRuntimeMenuVisibleRows - 1u));
+        }
         return;
     }
 
@@ -485,8 +510,9 @@ static void msx_clamp_runtime_menu_selection(void)
     if (s_runtimeMenu.scroll > s_runtimeMenu.selectedIndex) {
         s_runtimeMenu.scroll = s_runtimeMenu.selectedIndex;
     }
-    if (s_runtimeMenu.selectedIndex >= s_runtimeMenu.scroll + 5) {
-        s_runtimeMenu.scroll = static_cast<uint8_t>(s_runtimeMenu.selectedIndex - 4);
+    if (s_runtimeMenu.selectedIndex >= s_runtimeMenu.scroll + kRuntimeMenuVisibleRows) {
+        s_runtimeMenu.scroll =
+            static_cast<uint8_t>(s_runtimeMenu.selectedIndex - (kRuntimeMenuVisibleRows - 1u));
     }
 }
 
@@ -1322,6 +1348,8 @@ void msx_input_get_overlay_state(MsxInputOverlayState* state)
         msx_config_get_performance_flag(MsxPerformanceFlag::SimplifySpriteOverflow);
     state->perfInstantVdpCommands =
         msx_config_get_performance_flag(MsxPerformanceFlag::InstantVdpCommands);
+    state->perfExternalFixed30Fps =
+        msx_config_get_performance_flag(MsxPerformanceFlag::ExternalFixed30Fps);
     state->casChangeAvailable = s_runtimeOptions.changeCasAvailable;
     state->selectedIndex = s_runtimeMenu.selectedIndex;
 }
@@ -1331,7 +1359,7 @@ uint8_t msx_input_get_state_slot(void) {
 }
 
 uint8_t msx_input_get_scroll_index(void) {
-    return msx_runtime_menu_in_performance_page() ? 0u : s_runtimeMenu.scroll;
+    return s_runtimeMenu.scroll;
 }
 
 bool msx_input_get_save_requested(void) {

@@ -1227,9 +1227,14 @@ bool msx_video_present_frame(const MsxDisplayFrame* frame)
 
     bool skipPresent = false;
     if (msx_video_game_on_external()) {
-        s_externalFrameskipState = !s_externalFrameskipState;
-        skipPresent = s_externalFrameskipState;
+        if (msx_config_get_performance_flag(MsxPerformanceFlag::ExternalFixed30Fps)) {
+            s_externalFrameskipState = !s_externalFrameskipState;
+            skipPresent = s_externalFrameskipState;
+        } else {
+            s_externalFrameskipState = false;
+        }
     } else {
+        s_externalFrameskipState = false;
         if (s_autoFrameskipStep256 != 0u) {
             s_autoFrameskipAccum256 = static_cast<uint16_t>(s_autoFrameskipAccum256 + s_autoFrameskipStep256);
             if (s_autoFrameskipAccum256 >= 256u) {

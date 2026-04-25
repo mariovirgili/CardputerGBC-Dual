@@ -73,7 +73,8 @@ uint8_t msx_sanitize_performance_flags(uint8_t value)
         static_cast<uint8_t>(MsxPerformanceFlag::DisableSliceRendering) |
         static_cast<uint8_t>(MsxPerformanceFlag::DisableSpriteCollision) |
         static_cast<uint8_t>(MsxPerformanceFlag::SimplifySpriteOverflow) |
-        static_cast<uint8_t>(MsxPerformanceFlag::InstantVdpCommands);
+        static_cast<uint8_t>(MsxPerformanceFlag::InstantVdpCommands) |
+        static_cast<uint8_t>(MsxPerformanceFlag::ExternalFixed30Fps);
     return static_cast<uint8_t>(value & supportedFlags);
 }
 

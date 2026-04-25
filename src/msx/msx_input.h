@@ -38,6 +38,7 @@ struct MsxInputOverlayState {
     bool perfDisableSpriteCollision;
     bool perfSimplifySpriteOverflow;
     bool perfInstantVdpCommands;
+    bool perfExternalFixed30Fps;
     bool casChangeAvailable;
     uint8_t selectedIndex;
 };

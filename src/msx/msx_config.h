@@ -33,6 +33,7 @@ enum class MsxPerformanceFlag : uint8_t {
     DisableSpriteCollision = 0x02,
     SimplifySpriteOverflow = 0x04,
     InstantVdpCommands = 0x08,
+    ExternalFixed30Fps = 0x10,
 };
 
 MsxInternalViewMode msx_config_load_internal_view_mode(void);

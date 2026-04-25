@@ -189,11 +189,12 @@ static const char* msx_display_runtime_menu_label(const MsxInputOverlayState& ov
 {
     if (overlay.performanceSubmenuVisible) {
         switch (index) {
-            case 0u: return "SLICE RENDER";
-            case 1u: return "SPR COLL";
-            case 2u: return "8-SPR FLAGS";
-            case 3u: return "INSTANT CMD";
-            case 4u: return "BACK";
+            case 0u: return "EXT 30FPS";
+            case 1u: return "SLICE RENDER";
+            case 2u: return "SPR COLL";
+            case 3u: return "8-SPR FLAGS";
+            case 4u: return "INSTANT CMD";
+            case 5u: return "BACK";
             default: return "";
         }
     }
@@ -239,15 +240,17 @@ static const char* msx_display_runtime_menu_value(const MsxInputOverlayState& ov
     if (overlay.performanceSubmenuVisible) {
         switch (index) {
             case 0u:
+                return overlay.perfExternalFixed30Fps ? "ON" : "OFF";
+            case 1u:
                 if (!overlay.machineIsMsx2) {
                     return "N/A";
                 }
                 return overlay.perfDisableSliceRendering ? "OFF" : "ON";
-            case 1u:
-                return overlay.perfDisableSpriteCollision ? "OFF" : "ON";
             case 2u:
-                return overlay.perfSimplifySpriteOverflow ? "OFF" : "ON";
+                return overlay.perfDisableSpriteCollision ? "OFF" : "ON";
             case 3u:
+                return overlay.perfSimplifySpriteOverflow ? "OFF" : "ON";
+            case 4u:
                 if (!overlay.machineIsMsx2) {
                     return "N/A";
                 }
@@ -405,6 +408,7 @@ static bool msx_display_runtime_menu_overlay_equals(const MsxInputOverlayState& 
            a.perfDisableSpriteCollision == b.perfDisableSpriteCollision &&
            a.perfSimplifySpriteOverflow == b.perfSimplifySpriteOverflow &&
            a.perfInstantVdpCommands == b.perfInstantVdpCommands &&
+           a.perfExternalFixed30Fps == b.perfExternalFixed30Fps &&
            a.casChangeAvailable == b.casChangeAvailable &&
            a.selectedIndex == b.selectedIndex;
 }

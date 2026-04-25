@@ -276,7 +276,7 @@ static uint32_t msx_vdp_cycle_for_line_visible_legacy(const MsxVdpState* state, 
 }
 #endif
 
-static uint32_t msx_vdp_line_index_for_cycle(const MsxVdpState* state, uint32_t cycle)
+static inline uint32_t msx_vdp_line_index_for_cycle(const MsxVdpState* state, uint32_t cycle)
 {
     if (!state || state->frameCycleBudget == 0u) {
         return 0u;
@@ -291,8 +291,7 @@ static uint32_t msx_vdp_line_index_for_cycle(const MsxVdpState* state, uint32_t 
         return kFrameScanlines;
     }
 
-    return static_cast<uint32_t>((static_cast<uint64_t>(cycle) * static_cast<uint64_t>(kFrameScanlines)) /
-                                 static_cast<uint64_t>(state->frameCycleBudget));
+    return (cycle * kFrameScanlines) / state->frameCycleBudget;
 }
 
 static void msx_vdp_log_color_sprite_write(MsxVdpState* state,
@@ -345,7 +344,7 @@ static void msx_vdp_apply_color_sprite_writes_until(uint32_t targetCycle)
     }
 }
 
-static void msx_vdp_timeline_reset(MsxVdpRegTimelineEvent* timeline,
+static inline void msx_vdp_timeline_reset(MsxVdpRegTimelineEvent* timeline,
                                    uint8_t* count,
                                    uint8_t value)
 {
@@ -357,7 +356,7 @@ static void msx_vdp_timeline_reset(MsxVdpRegTimelineEvent* timeline,
     *count = 1u;
 }
 
-static void msx_vdp_timeline_append(MsxVdpRegTimelineEvent* timeline,
+static inline void msx_vdp_timeline_append(MsxVdpRegTimelineEvent* timeline,
                                     uint8_t* count,
                                     uint32_t cycle,
                                     uint8_t value)
@@ -383,7 +382,7 @@ static void msx_vdp_timeline_append(MsxVdpRegTimelineEvent* timeline,
     timeline[kMsxVdpRegTimelineMax - 1u].value = value;
 }
 
-static uint8_t msx_vdp_timeline_value_for_line(const MsxVdpState* state,
+static inline uint8_t msx_vdp_timeline_value_for_line(const MsxVdpState* state,
                                                const MsxVdpRegTimelineEvent* timeline,
                                                uint8_t count,
                                                unsigned y)
@@ -429,7 +428,7 @@ static const MsxVdpRenderAuxState* msx_vdp_render_aux(const MsxVdpState* state)
     return state ? static_cast<const MsxVdpRenderAuxState*>(state->renderContext) : nullptr;
 }
 
-static uint8_t msx_vdp_reg8_for_line(const MsxVdpState* state, unsigned y)
+static inline uint8_t msx_vdp_reg8_for_line(const MsxVdpState* state, unsigned y)
 {
     if (!state || !msx_vdp_is_msx2(state)) {
         return state ? state->regs[8] : 0u;
@@ -441,7 +440,7 @@ static uint8_t msx_vdp_reg8_for_line(const MsxVdpState* state, unsigned y)
                                            y);
 }
 
-static uint8_t msx_vdp_reg5_for_line(const MsxVdpState* state, unsigned y)
+static inline uint8_t msx_vdp_reg5_for_line(const MsxVdpState* state, unsigned y)
 {
     if (!state || !msx_vdp_is_msx2(state)) {
         return state ? state->regs[5] : 0u;
@@ -453,7 +452,7 @@ static uint8_t msx_vdp_reg5_for_line(const MsxVdpState* state, unsigned y)
                                            y);
 }
 
-static uint8_t msx_vdp_reg6_for_line(const MsxVdpState* state, unsigned y)
+static inline uint8_t msx_vdp_reg6_for_line(const MsxVdpState* state, unsigned y)
 {
     if (!state || !msx_vdp_is_msx2(state)) {
         return state ? state->regs[6] : 0u;
@@ -465,7 +464,7 @@ static uint8_t msx_vdp_reg6_for_line(const MsxVdpState* state, unsigned y)
                                            y);
 }
 
-static uint8_t msx_vdp_reg11_for_line(const MsxVdpState* state, unsigned y)
+static inline uint8_t msx_vdp_reg11_for_line(const MsxVdpState* state, unsigned y)
 {
     if (!state || !msx_vdp_is_msx2(state)) {
         return state ? state->regs[11] : 0u;
@@ -477,7 +476,7 @@ static uint8_t msx_vdp_reg11_for_line(const MsxVdpState* state, unsigned y)
                                            y);
 }
 
-static uint8_t msx_vdp_reg2_for_line(const MsxVdpState* state, unsigned y)
+static inline uint8_t msx_vdp_reg2_for_line(const MsxVdpState* state, unsigned y)
 {
     if (!state || !msx_vdp_is_msx2(state)) {
         return state ? state->regs[2] : 0u;
@@ -489,7 +488,7 @@ static uint8_t msx_vdp_reg2_for_line(const MsxVdpState* state, unsigned y)
                                            y);
 }
 
-static uint8_t msx_vdp_reg23_for_line(const MsxVdpState* state, unsigned y)
+static inline uint8_t msx_vdp_reg23_for_line(const MsxVdpState* state, unsigned y)
 {
     if (!state || !msx_vdp_is_msx2(state)) {
         return state ? state->regs[23] : 0u;
@@ -501,7 +500,7 @@ static uint8_t msx_vdp_reg23_for_line(const MsxVdpState* state, unsigned y)
                                            y);
 }
 
-static uint8_t msx_vdp_reg25_for_line(const MsxVdpState* state, unsigned y)
+static inline uint8_t msx_vdp_reg25_for_line(const MsxVdpState* state, unsigned y)
 {
     if (!state || !msx_vdp_is_msx2(state)) {
         return state ? state->regs[25] : 0u;
@@ -513,7 +512,7 @@ static uint8_t msx_vdp_reg25_for_line(const MsxVdpState* state, unsigned y)
                                            y);
 }
 
-static uint8_t msx_vdp_reg26_for_line(const MsxVdpState* state, unsigned y)
+static inline uint8_t msx_vdp_reg26_for_line(const MsxVdpState* state, unsigned y)
 {
     if (!state || !msx_vdp_is_msx2(state)) {
         return state ? state->regs[26] : 0u;
@@ -525,7 +524,7 @@ static uint8_t msx_vdp_reg26_for_line(const MsxVdpState* state, unsigned y)
                                            y);
 }
 
-static uint8_t msx_vdp_reg27_for_line(const MsxVdpState* state, unsigned y)
+static inline uint8_t msx_vdp_reg27_for_line(const MsxVdpState* state, unsigned y)
 {
     if (!state || !msx_vdp_is_msx2(state)) {
         return state ? state->regs[27] : 0u;
@@ -3085,13 +3084,263 @@ void msx_vdp_plot_color_sprite_bits(MsxVdpState* state,
     }
 }
 
+inline bool msx_vdp_can_use_color_sprite_scale1_fast_path(int x,
+                                                           uint8_t pattern,
+                                                           unsigned scale)
+{
+    return scale == 1u &&
+           pattern != 0u &&
+           x >= -32 &&
+           x <= static_cast<int>(kMsxFrameWidth + 24u);
+}
+
+inline void msx_vdp_plot_color_sprite_bits_scale1(MsxVdpState* state,
+                                                  uint8_t* line,
+                                                  int x,
+                                                  uint8_t pattern,
+                                                  uint8_t color,
+                                                  bool mergeColors,
+                                                  bool detectCollision)
+{
+    uint8_t* dst = line + static_cast<size_t>(x + 32);
+    bool collided = false;
+
+    if (!mergeColors) {
+        if (detectCollision) {
+            if ((pattern & 0x80u) != 0u) {
+                collided = collided || (dst[0] != 0u);
+                dst[0] = color;
+#if MSX_VDP_SPRITE_LOG_ENABLED
+                s_msxSpritePixelsDrawn++;
+#endif
+            }
+            if ((pattern & 0x40u) != 0u) {
+                collided = collided || (dst[1] != 0u);
+                dst[1] = color;
+#if MSX_VDP_SPRITE_LOG_ENABLED
+                s_msxSpritePixelsDrawn++;
+#endif
+            }
+            if ((pattern & 0x20u) != 0u) {
+                collided = collided || (dst[2] != 0u);
+                dst[2] = color;
+#if MSX_VDP_SPRITE_LOG_ENABLED
+                s_msxSpritePixelsDrawn++;
+#endif
+            }
+            if ((pattern & 0x10u) != 0u) {
+                collided = collided || (dst[3] != 0u);
+                dst[3] = color;
+#if MSX_VDP_SPRITE_LOG_ENABLED
+                s_msxSpritePixelsDrawn++;
+#endif
+            }
+            if ((pattern & 0x08u) != 0u) {
+                collided = collided || (dst[4] != 0u);
+                dst[4] = color;
+#if MSX_VDP_SPRITE_LOG_ENABLED
+                s_msxSpritePixelsDrawn++;
+#endif
+            }
+            if ((pattern & 0x04u) != 0u) {
+                collided = collided || (dst[5] != 0u);
+                dst[5] = color;
+#if MSX_VDP_SPRITE_LOG_ENABLED
+                s_msxSpritePixelsDrawn++;
+#endif
+            }
+            if ((pattern & 0x02u) != 0u) {
+                collided = collided || (dst[6] != 0u);
+                dst[6] = color;
+#if MSX_VDP_SPRITE_LOG_ENABLED
+                s_msxSpritePixelsDrawn++;
+#endif
+            }
+            if ((pattern & 0x01u) != 0u) {
+                collided = collided || (dst[7] != 0u);
+                dst[7] = color;
+#if MSX_VDP_SPRITE_LOG_ENABLED
+                s_msxSpritePixelsDrawn++;
+#endif
+            }
+
+            if (collided) {
+                msx_vdp_record_sprite_collision(state);
+            }
+            return;
+        }
+
+        if ((pattern & 0x80u) != 0u) {
+            dst[0] = color;
+#if MSX_VDP_SPRITE_LOG_ENABLED
+            s_msxSpritePixelsDrawn++;
+#endif
+        }
+        if ((pattern & 0x40u) != 0u) {
+            dst[1] = color;
+#if MSX_VDP_SPRITE_LOG_ENABLED
+            s_msxSpritePixelsDrawn++;
+#endif
+        }
+        if ((pattern & 0x20u) != 0u) {
+            dst[2] = color;
+#if MSX_VDP_SPRITE_LOG_ENABLED
+            s_msxSpritePixelsDrawn++;
+#endif
+        }
+        if ((pattern & 0x10u) != 0u) {
+            dst[3] = color;
+#if MSX_VDP_SPRITE_LOG_ENABLED
+            s_msxSpritePixelsDrawn++;
+#endif
+        }
+        if ((pattern & 0x08u) != 0u) {
+            dst[4] = color;
+#if MSX_VDP_SPRITE_LOG_ENABLED
+            s_msxSpritePixelsDrawn++;
+#endif
+        }
+        if ((pattern & 0x04u) != 0u) {
+            dst[5] = color;
+#if MSX_VDP_SPRITE_LOG_ENABLED
+            s_msxSpritePixelsDrawn++;
+#endif
+        }
+        if ((pattern & 0x02u) != 0u) {
+            dst[6] = color;
+#if MSX_VDP_SPRITE_LOG_ENABLED
+            s_msxSpritePixelsDrawn++;
+#endif
+        }
+        if ((pattern & 0x01u) != 0u) {
+            dst[7] = color;
+#if MSX_VDP_SPRITE_LOG_ENABLED
+            s_msxSpritePixelsDrawn++;
+#endif
+        }
+        return;
+    }
+
+    if (detectCollision) {
+        if ((pattern & 0x80u) != 0u) {
+            collided = collided || (dst[0] != 0u);
+            dst[0] |= color;
+#if MSX_VDP_SPRITE_LOG_ENABLED
+            s_msxSpritePixelsDrawn++;
+#endif
+        }
+        if ((pattern & 0x40u) != 0u) {
+            collided = collided || (dst[1] != 0u);
+            dst[1] |= color;
+#if MSX_VDP_SPRITE_LOG_ENABLED
+            s_msxSpritePixelsDrawn++;
+#endif
+        }
+        if ((pattern & 0x20u) != 0u) {
+            collided = collided || (dst[2] != 0u);
+            dst[2] |= color;
+#if MSX_VDP_SPRITE_LOG_ENABLED
+            s_msxSpritePixelsDrawn++;
+#endif
+        }
+        if ((pattern & 0x10u) != 0u) {
+            collided = collided || (dst[3] != 0u);
+            dst[3] |= color;
+#if MSX_VDP_SPRITE_LOG_ENABLED
+            s_msxSpritePixelsDrawn++;
+#endif
+        }
+        if ((pattern & 0x08u) != 0u) {
+            collided = collided || (dst[4] != 0u);
+            dst[4] |= color;
+#if MSX_VDP_SPRITE_LOG_ENABLED
+            s_msxSpritePixelsDrawn++;
+#endif
+        }
+        if ((pattern & 0x04u) != 0u) {
+            collided = collided || (dst[5] != 0u);
+            dst[5] |= color;
+#if MSX_VDP_SPRITE_LOG_ENABLED
+            s_msxSpritePixelsDrawn++;
+#endif
+        }
+        if ((pattern & 0x02u) != 0u) {
+            collided = collided || (dst[6] != 0u);
+            dst[6] |= color;
+#if MSX_VDP_SPRITE_LOG_ENABLED
+            s_msxSpritePixelsDrawn++;
+#endif
+        }
+        if ((pattern & 0x01u) != 0u) {
+            collided = collided || (dst[7] != 0u);
+            dst[7] |= color;
+#if MSX_VDP_SPRITE_LOG_ENABLED
+            s_msxSpritePixelsDrawn++;
+#endif
+        }
+
+        if (collided) {
+            msx_vdp_record_sprite_collision(state);
+        }
+        return;
+    }
+
+    if ((pattern & 0x80u) != 0u) {
+        dst[0] |= color;
+#if MSX_VDP_SPRITE_LOG_ENABLED
+        s_msxSpritePixelsDrawn++;
+#endif
+    }
+    if ((pattern & 0x40u) != 0u) {
+        dst[1] |= color;
+#if MSX_VDP_SPRITE_LOG_ENABLED
+        s_msxSpritePixelsDrawn++;
+#endif
+    }
+    if ((pattern & 0x20u) != 0u) {
+        dst[2] |= color;
+#if MSX_VDP_SPRITE_LOG_ENABLED
+        s_msxSpritePixelsDrawn++;
+#endif
+    }
+    if ((pattern & 0x10u) != 0u) {
+        dst[3] |= color;
+#if MSX_VDP_SPRITE_LOG_ENABLED
+        s_msxSpritePixelsDrawn++;
+#endif
+    }
+    if ((pattern & 0x08u) != 0u) {
+        dst[4] |= color;
+#if MSX_VDP_SPRITE_LOG_ENABLED
+        s_msxSpritePixelsDrawn++;
+#endif
+    }
+    if ((pattern & 0x04u) != 0u) {
+        dst[5] |= color;
+#if MSX_VDP_SPRITE_LOG_ENABLED
+        s_msxSpritePixelsDrawn++;
+#endif
+    }
+    if ((pattern & 0x02u) != 0u) {
+        dst[6] |= color;
+#if MSX_VDP_SPRITE_LOG_ENABLED
+        s_msxSpritePixelsDrawn++;
+#endif
+    }
+    if ((pattern & 0x01u) != 0u) {
+        dst[7] |= color;
+#if MSX_VDP_SPRITE_LOG_ENABLED
+        s_msxSpritePixelsDrawn++;
+#endif
+    }
+}
+
 bool msx_vdp_render_color_sprites_line(MsxVdpState* state, unsigned y, uint8_t* line)
 {
     if (!state || !line) {
         return false;
     }
 
-    std::memset(line, 0, kMsxSpriteColorLineWidth);
     static constexpr uint8_t kSpriteHeights[4] = {8u, 16u, 16u, 32u};
     const uint8_t lineVScroll = msx_vdp_reg23_for_line(state, y);
     const uint8_t scrolledScanY =
@@ -3147,6 +3396,8 @@ bool msx_vdp_render_color_sprites_line(MsxVdpState* state, unsigned y, uint8_t* 
     if (count == 0u) {
         return false;
     }
+    
+    std::memset(line, 0, kMsxSpriteColorLineWidth);
 #if MSX_VDP_SPRITE_LOG_ENABLED
     s_msxSpriteActiveLines++;
     s_msxSpriteSelectedCount += count;
@@ -3191,24 +3442,49 @@ bool msx_vdp_render_color_sprites_line(MsxVdpState* state, unsigned y, uint8_t* 
         const bool largeSprite = inputHeight > 8u;
         const uint8_t basePattern = largeSprite ? static_cast<uint8_t>(patternId & 0xFCu) : patternId;
         const uint32_t patternRow = static_cast<uint32_t>(basePattern) * 8u + static_cast<uint32_t>(lineIndex);
-        msx_vdp_plot_color_sprite_bits(state,
-                                      line,
-                                      x,
-                                      msx_vdp_read_vram_fast(state->vram, state->vramMask, patternBase + patternRow),
-                                      color,
-                                      scale,
-                                      mergeColors,
-                                      detectSpriteCollision);
-
-        if (largeSprite) {
+        const uint8_t leftPattern =
+            msx_vdp_read_vram_fast(state->vram, state->vramMask, patternBase + patternRow);
+        if (msx_vdp_can_use_color_sprite_scale1_fast_path(x, leftPattern, scale)) {
+            msx_vdp_plot_color_sprite_bits_scale1(state,
+                                                  line,
+                                                  x,
+                                                  leftPattern,
+                                                  color,
+                                                  mergeColors,
+                                                  detectSpriteCollision);
+        } else {
             msx_vdp_plot_color_sprite_bits(state,
                                            line,
-                                           x + static_cast<int>(8u * scale),
-                                      msx_vdp_read_vram_fast(state->vram, state->vramMask, patternBase + patternRow + 16u),
+                                           x,
+                                           leftPattern,
                                            color,
                                            scale,
                                            mergeColors,
                                            detectSpriteCollision);
+        }
+
+        if (largeSprite) {
+            const int rightX = x + static_cast<int>(8u * scale);
+            const uint8_t rightPattern =
+                msx_vdp_read_vram_fast(state->vram, state->vramMask, patternBase + patternRow + 16u);
+            if (msx_vdp_can_use_color_sprite_scale1_fast_path(rightX, rightPattern, scale)) {
+                msx_vdp_plot_color_sprite_bits_scale1(state,
+                                                      line,
+                                                      rightX,
+                                                      rightPattern,
+                                                      color,
+                                                      mergeColors,
+                                                      detectSpriteCollision);
+            } else {
+                msx_vdp_plot_color_sprite_bits(state,
+                                               line,
+                                               rightX,
+                                               rightPattern,
+                                               color,
+                                               scale,
+                                               mergeColors,
+                                               detectSpriteCollision);
+            }
         }
     }
 
