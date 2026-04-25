@@ -5528,6 +5528,7 @@ uint8_t msx_vdp_in_status(MsxVdpState* state)
 
     uint8_t value = state->status[index];
     msx_vdp_diag_log_status_read(state, index, value);
+    state->controlPending = false;
     if (index == 0u) {
         state->status[0] &= 0x5Fu;
     } else if (index == 1u) {
