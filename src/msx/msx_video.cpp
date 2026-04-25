@@ -61,7 +61,6 @@ struct MsxVideoPlan {
 struct MsxLineStreamState {
     bool active;
     bool cropOnly;
-    bool useRgb444;
     int srcX0;
     int srcY0;
     int roiH;
@@ -132,11 +131,6 @@ bool msx_video_game_on_external(void)
     return g_emu_display_target == EMU_DISPLAY_EXTERNAL;
 }
 
-bool msx_video_use_external_rgb444(void)
-{
-    return msx_video_game_on_external() && (g_emu_color_depth == EMU_COLOR_12BIT);
-}
-
 int msx_video_target_w(void)
 {
     return msx_video_game_on_external() ? kExternalTargetW : kInternalTargetW;
@@ -193,20 +187,17 @@ void msx_video_prepare_external_tft(void)
         }
     }
 
-    const bool useRgb444 = msx_video_use_external_rgb444();
-    if (!s_extTftColorModeKnown || s_extTftRgb444Configured != useRgb444) {
+    if (!s_extTftColorModeKnown || !s_extTftRgb444Configured) {
         s_extTft.startWrite();
         s_extTft.writecommand(0x3A);
-        s_extTft.writedata(useRgb444 ? 0x53 : 0x55);
+        s_extTft.writedata(0x53);
         s_extTft.endWrite();
-        s_extTftRgb444Configured = useRgb444;
+        s_extTftRgb444Configured = true;
         s_extTftColorModeKnown = true;
-        std::printf("[MSX][VIDEO] external color=%s\n",
-                    useRgb444 ? "RGB444 12-bit" : "RGB565 16-bit");
+        std::printf("[MSX][VIDEO] external color=RGB444 12-bit\n");
         s_extTftColorModeLogged = true;
     } else if (!s_extTftColorModeLogged) {
-        std::printf("[MSX][VIDEO] external color=%s\n",
-                    s_extTftRgb444Configured ? "RGB444 12-bit" : "RGB565 16-bit");
+        std::printf("[MSX][VIDEO] external color=RGB444 12-bit\n");
         s_extTftColorModeLogged = true;
     }
 }
@@ -679,7 +670,7 @@ bool msx_video_prepare_buffers(const MsxVideoPlan& plan, bool layoutChanged)
         s_lineCap = s_lineBuf ? neededLineWidth : 0;
     }
 
-    if (msx_video_use_external_rgb444()) {
+    if (msx_video_game_on_external()) {
         const int neededBytes = ((neededLineWidth * kBatchLines + 1) / 2) * 3;
         if (neededBytes > s_lineBuf12Cap) {
             free(s_lineBuf12);
@@ -708,7 +699,7 @@ bool msx_video_prepare_buffers(const MsxVideoPlan& plan, bool layoutChanged)
     if (!s_lineBuf) {
         return false;
     }
-    if (msx_video_use_external_rgb444() && !s_lineBuf12) {
+    if (msx_video_game_on_external() && !s_lineBuf12) {
         return false;
     }
     if (!plan.cropOnly && (!s_xmap || !s_ymap)) {
@@ -789,7 +780,7 @@ static void msx_video_emit_stream_line(const MsxLineStreamState& stream,
         (dstY < (msx_video_fps_hud_margin_y() + msx_video_fps_hud_box_height())) &&
         msx_video_should_draw_fps_hud(stream.dstW, stream.dstH);
 
-    if (msx_video_game_on_external() && stream.useRgb444) {
+    if (msx_video_game_on_external()) {
         const int bytesPerLine = ((stream.dstW + 1) / 2) * 3;
         if (overlayLine) {
             if (stream.cropOnly) {
@@ -844,17 +835,6 @@ static void msx_video_emit_stream_line(const MsxLineStreamState& stream,
         msx_video_draw_fps_hud_row(s_lineBuf, stream.dstW, stream.dstH, dstY);
     }
 
-    if (msx_video_game_on_external()) {
-        if (stream.useRgb444) {
-            msx_video_pack_rgb444_line(s_lineBuf, stream.dstW, s_lineBuf12);
-            const int bytesPerLine = ((stream.dstW + 1) / 2) * 3;
-            s_extTft.pushColors(reinterpret_cast<uint16_t*>(s_lineBuf12), (bytesPerLine + 1) / 2, false);
-        } else {
-            s_extTft.pushColors(s_lineBuf, stream.dstW, false);
-        }
-        return;
-    }
-
     M5Cardputer.Display.pushPixels(s_lineBuf, stream.dstW);
     taskYIELD();
 }
@@ -887,7 +867,6 @@ bool msx_video_begin_line_stream_impl(const MsxDisplayFrame* frame)
 
     s_lineStream.active = true;
     s_lineStream.cropOnly = plan.cropOnly;
-    s_lineStream.useRgb444 = msx_video_use_external_rgb444();
     s_lineStream.srcX0 = plan.srcX0;
     s_lineStream.srcY0 = plan.srcY0;
     s_lineStream.roiH = plan.roiH;
@@ -964,46 +943,30 @@ void msx_video_end_line_stream_impl(void)
 void msx_video_draw_crop_frame(const MsxDisplayFrame* frame, const MsxVideoPlan& plan)
 {
     const uint16_t* palette = frame->palette565 ? frame->palette565 : s_palette565;
-    const bool useRgb444 = msx_video_use_external_rgb444();
     msx_video_init_palette_pairs(palette, frame->paletteEntryCount);
 
     if (msx_video_game_on_external()) {
         msx_video_begin_active_write(plan);
-        if (useRgb444) {
-            const int bytesPerLine = ((plan.dstW + 1) / 2) * 3;
-            for (int y = 0; y < plan.dstH; y += kBatchLines) {
-                const int batch = (y + kBatchLines <= plan.dstH) ? kBatchLines : (plan.dstH - y);
-                for (int row = 0; row < batch; ++row) {
-                    const uint8_t* src = frame->indexed8
-                        + static_cast<size_t>(plan.srcY0 + y + row) * frame->pitchBytes
-                        + static_cast<size_t>(plan.srcX0);
-                    uint8_t* dst = s_lineBuf12 + static_cast<size_t>(row) * bytesPerLine;
-                    const int dstY = y + row;
-                    if (msx_video_should_draw_fps_hud(plan.dstW, plan.dstH) &&
-                        dstY < (msx_video_fps_hud_margin_y() + msx_video_fps_hud_box_height())) {
-                        uint16_t* dst565 = s_lineBuf + static_cast<size_t>(row) * plan.dstW;
-                        msx_video_expand_indexed_line(src, dst565, plan.dstW, palette, frame->paletteEntryCount);
-                        msx_video_draw_fps_hud_row(dst565, plan.dstW, plan.dstH, dstY);
-                        msx_video_pack_rgb444_line(dst565, plan.dstW, dst);
-                    } else {
-                        msx_video_pack_indexed_rgb444_line(src, dst, plan.dstW, frame->paletteEntryCount);
-                    }
+        const int bytesPerLine = ((plan.dstW + 1) / 2) * 3;
+        for (int y = 0; y < plan.dstH; y += kBatchLines) {
+            const int batch = (y + kBatchLines <= plan.dstH) ? kBatchLines : (plan.dstH - y);
+            for (int row = 0; row < batch; ++row) {
+                const uint8_t* src = frame->indexed8
+                    + static_cast<size_t>(plan.srcY0 + y + row) * frame->pitchBytes
+                    + static_cast<size_t>(plan.srcX0);
+                uint8_t* dst = s_lineBuf12 + static_cast<size_t>(row) * bytesPerLine;
+                const int dstY = y + row;
+                if (msx_video_should_draw_fps_hud(plan.dstW, plan.dstH) &&
+                    dstY < (msx_video_fps_hud_margin_y() + msx_video_fps_hud_box_height())) {
+                    uint16_t* dst565 = s_lineBuf + static_cast<size_t>(row) * plan.dstW;
+                    msx_video_expand_indexed_line(src, dst565, plan.dstW, palette, frame->paletteEntryCount);
+                    msx_video_draw_fps_hud_row(dst565, plan.dstW, plan.dstH, dstY);
+                    msx_video_pack_rgb444_line(dst565, plan.dstW, dst);
+                } else {
+                    msx_video_pack_indexed_rgb444_line(src, dst, plan.dstW, frame->paletteEntryCount);
                 }
-                s_extTft.pushColors(reinterpret_cast<uint16_t*>(s_lineBuf12), (bytesPerLine * batch + 1) / 2, false);
             }
-        } else {
-            for (int y = 0; y < plan.dstH; y += kBatchLines) {
-                const int batch = (y + kBatchLines <= plan.dstH) ? kBatchLines : (plan.dstH - y);
-                for (int row = 0; row < batch; ++row) {
-                    const uint8_t* src = frame->indexed8
-                        + static_cast<size_t>(plan.srcY0 + y + row) * frame->pitchBytes
-                        + static_cast<size_t>(plan.srcX0);
-                    uint16_t* dst = s_lineBuf + static_cast<size_t>(row) * plan.dstW;
-                    msx_video_expand_indexed_line(src, dst, plan.dstW, palette, frame->paletteEntryCount);
-                    msx_video_draw_fps_hud_row(dst, plan.dstW, plan.dstH, y + row);
-                }
-                s_extTft.pushColors(s_lineBuf, plan.dstW * batch, false);
-            }
+            s_extTft.pushColors(reinterpret_cast<uint16_t*>(s_lineBuf12), (bytesPerLine * batch + 1) / 2, false);
         }
         msx_video_end_active_write();
         return;
@@ -1029,57 +992,34 @@ void msx_video_draw_crop_frame(const MsxDisplayFrame* frame, const MsxVideoPlan&
 void msx_video_draw_scaled_frame(const MsxDisplayFrame* frame, const MsxVideoPlan& plan)
 {
     const uint16_t* palette = frame->palette565 ? frame->palette565 : s_palette565;
-    const bool useRgb444 = msx_video_use_external_rgb444();
     msx_video_init_palette_pairs(palette, frame->paletteEntryCount);
 
     if (msx_video_game_on_external()) {
         msx_video_begin_active_write(plan);
-        if (useRgb444) {
-            const int bytesPerLine = ((plan.dstW + 1) / 2) * 3;
-            for (int y = 0; y < plan.dstH; y += kBatchLines) {
-                const int batch = (y + kBatchLines <= plan.dstH) ? kBatchLines : (plan.dstH - y);
-                for (int row = 0; row < batch; ++row) {
-                    const uint8_t* src = frame->indexed8 + static_cast<size_t>(s_ymap[y + row]) * frame->pitchBytes;
-                    uint8_t* dst = s_lineBuf12 + static_cast<size_t>(row) * bytesPerLine;
-                    const int dstY = y + row;
-                    if (msx_video_should_draw_fps_hud(plan.dstW, plan.dstH) &&
-                        dstY < (msx_video_fps_hud_margin_y() + msx_video_fps_hud_box_height())) {
-                        uint16_t* dst565 = s_lineBuf + static_cast<size_t>(row) * plan.dstW;
-                        for (int x = 0; x < plan.dstW; ++x) {
-                            dst565[x] = palette[src[s_xmap[x]]];
-                        }
-                        msx_video_draw_fps_hud_row(dst565, plan.dstW, plan.dstH, dstY);
-                        msx_video_pack_rgb444_line(dst565, plan.dstW, dst);
-                    } else {
-                        msx_video_pack_mapped_rgb444_line(src,
-                                                          dst,
-                                                          plan.dstW,
-                                                          s_xmap,
-                                                          frame->paletteEntryCount);
+        const int bytesPerLine = ((plan.dstW + 1) / 2) * 3;
+        for (int y = 0; y < plan.dstH; y += kBatchLines) {
+            const int batch = (y + kBatchLines <= plan.dstH) ? kBatchLines : (plan.dstH - y);
+            for (int row = 0; row < batch; ++row) {
+                const uint8_t* src = frame->indexed8 + static_cast<size_t>(s_ymap[y + row]) * frame->pitchBytes;
+                uint8_t* dst = s_lineBuf12 + static_cast<size_t>(row) * bytesPerLine;
+                const int dstY = y + row;
+                if (msx_video_should_draw_fps_hud(plan.dstW, plan.dstH) &&
+                    dstY < (msx_video_fps_hud_margin_y() + msx_video_fps_hud_box_height())) {
+                    uint16_t* dst565 = s_lineBuf + static_cast<size_t>(row) * plan.dstW;
+                    for (int x = 0; x < plan.dstW; ++x) {
+                        dst565[x] = palette[src[s_xmap[x]]];
                     }
+                    msx_video_draw_fps_hud_row(dst565, plan.dstW, plan.dstH, dstY);
+                    msx_video_pack_rgb444_line(dst565, plan.dstW, dst);
+                } else {
+                    msx_video_pack_mapped_rgb444_line(src,
+                                                      dst,
+                                                      plan.dstW,
+                                                      s_xmap,
+                                                      frame->paletteEntryCount);
                 }
-                s_extTft.pushColors(reinterpret_cast<uint16_t*>(s_lineBuf12), (bytesPerLine * batch + 1) / 2, false);
             }
-        } else {
-            for (int y = 0; y < plan.dstH; y += kBatchLines) {
-                const int batch = (y + kBatchLines <= plan.dstH) ? kBatchLines : (plan.dstH - y);
-                for (int row = 0; row < batch; ++row) {
-                    const uint8_t* src = frame->indexed8 + static_cast<size_t>(s_ymap[y + row]) * frame->pitchBytes;
-                    uint16_t* dst = s_lineBuf + static_cast<size_t>(row) * plan.dstW;
-                    int x = 0;
-                    for (; x + 3 < plan.dstW; x += 4) {
-                        dst[x] = palette[src[s_xmap[x]]];
-                        dst[x + 1] = palette[src[s_xmap[x + 1]]];
-                        dst[x + 2] = palette[src[s_xmap[x + 2]]];
-                        dst[x + 3] = palette[src[s_xmap[x + 3]]];
-                    }
-                    for (; x < plan.dstW; ++x) {
-                        dst[x] = palette[src[s_xmap[x]]];
-                    }
-                    msx_video_draw_fps_hud_row(dst, plan.dstW, plan.dstH, y + row);
-                }
-                s_extTft.pushColors(s_lineBuf, plan.dstW * batch, false);
-            }
+            s_extTft.pushColors(reinterpret_cast<uint16_t*>(s_lineBuf12), (bytesPerLine * batch + 1) / 2, false);
         }
         msx_video_end_active_write();
         return;

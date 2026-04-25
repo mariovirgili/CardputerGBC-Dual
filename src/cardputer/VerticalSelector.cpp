@@ -244,7 +244,7 @@ int VerticalSelector::select(
                 return longEscResult;
             case KEY_ARROW_LEFT:
                 if (!romBrowserControls) {
-                    return -1;
+                    return shortEscResult;
                 }
                 break;
             case KEY_DEL:

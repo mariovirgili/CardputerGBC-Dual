@@ -36,7 +36,27 @@ static void showExternalRomSelectorTft()
   extTft.setSwapBytes(false);
 }
 
-static MsxMachineMode selectMsxLaunchSystem(CardputerView& display, CardputerInput& input)
+namespace {
+constexpr int kSelectorResultEditControls = -2;
+constexpr int kSelectorResultBackToRomBrowser = -3;
+
+struct MsxMachineSelectionResult {
+  bool backToRomBrowser = false;
+  MsxMachineMode mode = MsxMachineMode::MSX2;
+};
+
+struct MsxBoolSelectionResult {
+  bool backToRomBrowser = false;
+  bool value = false;
+};
+
+struct MsxDisplayTargetSelectionResult {
+  bool backToRomBrowser = false;
+  emu_display_target_t target = EMU_DISPLAY_EXTERNAL;
+};
+} // namespace
+
+static MsxMachineSelectionResult selectMsxLaunchSystem(CardputerView& display, CardputerInput& input)
 {
   VerticalSelector selector(display, input);
   const MsxMachineMode persistedMode = msx_config_load_machine_mode();
@@ -46,7 +66,6 @@ static MsxMachineMode selectMsxLaunchSystem(CardputerView& display, CardputerInp
   };
 
   const int initialIndex = (persistedMode == MsxMachineMode::MSX1) ? 0 : 1;
-
   const int selected = selector.select("MSX launch system",
                                        options,
                                        false,
@@ -56,40 +75,72 @@ static MsxMachineMode selectMsxLaunchSystem(CardputerView& display, CardputerInp
                                        false,
                                        true,
                                        true,
-                                       initialIndex);
+                                       initialIndex,
+                                       -1,
+                                       kSelectorResultBackToRomBrowser);
+
+  if (selected == kSelectorResultBackToRomBrowser) {
+    MsxMachineSelectionResult result;
+    result.backToRomBrowser = true;
+    result.mode = persistedMode;
+    return result;
+  }
 
   const int chosen = selected >= 0 ? selected : initialIndex;
-  return chosen == 0 ? MsxMachineMode::MSX1 : MsxMachineMode::MSX2;
+  MsxMachineSelectionResult result;
+  result.backToRomBrowser = false;
+  result.mode = chosen == 0 ? MsxMachineMode::MSX1 : MsxMachineMode::MSX2;
+  return result;
 }
 
-static bool selectMsxPerformanceMode(CardputerView& display, CardputerInput& input)
+static MsxDisplayTargetSelectionResult selectMsxDisplayTarget(CardputerView& display,
+                                                              CardputerInput& input,
+                                                              SdService& sd,
+                                                              share::EmuProfile emuProfile,
+                                                              bool hasProfile,
+                                                              emu_display_target_t savedTarget)
 {
   VerticalSelector selector(display, input);
-  const bool persistedMode = msx_config_load_performance_mode() == MsxPerformanceMode::Performance;
-  const std::vector<std::string> options = {
-      "Accurate / Compatible",
-      "Performance / Fast",
-  };
+  const std::vector<std::string> options = {"External TFT", "Internal LCD"};
+  const int initialIndex = (savedTarget == EMU_DISPLAY_EXTERNAL) ? 0 : 1;
 
-  const int initialIndex = persistedMode ? 1 : 0;
-  const int selected = selector.select("MSX performance mode",
-                                       options,
-                                       false,
-                                       false,
-                                       {},
-                                       {},
-                                       false,
-                                       true,
-                                       true,
-                                       initialIndex);
+  for (;;) {
+    display.topBar("SELECT DISPLAY", false, false);
+    const int selected = selector.select("Display target",
+                                         options,
+                                         false,
+                                         false,
+                                         {},
+                                         {},
+                                         false,
+                                         true,
+                                         true,
+                                         initialIndex,
+                                         hasProfile ? kSelectorResultEditControls : -1,
+                                         kSelectorResultBackToRomBrowser);
+    if (selected == kSelectorResultEditControls && hasProfile) {
+      share::emuControlsEdit(sd, emuProfile, display, input);
+      input.flushInput(150);
+      continue;
+    }
+    if (selected == kSelectorResultBackToRomBrowser) {
+      MsxDisplayTargetSelectionResult result;
+      result.backToRomBrowser = true;
+      result.target = savedTarget;
+      return result;
+    }
 
-  const int chosen = selected >= 0 ? selected : initialIndex;
-  return chosen == 1;
+    const int chosen = selected >= 0 ? selected : initialIndex;
+    MsxDisplayTargetSelectionResult result;
+    result.backToRomBrowser = false;
+    result.target = chosen == 0 ? EMU_DISPLAY_EXTERNAL : EMU_DISPLAY_INTERNAL;
+    return result;
+  }
 }
 
-static bool selectMsxExternalFpsLock(CardputerView& display,
-                                     CardputerInput& input,
-                                     bool persistedLocked)
+static MsxBoolSelectionResult selectMsxExternalFpsLock(CardputerView& display,
+                                                       CardputerInput& input,
+                                                       bool persistedLocked)
 {
   VerticalSelector selector(display, input);
   const std::vector<std::string> options = {
@@ -107,10 +158,22 @@ static bool selectMsxExternalFpsLock(CardputerView& display,
                                        false,
                                        true,
                                        true,
-                                       initialIndex);
+                                       initialIndex,
+                                       -1,
+                                       kSelectorResultBackToRomBrowser);
+
+  if (selected == kSelectorResultBackToRomBrowser) {
+    MsxBoolSelectionResult result;
+    result.backToRomBrowser = true;
+    result.value = persistedLocked;
+    return result;
+  }
 
   const int chosen = selected >= 0 ? selected : initialIndex;
-  return chosen == 1;
+  MsxBoolSelectionResult result;
+  result.backToRomBrowser = false;
+  result.value = chosen == 1;
+  return result;
 }
 
 static void welcomeExternalTft()
@@ -377,22 +440,106 @@ void setup() {
     }
   }
 
-  while (!ensureSelectedRomFitsPartition(sd, display, input, romPart, romPath)) {
+  auto reopenMsxLaunchBrowser = [&](const std::string& currentRomPath) {
     std::string browserFolder = getRomFolderFromSd(sd);
     if (browserFolder.empty()) {
-      browserFolder = extractRomFolder(romPath);
+      browserFolder = extractRomFolder(normalizeRomBrowserPath(currentRomPath));
     }
+    pendingLaunch = PendingLaunchState{};
     romPath = reopenRomBrowser(sd, display, input, browserFolder, true);
-  }
+    selectedFromBrowser = !romPath.empty();
+  };
 
-  const RomType ext = getRomType(romPath);
-  if (!pendingLaunch.valid() && selectedFromBrowser && ext != ROM_TYPE_UNKNOWN) {
-    MsxMachineMode chosenMachineMode = msx_config_load_machine_mode();
-    if (ext == ROM_TYPE_MSX || ext == ROM_TYPE_MSX_DISK || ext == ROM_TYPE_MSX_CAS) {
-      chosenMachineMode = selectMsxLaunchSystem(display, input);
+  RomType ext = ROM_TYPE_UNKNOWN;
+  const share::EmuProfile emuProfile = share::EmuProfile::MSX;
+  bool hasProfile = false;
+  std::string romName;
+
+  for (;;) {
+    while (!ensureSelectedRomFitsPartition(sd, display, input, romPart, romPath)) {
+      std::string browserFolder = getRomFolderFromSd(sd);
+      if (browserFolder.empty()) {
+        browserFolder = extractRomFolder(romPath);
+      }
+      romPath = reopenRomBrowser(sd, display, input, browserFolder, true);
+      selectedFromBrowser = !romPath.empty();
+      pendingLaunch = PendingLaunchState{};
     }
-    msx_config_set_machine_mode(chosenMachineMode, false);
-    restartForPendingLaunch(display, sd, romPath, static_cast<int>(chosenMachineMode));
+
+    ext = getRomType(romPath);
+    hasProfile = (ext == ROM_TYPE_MSX || ext == ROM_TYPE_MSX_DISK || ext == ROM_TYPE_MSX_CAS);
+    if (hasProfile) {
+      share::emuControlsLoad(sd, emuProfile);
+    }
+
+    auto pos = romPath.find_last_of("/\\");
+    romName = (pos == std::string::npos) ? romPath : romPath.substr(pos + 1);
+
+    if (!pendingLaunch.valid() && selectedFromBrowser && ext != ROM_TYPE_UNKNOWN) {
+      MsxMachineMode chosenMachineMode = msx_config_load_machine_mode();
+      if (hasProfile) {
+        const MsxMachineSelectionResult machineSelection = selectMsxLaunchSystem(display, input);
+        if (machineSelection.backToRomBrowser) {
+          reopenMsxLaunchBrowser(romPath);
+          continue;
+        }
+        chosenMachineMode = machineSelection.mode;
+      }
+      msx_config_set_machine_mode(chosenMachineMode, false);
+      restartForPendingLaunch(display, sd, romPath, static_cast<int>(chosenMachineMode));
+    }
+
+    if (emu_has_external_display_support((int)ext)) {
+      emu_set_aux_screen_locked(false);
+      const emu_display_target_t savedTarget = emu_load_display_target((int)ext);
+      const MsxDisplayTargetSelectionResult displaySelection =
+        selectMsxDisplayTarget(display, input, sd, emuProfile, hasProfile, savedTarget);
+      if (displaySelection.backToRomBrowser) {
+        reopenMsxLaunchBrowser(romPath);
+        continue;
+      }
+
+      g_emu_display_target = displaySelection.target;
+      if (g_emu_display_target != savedTarget) {
+        emu_save_display_target((int)ext, g_emu_display_target);
+      }
+
+      if (g_emu_display_target == EMU_DISPLAY_EXTERNAL) {
+        g_emu_color_depth = EMU_COLOR_12BIT;
+        if (emu_load_color_depth((int)ext) != EMU_COLOR_12BIT) {
+          emu_save_color_depth((int)ext, EMU_COLOR_12BIT);
+        }
+      } else {
+        g_emu_color_depth = EMU_COLOR_16BIT;
+      }
+
+      if (hasProfile) {
+        msx_config_load_performance_flags();
+        if (g_emu_display_target == EMU_DISPLAY_EXTERNAL) {
+          const bool savedExternalFpsLock =
+            msx_config_get_performance_flag(MsxPerformanceFlag::ExternalFixed30Fps);
+          const MsxBoolSelectionResult fpsLockSelection =
+            selectMsxExternalFpsLock(display, input, savedExternalFpsLock);
+          if (fpsLockSelection.backToRomBrowser) {
+            reopenMsxLaunchBrowser(romPath);
+            continue;
+          }
+          if (fpsLockSelection.value != savedExternalFpsLock) {
+            msx_config_set_performance_flag(MsxPerformanceFlag::ExternalFixed30Fps,
+                                            fpsLockSelection.value,
+                                            true);
+          }
+        }
+      }
+
+      display.initialize();
+      emu_set_aux_screen_locked(false);
+    } else {
+      g_emu_display_target = EMU_DISPLAY_INTERNAL;
+      g_emu_color_depth = EMU_COLOR_16BIT;
+    }
+
+    break;
   }
 
   printf("Selected ROM: %s\n", romPath.c_str());
@@ -426,119 +573,6 @@ void setup() {
 
   // Register the XIP VFS
   vfs_xip_register();
-
-  // Check the extension to choose the emulator
-  const share::EmuProfile emuProfile = share::EmuProfile::MSX;
-  const bool hasProfile = (ext == ROM_TYPE_MSX || ext == ROM_TYPE_MSX_DISK || ext == ROM_TYPE_MSX_CAS);
-  if (hasProfile) {
-    share::emuControlsLoad(sd, emuProfile);
-  }
-
-  // Prepare ROM filename early so we can preview the secondary info screen
-  auto pos = romPath.find_last_of("/\\");
-  std::string romName = (pos == std::string::npos) ? romPath : romPath.substr(pos + 1);
-
-  // Display target selection (for cores that support external TFT)
-  if (emu_has_external_display_support((int)ext)) {
-    emu_set_aux_screen_locked(false);
-    emu_display_target_t savedTarget = emu_load_display_target((int)ext);
-
-    VerticalSelector displaySelector(display, input);
-    std::vector<std::string> displayOptions = {"External TFT", "Internal LCD"};
-    int initialIdx = (savedTarget == EMU_DISPLAY_EXTERNAL) ? 0 : 1;
-    int sel = initialIdx;
-
-    for (;;) {
-      display.topBar("SELECT DISPLAY", false, false);
-      sel = displaySelector.select("Display target", displayOptions,
-                  false, false, {}, {}, false, true, true, initialIdx,
-                  hasProfile ? -2 : -1);
-      if (sel == -2 && hasProfile) {
-        share::emuControlsEdit(sd, emuProfile, display, input);
-        input.flushInput(150);
-        continue;
-      }
-      if (sel < 0) {
-        sel = initialIdx;
-      }
-      break;
-    }
-
-    emu_display_target_t chosen;
-    if (sel == 0) {
-      chosen = EMU_DISPLAY_EXTERNAL;
-    } else {
-      chosen = EMU_DISPLAY_INTERNAL;
-    }
-
-    g_emu_display_target = chosen;
-    if (chosen != savedTarget) {
-      emu_save_display_target((int)ext, chosen);
-    }
-
-    // Color depth selection (only when external display is chosen)
-    if (chosen == EMU_DISPLAY_EXTERNAL) {
-      emu_color_depth_t savedDepth = emu_load_color_depth((int)ext);
-      emu_color_depth_t recommended = emu_recommended_color_depth((int)ext);
-
-      std::string recommendedLabel =
-        (recommended == EMU_COLOR_12BIT)
-          ? "12-bit 4K colors (recommended)"
-          : "16-bit 65K colors (recommended)";
-      std::string alternateLabel =
-        (recommended == EMU_COLOR_12BIT)
-          ? "16-bit 65K colors"
-          : "12-bit 4K colors";
-
-      VerticalSelector depthSelector(display, input);
-      std::vector<std::string> depthOptions = {recommendedLabel, alternateLabel};
-      display.topBar("COLOR DEPTH", false, false);
-
-      int depthInitial = 0;
-      int dsel = depthSelector.select("Color depth", depthOptions,
-                    false, false, {}, {}, false, true, true, depthInitial);
-      if (dsel < 0) {
-        dsel = depthInitial;
-      }
-      emu_color_depth_t chosenDepth = (dsel == 0)
-        ? recommended
-        : (recommended == EMU_COLOR_12BIT ? EMU_COLOR_16BIT : EMU_COLOR_12BIT);
-
-      g_emu_color_depth = chosenDepth;
-      if (chosenDepth != savedDepth) {
-        emu_save_color_depth((int)ext, chosenDepth);
-      }
-    } else {
-      g_emu_color_depth = EMU_COLOR_16BIT;
-    }
-
-    if (hasProfile) {
-      const bool savedPerformanceMode =
-        msx_config_load_performance_mode() == MsxPerformanceMode::Performance;
-      const bool chosenPerformanceMode = selectMsxPerformanceMode(display, input);
-      if (chosenPerformanceMode != savedPerformanceMode) {
-        msx_config_set_performance_mode(chosenPerformanceMode, true);
-      }
-
-      if (chosen == EMU_DISPLAY_EXTERNAL) {
-        const bool savedExternalFpsLock =
-          msx_config_get_performance_flag(MsxPerformanceFlag::ExternalFixed30Fps);
-        const bool chosenExternalFpsLock =
-          selectMsxExternalFpsLock(display, input, savedExternalFpsLock);
-        if (chosenExternalFpsLock != savedExternalFpsLock) {
-          msx_config_set_performance_flag(MsxPerformanceFlag::ExternalFixed30Fps,
-                                          chosenExternalFpsLock,
-                                          true);
-        }
-      }
-    }
-
-    display.initialize();
-    emu_set_aux_screen_locked(false);
-  } else {
-    g_emu_display_target = EMU_DISPLAY_INTERNAL;
-    g_emu_color_depth = EMU_COLOR_16BIT;
-  }
 
   // Show keymapping
   display.topBar("- + SOUND [ ] BRIGHT", false, false);

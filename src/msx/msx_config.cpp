@@ -18,13 +18,13 @@ constexpr const char* kMsx2BiosPathKey = "bios_msx2";
 constexpr const char* kMsx2SubRomPathKey = "bios_sub2";
 constexpr MsxInternalViewMode kMsxDefaultInternalViewMode = MsxInternalViewMode::Wide;
 constexpr MsxMachineMode kMsxDefaultMachineMode = MsxMachineMode::MSX2;
-constexpr MsxPerformanceMode kMsxDefaultPerformanceMode = MsxPerformanceMode::Accurate;
-constexpr uint8_t kMsxDefaultPerformanceFlags = 0u;
-constexpr bool kMsxDefaultFpsOverlayEnabled = true;
 constexpr uint8_t kMsxFastPerformancePresetFlags =
     static_cast<uint8_t>(MsxPerformanceFlag::DisableSpriteCollision) |
     static_cast<uint8_t>(MsxPerformanceFlag::SimplifySpriteOverflow) |
     static_cast<uint8_t>(MsxPerformanceFlag::InstantVdpCommands);
+constexpr MsxPerformanceMode kMsxDefaultPerformanceMode = MsxPerformanceMode::Performance;
+constexpr uint8_t kMsxDefaultPerformanceFlags = kMsxFastPerformancePresetFlags;
+constexpr bool kMsxDefaultFpsOverlayEnabled = true;
 
 MsxInternalViewMode s_internalViewMode = kMsxDefaultInternalViewMode;
 MsxInternalViewMode s_viewModeOverride = kMsxDefaultInternalViewMode;
