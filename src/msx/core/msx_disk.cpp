@@ -723,10 +723,14 @@ static void patch_phydio(MsxCpuState* cpu, MsxMemoryState* memory)
     msx_disk_capture_slot_snapshot(memory, &snapshot);
     msx_disk_map_all_pages_to_ram(memory);
 
+    uint8_t sectorBuf[kMsxDskSectorSize];
     for (uint8_t i = 0u; i < count; ++i) {
         const uint32_t logicalSector = firstSector + i;
 
         if (isWrite) {
+            for (uint16_t b = 0u; b < static_cast<uint16_t>(kMsxDskSectorSize); ++b) {
+                sectorBuf[b] = msx_memory_read8(memory, static_cast<uint16_t>(dstAddr + b));
+            }
             msx_disk_restore_slot_snapshot(memory, &snapshot);
             MSX_DISK_LOG("[MSX][DSK] PHYDIO write blocked: sector=%lu dst=%04X\n",
                          static_cast<unsigned long>(logicalSector),
@@ -735,8 +739,7 @@ static void patch_phydio(MsxCpuState* cpu, MsxMemoryState* memory)
             return;
         }
 
-        const size_t byteOffset = static_cast<size_t>(logicalSector) * kMsxDskSectorSize;
-        if (byteOffset + kMsxDskSectorSize > disk->dskSize) {
+        if (!msx_disk_read_logical_sector(disk, logicalSector, sectorBuf)) {
             msx_disk_restore_slot_snapshot(memory, &snapshot);
             MSX_DISK_LOG("[MSX][DSK] PHYDIO read fail: sector=%lu countIndex=%u\n",
                          static_cast<unsigned long>(logicalSector),
@@ -745,26 +748,10 @@ static void patch_phydio(MsxCpuState* cpu, MsxMemoryState* memory)
             return;
         }
 
-        const uint8_t* src = disk->dskData + byteOffset;
-        uint32_t bytesLeft = kMsxDskSectorSize;
-        while (bytesLeft > 0) {
-            const uint8_t bank = static_cast<uint8_t>(dstAddr >> 13);
-            const uint16_t offset = static_cast<uint16_t>(dstAddr & 0x1FFFu);
-            const uint32_t maxChunk = static_cast<uint32_t>(0x2000u - offset);
-            const uint32_t chunk = bytesLeft < maxChunk ? bytesLeft : maxChunk;
-
-            if (memory->writeMap[bank]) {
-                std::memcpy(memory->writeMap[bank] + offset, src, chunk);
-            } else {
-                for (uint32_t b = 0; b < chunk; ++b) {
-                    msx_memory_write8(memory, static_cast<uint16_t>(dstAddr + b), src[b]);
-                }
-            }
-            
-            src += chunk;
-            dstAddr = static_cast<uint16_t>(dstAddr + chunk);
-            bytesLeft -= chunk;
+        for (uint16_t b = 0u; b < static_cast<uint16_t>(kMsxDskSectorSize); ++b) {
+            msx_memory_write8(memory, static_cast<uint16_t>(dstAddr + b), sectorBuf[b]);
         }
+        dstAddr = static_cast<uint16_t>(dstAddr + kMsxDskSectorSize);
     }
 
     msx_disk_restore_slot_snapshot(memory, &snapshot);
