@@ -237,7 +237,7 @@ static bool msx_vdp_color_sprite_snapshot_is_garbage(const uint8_t* spriteAttr,
            spriteColor[0] == 0xEEu;
 }
 
-static uint32_t msx_vdp_cycle_for_line(const MsxVdpState* state, unsigned y)
+static inline uint32_t msx_vdp_cycle_for_line(const MsxVdpState* state, unsigned y)
 {
     if (!state || state->frameCycleBudget == 0u) {
         return 0u;
@@ -254,8 +254,7 @@ static uint32_t msx_vdp_cycle_for_line(const MsxVdpState* state, unsigned y)
     // can make page-based scrolling jump to the wrong bitmap page.
     static constexpr uint32_t kFrameScanlines = 262u;
     const unsigned clampedY = (y < visibleHeight) ? y : (visibleHeight - 1u);
-    return static_cast<uint32_t>((static_cast<uint64_t>(clampedY) * state->frameCycleBudget) /
-                                 static_cast<uint64_t>(kFrameScanlines));
+    return (clampedY * state->frameCycleBudget) / kFrameScanlines;
 }
 
 #if MSX_VDP_G4_DISP_LOG_ENABLED
@@ -3361,6 +3360,7 @@ bool msx_vdp_render_color_sprites_line(MsxVdpState* state, unsigned y, uint8_t* 
     const uint8_t inputHeight = kSpriteHeights[spriteReg1 & 0x02u];
     const int outputHeightInt = static_cast<int>(outputHeight);
     const int inputHeightInt = static_cast<int>(inputHeight);
+    const uint8_t* const attrPtr = state->vram + attrBase;
     uint8_t selected[32];
     uint8_t count = 0u;
     uint8_t lastIndex = 31u;
@@ -3371,8 +3371,7 @@ bool msx_vdp_render_color_sprites_line(MsxVdpState* state, unsigned y, uint8_t* 
         !msx_config_get_performance_flag(MsxPerformanceFlag::DisableSpriteCollision);
 
     for (uint8_t index = 0; index < 32u; ++index) {
-        const uint32_t attr = static_cast<uint32_t>(index) * 4u;
-        const uint8_t rawSpriteY = msx_vdp_read_vram_fast(state->vram, state->vramMask, attrBase + attr);
+        const uint8_t rawSpriteY = attrPtr[index * 4u];
         if (rawSpriteY == 216u) {
             lastIndex = index;
             break;
@@ -3406,11 +3405,10 @@ bool msx_vdp_render_color_sprites_line(MsxVdpState* state, unsigned y, uint8_t* 
     const unsigned scale = (outputHeight > inputHeight) ? 2u : 1u;
     for (int selectedIndex = static_cast<int>(count) - 1; selectedIndex >= 0; --selectedIndex) {
         const uint8_t index = selected[static_cast<size_t>(selectedIndex)];
-        const uint32_t attr = static_cast<uint32_t>(index) * 4u;
-        const uint8_t spriteY =
-            msx_vdp_read_vram_fast(state->vram, state->vramMask, attrBase + attr);
-        const uint8_t xRaw = msx_vdp_read_vram_fast(state->vram, state->vramMask, attrBase + attr + 1u);
-        const uint8_t patternId = msx_vdp_read_vram_fast(state->vram, state->vramMask, attrBase + attr + 2u);
+        const unsigned attrOffset = static_cast<unsigned>(index) * 4u;
+        const uint8_t spriteY = attrPtr[attrOffset];
+        const uint8_t xRaw = attrPtr[attrOffset + 1u];
+        const uint8_t patternId = attrPtr[attrOffset + 2u];
         int lineIndex = static_cast<int>(static_cast<uint8_t>(scrolledScanY - spriteY - 1u));
         if (lineIndex >= outputHeightInt) {
             continue;
@@ -4292,12 +4290,23 @@ static void msx_vdp_render_bitmap4_range(MsxVdpState* state, unsigned yStart, un
 #endif
 
         if (!useHScroll) {
-            for (unsigned byteX = 0; byteX < (kMsxFrameWidth / 2u); ++byteX) {
-                const uint8_t packed = msx_vdp_read_vram_fast(vram, mask, lineBase + byteX);
-                if (hasSprites) {
-                    msx_vdp_render_bitmap4_byte_with_sprites(packed, spriteLine + byteX * 2u, dst + byteX * 2u);
-                } else {
-                    msx_vdp_render_bitmap4_byte(packed, dst + byteX * 2u);
+            if (!hasSprites && lineBase + (kMsxFrameWidth / 2u) - 1u <= mask) {
+                V9938_BENCH_VRAM_READ(lineBase, kMsxFrameWidth / 2u);
+                const uint8_t* src = vram + lineBase;
+                uint16_t* dst16 = reinterpret_cast<uint16_t*>(dst);
+                for (unsigned byteX = 0; byteX < (kMsxFrameWidth / 2u); ++byteX) {
+                    const uint8_t packed = src[byteX];
+                    dst16[byteX] = static_cast<uint16_t>((packed >> 4) | ((packed & 0x0F) << 8));
+                }
+            
+            } else {
+                for (unsigned byteX = 0; byteX < (kMsxFrameWidth / 2u); ++byteX) {
+                    const uint8_t packed = msx_vdp_read_vram_fast(vram, mask, lineBase + byteX);
+                    if (hasSprites) {
+                        msx_vdp_render_bitmap4_byte_with_sprites(packed, spriteLine + byteX * 2u, dst + byteX * 2u);
+                    } else {
+                        msx_vdp_render_bitmap4_byte(packed, dst + byteX * 2u);
+                    }
                 }
             }
         } else {
@@ -4522,30 +4531,51 @@ static void msx_vdp_render_bitmap6_range(MsxVdpState* state, unsigned yStart, un
 
         if (!useHScroll) {
             if (wideStream) {
-                for (unsigned byteX = 0; byteX < (kMsxWideFrameWidth / 4u); ++byteX) {
-                    const uint8_t packed = msx_vdp_read_vram_fast(vram, mask, lineBase + byteX);
-                    if (hasSprites) {
-                        msx_vdp_render_bitmap6_byte_wide_with_sprites(packed,
-                                                                       spriteLine + byteX * 2u,
-                                                                       dst + byteX * 4u);
-                    } else {
-                        msx_vdp_render_bitmap6_byte_wide(packed, dst + byteX * 4u);
+                if (!hasSprites && lineBase + (kMsxWideFrameWidth / 4u) - 1u <= mask) {
+                    V9938_BENCH_VRAM_READ(lineBase, kMsxWideFrameWidth / 4u);
+                    const uint8_t* src = vram + lineBase;
+                    uint32_t* dst32 = reinterpret_cast<uint32_t*>(dst);
+                    for (unsigned byteX = 0; byteX < (kMsxWideFrameWidth / 4u); ++byteX) {
+                        const uint8_t packed = src[byteX];
+                        dst32[byteX] = static_cast<uint32_t>(((packed >> 6) & 0x03u) |
+                                                             (((packed >> 4) & 0x03u) << 8) |
+                                                             (((packed >> 2) & 0x03u) << 16) |
+                                                             ((packed & 0x03u) << 24));
+                    }
+                } else {
+                    for (unsigned byteX = 0; byteX < (kMsxWideFrameWidth / 4u); ++byteX) {
+                        const uint8_t packed = msx_vdp_read_vram_fast(vram, mask, lineBase + byteX);
+                        if (hasSprites) {
+                            msx_vdp_render_bitmap6_byte_wide_with_sprites(packed, spriteLine + byteX * 2u, dst + byteX * 4u);
+                        } else {
+                            msx_vdp_render_bitmap6_byte_wide(packed, dst + byteX * 4u);
+                        }
                     }
                 }
             } else {
-                for (unsigned byteX = 0; byteX < (kMsxFrameWidth / 2u); ++byteX) {
-                    const uint8_t packed = msx_vdp_read_vram_fast(vram, mask, lineBase + byteX);
-                    const uint8_t p0 = static_cast<uint8_t>((packed >> 6) & 0x03u);
-                    const uint8_t p1 = static_cast<uint8_t>((packed >> 2) & 0x03u);
-                    const unsigned dstX = byteX * 2u;
-                    if (hasSprites) {
-                        const uint8_t s0 = spriteLine[dstX + 0u];
-                        const uint8_t s1 = spriteLine[dstX + 1u];
-                        dst[dstX + 0u] = s0 != 0u ? s0 : p0;
-                        dst[dstX + 1u] = s1 != 0u ? s1 : p1;
-                    } else {
-                        dst[dstX + 0u] = p0;
-                        dst[dstX + 1u] = p1;
+                if (!hasSprites && lineBase + (kMsxFrameWidth / 2u) - 1u <= mask) {
+                    V9938_BENCH_VRAM_READ(lineBase, kMsxFrameWidth / 2u);
+                    const uint8_t* src = vram + lineBase;
+                    uint16_t* dst16 = reinterpret_cast<uint16_t*>(dst);
+                    for (unsigned byteX = 0; byteX < (kMsxFrameWidth / 2u); ++byteX) {
+                        const uint8_t packed = src[byteX];
+                        dst16[byteX] = static_cast<uint16_t>(((packed >> 6) & 0x03u) | (((packed >> 2) & 0x03u) << 8));
+                    }
+                } else {
+                    for (unsigned byteX = 0; byteX < (kMsxFrameWidth / 2u); ++byteX) {
+                        const uint8_t packed = msx_vdp_read_vram_fast(vram, mask, lineBase + byteX);
+                        const uint8_t p0 = static_cast<uint8_t>((packed >> 6) & 0x03u);
+                        const uint8_t p1 = static_cast<uint8_t>((packed >> 2) & 0x03u);
+                        const unsigned dstX = byteX * 2u;
+                        if (hasSprites) {
+                            const uint8_t s0 = spriteLine[dstX + 0u];
+                            const uint8_t s1 = spriteLine[dstX + 1u];
+                            dst[dstX + 0u] = s0 != 0u ? s0 : p0;
+                            dst[dstX + 1u] = s1 != 0u ? s1 : p1;
+                        } else {
+                            dst[dstX + 0u] = p0;
+                            dst[dstX + 1u] = p1;
+                        }
                     }
                 }
             }
@@ -4607,20 +4637,38 @@ static void msx_vdp_render_bitmap7_range(MsxVdpState* state, unsigned yStart, un
 
         if (!useHScroll) {
             if (wideStream) {
-                for (unsigned byteX = 0; byteX < (kMsxWideFrameWidth / 2u); ++byteX) {
-                    const uint8_t packed = msx_vdp_read_vram_fast(vram, mask, lineBase + byteX);
-                    if (hasSprites) {
-                        msx_vdp_render_bitmap7_byte_with_sprites(packed, spriteLine + byteX, dst + byteX * 2u);
-                    } else {
-                        msx_vdp_render_bitmap7_byte(packed, dst + byteX * 2u);
+                if (!hasSprites && lineBase + (kMsxWideFrameWidth / 2u) - 1u <= mask) {
+                    V9938_BENCH_VRAM_READ(lineBase, kMsxWideFrameWidth / 2u);
+                    const uint8_t* src = vram + lineBase;
+                    uint16_t* dst16 = reinterpret_cast<uint16_t*>(dst);
+                    for (unsigned byteX = 0; byteX < (kMsxWideFrameWidth / 2u); ++byteX) {
+                        const uint8_t packed = src[byteX];
+                        dst16[byteX] = static_cast<uint16_t>((packed >> 4) | ((packed & 0x0F) << 8));
+                    }
+                } else {
+                    for (unsigned byteX = 0; byteX < (kMsxWideFrameWidth / 2u); ++byteX) {
+                        const uint8_t packed = msx_vdp_read_vram_fast(vram, mask, lineBase + byteX);
+                        if (hasSprites) {
+                            msx_vdp_render_bitmap7_byte_with_sprites(packed, spriteLine + byteX, dst + byteX * 2u);
+                        } else {
+                            msx_vdp_render_bitmap7_byte(packed, dst + byteX * 2u);
+                        }
                     }
                 }
             } else {
-                for (unsigned x = 0; x < renderWidth; ++x) {
-                    const uint8_t packed = msx_vdp_read_vram_fast(vram, mask, lineBase + x);
-                    const uint8_t pixel = static_cast<uint8_t>(packed >> 4);
-                    const uint8_t sprite = spriteLine[x];
-                    dst[x] = hasSprites && sprite != 0u ? sprite : pixel;
+                if (!hasSprites && lineBase + renderWidth - 1u <= mask) {
+                    V9938_BENCH_VRAM_READ(lineBase, renderWidth);
+                    const uint8_t* src = vram + lineBase;
+                    for (unsigned x = 0; x < renderWidth; ++x) {
+                        dst[x] = static_cast<uint8_t>(src[x] >> 4);
+                    }
+                } else {
+                    for (unsigned x = 0; x < renderWidth; ++x) {
+                        const uint8_t packed = msx_vdp_read_vram_fast(vram, mask, lineBase + x);
+                        const uint8_t pixel = static_cast<uint8_t>(packed >> 4);
+                        const uint8_t sprite = spriteLine[x];
+                        dst[x] = hasSprites && sprite != 0u ? sprite : pixel;
+                    }
                 }
             }
         } else {

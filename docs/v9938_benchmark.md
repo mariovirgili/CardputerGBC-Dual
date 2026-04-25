@@ -15,7 +15,7 @@ That environment adds:
 
 ```ini
 -DENABLE_V9938_BENCH
--DV9938_BENCH_FRAMES=1000
+-DV9938_BENCH_FRAMES=1200
 -DV9938_BENCH_SERIAL_OUTPUT=1
 -DV9938_BENCH_VERBOSE=1
 ```
@@ -43,7 +43,7 @@ When `V9938_BENCH_VERBOSE=1`, progress is printed every 60 frames:
 [V9938Bench] frame=300 fps=58.9 read=1.42MB/s write=0.31MB/s cmd=HMMM:12 LMMM:2 HMMC:4 LMMC:1 LINE:3 FILL:8
 ```
 
-At `V9938_BENCH_FRAMES`, default 1000 in the benchmark environment, the benchmark prints:
+At `V9938_BENCH_FRAMES`, default 1200 in the benchmark environment, the benchmark prints:
 
 - the original compact summary lines;
 - a human-readable `[V9938Bench][REPORT]` block for manual comparisons;

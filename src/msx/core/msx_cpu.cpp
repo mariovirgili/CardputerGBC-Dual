@@ -604,20 +604,25 @@ inline uint8_t msx_cpu_mem_read8(const MsxMemoryState* memory, uint16_t address)
 
 inline bool msx_cpu_fetch_can_use_direct_map(const MsxMemoryState* memory, uint16_t address)
 {
-    uint8_t mirroredValue = 0xFFu;
-    if (address < 0x0010u &&
-        msx_memory_try_cart_header_mirror_read(memory, address, &mirroredValue)) {
-        return false;
+    if (address >= 0x4000u && address < 0xC000u) {
+        return (address & 0x3F88u) != 0x3F88u;
     }
 
-    const uint8_t bank = static_cast<uint8_t>(address >> 13);
-    if (bank >= 6u) {
+    if (address >= 0xC000u) {
         if ((address == 0xFFFFu) || (address == 0xF7C5u) || (address == 0xF7C6u)) {
             return false;
         }
-        return !msx_memory_use_raw_page3_window(address);
+        if (address >= 0xF000u) {
+            if (address >= 0xFE00u && address < 0xFE30u) return true;
+            return false;
+        }
+        return (address & 0x3F88u) != 0x3F88u;
     }
 
+    uint8_t mirroredValue = 0xFFu;
+    if (address < 0x0010u && msx_memory_try_cart_header_mirror_read(memory, address, &mirroredValue)) {
+        return false;
+    }
     return (address & 0x3F88u) != 0x3F88u;
 }
 
@@ -826,21 +831,20 @@ int msx_cpu_step_opcode(MsxCpuState* state, MsxMemoryState* memory);
 uint8_t msx_cpu_fetch8(MsxCpuState* state, const MsxMemoryState* memory)
 {
     const uint16_t pc = state->pc;
-    uint8_t value = 0xFFu;
-    if (msx_cpu_fetch_can_use_direct_map(memory, pc)) {
-        const uint8_t bank = static_cast<uint8_t>(pc >> 13);
-        if (state->currentPcPtr == nullptr ||
-            state->currentPcAddress != pc ||
-            state->fetchBank != bank ||
-            state->fetchMapEpoch != memory->mapEpoch) {
-            msx_cpu_rebase_fetch_ptr(state, memory, pc);
-        }
+    uint8_t value;
 
+    if (state->currentPcAddress == pc && state->fetchMapEpoch == memory->mapEpoch) {
         value = *state->currentPcPtr++;
         state->currentPcAddress = static_cast<uint16_t>(pc + 1u);
     } else {
-        value = msx_cpu_mem_read8(memory, pc);
-        msx_cpu_invalidate_fetch_ptr(state);
+        if (msx_cpu_fetch_can_use_direct_map(memory, pc)) {
+            msx_cpu_rebase_fetch_ptr(state, memory, pc);
+            value = *state->currentPcPtr++;
+            state->currentPcAddress = static_cast<uint16_t>(pc + 1u);
+        } else {
+            value = msx_cpu_mem_read8(memory, pc);
+            msx_cpu_invalidate_fetch_ptr(state);
+        }
     }
 
     if (msx_cpu_fetch_should_return_open_bus_ret(memory, pc)) {
@@ -2437,9 +2441,3 @@ const char* msx_cpu_run_state_label(MsxCpuRunState state)
             return "FAULT";
     }
 }
-
-
-
-
-
-
