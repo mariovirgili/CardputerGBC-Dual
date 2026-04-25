@@ -5592,8 +5592,10 @@ void msx_vdp_out_control(MsxVdpState* state, uint8_t value)
         return;
     }
 
-    const uint8_t reg = msx_vdp_is_msx2(state) ? static_cast<uint8_t>(value & 0x3Fu) : static_cast<uint8_t>(value & 0x07u);
-    msx_vdp_write_register(state, reg, state->latchedControl);
+    if (command == 2u) {
+        const uint8_t reg = msx_vdp_is_msx2(state) ? static_cast<uint8_t>(value & 0x3Fu) : static_cast<uint8_t>(value & 0x07u);
+        msx_vdp_write_register(state, reg, state->latchedControl);
+    }
 }
 
 void msx_vdp_out_palette(MsxVdpState* state, uint8_t value)
