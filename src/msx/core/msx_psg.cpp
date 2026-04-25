@@ -313,7 +313,7 @@ int16_t msx_psg_render_sample(MsxPsgState* state)
 
     // Applica un filtro DSP Passa-Alto (DC Blocker) per eliminare i crepitii statici
     // Formula: y[n] = x[n] - x[n-1] + R * y[n-1] (con R =~ 0.99)
-    int32_t dcFiltered = mix - s_dcFilterX + (s_dcFilterY * 8110) / 8192;
+    int32_t dcFiltered = mix - s_dcFilterX + ((s_dcFilterY * 8110) >> 13);
     s_dcFilterX = mix;
     s_dcFilterY = dcFiltered;
     mix = dcFiltered;
