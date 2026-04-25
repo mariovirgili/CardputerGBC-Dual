@@ -39,13 +39,23 @@
 #include "vfs/rom_xip.h"
 
 #ifndef MSX_RUN_LOG_ENABLED
-#define MSX_RUN_LOG_ENABLED 1
+#define MSX_RUN_LOG_ENABLED 0
+#endif
+
+#ifndef MSX_BOOT_LOG_ENABLED
+#define MSX_BOOT_LOG_ENABLED 1
 #endif
 
 #if MSX_RUN_LOG_ENABLED
 #define MSX_RUN_LOG(...) std::printf(__VA_ARGS__)
 #else
 #define MSX_RUN_LOG(...) do { } while (0)
+#endif
+
+#if MSX_BOOT_LOG_ENABLED
+#define MSX_BOOT_LOG(...) std::printf(__VA_ARGS__)
+#else
+#define MSX_BOOT_LOG(...) do { } while (0)
 #endif
 
 extern uint8_t msx_input_get_state_slot(void);
@@ -1219,7 +1229,7 @@ void run_msx(const uint8_t* romData, size_t romLen, const char* romName, SdServi
 
     printf("[MSX] core init ok\n");
     printf("[MSX] entering main loop\n");
-    MSX_RUN_LOG("[MSX] boot=%s pc=%04X size=%u mapper=%s bios=%s machine=%s\n",
+    MSX_BOOT_LOG("[MSX] boot=%s pc=%04X size=%u mapper=%s bios=%s machine=%s\n",
                 core.directBoot ? "cart" : "bios",
                 core.bootPc,
                 static_cast<unsigned>(rom.size),

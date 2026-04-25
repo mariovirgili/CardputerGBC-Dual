@@ -18,6 +18,10 @@
 #include <cstdio>
 #include <cstring>
 
+#ifndef MSX_RUNTIME_MENU_LOG_ENABLED
+#define MSX_RUNTIME_MENU_LOG_ENABLED 0
+#endif
+
 namespace {
 
 struct MsxInputBindingCache {
@@ -526,6 +530,7 @@ static void msx_clamp_runtime_menu_selection(void)
 
 static void msx_runtime_log_options(void)
 {
+#if MSX_RUNTIME_MENU_LOG_ENABLED
     std::printf("[MSX][MENU] joy=%s keyboard=%s basic=%s vaus=%s perf=%s page=%s cas=%s view=%s menu=%s\n",
                 s_runtimeOptions.joystickEnabled ? "on" : "off",
                 s_runtimeOptions.keyboardEnabled ? "on" : "off",
@@ -536,6 +541,7 @@ static void msx_runtime_log_options(void)
                 s_runtimeOptions.changeCasAvailable ? "on" : "off",
                 msx_runtime_view_label(),
                 s_runtimeMenu.visible ? "open" : "closed");
+#endif
 }
 
 static void msx_runtime_menu_accept(void)

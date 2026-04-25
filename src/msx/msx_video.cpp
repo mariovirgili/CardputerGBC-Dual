@@ -20,6 +20,10 @@
 #define MSX_VIDEO_PERF_LOG_ENABLED 0
 #endif
 
+#ifndef MSX_VIDEO_RUNTIME_LOG_ENABLED
+#define MSX_VIDEO_RUNTIME_LOG_ENABLED 0
+#endif
+
 namespace {
 
 constexpr int kInternalTargetW = 240;
@@ -1044,12 +1048,14 @@ void msx_video_draw_scaled_frame(const MsxDisplayFrame* frame, const MsxVideoPla
 bool msx_video_render_frame_now(const MsxDisplayFrame* frame)
 {
     if (!frame || !frame->indexed8 || frame->width == 0 || frame->height == 0 || frame->pitchBytes < frame->width) {
+#if MSX_VIDEO_RUNTIME_LOG_ENABLED
         std::printf("[MSX][VIDEO] present_frame SKIP: frame=%p i8=%p w=%u h=%u pitch=%u\n",
                     static_cast<const void*>(frame),
                     frame ? static_cast<const void*>(frame->indexed8) : nullptr,
                     frame ? frame->width : 0u,
                     frame ? frame->height : 0u,
                     frame ? static_cast<unsigned>(frame->pitchBytes) : 0u);
+#endif
         return false;
     }
 
@@ -1067,7 +1073,9 @@ bool msx_video_render_frame_now(const MsxDisplayFrame* frame)
     }
 
     if (!msx_video_prepare_buffers(plan, layoutChanged)) {
+#if MSX_VIDEO_RUNTIME_LOG_ENABLED
         std::printf("[MSX][VIDEO] prepare_buffers FAILED dstW=%d dstH=%d\n", plan.dstW, plan.dstH);
+#endif
         return false;
     }
 

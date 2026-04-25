@@ -1006,7 +1006,7 @@ void msx_disk_bios_patch_handler(MsxCpuState* cpu, MsxMemoryState* memory, uint1
         case 0x401Cu: patch_dskfmt(cpu, memory);          break;
         case 0x401Fu: patch_drvoff(cpu, memory);          break;
         default:
-            std::printf("[MSX] ED FE at unknown address %04X\n", patchAddress);
+            MSX_DISK_LOG("[MSX] ED FE at unknown address %04X\n", patchAddress);
             clear_carry(cpu);
             break;
     }

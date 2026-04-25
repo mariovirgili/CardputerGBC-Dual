@@ -12,6 +12,10 @@
 #define MSX_AUDIO_TRACE_ENABLED 0
 #endif
 
+#ifndef MSX_AUDIO_DROP_LOG_ENABLED
+#define MSX_AUDIO_DROP_LOG_ENABLED 0
+#endif
+
 namespace {
 
 #if MSX_AUDIO_ENABLED
@@ -454,12 +458,14 @@ void msx_sound_submit(const int16_t* samples, size_t sampleCount)
         s_audioState.droppedFrames++;
         msx_sound_update_queue_depth();
 
+#if MSX_AUDIO_DROP_LOG_ENABLED
         static uint32_t s_lastDropLog = 0;
         if (millis() - s_lastDropLog > 5000) {
             std::printf("[MSX][AUDIO] WARNING: worker queue full, frame dropped. (Total drops: %lu)\n",
                         static_cast<unsigned long>(s_audioState.droppedFrames));
             s_lastDropLog = millis();
         }
+#endif
         return;
     }
 

@@ -8,6 +8,10 @@
 
 #include <esp_heap_caps.h>
 
+#ifndef SD_SERVICE_RUNTIME_LOG_ENABLED
+#define SD_SERVICE_RUNTIME_LOG_ENABLED 0
+#endif
+
 namespace {
 
 constexpr size_t kDefaultDirectoryLimit = 1024;
@@ -620,11 +624,13 @@ std::vector<std::string> SdService::getCachedDirectoryElements(
 
                 indexFile.close();
                 if (truncatedByMemory) {
+#if SD_SERVICE_RUNTIME_LOG_ENABLED
                     std::printf("[SD] directory index truncated by heap pressure: path=%s count=%u free8=%u largest8=%u\n",
                                 indexPath.c_str(),
                                 static_cast<unsigned>(indexedElements.size()),
                                 static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_8BIT)),
                                 static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_8BIT)));
+#endif
                 }
                 if (headerSeen) {
                     sortIndexedDirectoryElements(path, indexedElements);
