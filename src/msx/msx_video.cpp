@@ -222,14 +222,6 @@ constexpr uint32_t msx_pack_rgb444_pair(uint16_t c0, uint16_t c1)
          | (static_cast<uint32_t>(c1 & 0x00FFu) << 16);
 }
 
-inline void msx_store_rgb444_pair(uint8_t*& dst, uint32_t packed)
-{
-    dst[0] = static_cast<uint8_t>(packed & 0xFFu);
-    dst[1] = static_cast<uint8_t>((packed >> 8) & 0xFFu);
-    dst[2] = static_cast<uint8_t>((packed >> 16) & 0xFFu);
-    dst += 3;
-}
-
 uint8_t msx_video_fps_glyph_row(char ch, int row)
 {
     if (row < 0 || row >= kFpsHudGlyphH) {
@@ -1288,14 +1280,25 @@ void msx_video_pack_mapped_rgb444_line(const uint8_t* src,
                                                       ((src[xmap[x + 1]] & 0x0Fu) << 4));
             const uint8_t key1 = static_cast<uint8_t>((src[xmap[x + 2]] & 0x0Fu) |
                                                       ((src[xmap[x + 3]] & 0x0Fu) << 4));
-            msx_store_rgb444_pair(out, s_palettePairs444[key0]);
-            msx_store_rgb444_pair(out, s_palettePairs444[key1]);
+            const uint32_t p0 = s_palettePairs444[key0];
+            const uint32_t p1 = s_palettePairs444[key1];
+            out[0] = static_cast<uint8_t>(p0);
+            out[1] = static_cast<uint8_t>(p0 >> 8);
+            out[2] = static_cast<uint8_t>(p0 >> 16);
+            out[3] = static_cast<uint8_t>(p1);
+            out[4] = static_cast<uint8_t>(p1 >> 8);
+            out[5] = static_cast<uint8_t>(p1 >> 16);
+            out += 6;
         }
         if (x + 1 < pixelCount) {
             const uint8_t key = static_cast<uint8_t>((src[xmap[x]] & 0x0Fu) |
                                                      ((src[xmap[x + 1]] & 0x0Fu) << 4));
-            msx_store_rgb444_pair(out, s_palettePairs444[key]);
+            const uint32_t p0 = s_palettePairs444[key];
+            out[0] = static_cast<uint8_t>(p0);
+            out[1] = static_cast<uint8_t>(p0 >> 8);
+            out[2] = static_cast<uint8_t>(p0 >> 16);
             x += 2;
+            out += 3;
         }
         if (x < pixelCount) {
             const uint16_t color = s_palette444[src[xmap[x]] & 0x0Fu];
