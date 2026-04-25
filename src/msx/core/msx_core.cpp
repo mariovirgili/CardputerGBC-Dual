@@ -326,10 +326,10 @@ uint8_t msx_core_ram_segment_for_page(const MsxMemoryState* memory, uint8_t page
     }
 
     if (memory->mapperEnabled && memory->ramSegmentCount > 4u) {
-        return static_cast<uint8_t>(memory->mapperRegisters[pageIndex & 0x03u] % memory->ramSegmentCount);
+        return msx_memory_wrap_ram_segment(memory, memory->mapperRegisters[pageIndex & 0x03u]);
     }
 
-    return static_cast<uint8_t>(pageIndex % memory->ramSegmentCount);
+    return msx_memory_wrap_ram_segment(memory, pageIndex);
 }
 
 uint8_t* msx_core_raw_ram_bank_ptr(MsxMemoryState* memory, uint8_t pageIndex, uint8_t subPage)

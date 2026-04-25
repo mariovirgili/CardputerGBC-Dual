@@ -81,6 +81,17 @@ bool msx_memory_has_mapper(const MsxMemoryState* state)
     return state && state->mapperEnabled && state->ramSegmentCount > 4u;
 }
 
+void msx_memory_update_ram_segment_wrap(MsxMemoryState* state)
+{
+    if (!state || state->ramSegmentCount == 0u) {
+        return;
+    }
+
+    state->ramSegmentMask = static_cast<uint8_t>(state->ramSegmentCount - 1u);
+    state->ramSegmentCountPowerOfTwo =
+        (state->ramSegmentCount & state->ramSegmentMask) == 0u;
+}
+
 uint8_t msx_memory_ram_segment(const MsxMemoryState* state, uint8_t pageIndex)
 {
     if (!state || state->ramSegmentCount == 0u) {
@@ -91,10 +102,10 @@ uint8_t msx_memory_ram_segment(const MsxMemoryState* state, uint8_t pageIndex)
         if (state->machineMode == MsxMachineMode::MSX2) {
             return state->mapperRegisters[pageIndex & 0x03u];
         }
-        return static_cast<uint8_t>(state->mapperRegisters[pageIndex & 0x03u] % state->ramSegmentCount);
+        return msx_memory_wrap_ram_segment(state, state->mapperRegisters[pageIndex & 0x03u]);
     }
 
-    return static_cast<uint8_t>(pageIndex % state->ramSegmentCount);
+    return msx_memory_wrap_ram_segment(state, pageIndex);
 }
 
 bool msx_memory_is_static_bank(const uint8_t* ptr)
@@ -692,6 +703,7 @@ bool msx_memory_init(MsxMemoryState* state,
     do {
         state->ramSize = ramSize;
         state->ramSegmentCount = static_cast<uint8_t>(state->ramSize / kMsxPageSize16K);
+        msx_memory_update_ram_segment_wrap(state);
         state->ramBankCount = static_cast<uint8_t>(state->ramSize / kMsxPageSize8K);
         state->mapperEnabled = (machineMode == MsxMachineMode::MSX2) && state->ramSegmentCount > 4u;
 

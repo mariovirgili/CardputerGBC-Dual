@@ -38,6 +38,7 @@ struct MsxMemoryState {
     size_t ramBanksDynamicSize;
     size_t ramSize;
     uint8_t ramSegmentCount;
+    uint8_t ramSegmentMask;
     uint8_t ramBankCount;
     uint8_t mapperRegisters[4];
     const uint8_t* readMap[8];
@@ -59,10 +60,24 @@ struct MsxMemoryState {
     uint8_t lastPortAA;
     uint32_t ioWriteCount;
     bool mapperEnabled;
+    bool ramSegmentCountPowerOfTwo;
     bool cartBootWorkareaFallbackArmed;
     bool cartBootMappingRestoreArmed;
     bool ready;
 };
+
+inline uint8_t msx_memory_wrap_ram_segment(const MsxMemoryState* state, uint8_t segment)
+{
+    if (!state || state->ramSegmentCount == 0u) {
+        return 0u;
+    }
+
+    if (state->ramSegmentCountPowerOfTwo) {
+        return static_cast<uint8_t>(segment & state->ramSegmentMask);
+    }
+
+    return static_cast<uint8_t>(segment % state->ramSegmentCount);
+}
 
 bool msx_memory_init(MsxMemoryState* state,
                      MsxMachineMode machineMode,
