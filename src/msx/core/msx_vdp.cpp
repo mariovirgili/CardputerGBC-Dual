@@ -908,13 +908,26 @@ inline uint8_t msx_vdp_reg_backdrop(const MsxVdpState* state)
     return state ? static_cast<uint8_t>(state->regs[7] & 0x0Fu) : 1u;
 }
 
+inline void msx_vdp_refresh_resolved_color_lut(MsxVdpState* state)
+{
+    if (!state) {
+        return;
+    }
+
+    const uint8_t backdrop = msx_vdp_reg_backdrop(state);
+    state->resolvedColorLut[0] = backdrop == 0u ? 1u : backdrop;
+    for (uint8_t color = 1u; color < 16u; ++color) {
+        state->resolvedColorLut[color] = color;
+    }
+}
+
 inline uint8_t msx_vdp_resolve_color(const MsxVdpState* state, uint8_t color)
 {
-    const uint8_t backdrop = msx_vdp_reg_backdrop(state);
-    if ((color & 0x0Fu) == 0u) {
-        return backdrop == 0u ? 1u : backdrop;
+    if (!state) {
+        const uint8_t resolved = static_cast<uint8_t>(color & 0x0Fu);
+        return resolved == 0u ? 1u : resolved;
     }
-    return static_cast<uint8_t>(color & 0x0Fu);
+    return state->resolvedColorLut[color & 0x0Fu];
 }
 
 inline void msx_vdp_write_vram_fast(MsxVdpState* state, uint32_t address, uint8_t value)
@@ -2625,7 +2638,7 @@ void msx_vdp_write_register(MsxVdpState* state, uint8_t reg, uint8_t value)
 #endif
 
     if (state->regs[reg] != value) {
- #if MSX_VDP_VERBOSE_DIAG_ENABLED
+#if MSX_VDP_VERBOSE_DIAG_ENABLED
         static uint32_t s_msx2KeyRegLogCount = 0u;
         if (msx_vdp_is_msx2(state) && msx_vdp_is_traced_register(reg) && s_msx2KeyRegLogCount < 192u) {
             ++s_msx2KeyRegLogCount;
@@ -2639,6 +2652,9 @@ void msx_vdp_write_register(MsxVdpState* state, uint8_t reg, uint8_t value)
         }
 #endif
         state->regs[reg] = value;
+        if (reg == 7u) {
+            msx_vdp_refresh_resolved_color_lut(state);
+        }
         if (msx_vdp_is_msx2(state)) {
             if (reg == 5u) {
                 msx_vdp_timeline_append(s_msxVdpR5Timeline,
@@ -2842,6 +2858,72 @@ void msx_vdp_plot_sprite_bits(MsxVdpState* state,
                               unsigned scale,
                               bool detectCollision)
 {
+    if (scale == 1u &&
+        pattern != 0u &&
+        x >= 0 &&
+        x <= static_cast<int>(kMsxFrameWidth - 8u)) {
+        uint8_t* const dstPtr = dst + static_cast<size_t>(x);
+
+        if (!detectCollision) {
+            if ((pattern & 0x80u) != 0u) dstPtr[0] = color;
+            if ((pattern & 0x40u) != 0u) dstPtr[1] = color;
+            if ((pattern & 0x20u) != 0u) dstPtr[2] = color;
+            if ((pattern & 0x10u) != 0u) dstPtr[3] = color;
+            if ((pattern & 0x08u) != 0u) dstPtr[4] = color;
+            if ((pattern & 0x04u) != 0u) dstPtr[5] = color;
+            if ((pattern & 0x02u) != 0u) dstPtr[6] = color;
+            if ((pattern & 0x01u) != 0u) dstPtr[7] = color;
+            return;
+        }
+
+        uint8_t* const occPtr = occupancy + static_cast<size_t>(x);
+        bool collided = false;
+        if ((pattern & 0x80u) != 0u) {
+            collided = collided || (occPtr[0] != 0u);
+            occPtr[0] = 1u;
+            dstPtr[0] = color;
+        }
+        if ((pattern & 0x40u) != 0u) {
+            collided = collided || (occPtr[1] != 0u);
+            occPtr[1] = 1u;
+            dstPtr[1] = color;
+        }
+        if ((pattern & 0x20u) != 0u) {
+            collided = collided || (occPtr[2] != 0u);
+            occPtr[2] = 1u;
+            dstPtr[2] = color;
+        }
+        if ((pattern & 0x10u) != 0u) {
+            collided = collided || (occPtr[3] != 0u);
+            occPtr[3] = 1u;
+            dstPtr[3] = color;
+        }
+        if ((pattern & 0x08u) != 0u) {
+            collided = collided || (occPtr[4] != 0u);
+            occPtr[4] = 1u;
+            dstPtr[4] = color;
+        }
+        if ((pattern & 0x04u) != 0u) {
+            collided = collided || (occPtr[5] != 0u);
+            occPtr[5] = 1u;
+            dstPtr[5] = color;
+        }
+        if ((pattern & 0x02u) != 0u) {
+            collided = collided || (occPtr[6] != 0u);
+            occPtr[6] = 1u;
+            dstPtr[6] = color;
+        }
+        if ((pattern & 0x01u) != 0u) {
+            collided = collided || (occPtr[7] != 0u);
+            occPtr[7] = 1u;
+            dstPtr[7] = color;
+        }
+        if (collided) {
+            msx_vdp_record_sprite_collision(state);
+        }
+        return;
+    }
+
     for (unsigned bit = 0; bit < 8u; ++bit) {
         if ((pattern & static_cast<uint8_t>(0x80u >> bit)) == 0u) {
             continue;
@@ -5136,6 +5218,7 @@ void msx_vdp_reset(MsxVdpState* state)
         state->dirty = true;
         state->frameReady = false;
         state->frameCounter = 0;
+        msx_vdp_refresh_resolved_color_lut(state);
         msx_vdp_invalidate_mono_sprite_cache();
         msx_vdp_init_palette(state);
         msx_vdp_update_mode_geometry(state);
@@ -5176,6 +5259,7 @@ void msx_vdp_reset(MsxVdpState* state)
     state->frameCounter = 0;
     state->lineInterruptFrameTag = 0xFFFFFFFFu;
     state->lineInterruptLineTag = 0xFFu;
+    msx_vdp_refresh_resolved_color_lut(state);
     msx_vdp_invalidate_mono_sprite_cache();
     if (msx_vdp_is_msx2(state)) {
         state->regs[8] = 0x08u;

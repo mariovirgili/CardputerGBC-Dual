@@ -67,6 +67,7 @@ struct MsxVdpState {
     uint8_t status[10];
     uint8_t readBuffer;
     uint8_t paletteRaw[16][2];
+    uint8_t resolvedColorLut[16];
     uint16_t palette565[16];
     uint16_t screen8Palette565[256];
     uint32_t address;
