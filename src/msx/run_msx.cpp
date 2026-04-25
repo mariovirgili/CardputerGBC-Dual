@@ -6,6 +6,7 @@
 #include <Preferences.h>
 #include <SD.h>
 
+#include <algorithm>
 #include <cmath>
 #include <cctype>
 #include <cstdio>
@@ -92,9 +93,59 @@ struct MsxRuntimeTimingWindow {
     uint64_t otherUs;
 };
 
+struct MsxFpsOverlayWindow {
+    uint32_t frames;
+    uint32_t windowStartMs;
+};
+
 uint32_t msx_runtime_avg_us(uint64_t totalUs, uint32_t frames)
 {
     return frames != 0u ? static_cast<uint32_t>(totalUs / frames) : 0u;
+}
+
+void msx_runtime_reset_fps_overlay(MsxFpsOverlayWindow* window, uint32_t nowMs)
+{
+    if (!window) {
+        return;
+    }
+
+    window->frames = 0u;
+    window->windowStartMs = nowMs;
+}
+
+void msx_runtime_update_fps_overlay(MsxFpsOverlayWindow* window,
+                                    bool menuPaused,
+                                    uint32_t nowMs)
+{
+    if (!window) {
+        return;
+    }
+
+    if (menuPaused) {
+        msx_runtime_reset_fps_overlay(window, nowMs);
+        return;
+    }
+
+    if (window->windowStartMs == 0u) {
+        window->windowStartMs = nowMs;
+    }
+
+    window->frames++;
+    const uint32_t elapsedMs = nowMs - window->windowStartMs;
+    if (elapsedMs < 250u) {
+        return;
+    }
+
+    const uint32_t fps10 =
+        elapsedMs != 0u
+            ? static_cast<uint32_t>(
+                  std::min<uint64_t>(
+                      9999u,
+                      (static_cast<uint64_t>(window->frames) * 10000ull + (elapsedMs / 2u)) / elapsedMs))
+            : 0u;
+    msx_video_set_fps_overlay_value(static_cast<uint16_t>(fps10));
+    window->frames = 0u;
+    window->windowStartMs = nowMs;
 }
 
 void msx_runtime_timing_add(MsxRuntimeTimingWindow* window, const MsxCoreState* core)
@@ -1097,6 +1148,7 @@ void run_msx(const uint8_t* romData, size_t romLen, const char* romName, SdServi
 
     msx_config_load_internal_view_mode();
     msx_config_load_performance_mode();
+    msx_config_load_fps_overlay_enabled();
     viewModeGuard.configureForTarget(useExternal);
     const MsxMachineMode configuredMode = msx_config_load_machine_mode();
     msx_config_load_bios_path();
@@ -1180,6 +1232,9 @@ void run_msx(const uint8_t* romData, size_t romLen, const char* romName, SdServi
     uint32_t frameCount = 0;
     uint32_t lastLogMs = millis();
     MsxRuntimeTimingWindow timingWindow = {};
+    MsxFpsOverlayWindow fpsOverlay = {};
+    msx_runtime_reset_fps_overlay(&fpsOverlay, lastLogMs);
+    msx_video_set_fps_overlay_value(0u);
     bool quitRequested = false;
 
     while (!quitRequested) {
@@ -1269,6 +1324,7 @@ void run_msx(const uint8_t* romData, size_t romLen, const char* romName, SdServi
 
         frameCount++;
         const uint32_t nowMs = millis();
+        msx_runtime_update_fps_overlay(&fpsOverlay, menuPaused, nowMs);
         if (MSX_RUN_LOG_ENABLED && (nowMs - lastLogMs >= 1000)) {
             msx_runtime_log_summary(&core,
                                     &audioState,
@@ -1329,6 +1385,7 @@ void run_msx_disk(const uint8_t* dskData, size_t dskLen, const char* dskName, Sd
 
     msx_config_load_internal_view_mode();
     msx_config_load_performance_mode();
+    msx_config_load_fps_overlay_enabled();
     viewModeGuard.configureForTarget(useExternal);
     const MsxMachineMode configuredMode = msx_config_load_machine_mode();
     msx_config_load_bios_path();
@@ -1410,6 +1467,9 @@ void run_msx_disk(const uint8_t* dskData, size_t dskLen, const char* dskName, Sd
     uint32_t frameCount = 0;
     uint32_t lastLogMs = millis();
     MsxRuntimeTimingWindow timingWindow = {};
+    MsxFpsOverlayWindow fpsOverlay = {};
+    msx_runtime_reset_fps_overlay(&fpsOverlay, lastLogMs);
+    msx_video_set_fps_overlay_value(0u);
 
     while (!quitRequested) {
         MsxInputState input = {};
@@ -1491,6 +1551,7 @@ void run_msx_disk(const uint8_t* dskData, size_t dskLen, const char* dskName, Sd
 
         frameCount++;
         const uint32_t nowMs = millis();
+        msx_runtime_update_fps_overlay(&fpsOverlay, menuPaused, nowMs);
         if (MSX_RUN_LOG_ENABLED && (nowMs - lastLogMs >= 1000)) {
             msx_runtime_log_summary(&core,
                                     &audioState,
@@ -1551,6 +1612,7 @@ void run_msx_basic(const char* name, SdService& sd)
 
     msx_config_load_internal_view_mode();
     msx_config_load_performance_mode();
+    msx_config_load_fps_overlay_enabled();
     viewModeGuard.configureForTarget(useExternal);
     const MsxMachineMode configuredMode = msx_config_load_machine_mode();
     msx_config_load_bios_path();
@@ -1617,6 +1679,9 @@ void run_msx_basic(const char* name, SdService& sd)
     uint32_t frameCount = 0;
     uint32_t lastLogMs = millis();
     MsxRuntimeTimingWindow timingWindow = {};
+    MsxFpsOverlayWindow fpsOverlay = {};
+    msx_runtime_reset_fps_overlay(&fpsOverlay, lastLogMs);
+    msx_video_set_fps_overlay_value(0u);
 
     while (!quitRequested) {
         MsxInputState input = {};
@@ -1696,6 +1761,7 @@ void run_msx_basic(const char* name, SdService& sd)
 
         frameCount++;
         const uint32_t nowMs = millis();
+        msx_runtime_update_fps_overlay(&fpsOverlay, menuPaused, nowMs);
         if (MSX_RUN_LOG_ENABLED && (nowMs - lastLogMs >= 1000)) {
             msx_runtime_log_summary(&core,
                                     &audioState,
@@ -1767,6 +1833,7 @@ void run_msx_cas(const uint8_t* casData, size_t casLen, const char* casName, SdS
 
     msx_config_load_internal_view_mode();
     msx_config_load_performance_mode();
+    msx_config_load_fps_overlay_enabled();
     viewModeGuard.configureForTarget(useExternal);
     const MsxMachineMode configuredMode = msx_config_load_machine_mode();
     msx_config_load_bios_path();
@@ -1840,6 +1907,9 @@ void run_msx_cas(const uint8_t* casData, size_t casLen, const char* casName, SdS
     uint32_t frameCount = 0;
     uint32_t lastLogMs = millis();
     MsxRuntimeTimingWindow timingWindow = {};
+    MsxFpsOverlayWindow fpsOverlay = {};
+    msx_runtime_reset_fps_overlay(&fpsOverlay, lastLogMs);
+    msx_video_set_fps_overlay_value(0u);
 
     while (!quitRequested) {
         MsxInputState input = {};
@@ -1927,6 +1997,7 @@ void run_msx_cas(const uint8_t* casData, size_t casLen, const char* casName, SdS
 
         frameCount++;
         const uint32_t nowMs = millis();
+        msx_runtime_update_fps_overlay(&fpsOverlay, menuPaused, nowMs);
         if (MSX_RUN_LOG_ENABLED && (nowMs - lastLogMs >= 1000)) {
             msx_runtime_log_summary(&core,
                                     &audioState,

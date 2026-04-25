@@ -4,6 +4,7 @@
 #include <TFT_eSPI.h>
 #include <esp_heap_caps.h>
 
+#include <algorithm>
 #include <cstdio>
 #include <cstring>
 #include <esp_timer.h>
@@ -32,6 +33,14 @@ constexpr int kWideAspectW = 4;
 constexpr int kWideAspectH = 3;
 constexpr int kBatchLines = 8;
 constexpr unsigned kMsxVisibleSafeHeight = 212u;
+constexpr int kFpsHudMarginX = 2;
+constexpr int kFpsHudMarginY = 2;
+constexpr int kFpsHudPadX = 1;
+constexpr int kFpsHudPadY = 1;
+constexpr int kFpsHudGlyphW = 3;
+constexpr int kFpsHudGlyphH = 5;
+constexpr int kFpsHudScale = 1;
+constexpr int kFpsHudAdvance = (kFpsHudGlyphW + 1) * kFpsHudScale;
 
 struct MsxVideoPlan {
     int srcX0;
@@ -105,6 +114,8 @@ static bool s_runtimeMenuActive = false;
 static bool s_stateOverlayActive = false;
 static MsxLineStreamState s_lineStream = {};
 static bool s_externalFixedSkipNextPresent = false;
+static uint16_t s_fpsHudValue10 = 0u;
+static char s_fpsHudText[16] = "0.0";
 
 static uint32_t s_spiPushFrames = 0;
 static uint32_t s_spiPushUs = 0;
@@ -192,6 +203,156 @@ inline void msx_store_rgb444_pair(uint8_t*& dst, uint32_t packed)
     dst[1] = static_cast<uint8_t>((packed >> 8) & 0xFFu);
     dst[2] = static_cast<uint8_t>((packed >> 16) & 0xFFu);
     dst += 3;
+}
+
+uint8_t msx_video_fps_glyph_row(char ch, int row)
+{
+    if (row < 0 || row >= kFpsHudGlyphH) {
+        return 0u;
+    }
+
+    switch (ch) {
+        case '0': {
+            static constexpr uint8_t kRows[kFpsHudGlyphH] = {0x07u, 0x05u, 0x05u, 0x05u, 0x07u};
+            return kRows[row];
+        }
+        case '1': {
+            static constexpr uint8_t kRows[kFpsHudGlyphH] = {0x02u, 0x06u, 0x02u, 0x02u, 0x07u};
+            return kRows[row];
+        }
+        case '2': {
+            static constexpr uint8_t kRows[kFpsHudGlyphH] = {0x07u, 0x01u, 0x07u, 0x04u, 0x07u};
+            return kRows[row];
+        }
+        case '3': {
+            static constexpr uint8_t kRows[kFpsHudGlyphH] = {0x07u, 0x01u, 0x07u, 0x01u, 0x07u};
+            return kRows[row];
+        }
+        case '4': {
+            static constexpr uint8_t kRows[kFpsHudGlyphH] = {0x05u, 0x05u, 0x07u, 0x01u, 0x01u};
+            return kRows[row];
+        }
+        case '5': {
+            static constexpr uint8_t kRows[kFpsHudGlyphH] = {0x07u, 0x04u, 0x07u, 0x01u, 0x07u};
+            return kRows[row];
+        }
+        case '6': {
+            static constexpr uint8_t kRows[kFpsHudGlyphH] = {0x07u, 0x04u, 0x07u, 0x05u, 0x07u};
+            return kRows[row];
+        }
+        case '7': {
+            static constexpr uint8_t kRows[kFpsHudGlyphH] = {0x07u, 0x01u, 0x01u, 0x01u, 0x01u};
+            return kRows[row];
+        }
+        case '8': {
+            static constexpr uint8_t kRows[kFpsHudGlyphH] = {0x07u, 0x05u, 0x07u, 0x05u, 0x07u};
+            return kRows[row];
+        }
+        case '9': {
+            static constexpr uint8_t kRows[kFpsHudGlyphH] = {0x07u, 0x05u, 0x07u, 0x01u, 0x07u};
+            return kRows[row];
+        }
+        case 'F': {
+            static constexpr uint8_t kRows[kFpsHudGlyphH] = {0x07u, 0x04u, 0x06u, 0x04u, 0x04u};
+            return kRows[row];
+        }
+        case 'P': {
+            static constexpr uint8_t kRows[kFpsHudGlyphH] = {0x06u, 0x05u, 0x06u, 0x04u, 0x04u};
+            return kRows[row];
+        }
+        case 'S': {
+            static constexpr uint8_t kRows[kFpsHudGlyphH] = {0x07u, 0x04u, 0x07u, 0x01u, 0x07u};
+            return kRows[row];
+        }
+        case '.': {
+            static constexpr uint8_t kRows[kFpsHudGlyphH] = {0x00u, 0x00u, 0x00u, 0x00u, 0x02u};
+            return kRows[row];
+        }
+        case ' ':
+        default:
+            return 0u;
+    }
+}
+
+int msx_video_fps_hud_text_width(void)
+{
+    const size_t len = std::strlen(s_fpsHudText);
+    if (len == 0u) {
+        return 0;
+    }
+
+    return static_cast<int>(len) * kFpsHudAdvance - kFpsHudScale;
+}
+
+int msx_video_fps_hud_box_width(void)
+{
+    return (kFpsHudPadX * 2) + msx_video_fps_hud_text_width();
+}
+
+int msx_video_fps_hud_box_height(void)
+{
+    return (kFpsHudPadY * 2) + (kFpsHudGlyphH * kFpsHudScale);
+}
+
+bool msx_video_should_draw_fps_hud(int dstW, int dstH)
+{
+    if (!msx_config_get_fps_overlay_enabled()) {
+        return false;
+    }
+
+    return dstW >= (kFpsHudMarginX + msx_video_fps_hud_box_width()) &&
+           dstH >= (kFpsHudMarginY + msx_video_fps_hud_box_height());
+}
+
+void msx_video_draw_fps_hud_row(uint16_t* dst, int dstW, int dstH, int dstY)
+{
+    if (!dst || !msx_video_should_draw_fps_hud(dstW, dstH)) {
+        return;
+    }
+
+    const int boxW = msx_video_fps_hud_box_width();
+    const int boxH = msx_video_fps_hud_box_height();
+    if (dstY < kFpsHudMarginY || dstY >= (kFpsHudMarginY + boxH)) {
+        return;
+    }
+
+    const int boxX = std::max(0, dstW - boxW - kFpsHudMarginX);
+    const int localY = dstY - kFpsHudMarginY;
+    const int fillLimit = std::min(dstW, boxX + boxW);
+    for (int x = boxX; x < fillLimit; ++x) {
+        dst[x] = 0u;
+    }
+
+    if (localY < kFpsHudPadY || localY >= (kFpsHudPadY + (kFpsHudGlyphH * kFpsHudScale))) {
+        return;
+    }
+
+    const int glyphRow = (localY - kFpsHudPadY) / kFpsHudScale;
+    const int textX0 = boxX + kFpsHudPadX;
+    const uint16_t fg = 0xFFFFu;
+    const size_t len = std::strlen(s_fpsHudText);
+    for (size_t i = 0; i < len; ++i) {
+        const uint8_t rowBits = msx_video_fps_glyph_row(s_fpsHudText[i], glyphRow);
+        if (rowBits == 0u) {
+            continue;
+        }
+
+        const int charX0 = textX0 + static_cast<int>(i) * kFpsHudAdvance;
+        for (int col = 0; col < kFpsHudGlyphW; ++col) {
+            const uint8_t mask = static_cast<uint8_t>(1u << (kFpsHudGlyphW - 1 - col));
+            if ((rowBits & mask) == 0u) {
+                continue;
+            }
+
+            const int pixelX0 = charX0 + col * kFpsHudScale;
+            for (int sx = 0; sx < kFpsHudScale; ++sx) {
+                const int pixelX = pixelX0 + sx;
+                if (pixelX >= boxX && pixelX < fillLimit) {
+                    dst[pixelX] = fg;
+                }
+            }
+        }
+    }
 }
 
 void msx_video_init_palette(void)
@@ -576,15 +737,38 @@ void msx_video_end_active_write(void)
 }
 
 static void msx_video_emit_stream_line(const MsxLineStreamState& stream,
-                                      const uint8_t* srcLine)
+                                       const uint8_t* srcLine,
+                                       int dstY)
 {
     if (!stream.active || !srcLine || stream.dstW <= 0 || !stream.palette) {
         return;
     }
 
+    const bool overlayLine =
+        (dstY >= kFpsHudMarginY) &&
+        (dstY < (kFpsHudMarginY + msx_video_fps_hud_box_height())) &&
+        msx_video_should_draw_fps_hud(stream.dstW, stream.dstH);
+
     if (msx_video_game_on_external() && stream.useRgb444) {
         const int bytesPerLine = ((stream.dstW + 1) / 2) * 3;
-        if (stream.cropOnly) {
+        if (overlayLine) {
+            if (stream.cropOnly) {
+                msx_video_expand_indexed_line(srcLine + static_cast<size_t>(stream.srcX0),
+                                              s_lineBuf,
+                                              stream.dstW,
+                                              stream.palette,
+                                              stream.paletteEntries);
+            } else {
+                if (!s_xmap) {
+                    return;
+                }
+                for (int x = 0; x < stream.dstW; ++x) {
+                    s_lineBuf[x] = stream.palette[srcLine[s_xmap[x]]];
+                }
+            }
+            msx_video_draw_fps_hud_row(s_lineBuf, stream.dstW, stream.dstH, dstY);
+            msx_video_pack_rgb444_line(s_lineBuf, stream.dstW, s_lineBuf12);
+        } else if (stream.cropOnly) {
             msx_video_pack_indexed_rgb444_line(srcLine + static_cast<size_t>(stream.srcX0),
                                                s_lineBuf12,
                                                stream.dstW,
@@ -614,6 +798,10 @@ static void msx_video_emit_stream_line(const MsxLineStreamState& stream,
         for (int x = 0; x < stream.dstW; ++x) {
             s_lineBuf[x] = stream.palette[src[s_xmap[x]]];
         }
+    }
+
+    if (overlayLine) {
+        msx_video_draw_fps_hud_row(s_lineBuf, stream.dstW, stream.dstH, dstY);
     }
 
     if (msx_video_game_on_external()) {
@@ -687,7 +875,7 @@ bool msx_video_stream_line_impl(const MsxDisplayFrame* frame, const uint8_t* src
     if (s_lineStream.cropOnly) {
         const int dstLine = static_cast<int>(srcLineIndex) - s_lineStream.srcY0;
         if (dstLine >= 0 && dstLine < s_lineStream.roiH) {
-            msx_video_emit_stream_line(s_lineStream, srcLine);
+            msx_video_emit_stream_line(s_lineStream, srcLine, dstLine);
             emitted = true;
         }
         return emitted;
@@ -702,7 +890,7 @@ bool msx_video_stream_line_impl(const MsxDisplayFrame* frame, const uint8_t* src
         mappedSrcLine < s_ymap[s_lineStream.nextDstY - 1]) {
         for (int y = 0; y < s_lineStream.dstH; ++y) {
             if (s_ymap[y] == mappedSrcLine) {
-                msx_video_emit_stream_line(s_lineStream, srcLine);
+                msx_video_emit_stream_line(s_lineStream, srcLine, y);
                 emitted = true;
             }
         }
@@ -715,7 +903,7 @@ bool msx_video_stream_line_impl(const MsxDisplayFrame* frame, const uint8_t* src
     }
     while (s_lineStream.nextDstY < s_lineStream.dstH &&
            s_ymap[s_lineStream.nextDstY] == mappedSrcLine) {
-        msx_video_emit_stream_line(s_lineStream, srcLine);
+        msx_video_emit_stream_line(s_lineStream, srcLine, s_lineStream.nextDstY);
         emitted = true;
         ++s_lineStream.nextDstY;
     }
@@ -750,7 +938,16 @@ void msx_video_draw_crop_frame(const MsxDisplayFrame* frame, const MsxVideoPlan&
                         + static_cast<size_t>(plan.srcY0 + y + row) * frame->pitchBytes
                         + static_cast<size_t>(plan.srcX0);
                     uint8_t* dst = s_lineBuf12 + static_cast<size_t>(row) * bytesPerLine;
-                    msx_video_pack_indexed_rgb444_line(src, dst, plan.dstW, frame->paletteEntryCount);
+                    const int dstY = y + row;
+                    if (msx_video_should_draw_fps_hud(plan.dstW, plan.dstH) &&
+                        dstY < (kFpsHudMarginY + msx_video_fps_hud_box_height())) {
+                        uint16_t* dst565 = s_lineBuf + static_cast<size_t>(row) * plan.dstW;
+                        msx_video_expand_indexed_line(src, dst565, plan.dstW, palette, frame->paletteEntryCount);
+                        msx_video_draw_fps_hud_row(dst565, plan.dstW, plan.dstH, dstY);
+                        msx_video_pack_rgb444_line(dst565, plan.dstW, dst);
+                    } else {
+                        msx_video_pack_indexed_rgb444_line(src, dst, plan.dstW, frame->paletteEntryCount);
+                    }
                 }
                 s_extTft.pushColors(reinterpret_cast<uint16_t*>(s_lineBuf12), (bytesPerLine * batch + 1) / 2, false);
             }
@@ -763,6 +960,7 @@ void msx_video_draw_crop_frame(const MsxDisplayFrame* frame, const MsxVideoPlan&
                         + static_cast<size_t>(plan.srcX0);
                     uint16_t* dst = s_lineBuf + static_cast<size_t>(row) * plan.dstW;
                     msx_video_expand_indexed_line(src, dst, plan.dstW, palette, frame->paletteEntryCount);
+                    msx_video_draw_fps_hud_row(dst, plan.dstW, plan.dstH, y + row);
                 }
                 s_extTft.pushColors(s_lineBuf, plan.dstW * batch, false);
             }
@@ -780,6 +978,7 @@ void msx_video_draw_crop_frame(const MsxDisplayFrame* frame, const MsxVideoPlan&
                 + static_cast<size_t>(plan.srcX0);
             uint16_t* dst = s_lineBuf + static_cast<size_t>(row) * plan.dstW;
             msx_video_expand_indexed_line(src, dst, plan.dstW, palette, frame->paletteEntryCount);
+            msx_video_draw_fps_hud_row(dst, plan.dstW, plan.dstH, y + row);
         }
         M5Cardputer.Display.pushPixels(s_lineBuf, plan.dstW * batch);
         taskYIELD();
@@ -802,11 +1001,22 @@ void msx_video_draw_scaled_frame(const MsxDisplayFrame* frame, const MsxVideoPla
                 for (int row = 0; row < batch; ++row) {
                     const uint8_t* src = frame->indexed8 + static_cast<size_t>(s_ymap[y + row]) * frame->pitchBytes;
                     uint8_t* dst = s_lineBuf12 + static_cast<size_t>(row) * bytesPerLine;
-                    msx_video_pack_mapped_rgb444_line(src,
-                                                      dst,
-                                                      plan.dstW,
-                                                      s_xmap,
-                                                      frame->paletteEntryCount);
+                    const int dstY = y + row;
+                    if (msx_video_should_draw_fps_hud(plan.dstW, plan.dstH) &&
+                        dstY < (kFpsHudMarginY + msx_video_fps_hud_box_height())) {
+                        uint16_t* dst565 = s_lineBuf + static_cast<size_t>(row) * plan.dstW;
+                        for (int x = 0; x < plan.dstW; ++x) {
+                            dst565[x] = palette[src[s_xmap[x]]];
+                        }
+                        msx_video_draw_fps_hud_row(dst565, plan.dstW, plan.dstH, dstY);
+                        msx_video_pack_rgb444_line(dst565, plan.dstW, dst);
+                    } else {
+                        msx_video_pack_mapped_rgb444_line(src,
+                                                          dst,
+                                                          plan.dstW,
+                                                          s_xmap,
+                                                          frame->paletteEntryCount);
+                    }
                 }
                 s_extTft.pushColors(reinterpret_cast<uint16_t*>(s_lineBuf12), (bytesPerLine * batch + 1) / 2, false);
             }
@@ -826,6 +1036,7 @@ void msx_video_draw_scaled_frame(const MsxDisplayFrame* frame, const MsxVideoPla
                     for (; x < plan.dstW; ++x) {
                         dst[x] = palette[src[s_xmap[x]]];
                     }
+                    msx_video_draw_fps_hud_row(dst, plan.dstW, plan.dstH, y + row);
                 }
                 s_extTft.pushColors(s_lineBuf, plan.dstW * batch, false);
             }
@@ -850,6 +1061,7 @@ void msx_video_draw_scaled_frame(const MsxDisplayFrame* frame, const MsxVideoPla
             for (; x < plan.dstW; ++x) {
                 dst[x] = palette[src[s_xmap[x]]];
             }
+            msx_video_draw_fps_hud_row(dst, plan.dstW, plan.dstH, y + row);
         }
         M5Cardputer.Display.pushPixels(s_lineBuf, plan.dstW * batch);
         taskYIELD();
@@ -1352,6 +1564,16 @@ uint32_t msx_video_get_last_present_us(void)
 void msx_video_clear_last_present_us(void)
 {
     s_lastPresentUs = 0u;
+}
+
+void msx_video_set_fps_overlay_value(uint16_t fps10)
+{
+    s_fpsHudValue10 = fps10;
+    std::snprintf(s_fpsHudText,
+                  sizeof(s_fpsHudText),
+                  "%u.%u",
+                  static_cast<unsigned>(s_fpsHudValue10 / 10u),
+                  static_cast<unsigned>(s_fpsHudValue10 % 10u));
 }
 
 void msx_video_request_full_redraw(void)

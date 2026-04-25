@@ -79,6 +79,7 @@ enum class MsxRuntimeMenuPage : uint8_t {
 
 enum class MsxPerformanceMenuItem : uint8_t {
     ExternalFixed30Fps = 0,
+    FpsOverlay,
     SliceRendering,
     SpriteCollision,
     SpriteOverflow,
@@ -181,11 +182,12 @@ static MsxPerformanceMenuItem msx_get_performance_menu_item(uint8_t index)
 {
     switch (index) {
         case 0: return MsxPerformanceMenuItem::ExternalFixed30Fps;
-        case 1: return MsxPerformanceMenuItem::SliceRendering;
-        case 2: return MsxPerformanceMenuItem::SpriteCollision;
-        case 3: return MsxPerformanceMenuItem::SpriteOverflow;
-        case 4: return MsxPerformanceMenuItem::InstantCommands;
-        case 5: return MsxPerformanceMenuItem::Back;
+        case 1: return MsxPerformanceMenuItem::FpsOverlay;
+        case 2: return MsxPerformanceMenuItem::SliceRendering;
+        case 3: return MsxPerformanceMenuItem::SpriteCollision;
+        case 4: return MsxPerformanceMenuItem::SpriteOverflow;
+        case 5: return MsxPerformanceMenuItem::InstantCommands;
+        case 6: return MsxPerformanceMenuItem::Back;
         default: return MsxPerformanceMenuItem::Back;
     }
 }
@@ -434,6 +436,12 @@ static void msx_runtime_toggle_performance_item(MsxPerformanceMenuItem item)
             msx_config_set_performance_flag(
                 MsxPerformanceFlag::ExternalFixed30Fps,
                 !msx_config_get_performance_flag(MsxPerformanceFlag::ExternalFixed30Fps),
+                true
+            );
+            break;
+        case MsxPerformanceMenuItem::FpsOverlay:
+            msx_config_set_fps_overlay_enabled(
+                !msx_config_get_fps_overlay_enabled(),
                 true
             );
             break;
@@ -1350,6 +1358,7 @@ void msx_input_get_overlay_state(MsxInputOverlayState* state)
         msx_config_get_performance_flag(MsxPerformanceFlag::InstantVdpCommands);
     state->perfExternalFixed30Fps =
         msx_config_get_performance_flag(MsxPerformanceFlag::ExternalFixed30Fps);
+    state->perfShowFpsOverlay = msx_config_get_fps_overlay_enabled();
     state->casChangeAvailable = s_runtimeOptions.changeCasAvailable;
     state->selectedIndex = s_runtimeMenu.selectedIndex;
 }

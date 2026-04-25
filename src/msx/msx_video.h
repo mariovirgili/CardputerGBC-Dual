@@ -36,3 +36,4 @@ void msx_video_request_full_redraw(void);
 MsxVideoPerfSummary msx_video_get_perf_summary(void);
 uint32_t msx_video_get_last_present_us(void);
 void msx_video_clear_last_present_us(void);
+void msx_video_set_fps_overlay_value(uint16_t fps10);

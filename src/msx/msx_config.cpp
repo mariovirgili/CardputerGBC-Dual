@@ -11,6 +11,7 @@ constexpr const char* kMsxViewKey = "int_view";
 constexpr const char* kMsxMachineKey = "machine";
 constexpr const char* kMsxPerformanceKey = "perf_mode";
 constexpr const char* kMsxPerformanceFlagsKey = "perf_flags";
+constexpr const char* kMsxFpsOverlayKey = "fps_hud";
 constexpr const char* kMsxBiosPathKey = "bios_path";
 constexpr const char* kMsx1BiosPathKey = "bios_msx1";
 constexpr const char* kMsx2BiosPathKey = "bios_msx2";
@@ -19,6 +20,7 @@ constexpr MsxInternalViewMode kMsxDefaultInternalViewMode = MsxInternalViewMode:
 constexpr MsxMachineMode kMsxDefaultMachineMode = MsxMachineMode::MSX2;
 constexpr MsxPerformanceMode kMsxDefaultPerformanceMode = MsxPerformanceMode::Accurate;
 constexpr uint8_t kMsxDefaultPerformanceFlags = 0u;
+constexpr bool kMsxDefaultFpsOverlayEnabled = true;
 constexpr uint8_t kMsxFastPerformancePresetFlags =
     static_cast<uint8_t>(MsxPerformanceFlag::DisableSpriteCollision) |
     static_cast<uint8_t>(MsxPerformanceFlag::SimplifySpriteOverflow) |
@@ -30,6 +32,7 @@ bool s_viewModeOverrideEnabled = false;
 MsxMachineMode s_machineMode = kMsxDefaultMachineMode;
 MsxPerformanceMode s_performanceMode = kMsxDefaultPerformanceMode;
 uint8_t s_performanceFlags = kMsxDefaultPerformanceFlags;
+bool s_fpsOverlayEnabled = kMsxDefaultFpsOverlayEnabled;
 char s_genericBiosPath[96] = {0};
 char s_msx1BiosPath[96] = {0};
 char s_msx2BiosPath[96] = {0};
@@ -469,6 +472,44 @@ void msx_config_set_performance_mode(bool enabled, bool persist)
 void msx_config_toggle_performance_mode(void)
 {
     msx_config_set_performance_mode(!msx_config_get_performance_mode(), true);
+}
+
+bool msx_config_load_fps_overlay_enabled(void)
+{
+    Preferences prefs;
+    prefs.begin(kMsxConfigNs, true);
+    const bool hasSavedValue = prefs.isKey(kMsxFpsOverlayKey);
+    const bool savedValue = prefs.getBool(kMsxFpsOverlayKey, kMsxDefaultFpsOverlayEnabled);
+    prefs.end();
+
+    s_fpsOverlayEnabled = hasSavedValue ? savedValue : kMsxDefaultFpsOverlayEnabled;
+
+    if (!hasSavedValue) {
+        Preferences writePrefs;
+        writePrefs.begin(kMsxConfigNs, false);
+        writePrefs.putBool(kMsxFpsOverlayKey, s_fpsOverlayEnabled);
+        writePrefs.end();
+    }
+
+    return s_fpsOverlayEnabled;
+}
+
+bool msx_config_get_fps_overlay_enabled(void)
+{
+    return s_fpsOverlayEnabled;
+}
+
+void msx_config_set_fps_overlay_enabled(bool enabled, bool persist)
+{
+    s_fpsOverlayEnabled = enabled;
+    if (!persist) {
+        return;
+    }
+
+    Preferences prefs;
+    prefs.begin(kMsxConfigNs, false);
+    prefs.putBool(kMsxFpsOverlayKey, s_fpsOverlayEnabled);
+    prefs.end();
 }
 
 const char* msx_config_load_bios_path(void)

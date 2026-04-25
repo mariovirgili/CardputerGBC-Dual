@@ -69,6 +69,9 @@ void msx_config_set_performance_flags(uint8_t flags, bool persist);
 void msx_config_set_performance_flag(MsxPerformanceFlag flag, bool enabled, bool persist);
 void msx_config_set_performance_mode(bool enabled, bool persist);
 void msx_config_toggle_performance_mode(void);
+bool msx_config_load_fps_overlay_enabled(void);
+bool msx_config_get_fps_overlay_enabled(void);
+void msx_config_set_fps_overlay_enabled(bool enabled, bool persist);
 
 const char* msx_config_load_bios_path(void);
 const char* msx_config_get_bios_path(void);
