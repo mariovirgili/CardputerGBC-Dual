@@ -159,13 +159,13 @@ static void msx_display_draw_placeholder(const MsxDisplayStatus* status)
         msx_display_prepare_external_tft();
         auto& tft = msx_display_external_tft();
         tft.fillScreen(TFT_BLACK);
-        tft.drawRoundRect(boxX, boxY, boxW, boxH, DEFAULT_ROUND_RECT, PRIMARY_COLOR);
-        tft.drawRoundRect(boxX + 2, boxY + 2, boxW - 4, boxH - 4, DEFAULT_ROUND_RECT, RECT_COLOR_DARK);
+        tft.drawRect(boxX, boxY, boxW, boxH, PRIMARY_COLOR);
+        tft.drawRect(boxX + 2, boxY + 2, boxW - 4, boxH - 4, RECT_COLOR_DARK);
     } else {
         auto& display = M5Cardputer.Display;
         display.fillScreen(TFT_BLACK);
-        display.drawRoundRect(boxX, boxY, boxW, boxH, DEFAULT_ROUND_RECT, PRIMARY_COLOR);
-        display.drawRoundRect(boxX + 2, boxY + 2, boxW - 4, boxH - 4, DEFAULT_ROUND_RECT, RECT_COLOR_DARK);
+        display.drawRect(boxX, boxY, boxW, boxH, PRIMARY_COLOR);
+        display.drawRect(boxX + 2, boxY + 2, boxW - 4, boxH - 4, RECT_COLOR_DARK);
     }
 
     msx_display_draw_line("MSX VIDEO", 16, PRIMARY_COLOR, 4);
@@ -299,10 +299,10 @@ static void msx_display_draw_runtime_menu_shell(const MsxInputOverlayState& over
     if (msx_display_game_on_external()) {
         msx_display_prepare_external_tft();
         auto& tft = msx_display_external_tft();
-        tft.fillRoundRect(boxX + kRuntimeMenuShadowOffset, boxY + kRuntimeMenuShadowOffset, kRuntimeMenuBoxW, kRuntimeMenuBoxH, DEFAULT_ROUND_RECT, TFT_BLACK);
-        tft.fillRoundRect(boxX, boxY, kRuntimeMenuBoxW, kRuntimeMenuBoxH, DEFAULT_ROUND_RECT, TFT_BLACK);
-        tft.drawRoundRect(boxX, boxY, kRuntimeMenuBoxW, kRuntimeMenuBoxH, DEFAULT_ROUND_RECT, PRIMARY_COLOR);
-        tft.drawRoundRect(boxX + 2, boxY + 2, kRuntimeMenuBoxW - 4, kRuntimeMenuBoxH - 4, DEFAULT_ROUND_RECT, RECT_COLOR_DARK);
+        tft.fillRect(boxX + kRuntimeMenuShadowOffset, boxY + kRuntimeMenuShadowOffset, kRuntimeMenuBoxW, kRuntimeMenuBoxH, TFT_BLACK);
+        tft.fillRect(boxX, boxY, kRuntimeMenuBoxW, kRuntimeMenuBoxH, TFT_BLACK);
+        tft.drawRect(boxX, boxY, kRuntimeMenuBoxW, kRuntimeMenuBoxH, PRIMARY_COLOR);
+        tft.drawRect(boxX + 2, boxY + 2, kRuntimeMenuBoxW - 4, kRuntimeMenuBoxH - 4, RECT_COLOR_DARK);
         tft.setTextDatum(TL_DATUM);
         tft.setTextColor(PRIMARY_COLOR, TFT_BLACK);
         const int titleX = boxX + (kRuntimeMenuBoxW - tft.textWidth(title, 2)) / 2;
@@ -314,10 +314,10 @@ static void msx_display_draw_runtime_menu_shell(const MsxInputOverlayState& over
     }
 
     auto& display = M5Cardputer.Display;
-    display.fillRoundRect(boxX + kRuntimeMenuShadowOffset, boxY + kRuntimeMenuShadowOffset, kRuntimeMenuBoxW, kRuntimeMenuBoxH, DEFAULT_ROUND_RECT, TFT_BLACK);
-    display.fillRoundRect(boxX, boxY, kRuntimeMenuBoxW, kRuntimeMenuBoxH, DEFAULT_ROUND_RECT, TFT_BLACK);
-    display.drawRoundRect(boxX, boxY, kRuntimeMenuBoxW, kRuntimeMenuBoxH, DEFAULT_ROUND_RECT, PRIMARY_COLOR);
-    display.drawRoundRect(boxX + 2, boxY + 2, kRuntimeMenuBoxW - 4, kRuntimeMenuBoxH - 4, DEFAULT_ROUND_RECT, RECT_COLOR_DARK);
+    display.fillRect(boxX + kRuntimeMenuShadowOffset, boxY + kRuntimeMenuShadowOffset, kRuntimeMenuBoxW, kRuntimeMenuBoxH, TFT_BLACK);
+    display.fillRect(boxX, boxY, kRuntimeMenuBoxW, kRuntimeMenuBoxH, TFT_BLACK);
+    display.drawRect(boxX, boxY, kRuntimeMenuBoxW, kRuntimeMenuBoxH, PRIMARY_COLOR);
+    display.drawRect(boxX + 2, boxY + 2, kRuntimeMenuBoxW - 4, kRuntimeMenuBoxH - 4, RECT_COLOR_DARK);
     display.setTextDatum(top_left);
     display.setFont(&fonts::Font2);
     display.setTextColor(PRIMARY_COLOR, TFT_BLACK);
@@ -354,12 +354,7 @@ static void msx_display_draw_runtime_menu_row_state(const MsxInputOverlayState& 
         auto& tft = msx_display_external_tft();
         const uint16_t rowBg = selected ? RECT_COLOR_DARK : TFT_BLACK;
         const uint16_t rowFg = selected ? TFT_ORANGE : TFT_WHITE;
-        tft.fillRoundRect(rowX,
-                          rowY,
-                          rowW,
-                          rowH,
-                          kRuntimeMenuSelectionRadius,
-                          rowBg);
+        tft.fillRect(rowX, rowY, rowW, rowH, rowBg);
         tft.setTextColor(rowFg, rowBg);
         tft.drawString(label, innerX, y, 1);
         if (value) {
@@ -369,12 +364,7 @@ static void msx_display_draw_runtime_menu_row_state(const MsxInputOverlayState& 
     }
 
     auto& display = M5Cardputer.Display;
-    display.fillRoundRect(rowX,
-                          rowY,
-                          rowW,
-                          rowH,
-                          kRuntimeMenuSelectionRadius,
-                          selected ? RECT_COLOR_DARK : TFT_BLACK);
+    display.fillRect(rowX, rowY, rowW, rowH, selected ? RECT_COLOR_DARK : TFT_BLACK);
     display.setFont(&fonts::Font0);
     display.setTextColor(selected ? PRIMARY_COLOR : TEXT_COLOR, selected ? RECT_COLOR_DARK : TFT_BLACK);
     display.drawString(label, innerX, y);
