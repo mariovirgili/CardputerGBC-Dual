@@ -816,10 +816,10 @@ bool msx_vdp_is_msx2(const MsxVdpState* state)
 
 const MsxVdpTableMasks* msx_vdp_table_masks(MsxVdpMode mode)
 {
-    static constexpr MsxVdpTableMasks kText40   = {0x7F, 0x00, 0x07, 0x00, 0x00, 0x00, 0x00, 0x00, 10};
-    static constexpr MsxVdpTableMasks kGraphics1 = {0x7F, 0xFF, 0x07, 0xFF, 0x00, 0x00, 0x00, 0x00, 10};
+    static constexpr MsxVdpTableMasks kText40   = {0x7F, 0x00, 0x3F, 0x00, 0x00, 0x00, 0x00, 0x00, 10};
+    static constexpr MsxVdpTableMasks kGraphics1 = {0x7F, 0xFF, 0x3F, 0xFF, 0x00, 0x00, 0x00, 0x00, 10};
     static constexpr MsxVdpTableMasks kGraphics2 = {0x7F, 0x80, 0x3C, 0xFF, 0x00, 0x7F, 0x03, 0x00, 10};
-    static constexpr MsxVdpTableMasks kMulticolor = {0x7F, 0x00, 0x07, 0xFF, 0x00, 0x00, 0x00, 0x00, 10};
+    static constexpr MsxVdpTableMasks kMulticolor = {0x7F, 0x00, 0x3F, 0xFF, 0x00, 0x00, 0x00, 0x00, 10};
     static constexpr MsxVdpTableMasks kGraphics3 = {0x7F, 0x80, 0x3C, 0xFC, 0x00, 0x7F, 0x03, 0x03, 10};
     static constexpr MsxVdpTableMasks kBitmap4  = {0x60, 0x00, 0x00, 0xFC, 0x1F, 0x00, 0x00, 0x03, 10};
     static constexpr MsxVdpTableMasks kBitmap6  = {0x60, 0x00, 0x00, 0xFC, 0x1F, 0x00, 0x00, 0x03, 10};
@@ -5528,7 +5528,6 @@ uint8_t msx_vdp_in_status(MsxVdpState* state)
 
     uint8_t value = state->status[index];
     msx_vdp_diag_log_status_read(state, index, value);
-    state->controlPending = false;
     if (index == 0u) {
         state->status[0] &= 0x5Fu;
     } else if (index == 1u) {
@@ -5592,10 +5591,8 @@ void msx_vdp_out_control(MsxVdpState* state, uint8_t value)
         return;
     }
 
-    if (command == 2u) {
-        const uint8_t reg = msx_vdp_is_msx2(state) ? static_cast<uint8_t>(value & 0x3Fu) : static_cast<uint8_t>(value & 0x07u);
-        msx_vdp_write_register(state, reg, state->latchedControl);
-    }
+    const uint8_t reg = msx_vdp_is_msx2(state) ? static_cast<uint8_t>(value & 0x3Fu) : static_cast<uint8_t>(value & 0x07u);
+    msx_vdp_write_register(state, reg, state->latchedControl);
 }
 
 void msx_vdp_out_palette(MsxVdpState* state, uint8_t value)
