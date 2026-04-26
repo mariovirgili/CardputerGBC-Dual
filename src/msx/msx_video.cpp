@@ -41,7 +41,7 @@ constexpr int kFpsHudExternalMarginX = 2;
 constexpr int kFpsHudExternalMarginY = 2;
 constexpr int kFpsHudExternalPadX = 1;
 constexpr int kFpsHudExternalPadY = 1;
-constexpr int kFpsHudExternalScale = 1;
+constexpr int kFpsHudExternalScale = 2;
 constexpr int kFpsHudInternalMarginX = 4;
 constexpr int kFpsHudInternalMarginY = 4;
 constexpr int kFpsHudInternalPadX = 2;
@@ -1102,6 +1102,16 @@ static uint32_t s_videoPerfWindowFrames = 0;
 static uint32_t s_videoPerfSkippedFrames = 0;
 static uint16_t s_autoFrameskipStep256 = 0;
 static uint16_t s_autoFrameskipAccum256 = 0;
+static uint8_t s_fixedFrameskipAccum = 0;
+static MsxFrameskipMode s_lastFrameskipMode = MsxFrameskipMode::Adaptive;
+
+static void msx_video_reset_frameskip_state(void)
+{
+    s_autoFrameskipStep256 = 0;
+    s_autoFrameskipAccum256 = 0;
+    s_fixedFrameskipAccum = 0;
+    s_lastFrameskipMode = msx_config_get_frameskip_mode();
+}
 
 bool msx_video_begin_line_stream(const MsxDisplayFrame* frame)
 {
@@ -1136,8 +1146,7 @@ void msx_video_init(void)
     s_videoPerfPresentFails = 0;
     s_videoPerfWindowFrames = 0;
     s_videoPerfSkippedFrames = 0;
-    s_autoFrameskipStep256 = 0;
-    s_autoFrameskipAccum256 = 0;
+    msx_video_reset_frameskip_state();
     s_lastPresentUs = 0;
     msx_video_reset_external_pacing();
     msx_video_reset_layout_cache();
@@ -1151,6 +1160,7 @@ void msx_video_shutdown(void)
     s_externalUiActive = false;
     s_stateOverlayActive = false;
     s_lastPresentUs = 0;
+    msx_video_reset_frameskip_state();
     msx_video_reset_external_pacing();
     msx_video_reset_layout_cache();
 }
@@ -1405,8 +1415,7 @@ void msx_video_prepare_sd_access(void)
     s_videoPerfPresentFails = 0;
     s_videoPerfWindowFrames = 0;
     s_videoPerfSkippedFrames = 0;
-    s_autoFrameskipStep256 = 0;
-    s_autoFrameskipAccum256 = 0;
+    msx_video_reset_frameskip_state();
     s_lastPresentUs = 0;
     msx_video_reset_external_pacing();
 
@@ -1435,8 +1444,15 @@ bool msx_video_present_frame(const MsxDisplayFrame* frame)
     }
 
     bool skipPresent = false;
+    const MsxFrameskipMode frameskipMode = msx_config_get_frameskip_mode();
+    if (frameskipMode != s_lastFrameskipMode) {
+        msx_video_reset_frameskip_state();
+    }
+    const bool externalFixed30Active =
+        msx_video_game_on_external() &&
+        msx_config_get_performance_flag(MsxPerformanceFlag::ExternalFixed30Fps);
     if (msx_video_game_on_external()) {
-        if (msx_config_get_performance_flag(MsxPerformanceFlag::ExternalFixed30Fps)) {
+        if (externalFixed30Active) {
             skipPresent = s_externalFixedSkipNextPresent;
             s_externalFixedSkipNextPresent = !s_externalFixedSkipNextPresent;
         } else {
@@ -1444,6 +1460,21 @@ bool msx_video_present_frame(const MsxDisplayFrame* frame)
         }
     } else {
         msx_video_reset_external_pacing();
+    }
+
+    if (!externalFixed30Active && !skipPresent && frameskipMode != MsxFrameskipMode::Adaptive) {
+        const uint8_t skipNumerator = msx_config_frameskip_mode_skip_numerator(frameskipMode);
+        const uint8_t skipDenominator = msx_config_frameskip_mode_skip_denominator(frameskipMode);
+        s_autoFrameskipStep256 = 0u;
+        s_autoFrameskipAccum256 = 0u;
+        if (skipNumerator > 0u && skipDenominator > 0u) {
+            s_fixedFrameskipAccum = static_cast<uint8_t>(s_fixedFrameskipAccum + skipNumerator);
+            if (s_fixedFrameskipAccum >= skipDenominator) {
+                s_fixedFrameskipAccum = static_cast<uint8_t>(s_fixedFrameskipAccum - skipDenominator);
+                skipPresent = true;
+            }
+        }
+    } else if (frameskipMode == MsxFrameskipMode::Adaptive && !msx_video_game_on_external()) {
         if (s_autoFrameskipStep256 != 0u) {
             s_autoFrameskipAccum256 = static_cast<uint16_t>(s_autoFrameskipAccum256 + s_autoFrameskipStep256);
             if (s_autoFrameskipAccum256 >= 256u) {
@@ -1451,6 +1482,8 @@ bool msx_video_present_frame(const MsxDisplayFrame* frame)
                 skipPresent = true;
             }
         }
+    } else if (frameskipMode == MsxFrameskipMode::Adaptive) {
+        s_fixedFrameskipAccum = 0u;
     }
 
     bool result = true;
@@ -1486,14 +1519,24 @@ bool msx_video_present_frame(const MsxDisplayFrame* frame)
                                      ? static_cast<uint32_t>(s_spiPushUs / s_spiPushFrames)
                                      : 0u;
             const uint32_t fps10 = avgUs ? static_cast<uint32_t>((10000000ull + (avgUs / 2u)) / avgUs) : 0u;
-            if (avgUs > kFrameskipDeadbandUs) {
+            if (frameskipMode != MsxFrameskipMode::Adaptive) {
+                s_autoFrameskipStep256 = 0u;
+                s_autoFrameskipAccum256 = 0u;
+            } else if (avgUs > kFrameskipDeadbandUs) {
                 const uint32_t keep256 = static_cast<uint32_t>((static_cast<uint64_t>(kFrameBudgetUs) * 256u) / avgUs);
                 s_autoFrameskipStep256 = static_cast<uint16_t>(keep256 >= 256u ? 0u : (256u - keep256));
             } else {
                 s_autoFrameskipStep256 = 0u;
                 s_autoFrameskipAccum256 = 0u;
             }
-            const uint32_t frameskipPct = static_cast<uint32_t>((static_cast<uint32_t>(s_autoFrameskipStep256) * 100u + 128u) / 256u);
+            uint32_t frameskipPct = static_cast<uint32_t>((static_cast<uint32_t>(s_autoFrameskipStep256) * 100u + 128u) / 256u);
+            if (frameskipMode != MsxFrameskipMode::Adaptive) {
+                const uint8_t skipNumerator = msx_config_frameskip_mode_skip_numerator(frameskipMode);
+                const uint8_t skipDenominator = msx_config_frameskip_mode_skip_denominator(frameskipMode);
+                frameskipPct = skipDenominator > 0u
+                                  ? ((static_cast<uint32_t>(skipNumerator) * 100u + (skipDenominator / 2u)) / skipDenominator)
+                                  : 0u;
+            }
             s_videoPerfSummary.valid = true;
             s_videoPerfSummary.windowFrames = s_videoPerfWindowFrames;
             s_videoPerfSummary.pushedFrames = s_spiPushFrames;
@@ -1572,5 +1615,6 @@ void msx_video_request_full_redraw(void)
     msx_video_lock();
     msx_video_reset_layout_cache();
     msx_video_reset_external_pacing();
+    msx_video_reset_frameskip_state();
     msx_video_unlock();
 }

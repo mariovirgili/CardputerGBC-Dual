@@ -11,6 +11,7 @@ constexpr const char* kMsxViewKey = "int_view";
 constexpr const char* kMsxMachineKey = "machine";
 constexpr const char* kMsxPerformanceKey = "perf_mode";
 constexpr const char* kMsxPerformanceFlagsKey = "perf_flags";
+constexpr const char* kMsxFrameskipKey = "frameskip";
 constexpr const char* kMsxFpsOverlayKey = "fps_hud";
 constexpr const char* kMsxBiosPathKey = "bios_path";
 constexpr const char* kMsx1BiosPathKey = "bios_msx1";
@@ -24,6 +25,7 @@ constexpr uint8_t kMsxFastPerformancePresetFlags =
     static_cast<uint8_t>(MsxPerformanceFlag::InstantVdpCommands);
 constexpr MsxPerformanceMode kMsxDefaultPerformanceMode = MsxPerformanceMode::Performance;
 constexpr uint8_t kMsxDefaultPerformanceFlags = kMsxFastPerformancePresetFlags;
+constexpr MsxFrameskipMode kMsxDefaultFrameskipMode = MsxFrameskipMode::Adaptive;
 constexpr bool kMsxDefaultFpsOverlayEnabled = true;
 
 MsxInternalViewMode s_internalViewMode = kMsxDefaultInternalViewMode;
@@ -32,6 +34,7 @@ bool s_viewModeOverrideEnabled = false;
 MsxMachineMode s_machineMode = kMsxDefaultMachineMode;
 MsxPerformanceMode s_performanceMode = kMsxDefaultPerformanceMode;
 uint8_t s_performanceFlags = kMsxDefaultPerformanceFlags;
+MsxFrameskipMode s_frameskipMode = kMsxDefaultFrameskipMode;
 bool s_fpsOverlayEnabled = kMsxDefaultFpsOverlayEnabled;
 char s_genericBiosPath[96] = {0};
 char s_msx1BiosPath[96] = {0};
@@ -79,6 +82,14 @@ uint8_t msx_sanitize_performance_flags(uint8_t value)
         static_cast<uint8_t>(MsxPerformanceFlag::InstantVdpCommands) |
         static_cast<uint8_t>(MsxPerformanceFlag::ExternalFixed30Fps);
     return static_cast<uint8_t>(value & supportedFlags);
+}
+
+MsxFrameskipMode msx_sanitize_frameskip_mode(uint8_t value)
+{
+    if (value < static_cast<uint8_t>(MsxFrameskipMode::Count)) {
+        return static_cast<MsxFrameskipMode>(value);
+    }
+    return kMsxDefaultFrameskipMode;
 }
 
 void msx_copy_path(char* dst, size_t dstSize, const char* src)
@@ -472,6 +483,132 @@ void msx_config_set_performance_mode(bool enabled, bool persist)
 void msx_config_toggle_performance_mode(void)
 {
     msx_config_set_performance_mode(!msx_config_get_performance_mode(), true);
+}
+
+MsxFrameskipMode msx_config_load_frameskip_mode(void)
+{
+    Preferences prefs;
+    prefs.begin(kMsxConfigNs, true);
+    const bool hasSavedValue = prefs.isKey(kMsxFrameskipKey);
+    const uint8_t savedValue = prefs.getUChar(
+        kMsxFrameskipKey,
+        static_cast<uint8_t>(kMsxDefaultFrameskipMode)
+    );
+    prefs.end();
+
+    s_frameskipMode = hasSavedValue
+                          ? msx_sanitize_frameskip_mode(savedValue)
+                          : kMsxDefaultFrameskipMode;
+
+    if (!hasSavedValue) {
+        Preferences writePrefs;
+        writePrefs.begin(kMsxConfigNs, false);
+        writePrefs.putUChar(kMsxFrameskipKey, static_cast<uint8_t>(s_frameskipMode));
+        writePrefs.end();
+    }
+
+    return s_frameskipMode;
+}
+
+MsxFrameskipMode msx_config_get_frameskip_mode(void)
+{
+    return s_frameskipMode;
+}
+
+const char* msx_config_frameskip_mode_label(MsxFrameskipMode mode)
+{
+    switch (mode) {
+        case MsxFrameskipMode::Ratio12: return "1/1.2";
+        case MsxFrameskipMode::Ratio13: return "1/1.3";
+        case MsxFrameskipMode::Ratio14: return "1/1.4";
+        case MsxFrameskipMode::Ratio15: return "1/1.5";
+        case MsxFrameskipMode::Ratio2: return "1/2";
+        case MsxFrameskipMode::Ratio3: return "1/3";
+        case MsxFrameskipMode::Ratio4: return "1/4";
+        case MsxFrameskipMode::Adaptive:
+        default:
+            return "ADAPT";
+    }
+}
+
+const char* msx_config_get_frameskip_mode_label(void)
+{
+    return msx_config_frameskip_mode_label(s_frameskipMode);
+}
+
+uint8_t msx_config_frameskip_mode_skip_numerator(MsxFrameskipMode mode)
+{
+    switch (mode) {
+        case MsxFrameskipMode::Ratio12: return 5u;
+        case MsxFrameskipMode::Ratio13: return 10u;
+        case MsxFrameskipMode::Ratio14: return 5u;
+        case MsxFrameskipMode::Ratio15: return 2u;
+        case MsxFrameskipMode::Ratio2:
+        case MsxFrameskipMode::Ratio3:
+        case MsxFrameskipMode::Ratio4:
+            return 1u;
+        case MsxFrameskipMode::Adaptive:
+        default:
+            return 0u;
+    }
+}
+
+uint8_t msx_config_frameskip_mode_skip_denominator(MsxFrameskipMode mode)
+{
+    switch (mode) {
+        case MsxFrameskipMode::Ratio12: return 6u;
+        case MsxFrameskipMode::Ratio13: return 13u;
+        case MsxFrameskipMode::Ratio14: return 7u;
+        case MsxFrameskipMode::Ratio15: return 3u;
+        case MsxFrameskipMode::Ratio2: return 2u;
+        case MsxFrameskipMode::Ratio3: return 3u;
+        case MsxFrameskipMode::Ratio4: return 4u;
+        case MsxFrameskipMode::Adaptive:
+        default:
+            return 0u;
+    }
+}
+
+void msx_config_set_frameskip_mode(MsxFrameskipMode mode, bool persist)
+{
+    s_frameskipMode = msx_sanitize_frameskip_mode(static_cast<uint8_t>(mode));
+    if (!persist) {
+        return;
+    }
+
+    Preferences prefs;
+    prefs.begin(kMsxConfigNs, false);
+    prefs.putUChar(kMsxFrameskipKey, static_cast<uint8_t>(s_frameskipMode));
+    prefs.end();
+}
+
+void msx_config_cycle_frameskip_mode(int delta, bool persist)
+{
+    constexpr MsxFrameskipMode kOrder[] = {
+        MsxFrameskipMode::Adaptive,
+        MsxFrameskipMode::Ratio12,
+        MsxFrameskipMode::Ratio13,
+        MsxFrameskipMode::Ratio14,
+        MsxFrameskipMode::Ratio15,
+        MsxFrameskipMode::Ratio2,
+        MsxFrameskipMode::Ratio3,
+        MsxFrameskipMode::Ratio4,
+    };
+    constexpr int count = static_cast<int>(sizeof(kOrder) / sizeof(kOrder[0]));
+    int current = 0;
+    for (int i = 0; i < count; ++i) {
+        if (kOrder[i] == s_frameskipMode) {
+            current = i;
+            break;
+        }
+    }
+
+    int next = current + delta;
+    while (next < 0) {
+        next += count;
+    }
+    next %= count;
+    msx_config_set_frameskip_mode(kOrder[next], persist);
 }
 
 bool msx_config_load_fps_overlay_enabled(void)

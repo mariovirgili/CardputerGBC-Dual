@@ -190,12 +190,13 @@ static const char* msx_display_runtime_menu_label(const MsxInputOverlayState& ov
     if (overlay.performanceSubmenuVisible) {
         switch (index) {
             case 0u: return "EXT 30FPS";
-            case 1u: return "FPS HUD";
-            case 2u: return "SLICE RENDER";
-            case 3u: return "SPR COLL";
-            case 4u: return "8-SPR FLAGS";
-            case 5u: return "INSTANT CMD";
-            case 6u: return "BACK";
+            case 1u: return "FRAMESKP";
+            case 2u: return "FPS HUD";
+            case 3u: return "SLICE RENDER";
+            case 4u: return "SPR COLL";
+            case 5u: return "8-SPR FLAGS";
+            case 6u: return "INSTANT CMD";
+            case 7u: return "BACK";
             default: return "";
         }
     }
@@ -243,17 +244,19 @@ static const char* msx_display_runtime_menu_value(const MsxInputOverlayState& ov
             case 0u:
                 return overlay.perfExternalFixed30Fps ? "ON" : "OFF";
             case 1u:
-                return overlay.perfShowFpsOverlay ? "ON" : "OFF";
+                return msx_config_frameskip_mode_label(overlay.perfFrameskipMode);
             case 2u:
+                return overlay.perfShowFpsOverlay ? "ON" : "OFF";
+            case 3u:
                 if (!overlay.machineIsMsx2) {
                     return "N/A";
                 }
                 return overlay.perfDisableSliceRendering ? "OFF" : "ON";
-            case 3u:
-                return overlay.perfDisableSpriteCollision ? "OFF" : "ON";
             case 4u:
-                return overlay.perfSimplifySpriteOverflow ? "OFF" : "ON";
+                return overlay.perfDisableSpriteCollision ? "OFF" : "ON";
             case 5u:
+                return overlay.perfSimplifySpriteOverflow ? "OFF" : "ON";
+            case 6u:
                 if (!overlay.machineIsMsx2) {
                     return "N/A";
                 }
@@ -412,6 +415,7 @@ static bool msx_display_runtime_menu_overlay_equals(const MsxInputOverlayState& 
            a.perfSimplifySpriteOverflow == b.perfSimplifySpriteOverflow &&
            a.perfInstantVdpCommands == b.perfInstantVdpCommands &&
            a.perfExternalFixed30Fps == b.perfExternalFixed30Fps &&
+           a.perfFrameskipMode == b.perfFrameskipMode &&
            a.perfShowFpsOverlay == b.perfShowFpsOverlay &&
            a.casChangeAvailable == b.casChangeAvailable &&
            a.selectedIndex == b.selectedIndex;

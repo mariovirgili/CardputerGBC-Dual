@@ -36,6 +36,18 @@ enum class MsxPerformanceFlag : uint8_t {
     ExternalFixed30Fps = 0x10,
 };
 
+enum class MsxFrameskipMode : uint8_t {
+    Adaptive = 0,
+    Ratio15,
+    Ratio2,
+    Ratio3,
+    Ratio4,
+    Ratio12,
+    Ratio13,
+    Ratio14,
+    Count,
+};
+
 MsxInternalViewMode msx_config_load_internal_view_mode(void);
 MsxInternalViewMode msx_config_get_internal_view_mode(void);
 MsxInternalViewMode msx_config_get_active_view_mode(void);
@@ -69,6 +81,14 @@ void msx_config_set_performance_flags(uint8_t flags, bool persist);
 void msx_config_set_performance_flag(MsxPerformanceFlag flag, bool enabled, bool persist);
 void msx_config_set_performance_mode(bool enabled, bool persist);
 void msx_config_toggle_performance_mode(void);
+MsxFrameskipMode msx_config_load_frameskip_mode(void);
+MsxFrameskipMode msx_config_get_frameskip_mode(void);
+const char* msx_config_frameskip_mode_label(MsxFrameskipMode mode);
+const char* msx_config_get_frameskip_mode_label(void);
+uint8_t msx_config_frameskip_mode_skip_numerator(MsxFrameskipMode mode);
+uint8_t msx_config_frameskip_mode_skip_denominator(MsxFrameskipMode mode);
+void msx_config_set_frameskip_mode(MsxFrameskipMode mode, bool persist);
+void msx_config_cycle_frameskip_mode(int delta, bool persist);
 bool msx_config_load_fps_overlay_enabled(void);
 bool msx_config_get_fps_overlay_enabled(void);
 void msx_config_set_fps_overlay_enabled(bool enabled, bool persist);

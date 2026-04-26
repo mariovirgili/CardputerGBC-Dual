@@ -40,6 +40,7 @@ struct MsxInputOverlayState {
     bool perfInstantVdpCommands;
     bool perfExternalFixed30Fps;
     bool perfShowFpsOverlay;
+    MsxFrameskipMode perfFrameskipMode;
     bool casChangeAvailable;
     uint8_t selectedIndex;
 };

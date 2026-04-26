@@ -83,6 +83,7 @@ enum class MsxRuntimeMenuPage : uint8_t {
 
 enum class MsxPerformanceMenuItem : uint8_t {
     ExternalFixed30Fps = 0,
+    Frameskip,
     FpsOverlay,
     SliceRendering,
     SpriteCollision,
@@ -186,12 +187,13 @@ static MsxPerformanceMenuItem msx_get_performance_menu_item(uint8_t index)
 {
     switch (index) {
         case 0: return MsxPerformanceMenuItem::ExternalFixed30Fps;
-        case 1: return MsxPerformanceMenuItem::FpsOverlay;
-        case 2: return MsxPerformanceMenuItem::SliceRendering;
-        case 3: return MsxPerformanceMenuItem::SpriteCollision;
-        case 4: return MsxPerformanceMenuItem::SpriteOverflow;
-        case 5: return MsxPerformanceMenuItem::InstantCommands;
-        case 6: return MsxPerformanceMenuItem::Back;
+        case 1: return MsxPerformanceMenuItem::Frameskip;
+        case 2: return MsxPerformanceMenuItem::FpsOverlay;
+        case 3: return MsxPerformanceMenuItem::SliceRendering;
+        case 4: return MsxPerformanceMenuItem::SpriteCollision;
+        case 5: return MsxPerformanceMenuItem::SpriteOverflow;
+        case 6: return MsxPerformanceMenuItem::InstantCommands;
+        case 7: return MsxPerformanceMenuItem::Back;
         default: return MsxPerformanceMenuItem::Back;
     }
 }
@@ -443,6 +445,9 @@ static void msx_runtime_toggle_performance_item(MsxPerformanceMenuItem item)
                 true
             );
             break;
+        case MsxPerformanceMenuItem::Frameskip:
+            msx_config_cycle_frameskip_mode(1, true);
+            break;
         case MsxPerformanceMenuItem::FpsOverlay:
             msx_config_set_fps_overlay_enabled(
                 !msx_config_get_fps_overlay_enabled(),
@@ -487,8 +492,12 @@ static void msx_runtime_toggle_performance_item(MsxPerformanceMenuItem item)
 static void msx_runtime_menu_adjust(int delta)
 {
     if (msx_runtime_menu_in_performance_page()) {
-        (void)delta;
-        msx_runtime_toggle_performance_item(msx_get_performance_menu_item(s_runtimeMenu.selectedIndex));
+        const MsxPerformanceMenuItem item = msx_get_performance_menu_item(s_runtimeMenu.selectedIndex);
+        if (item == MsxPerformanceMenuItem::Frameskip) {
+            msx_config_cycle_frameskip_mode(delta >= 0 ? 1 : -1, true);
+        } else {
+            msx_runtime_toggle_performance_item(item);
+        }
         return;
     }
 
@@ -609,7 +618,7 @@ static void msx_runtime_menu_accept(void)
                 ConfirmationSelector confirm(view, cinput);
                 char confirmTitle[32];
                 std::snprintf(confirmTitle, sizeof(confirmTitle), "LOAD STATE <%u>", static_cast<unsigned>(s_runtimeOptions.stateSlot));
-                bool sure = confirm.select(confirmTitle, "Are you sure?", 89);
+                bool sure = confirm.select(confirmTitle, "Are you sure?", 92);
                 s_runtimeMenu.visible = false;
                 if (sure) {
                     s_runtimeOptions.loadRequested = true;
@@ -1365,6 +1374,7 @@ void msx_input_get_overlay_state(MsxInputOverlayState* state)
     state->perfExternalFixed30Fps =
         msx_config_get_performance_flag(MsxPerformanceFlag::ExternalFixed30Fps);
     state->perfShowFpsOverlay = msx_config_get_fps_overlay_enabled();
+    state->perfFrameskipMode = msx_config_get_frameskip_mode();
     state->casChangeAvailable = s_runtimeOptions.changeCasAvailable;
     state->selectedIndex = s_runtimeMenu.selectedIndex;
 }
