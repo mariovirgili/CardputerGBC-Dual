@@ -61,6 +61,7 @@ struct MsxMemoryState {
     uint32_t ioWriteCount;
     bool mapperEnabled;
     bool ramSegmentCountPowerOfTwo;
+    bool slot3Expanded;
     bool cartBootWorkareaFallbackArmed;
     bool cartBootMappingRestoreArmed;
     bool ready;

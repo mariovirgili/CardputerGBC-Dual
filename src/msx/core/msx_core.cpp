@@ -56,7 +56,8 @@ uint8_t msx_core_default_secondary_slot_reg(MsxMachineMode machineMode, bool dir
 }
 constexpr uint32_t kMsxStatusRefreshPeriod = 8u;
 constexpr size_t kMsxCartRamSizeMsx1 = 0x8000u;
-constexpr uint8_t kMsxSlotIdMainRam = 0x8Bu;   // expanded slot 3-2
+constexpr uint8_t kMsxSlotIdMainRamExpanded = 0x8Bu;   // expanded slot 3-2
+constexpr uint8_t kMsxSlotIdMainRamPrimary = 0x03u;    // primary slot 3, not expanded
 constexpr uint8_t kMsxSlotIdDiskRom = 0x87u;   // expanded slot 3-1
 constexpr uint8_t kMsxSlotIdCartridge = 0x01u; // primary slot 1
 constexpr uint8_t kMsxInputCfgJoy = 0x01u;
@@ -166,9 +167,6 @@ void msx_core_log_profile(MsxCoreState* state,
 constexpr uint16_t kMsxAddrDrvInv = 0xFB21u;
 constexpr uint16_t kMsxAddrRamAd0 = 0xF341u;
 constexpr uint16_t kMsxAddrMaster = 0xF348u;
-constexpr uint16_t kMsxAddrCartInitLo = 0xF7C5u;
-constexpr uint16_t kMsxAddrCartInitHi = 0xF7C6u;
-constexpr uint16_t kMsxAddrCartInitSlot = 0xF7C7u;
 constexpr size_t kMsxRamSizeMsx2 = 0x20000u;
 constexpr size_t kMsxRamSizeMsx1 = 0x10000u;
 constexpr size_t kMsxPageSize16K = 0x4000u;
@@ -294,12 +292,8 @@ uint16_t msx_core_select_boot_pc(const MsxCartState* cart, bool* directBoot)
         return 0x0000u;
     }
 
-    // Standard "AB" cartridge headers should boot through the BIOS with the
-    // cartridge visible at 4000h-BFFFh. Jumping directly into the header
-    // routine skips BIOS machine setup and breaks games such as Bomberman.
-    if (directBoot) {
-        *directBoot = true;
-    }
+    // Standard "AB" cartridge headers boot through the BIOS. The BIOS slot
+    // routines select the cartridge page when probing/calling its INIT vector.
     return 0x0000u;
 }
 
@@ -379,19 +373,24 @@ void msx_core_seed_slot_work_area(MsxCoreState* state, uint8_t secondarySlotReg)
                              memory->cart.directBootCandidate &&
                              (memory->cart.initAddress >= 0x4000u) &&
                              (memory->cart.initAddress < 0xC000u);
+    const bool slot3Expanded = memory->slot3Expanded;
+    const uint8_t mainRamSlotId = slot3Expanded ? kMsxSlotIdMainRamExpanded
+                                                : kMsxSlotIdMainRamPrimary;
+    const uint8_t exptbl3 = slot3Expanded ? 0x80u : 0x00u;
+    const uint8_t slttbl3 = slot3Expanded ? secondarySlotReg : 0x00u;
 
     msx_core_raw_page3_write8(memory, static_cast<uint16_t>(kMsxAddrExptbl + 0u), 0x00u);
     msx_core_raw_page3_write8(memory, static_cast<uint16_t>(kMsxAddrExptbl + 1u), 0x00u);
     msx_core_raw_page3_write8(memory, static_cast<uint16_t>(kMsxAddrExptbl + 2u), 0x00u);
-    msx_core_raw_page3_write8(memory, static_cast<uint16_t>(kMsxAddrExptbl + 3u), 0x80u);
+    msx_core_raw_page3_write8(memory, static_cast<uint16_t>(kMsxAddrExptbl + 3u), exptbl3);
 
     msx_core_raw_page3_write8(memory, static_cast<uint16_t>(kMsxAddrSlttbl + 0u), 0x00u);
     msx_core_raw_page3_write8(memory, static_cast<uint16_t>(kMsxAddrSlttbl + 1u), 0x00u);
     msx_core_raw_page3_write8(memory, static_cast<uint16_t>(kMsxAddrSlttbl + 2u), 0x00u);
-    msx_core_raw_page3_write8(memory, static_cast<uint16_t>(kMsxAddrSlttbl + 3u), secondarySlotReg);
+    msx_core_raw_page3_write8(memory, static_cast<uint16_t>(kMsxAddrSlttbl + 3u), slttbl3);
 
     for (uint16_t i = 0u; i < 4u; ++i) {
-        msx_core_raw_page3_write8(memory, static_cast<uint16_t>(kMsxAddrRamAd0 + i), kMsxSlotIdMainRam);
+        msx_core_raw_page3_write8(memory, static_cast<uint16_t>(kMsxAddrRamAd0 + i), mainRamSlotId);
     }
 
     msx_core_raw_page3_write8(memory, kMsxAddrMaster, hasDiskRom ? kMsxSlotIdDiskRom : 0x00u);
@@ -415,30 +414,19 @@ void msx_core_seed_slot_work_area(MsxCoreState* state, uint8_t secondarySlotReg)
         msx_core_raw_page3_write8(memory, static_cast<uint16_t>(kMsxAddrSltwrk + i), 0x00u);
     }
 
-    if (hasCartInit) {
-        msx_core_raw_page3_write8(memory,
-                                  kMsxAddrCartInitLo,
-                                  static_cast<uint8_t>(memory->cart.initAddress & 0x00FFu));
-        msx_core_raw_page3_write8(memory,
-                                  kMsxAddrCartInitHi,
-                                  static_cast<uint8_t>(memory->cart.initAddress >> 8));
-        msx_core_raw_page3_write8(memory, kMsxAddrCartInitSlot, kMsxSlotIdCartridge);
-    } else {
-        msx_core_raw_page3_write8(memory, kMsxAddrCartInitSlot, 0x00u);
-    }
-    memory->cartBootWorkareaFallbackArmed = hasCartInit;
+    memory->cartBootWorkareaFallbackArmed = false;
     memory->cartBootMappingRestoreArmed = hasCartInit;
 
     MSX_CORE_LOG("[MSX] slot workarea: EXPTBL=%02X/%02X/%02X/%02X SLTTBL=%02X/%02X/%02X/%02X RAMAD=%02X MASTER=%02X CART=%02X INIT=%04X SLOT=%02X\n",
                  static_cast<unsigned>(0x00u),
                  static_cast<unsigned>(0x00u),
                  static_cast<unsigned>(0x00u),
-                 static_cast<unsigned>(0x80u),
+                 static_cast<unsigned>(exptbl3),
                  static_cast<unsigned>(0x00u),
                  static_cast<unsigned>(0x00u),
                  static_cast<unsigned>(0x00u),
-                 static_cast<unsigned>(secondarySlotReg),
-                 static_cast<unsigned>(kMsxSlotIdMainRam),
+                 static_cast<unsigned>(slttbl3),
+                 static_cast<unsigned>(mainRamSlotId),
                  static_cast<unsigned>(hasDiskRom ? kMsxSlotIdDiskRom : 0x00u),
                  static_cast<unsigned>(hasCartInit ? kMsxSlotIdCartridge : 0x00u),
                  static_cast<unsigned>(hasCartInit ? memory->cart.initAddress : 0x0000u),
@@ -468,9 +456,14 @@ void msx_core_apply_boot_mapping(MsxCoreState* state,
 void msx_core_finish_no_cart_init(MsxCoreState* state)
 {
     msx_core_attach_runtime_devices(state);
+    const bool hasDiskRom = state &&
+                            (state->memory.diskRom != nullptr) &&
+                            (state->memory.diskRomSize != 0u);
     msx_core_apply_boot_mapping(state,
                                 kMsxBootSlotBios,
-                                msx_core_default_secondary_slot_reg(state->machineMode, false));
+                                hasDiskRom
+                                    ? kMsxBootSecondaryDisk
+                                    : msx_core_default_secondary_slot_reg(state->machineMode, false));
 
     state->bootPc = 0x0000u;
     state->directBoot = false;
@@ -1057,6 +1050,12 @@ void msx_core_attach_disk_rom(MsxCoreState* state,
 
     state->memory.diskRom = diskRomData;
     state->memory.diskRomSize = diskRomSize;
+    state->memory.slot3Expanded =
+        (state->machineMode == MsxMachineMode::MSX2) ||
+        ((diskRomData != nullptr) && (diskRomSize != 0u));
+    if (state->memory.slot3Expanded && diskRomData && diskRomSize != 0u) {
+        state->memory.secondarySlotRegs[3] = kMsxBootSecondaryDisk;
+    }
     state->memory.diskPatch = msx_disk_bios_patch_handler;
     msx_memory_refresh_maps(&state->memory);
     msx_core_seed_slot_work_area(state, state->memory.secondarySlotRegs[3]);
@@ -1160,6 +1159,12 @@ bool msx_core_init_disk(MsxCoreState* state,
     msx_core_init_audio(state, audioSampleRate);
     state->memory.diskRom = diskRomData;
     state->memory.diskRomSize = diskRomSize;
+    state->memory.slot3Expanded =
+        (state->machineMode == MsxMachineMode::MSX2) ||
+        ((diskRomData != nullptr) && (diskRomSize != 0u));
+    if (state->memory.slot3Expanded && diskRomData && diskRomSize != 0u) {
+        state->memory.secondarySlotRegs[3] = kMsxBootSecondaryDisk;
+    }
     state->memory.diskPatch = msx_disk_bios_patch_handler;
     msx_disk_init(&state->disk, dskData, dskSize);
     state->memory.disk = &state->disk;

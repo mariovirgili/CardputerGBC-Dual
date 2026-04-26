@@ -33,8 +33,6 @@ constexpr uint16_t kMsxAddrSlttbl = 0xFCC5u;
 constexpr uint16_t kMsxAddrPage3RuntimeRamBegin = 0xF000u;
 constexpr uint16_t kMsxAddrPage3ProbeWindowBegin = 0xFE00u;
 constexpr uint16_t kMsxAddrPage3ProbeWindowEnd = 0xFE30u;
-constexpr uint16_t kMsxAddrCartInitLo = 0xF7C5u;
-constexpr uint16_t kMsxAddrCartInitHi = 0xF7C6u;
 // Cart lives in primary slot 1 (standard MSX topology).
 // The earlier slot-2 experiment was a misread of the BIOS trace: the CALLF
 // extension-ROM scan switched page3 into slot 2 to test it, not to access
@@ -68,12 +66,18 @@ uint8_t msx_memory_effective_secondary_slot_reg(const MsxMemoryState* state, uin
         return 0u;
     }
 
-    // In the current MSX1 model only primary slot 3 is expanded.
-    if (primarySlot != kMsxPrimarySlotExpanded) {
+    if (primarySlot != kMsxPrimarySlotExpanded || !state->slot3Expanded) {
         return 0u;
     }
 
     return state->secondarySlotRegs[primarySlot];
+}
+
+bool msx_memory_primary_slot_has_secondary_register(const MsxMemoryState* state, uint8_t primarySlot)
+{
+    return state &&
+           primarySlot == kMsxPrimarySlotExpanded &&
+           state->slot3Expanded;
 }
 
 bool msx_memory_has_mapper(const MsxMemoryState* state)
@@ -229,11 +233,21 @@ void msx_memory_bind_disk_rom(MsxMemoryState* state, uint8_t bank)
     state->writeMap[bank] = nullptr;
 }
 
-// Dispatch a single 8K bank within primary slot 3 using the secondary slot register.
-// MSX2 uses subslot0 = Sub-ROM (page0 only), subslot1 = DiskROM (page1 only),
-// subslot2 = RAM. MSX1 keeps the existing DiskROM/RAM layout.
+// Dispatch a single 8K bank within primary slot 3. Plain MSX1 cartridge
+// setups expose RAM as a non-expanded primary slot, while MSX2/DiskROM setups
+// use subslot0 = Sub-ROM (page0 only), subslot1 = DiskROM (page1 only),
+// subslot2 = RAM.
 void msx_memory_bind_slot3(MsxMemoryState* state, uint8_t pageIndex, uint8_t bank)
 {
+    if (!state->slot3Expanded) {
+        if (pageIndex >= 2u) {
+            msx_memory_bind_ram(state, pageIndex, bank);
+        } else {
+            msx_memory_bind_open_bus(state, bank);
+        }
+        return;
+    }
+
     const uint8_t subSlot = msx_secondary_slot_for_page(
         msx_memory_effective_secondary_slot_reg(state, 3u),
         pageIndex
@@ -432,42 +446,6 @@ void msx_memory_raw_page3_write8(MsxMemoryState* state, uint16_t address, uint8_
     }
 
     state->ramBanks[bankIndex][address & 0x1FFFu] = value;
-}
-
-bool msx_memory_try_cart_workarea_fallback_read(const MsxMemoryState* state,
-                                                uint16_t address,
-                                                uint8_t* value)
-{
-    if (!state || !state->ready || !value) {
-        return false;
-    }
-
-    if ((address != kMsxAddrCartInitLo) && (address != kMsxAddrCartInitHi)) {
-        return false;
-    }
-
-    const MsxCartState* const cart = &state->cart;
-    if (!cart->ready || !cart->directBootCandidate || !state->cartBootWorkareaFallbackArmed) {
-        return false;
-    }
-
-    if ((cart->initAddress < 0x4000u) || (cart->initAddress >= 0xC000u)) {
-        return false;
-    }
-
-    const uint8_t rawLo = msx_memory_raw_page3_read8(state, kMsxAddrCartInitLo);
-    const uint8_t rawHi = msx_memory_raw_page3_read8(state, kMsxAddrCartInitHi);
-    const uint16_t rawInit =
-        static_cast<uint16_t>(rawLo | (static_cast<uint16_t>(rawHi) << 8));
-    if ((rawInit >= 0x4000u) && (rawInit < 0xC000u)) {
-        return false;
-    }
-
-    *value = (address == kMsxAddrCartInitLo)
-                 ? static_cast<uint8_t>(cart->initAddress & 0x00FFu)
-                 : static_cast<uint8_t>(cart->initAddress >> 8);
-
-    return true;
 }
 
 void msx_memory_release_ram_banks(MsxMemoryState* state)
@@ -738,6 +716,7 @@ bool msx_memory_init(MsxMemoryState* state,
     msx_keyboard_init(&state->keyboard);
     state->slotRegister = kMsxDefaultSlotRegister;
     std::memset(state->secondarySlotRegs, 0, sizeof(state->secondarySlotRegs));
+    state->slot3Expanded = (state->machineMode == MsxMachineMode::MSX2);
     if (state->machineMode == MsxMachineMode::MSX2) {
         state->secondarySlotRegs[3] = kMsxMsx2SecondarySlotDefault;
     }
@@ -804,6 +783,11 @@ void msx_memory_reset(MsxMemoryState* state)
 
     state->slotRegister = kMsxDefaultSlotRegister;
     std::memset(state->secondarySlotRegs, 0, sizeof(state->secondarySlotRegs));
+    state->slot3Expanded = (state->machineMode == MsxMachineMode::MSX2) ||
+                           ((state->diskRom != nullptr) && (state->diskRomSize != 0u));
+    if (state->slot3Expanded && state->machineMode == MsxMachineMode::MSX2) {
+        state->secondarySlotRegs[3] = kMsxMsx2SecondarySlotDefault;
+    }
     state->ppiPortC = 0u;
     state->lastPort98 = 0u;
     state->lastPort99 = 0u;
@@ -878,20 +862,17 @@ uint8_t msx_memory_read8(const MsxMemoryState* state, uint16_t address)
         return mirroredValue;
     }
 
-    // Secondary slot register: 0xFFFF always reads ~SSLReg[slot in page3] (fMSX RdZ80)
+    // Expanded slots expose their secondary slot register at FFFFh.
     if (address == 0xFFFFu) {
         const uint8_t page3Slot = msx_memory_page3_primary_slot(state);
-        const uint8_t value = static_cast<uint8_t>(~msx_memory_effective_secondary_slot_reg(state, page3Slot));
-        return value;
+        if (msx_memory_primary_slot_has_secondary_register(state, page3Slot)) {
+            const uint8_t value = static_cast<uint8_t>(~msx_memory_effective_secondary_slot_reg(state, page3Slot));
+            return value;
+        }
     }
 
     const uint8_t bank = static_cast<uint8_t>(address >> 13);
     const uint16_t offset = static_cast<uint16_t>(address & 0x1FFFu);
-
-    uint8_t workareaValue = 0xFFu;
-    if (msx_memory_try_cart_workarea_fallback_read(state, address, &workareaValue)) {
-        return workareaValue;
-    }
 
     // During CALLF, page3 can be switched to an extension slot while the BIOS
     // still needs the upper work area and stack to live in RAM. Keep that
@@ -917,23 +898,25 @@ void msx_memory_write8(MsxMemoryState* state, uint16_t address, uint8_t value)
         return;
     }
 
-    // Secondary slot register: 0xFFFF write always goes to SSLReg[slot in page3] (fMSX WrZ80)
+    // Expanded slots expose their secondary slot register at FFFFh.
     if (address == 0xFFFFu) {
         const uint8_t page3Slot = msx_memory_page3_primary_slot(state);
-        uint8_t coercedValue = value;
-        if (page3Slot != 3u) {
-            coercedValue = 0u;
-        }
+        if (msx_memory_primary_slot_has_secondary_register(state, page3Slot)) {
+            uint8_t coercedValue = value;
+            if (page3Slot != 3u) {
+                coercedValue = 0u;
+            }
 
-        state->secondarySlotRegs[page3Slot] = coercedValue;
-        msx_memory_raw_page3_write8(state,
-                                    static_cast<uint16_t>(kMsxAddrSlttbl + page3Slot),
-                                    coercedValue);
+            state->secondarySlotRegs[page3Slot] = coercedValue;
+            msx_memory_raw_page3_write8(state,
+                                        static_cast<uint16_t>(kMsxAddrSlttbl + page3Slot),
+                                        coercedValue);
 
-        if (page3Slot == 3u) {
-            msx_memory_refresh_maps(state);
+            if (page3Slot == 3u) {
+                msx_memory_refresh_maps(state);
+            }
+            return;
         }
-        return;
     }
 
     const uint8_t bank = static_cast<uint8_t>(address >> 13);
