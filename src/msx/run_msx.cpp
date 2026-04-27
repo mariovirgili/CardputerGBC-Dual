@@ -888,6 +888,27 @@ static void msx_apply_runtime_view_toggle(MsxCoreState* core, bool useExternal)
     }
 }
 
+static bool msx_input_has_keyboard_press(const MsxInputState& input)
+{
+    for (uint8_t row = 0; row < kMsxKeyboardRowCount; ++row) {
+        if (input.keyboardMatrix.rows[row] != 0xFFu) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static void msx_force_keyboard_input_refresh(MsxCoreState* core, const MsxInputState& input)
+{
+    if (!core ||
+        (!input.keyboardEnabled && !input.basicKeyboardEnabled) ||
+        !msx_input_has_keyboard_press(input)) {
+        return;
+    }
+
+    core->vdp.dirty = true;
+}
+
 static bool msx_sd_root_accessible(void)
 {
     File root = SD.open("/");
@@ -1302,9 +1323,10 @@ void run_msx(const uint8_t* romData, size_t romLen, const char* romName, SdServi
             msx_handle_load_state(&core, romName, useExternal, sd);
         }
 
-        const bool menuPaused = input.menuVisible;
+        const bool menuPaused = input.menuVisible || input.virtualKeyPickerVisible;
         msx_sound_set_paused(menuPaused);
         msx_core_handle_input(&core, &input);
+        msx_force_keyboard_input_refresh(&core, input);
 
         if (menuPaused) {
             msx_core_drain_audio(&core, nullptr, 0u);
@@ -1533,9 +1555,10 @@ void run_msx_disk(const uint8_t* dskData, size_t dskLen, const char* dskName, Sd
             msx_handle_load_state(&core, dskName, useExternal, sd);
         }
 
-        const bool menuPaused = input.menuVisible;
+        const bool menuPaused = input.menuVisible || input.virtualKeyPickerVisible;
         msx_sound_set_paused(menuPaused);
         msx_core_handle_input(&core, &input);
+        msx_force_keyboard_input_refresh(&core, input);
         if (menuPaused) {
             msx_core_drain_audio(&core, nullptr, 0u);
         } else {
@@ -1742,9 +1765,10 @@ void run_msx_basic(const char* name, SdService& sd)
             msx_handle_load_state(&core, name, useExternal, sd);
         }
 
-        const bool menuPaused = input.menuVisible;
+        const bool menuPaused = input.menuVisible || input.virtualKeyPickerVisible;
         msx_sound_set_paused(menuPaused);
         msx_core_handle_input(&core, &input);
+        msx_force_keyboard_input_refresh(&core, input);
         if (menuPaused) {
             msx_core_drain_audio(&core, nullptr, 0u);
         } else {
@@ -1973,9 +1997,10 @@ void run_msx_cas(const uint8_t* casData, size_t casLen, const char* casName, SdS
             msx_handle_load_state(&core, currentCasPath.c_str(), useExternal, sd);
         }
 
-        const bool menuPaused = input.menuVisible;
+        const bool menuPaused = input.menuVisible || input.virtualKeyPickerVisible;
         msx_sound_set_paused(menuPaused);
         msx_core_handle_input(&core, &input);
+        msx_force_keyboard_input_refresh(&core, input);
         if (menuPaused) {
             msx_core_drain_audio(&core, nullptr, 0u);
         } else {

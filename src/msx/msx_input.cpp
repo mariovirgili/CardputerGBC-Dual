@@ -129,6 +129,19 @@ static MsxRuntimeMenuState s_runtimeMenu = {
 static const char* s_textMacro = nullptr;
 static size_t s_textMacroIndex = 0;
 static uint8_t s_textMacroPhase = 0;
+static bool s_virtualKeyPickerVisible = false;
+static uint8_t s_virtualKeyPickerIndex = 0;
+static bool s_virtualKeyPickerTriggerHeld = false;
+static bool s_virtualKeyPickerLeftHeld = false;
+static bool s_virtualKeyPickerRightHeld = false;
+static bool s_virtualKeyPickerAcceptHeld = false;
+static bool s_virtualKeyPickerBackHeld = false;
+static bool s_virtualKeyPickerAwaitRelease = false;
+static bool s_virtualKeyPickerSuppressUntilRelease = false;
+static int8_t s_virtualKeyPickerRepeatDir = 0;
+static uint32_t s_virtualKeyPickerNextRepeatMs = 0;
+static char s_virtualKeyChar = 0;
+static uint8_t s_virtualKeyFrames = 0;
 static MsxMachineMode s_runtimeMachineMode = MsxMachineMode::MSX2;
 
 static constexpr const char* kMsxInputConfigNs = "msx_input";
@@ -149,12 +162,9 @@ static MsxRuntimeOptionConfig msx_sanitize_runtime_option_config(MsxRuntimeOptio
 {
     config.stateSlot = static_cast<uint8_t>(config.stateSlot % 10u);
     if (config.basicKeyboardEnabled) {
-        config.keyboardEnabled = true;
+        config.keyboardEnabled = false;
         config.joystickEnabled = false;
         config.vausEnabled = false;
-    }
-    if (!config.keyboardEnabled) {
-        config.basicKeyboardEnabled = false;
     }
     return config;
 }
@@ -396,6 +406,43 @@ static void msx_keyboard_matrix_press_text_char(MsxKeyboardMatrix* matrix, char 
     msx_keyboard_matrix_press_ascii(matrix, ch);
 }
 
+static constexpr char kMsxVirtualKeyPickerChars[] = "0123456789'abcdefghijklmnopqrstuvwxyz";
+static constexpr uint8_t kMsxVirtualKeyPickerCount =
+    static_cast<uint8_t>(sizeof(kMsxVirtualKeyPickerChars) - 1u);
+static constexpr int kMsxVirtualKeyPickerTriggerX = 6;
+static constexpr int kMsxVirtualKeyPickerTriggerY = 3;
+
+static bool msx_virtual_key_picker_allowed(bool keyboardEnabled,
+                                           bool joystickEnabled,
+                                           bool basicKeyboardEnabled)
+{
+    return !basicKeyboardEnabled && (keyboardEnabled || joystickEnabled);
+}
+
+static bool msx_virtual_key_picker_trigger_pressed(void)
+{
+    return msx_key_position_pressed(kMsxVirtualKeyPickerTriggerX, kMsxVirtualKeyPickerTriggerY) ||
+           msx_key_pressed_any('v', 'V');
+}
+
+static char msx_virtual_key_picker_current_char(void)
+{
+    return kMsxVirtualKeyPickerChars[s_virtualKeyPickerIndex % kMsxVirtualKeyPickerCount];
+}
+
+static void msx_apply_virtual_key_step(MsxKeyboardMatrix* matrix)
+{
+    if (!matrix || s_virtualKeyFrames == 0u || s_virtualKeyChar == 0) {
+        return;
+    }
+
+    msx_keyboard_matrix_press_text_char(matrix, s_virtualKeyChar);
+    --s_virtualKeyFrames;
+    if (s_virtualKeyFrames == 0u) {
+        s_virtualKeyChar = 0;
+    }
+}
+
 static bool msx_apply_text_macro_step(MsxKeyboardMatrix* matrix)
 {
     if (!matrix || !msx_text_macro_active()) {
@@ -479,6 +526,7 @@ static void msx_runtime_menu_open_performance_page(void)
 static void msx_toggle_runtime_menu(void)
 {
     s_runtimeMenu.visible = !s_runtimeMenu.visible;
+    s_virtualKeyPickerVisible = false;
     if (s_runtimeMenu.visible) {
         msx_runtime_menu_open_main_page();
     } else {
@@ -662,15 +710,13 @@ static void msx_runtime_menu_accept(void)
             break;
         case MsxRuntimeMenuItem::Keyboard:
             s_runtimeOptions.keyboardEnabled = !s_runtimeOptions.keyboardEnabled;
-            if (!s_runtimeOptions.keyboardEnabled) {
-                s_runtimeOptions.basicKeyboardEnabled = false;
-            }
+            s_runtimeOptions.basicKeyboardEnabled = false;
             msx_persist_runtime_option_config(msx_input_get_runtime_option_config());
             break;
         case MsxRuntimeMenuItem::BasicKeyboard:
             s_runtimeOptions.basicKeyboardEnabled = !s_runtimeOptions.basicKeyboardEnabled;
             if (s_runtimeOptions.basicKeyboardEnabled) {
-                s_runtimeOptions.keyboardEnabled = true;
+                s_runtimeOptions.keyboardEnabled = false;
                 s_runtimeOptions.joystickEnabled = false;
                 s_runtimeOptions.vausEnabled = false;
             }
@@ -745,6 +791,14 @@ static void msx_runtime_menu_accept(void)
 static inline bool msx_binding_pressed(char key)
 {
     return key != 0 && msx_key_pressed(key);
+}
+
+static bool msx_binding_pressed_for_gameplay(char key, bool reserveVirtualKeyTrigger)
+{
+    if (reserveVirtualKeyTrigger && msx_normalize_char(key) == 'v') {
+        return false;
+    }
+    return msx_binding_pressed(key);
 }
 
 static void msx_apply_system_keys(const Keyboard_Class::KeysState& status)
@@ -824,18 +878,19 @@ static bool msx_is_joystick_key(char ch, const MsxInputBindingCache& cache)
 
 // Set joystick direction/fire state from the configured emulator bindings.
 static void msx_apply_joystick_mode_actions(MsxInputState* state,
-                                            const MsxInputBindingCache& cache)
+                                            const MsxInputBindingCache& cache,
+                                            bool reserveVirtualKeyTrigger)
 {
     if (!state) {
         return;
     }
 
-    state->up    |= msx_binding_pressed(cache.up);
-    state->down  |= msx_binding_pressed(cache.down);
-    state->left  |= msx_binding_pressed(cache.left);
-    state->right |= msx_binding_pressed(cache.right);
-    state->fire1 |= msx_binding_pressed(cache.fire1);
-    state->fire2 |= msx_binding_pressed(cache.fire2);
+    state->up    |= msx_binding_pressed_for_gameplay(cache.up, reserveVirtualKeyTrigger);
+    state->down  |= msx_binding_pressed_for_gameplay(cache.down, reserveVirtualKeyTrigger);
+    state->left  |= msx_binding_pressed_for_gameplay(cache.left, reserveVirtualKeyTrigger);
+    state->right |= msx_binding_pressed_for_gameplay(cache.right, reserveVirtualKeyTrigger);
+    state->fire1 |= msx_binding_pressed_for_gameplay(cache.fire1, reserveVirtualKeyTrigger);
+    state->fire2 |= msx_binding_pressed_for_gameplay(cache.fire2, reserveVirtualKeyTrigger);
 }
 
 // Inject cursor keys from ;.,./ and F1-F5 from 1-5 without needing FN (joystick mode).
@@ -915,7 +970,8 @@ static void msx_apply_printable_keys(MsxKeyboardMatrix* matrix,
                                      const Keyboard_Class::KeysState& keys,
                                      const MsxInputBindingCache& cache,
                                      bool joystickEnabled,
-                                     bool basicKeyboardEnabled)
+                                     bool basicKeyboardEnabled,
+                                     bool virtualKeyPickerAllowed)
 {
     if (!matrix) {
         return;
@@ -941,6 +997,10 @@ static void msx_apply_printable_keys(MsxKeyboardMatrix* matrix,
         }
 
         if (msx_is_view_toggle_key(ch)) {
+            continue;
+        }
+
+        if (virtualKeyPickerAllowed && msx_normalize_char(ch) == 'v') {
             continue;
         }
 
@@ -1062,20 +1122,21 @@ static void msx_apply_fn_combos(MsxKeyboardMatrix* matrix, const Keyboard_Class:
 
 static void msx_apply_shared_actions(MsxInputState* state,
                                      const Keyboard_Class::KeysState& keys,
-                                     const MsxInputBindingCache& cache)
+                                     const MsxInputBindingCache& cache,
+                                     bool reserveVirtualKeyTrigger)
 {
     if (!state || keys.fn) {
         return;
     }
 
-    state->up |= msx_binding_pressed(cache.up);
-    state->down |= msx_binding_pressed(cache.down);
-    state->left |= msx_binding_pressed(cache.left);
-    state->right |= msx_binding_pressed(cache.right);
-    state->fire1 |= msx_binding_pressed(cache.fire1);
-    state->fire2 |= msx_binding_pressed(cache.fire2);
-    state->start |= msx_binding_pressed(cache.start);
-    state->select |= msx_binding_pressed(cache.select);
+    state->up |= msx_binding_pressed_for_gameplay(cache.up, reserveVirtualKeyTrigger);
+    state->down |= msx_binding_pressed_for_gameplay(cache.down, reserveVirtualKeyTrigger);
+    state->left |= msx_binding_pressed_for_gameplay(cache.left, reserveVirtualKeyTrigger);
+    state->right |= msx_binding_pressed_for_gameplay(cache.right, reserveVirtualKeyTrigger);
+    state->fire1 |= msx_binding_pressed_for_gameplay(cache.fire1, reserveVirtualKeyTrigger);
+    state->fire2 |= msx_binding_pressed_for_gameplay(cache.fire2, reserveVirtualKeyTrigger);
+    state->start |= msx_binding_pressed_for_gameplay(cache.start, reserveVirtualKeyTrigger);
+    state->select |= msx_binding_pressed_for_gameplay(cache.select, reserveVirtualKeyTrigger);
 }
 
 static void msx_apply_emulator_actions_to_matrix(MsxKeyboardMatrix* matrix,
@@ -1120,9 +1181,12 @@ static void msx_build_keyboard_matrix(MsxKeyboardMatrix* matrix,
                                       const MsxInputBindingCache& cache,
                                       bool keyboardEnabled,
                                       bool joystickEnabled,
-                                      bool basicKeyboardEnabled)
+                                      bool basicKeyboardEnabled,
+                                      bool virtualKeyPickerAllowed)
 {
     msx_keyboard_matrix_clear(matrix);
+    msx_apply_virtual_key_step(matrix);
+
     if (!keyboardEnabled) {
         return;
     }
@@ -1148,7 +1212,12 @@ static void msx_build_keyboard_matrix(MsxKeyboardMatrix* matrix,
     if (!basicKeyboardEnabled) {
         msx_apply_emulator_actions_to_matrix(matrix, state, joystickEnabled);
     }
-    msx_apply_printable_keys(matrix, keys, cache, joystickEnabled, basicKeyboardEnabled);
+    msx_apply_printable_keys(matrix,
+                             keys,
+                             cache,
+                             joystickEnabled,
+                             basicKeyboardEnabled,
+                             virtualKeyPickerAllowed);
 }
 
 static bool msx_menu_prev_pressed(const Keyboard_Class::KeysState& keys,
@@ -1207,6 +1276,174 @@ static bool msx_menu_back_pressed(const Keyboard_Class::KeysState& keys,
            msx_binding_pressed(bindings.fire2) ||
            msx_binding_pressed(bindings.select) ||
            ((padState & (share::PAD_B | share::PAD_SELECT)) != 0u);
+}
+
+static bool msx_picker_left_pressed(const Keyboard_Class::KeysState& keys,
+                                    const MsxInputBindingCache& bindings,
+                                    uint32_t padState)
+{
+    return M5Cardputer.Keyboard.isKeyPressed(KEY_ARROW_LEFT) ||
+           msx_binding_pressed_for_gameplay(bindings.left, true) ||
+           ((padState & share::PAD_LEFT) != 0u);
+}
+
+static bool msx_picker_right_pressed(const Keyboard_Class::KeysState& keys,
+                                     const MsxInputBindingCache& bindings,
+                                     uint32_t padState)
+{
+    return M5Cardputer.Keyboard.isKeyPressed(KEY_ARROW_RIGHT) ||
+           msx_binding_pressed_for_gameplay(bindings.right, true) ||
+           ((padState & share::PAD_RIGHT) != 0u);
+}
+
+static bool msx_picker_accept_pressed(const Keyboard_Class::KeysState& keys,
+                                      const MsxInputBindingCache& bindings,
+                                      uint32_t padState)
+{
+    return keys.enter ||
+           keys.space ||
+           msx_binding_pressed_for_gameplay(bindings.fire1, true) ||
+           msx_binding_pressed_for_gameplay(bindings.start, true) ||
+           ((padState & (share::PAD_A | share::PAD_START)) != 0u);
+}
+
+static bool msx_picker_back_pressed(const Keyboard_Class::KeysState& keys,
+                                    const MsxInputBindingCache& bindings,
+                                    uint32_t padState)
+{
+    return keys.del ||
+           msx_binding_pressed_for_gameplay(bindings.fire2, true) ||
+           msx_binding_pressed_for_gameplay(bindings.select, true) ||
+           ((padState & (share::PAD_B | share::PAD_SELECT)) != 0u);
+}
+
+static void msx_reset_virtual_key_picker_latches(void)
+{
+    s_virtualKeyPickerLeftHeld = false;
+    s_virtualKeyPickerRightHeld = false;
+    s_virtualKeyPickerAcceptHeld = false;
+    s_virtualKeyPickerBackHeld = false;
+    s_virtualKeyPickerRepeatDir = 0;
+    s_virtualKeyPickerNextRepeatMs = 0;
+}
+
+static void msx_close_virtual_key_picker(void)
+{
+    s_virtualKeyPickerVisible = false;
+    msx_reset_virtual_key_picker_latches();
+}
+
+static void msx_move_virtual_key_picker(int delta)
+{
+    const int count = static_cast<int>(kMsxVirtualKeyPickerCount);
+    int index = static_cast<int>(s_virtualKeyPickerIndex);
+    index = (index + delta + count) % count;
+    s_virtualKeyPickerIndex = static_cast<uint8_t>(index);
+}
+
+static void msx_apply_virtual_key_picker_repeat(int8_t dir, uint32_t nowMs)
+{
+    static constexpr uint32_t kInitialRepeatDelayMs = 420u;
+    static constexpr uint32_t kRepeatIntervalMs = 180u;
+
+    if (dir == 0) {
+        s_virtualKeyPickerRepeatDir = 0;
+        s_virtualKeyPickerNextRepeatMs = 0;
+        return;
+    }
+
+    if (s_virtualKeyPickerRepeatDir != dir) {
+        s_virtualKeyPickerRepeatDir = dir;
+        s_virtualKeyPickerNextRepeatMs = nowMs + kInitialRepeatDelayMs;
+        return;
+    }
+
+    if (s_virtualKeyPickerNextRepeatMs != 0u &&
+        static_cast<int32_t>(nowMs - s_virtualKeyPickerNextRepeatMs) >= 0) {
+        msx_move_virtual_key_picker(dir);
+        s_virtualKeyPickerNextRepeatMs = nowMs + kRepeatIntervalMs;
+    }
+}
+
+static bool msx_poll_virtual_key_picker(const Keyboard_Class::KeysState& keys,
+                                        const MsxInputBindingCache& bindings,
+                                        uint32_t padState,
+                                        bool allowed)
+{
+    const bool triggerPressed = allowed && msx_virtual_key_picker_trigger_pressed();
+    const bool triggerEdge = triggerPressed && !s_virtualKeyPickerTriggerHeld;
+    s_virtualKeyPickerTriggerHeld = triggerPressed;
+
+    if (!allowed) {
+        msx_close_virtual_key_picker();
+        s_virtualKeyPickerSuppressUntilRelease = false;
+        return false;
+    }
+
+    const bool leftPressed = msx_picker_left_pressed(keys, bindings, padState);
+    const bool rightPressed = msx_picker_right_pressed(keys, bindings, padState);
+    const bool acceptPressed = msx_picker_accept_pressed(keys, bindings, padState);
+    const bool backPressed = msx_picker_back_pressed(keys, bindings, padState) || triggerEdge;
+
+    if (s_virtualKeyPickerSuppressUntilRelease) {
+        if (!triggerPressed && !leftPressed && !rightPressed && !acceptPressed && !backPressed) {
+            s_virtualKeyPickerSuppressUntilRelease = false;
+            return false;
+        }
+        return true;
+    }
+
+    if (!s_virtualKeyPickerVisible && triggerEdge) {
+        s_virtualKeyPickerVisible = true;
+        s_virtualKeyPickerIndex = 0;
+        s_virtualKeyPickerAwaitRelease = true;
+        msx_reset_virtual_key_picker_latches();
+        return true;
+    }
+
+    if (!s_virtualKeyPickerVisible) {
+        return false;
+    }
+
+    if (s_virtualKeyPickerAwaitRelease) {
+        s_virtualKeyPickerLeftHeld = leftPressed;
+        s_virtualKeyPickerRightHeld = rightPressed;
+        s_virtualKeyPickerAcceptHeld = acceptPressed;
+        s_virtualKeyPickerBackHeld = backPressed;
+        s_virtualKeyPickerRepeatDir = 0;
+        s_virtualKeyPickerNextRepeatMs = 0;
+        if (!triggerPressed && !leftPressed && !rightPressed && !acceptPressed && !backPressed) {
+            s_virtualKeyPickerAwaitRelease = false;
+        }
+        return true;
+    }
+
+    if (msx_menu_edge(leftPressed, &s_virtualKeyPickerLeftHeld)) {
+        msx_move_virtual_key_picker(-1);
+        s_virtualKeyPickerRepeatDir = -1;
+        s_virtualKeyPickerNextRepeatMs = millis() + 420u;
+    }
+    if (msx_menu_edge(rightPressed, &s_virtualKeyPickerRightHeld)) {
+        msx_move_virtual_key_picker(1);
+        s_virtualKeyPickerRepeatDir = 1;
+        s_virtualKeyPickerNextRepeatMs = millis() + 420u;
+    }
+    msx_apply_virtual_key_picker_repeat((leftPressed == rightPressed) ? 0 : (leftPressed ? -1 : 1),
+                                        millis());
+    if (msx_menu_edge(acceptPressed, &s_virtualKeyPickerAcceptHeld)) {
+        s_virtualKeyChar = msx_virtual_key_picker_current_char();
+        s_virtualKeyFrames = 3u;
+        s_virtualKeyPickerSuppressUntilRelease = true;
+        msx_close_virtual_key_picker();
+        return true;
+    }
+    if (msx_menu_edge(backPressed, &s_virtualKeyPickerBackHeld)) {
+        s_virtualKeyPickerSuppressUntilRelease = true;
+        msx_close_virtual_key_picker();
+        return true;
+    }
+
+    return true;
 }
 
 static void msx_diag_append(char* dst, size_t dstSize, const char* text)
@@ -1464,6 +1701,7 @@ void msx_input_poll_diagnostic(const MsxRuntimeOptionConfig& requestedConfig,
     const bool basicKeyboardEnabled = config.basicKeyboardEnabled;
     const bool joystickEnabled = config.joystickEnabled && !basicKeyboardEnabled;
     const bool keyboardEnabled = config.keyboardEnabled;
+    const bool effectiveKeyboardEnabled = keyboardEnabled || basicKeyboardEnabled;
     const bool vausEnabled = config.vausEnabled && !basicKeyboardEnabled;
 
     msx_diag_raw_label(keys, diagnostic->rawLabel, sizeof(diagnostic->rawLabel));
@@ -1474,24 +1712,25 @@ void msx_input_poll_diagnostic(const MsxRuntimeOptionConfig& requestedConfig,
     MsxInputState state = {};
     msx_keyboard_matrix_clear(&state.keyboardMatrix);
     state.joystickEnabled = joystickEnabled;
-    state.keyboardEnabled = keyboardEnabled;
+    state.keyboardEnabled = effectiveKeyboardEnabled;
     state.basicKeyboardEnabled = basicKeyboardEnabled;
     state.vausEnabled = vausEnabled;
 
     if (!basicKeyboardEnabled && (joystickEnabled || vausEnabled)) {
-        msx_apply_joystick_mode_actions(&state, bindings);
+        msx_apply_joystick_mode_actions(&state, bindings, false);
     }
     if (keyboardEnabled && !basicKeyboardEnabled) {
-        msx_apply_shared_actions(&state, keys, bindings);
+        msx_apply_shared_actions(&state, keys, bindings, false);
     }
 
     msx_build_keyboard_matrix(&state.keyboardMatrix,
                               keys,
                               &state,
                               bindings,
-                              keyboardEnabled,
+                              effectiveKeyboardEnabled,
                               config.joystickEnabled,
-                              basicKeyboardEnabled);
+                              basicKeyboardEnabled,
+                              false);
 
     if (joystickEnabled) {
         char buttons[24] = "";
@@ -1520,7 +1759,7 @@ void msx_input_poll_diagnostic(const MsxRuntimeOptionConfig& requestedConfig,
                       buttons[0] != '\0' ? buttons : "IDLE");
     }
 
-    if (keyboardEnabled) {
+    if (effectiveKeyboardEnabled) {
         msx_diag_keyboard_label(state.keyboardMatrix,
                                 diagnostic->keyboardLabel,
                                 sizeof(diagnostic->keyboardLabel));
@@ -1589,9 +1828,11 @@ void msx_input_set_basic_keyboard_enabled(bool enabled)
         return;
     }
     s_runtimeOptions.basicKeyboardEnabled = enabled;
-    s_runtimeOptions.keyboardEnabled = true;
-    s_runtimeOptions.joystickEnabled = false;
-    s_runtimeOptions.vausEnabled = false;
+    if (enabled) {
+        s_runtimeOptions.keyboardEnabled = false;
+        s_runtimeOptions.joystickEnabled = false;
+        s_runtimeOptions.vausEnabled = false;
+    }
 }
 
 void msx_input_set_cas_change_available(bool available)
@@ -1708,14 +1949,30 @@ void msx_input_poll(MsxInputState* state)
     }
 
     const bool basicKeyboardEnabled = s_runtimeOptions.basicKeyboardEnabled;
+    const bool effectiveKeyboardEnabled = s_runtimeOptions.keyboardEnabled || basicKeyboardEnabled;
     state->joystickMode = s_runtimeOptions.joystickEnabled && !basicKeyboardEnabled;
     state->joystickEnabled = s_runtimeOptions.joystickEnabled && !basicKeyboardEnabled;
-    state->keyboardEnabled = s_runtimeOptions.keyboardEnabled;
+    state->keyboardEnabled = effectiveKeyboardEnabled;
     state->basicKeyboardEnabled = basicKeyboardEnabled;
     state->vausEnabled = s_runtimeOptions.vausEnabled && !basicKeyboardEnabled;
     state->menuVisible = s_runtimeMenu.visible;
+    state->virtualKeyPickerVisible = s_virtualKeyPickerVisible;
 
     if (menuWasVisible || s_runtimeMenu.visible || goLongToggledMenu) {
+        return;
+    }
+
+    const bool virtualKeyPickerAllowed =
+        msx_virtual_key_picker_allowed(s_runtimeOptions.keyboardEnabled,
+                                       s_runtimeOptions.joystickEnabled,
+                                       basicKeyboardEnabled);
+    if (msx_poll_virtual_key_picker(keys, bindings, padState, virtualKeyPickerAllowed)) {
+        state->virtualKeyPickerVisible = s_virtualKeyPickerVisible;
+        if (s_virtualKeyFrames != 0u) {
+            state->keyboardEnabled = true;
+        }
+        msx_keyboard_matrix_clear(&state->keyboardMatrix);
+        msx_apply_virtual_key_step(&state->keyboardMatrix);
         return;
     }
 
@@ -1737,20 +1994,21 @@ void msx_input_poll(MsxInputState* state)
 
     if (!basicKeyboardEnabled && (s_runtimeOptions.joystickEnabled || s_runtimeOptions.vausEnabled)) {
         // Configurable emulator bindings drive the PSG joystick path and Vaus.
-        msx_apply_joystick_mode_actions(state, bindings);
+        msx_apply_joystick_mode_actions(state, bindings, virtualKeyPickerAllowed);
     }
 
     if (s_runtimeOptions.keyboardEnabled && !basicKeyboardEnabled) {
-        msx_apply_shared_actions(state, keys, bindings);
+        msx_apply_shared_actions(state, keys, bindings, virtualKeyPickerAllowed);
     }
 
     msx_build_keyboard_matrix(&state->keyboardMatrix,
                               keys,
                               state,
                               bindings,
-                              s_runtimeOptions.keyboardEnabled,
+                              effectiveKeyboardEnabled,
                               s_runtimeOptions.joystickEnabled,
-                              basicKeyboardEnabled);
+                              basicKeyboardEnabled,
+                              virtualKeyPickerAllowed);
 }
 
 void msx_input_get_overlay_state(MsxInputOverlayState* state)
@@ -1780,6 +2038,11 @@ void msx_input_get_overlay_state(MsxInputOverlayState* state)
     state->perfShowFpsOverlay = msx_config_get_fps_overlay_enabled();
     state->perfFrameskipMode = msx_config_get_frameskip_mode();
     state->casChangeAvailable = s_runtimeOptions.changeCasAvailable;
+    state->virtualKeyPickerVisible = s_virtualKeyPickerVisible;
+    std::snprintf(state->virtualKeyPickerLabel,
+                  sizeof(state->virtualKeyPickerLabel),
+                  "%c",
+                  msx_virtual_key_picker_current_char());
     state->selectedIndex = s_runtimeMenu.selectedIndex;
 }
 

@@ -31,6 +31,8 @@ static uint32_t s_lastDisplayDiagMs = 0;
 static MsxInternalViewMode s_lastViewMode = MsxInternalViewMode::Wide;
 static MsxInputOverlayState s_lastMenuOverlay = {};
 static bool s_lastMenuVisible = false;
+static bool s_lastVirtualKeyPickerVisible = false;
+static char s_lastVirtualKeyPickerLabel[8] = "";
 static uint8_t s_lastScrollIndex = 0;
 static uint8_t s_lastStateSlot = 0;
 static constexpr uint8_t kRuntimeMenuRowCount = 5u;
@@ -399,6 +401,46 @@ static void msx_display_draw_runtime_menu(const MsxInputOverlayState& overlay)
     }
 }
 
+static void msx_display_draw_virtual_key_picker(const MsxInputOverlayState& overlay)
+{
+    const int displayW = msx_display_active_width();
+    const int displayH = msx_display_active_height();
+    const int boxW = msx_display_game_on_external() ? 116 : 96;
+    const int boxH = msx_display_game_on_external() ? 48 : 42;
+    const int boxX = (displayW - boxW) / 2;
+    const int boxY = (displayH - boxH) / 2;
+
+    char value[16];
+    std::snprintf(value,
+                  sizeof(value),
+                  "< %s >",
+                  overlay.virtualKeyPickerLabel[0] ? overlay.virtualKeyPickerLabel : "0");
+
+    if (msx_display_game_on_external()) {
+        msx_display_prepare_external_tft();
+        auto& tft = msx_display_external_tft();
+        tft.fillRoundRect(boxX + 3, boxY + 3, boxW, boxH, 4, TFT_BLACK);
+        tft.fillRoundRect(boxX, boxY, boxW, boxH, 4, TFT_BLACK);
+        tft.drawRoundRect(boxX, boxY, boxW, boxH, 4, PRIMARY_COLOR);
+        tft.drawRoundRect(boxX + 2, boxY + 2, boxW - 4, boxH - 4, 3, RECT_COLOR_DARK);
+        tft.setTextColor(PRIMARY_COLOR, TFT_BLACK);
+        tft.drawCentreString("KEY", displayW / 2, boxY + 6, 2);
+        tft.setTextColor(TFT_WHITE, TFT_BLACK);
+        tft.drawCentreString(value, displayW / 2, boxY + 25, 2);
+        return;
+    }
+
+    auto& display = M5Cardputer.Display;
+    display.fillRoundRect(boxX + 3, boxY + 3, boxW, boxH, 4, TFT_BLACK);
+    display.fillRoundRect(boxX, boxY, boxW, boxH, 4, TFT_BLACK);
+    display.drawRoundRect(boxX, boxY, boxW, boxH, 4, PRIMARY_COLOR);
+    display.drawRoundRect(boxX + 2, boxY + 2, boxW - 4, boxH - 4, 3, RECT_COLOR_DARK);
+    display.setTextColor(PRIMARY_COLOR, TFT_BLACK);
+    display.drawCenterString("KEY", displayW / 2, boxY + 6, &fonts::Font0);
+    display.setTextColor(TFT_WHITE, TFT_BLACK);
+    display.drawCenterString(value, displayW / 2, boxY + 23, &fonts::Font2);
+}
+
 static bool msx_display_runtime_menu_overlay_equals(const MsxInputOverlayState& a,
                                                     const MsxInputOverlayState& b)
 {
@@ -456,6 +498,8 @@ void msx_display_init(void)
     s_lastStateSlot = msx_input_get_state_slot();
     s_lastMenuOverlay = {};
     s_lastMenuVisible = false;
+    s_lastVirtualKeyPickerVisible = false;
+    s_lastVirtualKeyPickerLabel[0] = '\0';
     msx_video_init();
 }
 
@@ -521,6 +565,8 @@ void msx_display_submit_frame(const MsxDisplayFrame* frame, const MsxDisplayStat
         s_lastMenuOverlay = overlay;
         s_lastMenuVisible = true;
         s_lastScrollIndex = scrollIndex;
+        s_lastVirtualKeyPickerVisible = false;
+        s_lastVirtualKeyPickerLabel[0] = '\0';
         msx_video_unlock();
         return;
     }
@@ -539,8 +585,39 @@ void msx_display_submit_frame(const MsxDisplayFrame* frame, const MsxDisplayStat
     }
     s_lastMenuVisible = false;
 
+    const bool pickerClosed = s_lastVirtualKeyPickerVisible && !overlay.virtualKeyPickerVisible;
+    if (pickerClosed) {
+        msx_video_lock();
+        if (msx_display_game_on_external()) {
+            msx_video_finish_external_ui();
+        }
+        s_lastVirtualKeyPickerVisible = false;
+        s_lastVirtualKeyPickerLabel[0] = '\0';
+        msx_video_unlock();
+        msx_video_request_full_redraw();
+    }
+
     if (frame && (frame->indexed8 || streamFrame)) {
-        if (menuClosed) {
+        const bool pickerVisible = overlay.virtualKeyPickerVisible;
+        const bool pickerChanged =
+            pickerVisible &&
+            (!s_lastVirtualKeyPickerVisible ||
+             std::strcmp(s_lastVirtualKeyPickerLabel, overlay.virtualKeyPickerLabel) != 0);
+        if (pickerVisible) {
+            msx_video_lock();
+            if (pickerChanged) {
+                msx_display_draw_virtual_key_picker(overlay);
+                std::snprintf(s_lastVirtualKeyPickerLabel,
+                              sizeof(s_lastVirtualKeyPickerLabel),
+                              "%s",
+                              overlay.virtualKeyPickerLabel);
+            }
+            s_lastVirtualKeyPickerVisible = true;
+            msx_video_unlock();
+            return;
+        }
+
+        if (menuClosed || pickerClosed) {
             if (frame->indexed8) {
                 msx_video_present_frame(frame);
             }
@@ -562,5 +639,13 @@ void msx_display_submit_frame(const MsxDisplayFrame* frame, const MsxDisplayStat
     
     msx_video_lock();
     msx_display_draw_placeholder(status);
+    if (overlay.virtualKeyPickerVisible) {
+        msx_display_draw_virtual_key_picker(overlay);
+        std::snprintf(s_lastVirtualKeyPickerLabel,
+                      sizeof(s_lastVirtualKeyPickerLabel),
+                      "%s",
+                      overlay.virtualKeyPickerLabel);
+    }
     msx_video_unlock();
+    s_lastVirtualKeyPickerVisible = overlay.virtualKeyPickerVisible;
 }

@@ -322,12 +322,9 @@ static MsxRuntimeOptionConfig sanitizeStartupTesterConfig(MsxRuntimeOptionConfig
 {
   config.stateSlot = static_cast<uint8_t>(config.stateSlot % 10u);
   if (config.basicKeyboardEnabled) {
-    config.keyboardEnabled = true;
+    config.keyboardEnabled = false;
     config.joystickEnabled = false;
     config.vausEnabled = false;
-  }
-  if (!config.keyboardEnabled) {
-    config.basicKeyboardEnabled = false;
   }
   return config;
 }
@@ -443,9 +440,7 @@ static void showStartupInputTester(CardputerView& display, CardputerInput& input
         togglePressed = true;
       } else if (startupKeyWordPressed('k')) {
         config.keyboardEnabled = !config.keyboardEnabled;
-        if (!config.keyboardEnabled) {
-          config.basicKeyboardEnabled = false;
-        }
+        config.basicKeyboardEnabled = false;
         togglePressed = true;
       } else if (startupKeyWordPressed('b')) {
         config.basicKeyboardEnabled = !config.basicKeyboardEnabled;
@@ -715,9 +710,7 @@ static void showStartupMsxConfigMenu(CardputerView& display, CardputerInput& inp
         break;
       case 2:
         config.keyboardEnabled = !config.keyboardEnabled;
-        if (!config.keyboardEnabled) {
-          config.basicKeyboardEnabled = false;
-        }
+        config.basicKeyboardEnabled = false;
         msx_input_set_runtime_option_config(config, true);
         break;
       case 3:

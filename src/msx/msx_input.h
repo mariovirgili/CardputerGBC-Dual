@@ -22,6 +22,7 @@ struct MsxInputState {
     bool basicKeyboardEnabled;
     bool vausEnabled;
     bool menuVisible;
+    bool virtualKeyPickerVisible;
     bool quitRequested;
     bool toggleViewRequested;
 };
@@ -43,6 +44,8 @@ struct MsxInputOverlayState {
     bool perfShowFpsOverlay;
     MsxFrameskipMode perfFrameskipMode;
     bool casChangeAvailable;
+    bool virtualKeyPickerVisible;
+    char virtualKeyPickerLabel[8];
     uint8_t selectedIndex;
 };
 
