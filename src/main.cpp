@@ -39,6 +39,19 @@ static void showExternalRomSelectorTft()
   extTft.setSwapBytes(false);
 }
 
+static TFT_eSPI& startupExternalTft()
+{
+  static TFT_eSPI extTft;
+  static bool initialized = false;
+  emu_set_aux_screen_locked(false);
+  if (!initialized) {
+    extTft.begin();
+    extTft.setRotation(3);
+    initialized = true;
+  }
+  return extTft;
+}
+
 namespace {
 constexpr int kSelectorResultEditControls = -2;
 constexpr int kSelectorResultBackToRomBrowser = -3;
@@ -345,8 +358,39 @@ static void drawStartupInputTester(const MsxRuntimeOptionConfig& config,
   tft.drawString((std::string("KBD: ") + state.keyboardLabel).c_str(), 8, 106);
   tft.drawString((std::string("VAUS: ") + state.vausLabel).c_str(), 8, 120);
   tft.setTextColor(PRIMARY_COLOR, TFT_BLACK);
-  tft.drawString("GO / LEFT / ` = back", 8, 136);
+  tft.drawString("GO = back", 8, 136);
   tft.setTextDatum(middle_center);
+}
+
+static void drawStartupInputTesterExternal(const MsxRuntimeOptionConfig& config,
+                                           const MsxInputDiagnosticState& state)
+{
+  auto& tft = startupExternalTft();
+  tft.fillScreen(TFT_BLACK);
+  tft.setTextDatum(TL_DATUM);
+  tft.setTextColor(PRIMARY_COLOR, TFT_BLACK);
+  const char* title = "MSX INPUT TEST";
+  tft.drawString(title, (320 - tft.textWidth(title, 2)) / 2, 12, 2);
+  tft.drawString("FN+J/K/B/V toggles", 14, 42, 2);
+  tft.setTextColor(TEXT_COLOR, TFT_BLACK);
+
+  char modeLine[48];
+  snprintf(modeLine,
+           sizeof(modeLine),
+           "J:%s  K:%s  B:%s  V:%s",
+           config.joystickEnabled ? "ON" : "OFF",
+           config.keyboardEnabled ? "ON" : "OFF",
+           config.basicKeyboardEnabled ? "ON" : "OFF",
+           config.vausEnabled ? "ON" : "OFF");
+  tft.drawString(modeLine, 14, 68, 2);
+  tft.drawString((std::string("RAW:  ") + state.rawLabel).c_str(), 14, 94, 2);
+  tft.drawString((std::string("EMU:  ") + state.actionLabel).c_str(), 14, 118, 2);
+  tft.drawString((std::string("JOY:  ") + state.joystickLabel).c_str(), 14, 142, 2);
+  tft.drawString((std::string("KBD:  ") + state.keyboardLabel).c_str(), 14, 166, 2);
+  tft.drawString((std::string("VAUS: ") + state.vausLabel).c_str(), 14, 190, 2);
+  tft.setTextColor(PRIMARY_COLOR, TFT_BLACK);
+  tft.drawString("GO = back", 14, 216, 2);
+  tft.setTextDatum(MC_DATUM);
 }
 
 static std::string startupInputTesterSnapshot(const MsxRuntimeOptionConfig& config,
@@ -373,6 +417,7 @@ static void showStartupInputTester(CardputerView& display, CardputerInput& input
   MsxRuntimeOptionConfig config = sanitizeStartupTesterConfig(msx_input_load_runtime_option_config());
   MsxInputDiagnosticState diagnostic = {};
   uint32_t lastDraw = 0;
+  uint32_t nextToggleAllowedMs = 0;
   std::string lastSnapshot;
   bool toggleLatch = false;
 
@@ -388,7 +433,8 @@ static void showStartupInputTester(CardputerView& display, CardputerInput& input
     }
 
     bool togglePressed = false;
-    if (keys.fn) {
+    const uint32_t now = millis();
+    if (keys.fn && !toggleLatch && now >= nextToggleAllowedMs) {
       if (startupKeyWordPressed('j')) {
         config.joystickEnabled = !config.joystickEnabled;
         if (config.joystickEnabled) {
@@ -413,16 +459,18 @@ static void showStartupInputTester(CardputerView& display, CardputerInput& input
       }
     }
 
-    if (togglePressed && !toggleLatch) {
+    if (togglePressed) {
       config = sanitizeStartupTesterConfig(config);
+      msx_input_poll_diagnostic(config, &diagnostic);
       lastSnapshot.clear();
+      nextToggleAllowedMs = now + 450u;
     }
     toggleLatch = togglePressed;
 
-    const uint32_t now = millis();
     const std::string snapshot = startupInputTesterSnapshot(config, diagnostic);
     if ((lastDraw == 0 || now - lastDraw >= 180u) && snapshot != lastSnapshot) {
       drawStartupInputTester(config, diagnostic);
+      drawStartupInputTesterExternal(config, diagnostic);
       lastSnapshot = snapshot;
       lastDraw = now;
     }
@@ -437,14 +485,35 @@ static void drawStartupAboutPage()
   tft.setTextDatum(middle_center);
   tft.setTextColor(TEXT_COLOR, TFT_BLACK);
   tft.setTextSize(TEXT_WIDE);
-  tft.drawCenterString("Msx ADV Emulators v0.5", tft.width() / 2, 24);
-  tft.setTextSize(TEXT_TINY);
-  tft.drawCenterString("MSX is a registered trademark", tft.width() / 2, 58);
-  tft.drawCenterString("owned by MSX Licensing", tft.width() / 2, 74);
-  tft.drawCenterString("Corporation", tft.width() / 2, 90);
+  tft.drawCenterString("Msx ADV Emulators v0.5", tft.width() / 2, 16);
+  tft.setTextSize(TEXT_SMALL);
+  tft.drawCenterString("MSX is a registered", tft.width() / 2, 48);
+  tft.drawCenterString("trademark owned by", tft.width() / 2, 64);
+  tft.drawCenterString("MSX Licensing", tft.width() / 2, 80);
+  tft.drawCenterString("Corporation", tft.width() / 2, 96);
   tft.setTextSize(TEXT_SMALL);
   tft.setTextColor(PRIMARY_COLOR, TFT_BLACK);
   tft.drawCenterString("GO / LEFT / ` = back", tft.width() / 2, 124);
+}
+
+static void drawStartupAboutPageExternal()
+{
+  auto& tft = startupExternalTft();
+  tft.fillScreen(TFT_BLACK);
+  tft.setTextDatum(TL_DATUM);
+  tft.setTextColor(TEXT_COLOR, TFT_BLACK);
+  const char* title = "Msx ADV Emulators v0.5";
+  tft.drawString(title, (320 - tft.textWidth(title, 2)) / 2, 20, 2);
+  const char* line1 = "MSX is a registered trademark";
+  const char* line2 = "owned by MSX Licensing";
+  const char* line3 = "Corporation";
+  tft.drawString(line1, (320 - tft.textWidth(line1, 2)) / 2, 76, 2);
+  tft.drawString(line2, (320 - tft.textWidth(line2, 2)) / 2, 104, 2);
+  tft.drawString(line3, (320 - tft.textWidth(line3, 2)) / 2, 132, 2);
+  tft.setTextColor(PRIMARY_COLOR, TFT_BLACK);
+  const char* hint = "GO / LEFT / ` = back";
+  tft.drawString(hint, (320 - tft.textWidth(hint, 2)) / 2, 196, 2);
+  tft.setTextDatum(MC_DATUM);
 }
 
 static void showStartupAboutPage(SdService& sd, CardputerView& display, CardputerInput& input)
@@ -454,12 +523,14 @@ static void showStartupAboutPage(SdService& sd, CardputerView& display, Cardpute
   size_t konamiProgress = 0;
 
   drawStartupAboutPage();
+  drawStartupAboutPageExternal();
   input.flushInput(150);
 
   for (;;) {
     M5Cardputer.update();
     if (startupEscapePressed() ||
         (konamiProgress == 0 && M5Cardputer.Keyboard.isKeyPressed(KEY_ARROW_LEFT))) {
+      showExternalRomSelectorTft();
       input.flushInput(150);
       return;
     }
@@ -474,6 +545,7 @@ static void showStartupAboutPage(SdService& sd, CardputerView& display, Cardpute
       if (konamiProgress >= kKonamiLength) {
         showStartupInputTester(display, input);
         drawStartupAboutPage();
+        drawStartupAboutPageExternal();
         konamiProgress = 0;
         input.flushInput(150);
       }

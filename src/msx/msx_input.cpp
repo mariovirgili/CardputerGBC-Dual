@@ -1054,29 +1054,33 @@ static void msx_apply_shared_actions(MsxInputState* state,
     state->select |= msx_binding_pressed(cache.select);
 }
 
-static void msx_apply_emulator_actions_to_matrix(MsxKeyboardMatrix* matrix, const MsxInputState* state)
+static void msx_apply_emulator_actions_to_matrix(MsxKeyboardMatrix* matrix,
+                                                 const MsxInputState* state,
+                                                 bool joystickEnabled)
 {
     if (!matrix || !state) {
         return;
     }
 
-    if (state->up) {
-        msx_keyboard_matrix_press_special(matrix, MsxKeyboardSpecialKey::Up);
-    }
-    if (state->down) {
-        msx_keyboard_matrix_press_special(matrix, MsxKeyboardSpecialKey::Down);
-    }
-    if (state->left) {
-        msx_keyboard_matrix_press_special(matrix, MsxKeyboardSpecialKey::Left);
-    }
-    if (state->right) {
-        msx_keyboard_matrix_press_special(matrix, MsxKeyboardSpecialKey::Right);
-    }
-    if (state->fire1) {
-        msx_keyboard_matrix_press_special(matrix, MsxKeyboardSpecialKey::Space);
-    }
-    if (state->fire2) {
-        msx_keyboard_matrix_press_special(matrix, MsxKeyboardSpecialKey::Graph);
+    if (!joystickEnabled) {
+        if (state->up) {
+            msx_keyboard_matrix_press_special(matrix, MsxKeyboardSpecialKey::Up);
+        }
+        if (state->down) {
+            msx_keyboard_matrix_press_special(matrix, MsxKeyboardSpecialKey::Down);
+        }
+        if (state->left) {
+            msx_keyboard_matrix_press_special(matrix, MsxKeyboardSpecialKey::Left);
+        }
+        if (state->right) {
+            msx_keyboard_matrix_press_special(matrix, MsxKeyboardSpecialKey::Right);
+        }
+        if (state->fire1) {
+            msx_keyboard_matrix_press_special(matrix, MsxKeyboardSpecialKey::Space);
+        }
+        if (state->fire2) {
+            msx_keyboard_matrix_press_special(matrix, MsxKeyboardSpecialKey::Graph);
+        }
     }
     if (state->start) {
         msx_keyboard_matrix_press_special(matrix, MsxKeyboardSpecialKey::Enter);
@@ -1118,7 +1122,7 @@ static void msx_build_keyboard_matrix(MsxKeyboardMatrix* matrix,
     }
 
     if (!basicKeyboardEnabled) {
-        msx_apply_emulator_actions_to_matrix(matrix, state);
+        msx_apply_emulator_actions_to_matrix(matrix, state, joystickEnabled);
     }
     msx_apply_printable_keys(matrix, keys, cache, joystickEnabled, basicKeyboardEnabled);
 }
@@ -1441,10 +1445,7 @@ void msx_input_poll_diagnostic(const MsxRuntimeOptionConfig& requestedConfig,
     msx_diag_raw_label(keys, diagnostic->rawLabel, sizeof(diagnostic->rawLabel));
     msx_diag_action_label(bindings, diagnostic->actionLabel, sizeof(diagnostic->actionLabel));
     diagnostic->hasInput = std::strcmp(diagnostic->rawLabel, "NONE") != 0;
-    diagnostic->exitRequested =
-        M5Cardputer.BtnA.wasClicked() ||
-        M5Cardputer.Keyboard.isKeyPressed(KEY_ARROW_LEFT) ||
-        msx_key_pressed_any('`', '~');
+    diagnostic->exitRequested = M5Cardputer.BtnA.wasClicked();
 
     MsxInputState state = {};
     msx_keyboard_matrix_clear(&state.keyboardMatrix);
@@ -1471,27 +1472,27 @@ void msx_input_poll_diagnostic(const MsxRuntimeOptionConfig& requestedConfig,
     if (joystickEnabled) {
         char buttons[24] = "";
         if (state.up) {
-            msx_diag_append(buttons, sizeof(buttons), "U");
+            msx_diag_append(buttons, sizeof(buttons), "UP");
         }
         if (state.down) {
-            msx_diag_append(buttons, sizeof(buttons), "D");
+            msx_diag_append(buttons, sizeof(buttons), "DOWN");
         }
         if (state.left) {
-            msx_diag_append(buttons, sizeof(buttons), "L");
+            msx_diag_append(buttons, sizeof(buttons), "LEFT");
         }
         if (state.right) {
-            msx_diag_append(buttons, sizeof(buttons), "R");
+            msx_diag_append(buttons, sizeof(buttons), "RIGHT");
         }
         if (state.fire1) {
-            msx_diag_append(buttons, sizeof(buttons), "A");
+            msx_diag_append(buttons, sizeof(buttons), "FIRE1");
         }
         if (state.fire2) {
-            msx_diag_append(buttons, sizeof(buttons), "B");
+            msx_diag_append(buttons, sizeof(buttons), "FIRE2");
         }
         std::snprintf(diagnostic->joystickLabel,
                       sizeof(diagnostic->joystickLabel),
                       "%s %s",
-                      vausEnabled ? "PORTB" : "PORTA",
+                      vausEnabled ? "PORT B" : "PORT A",
                       buttons[0] != '\0' ? buttons : "IDLE");
     }
 
