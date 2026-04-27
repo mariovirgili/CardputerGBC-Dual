@@ -365,8 +365,6 @@ bool emuControlsEdit(SdService& sd, EmuProfile profile, CardputerView& display, 
 
     const int originalInternalView = static_cast<int>(msx_config_load_internal_view_mode());
     int pendingInternalView = originalInternalView;
-    int pendingMachineMode = static_cast<int>(msx_config_load_machine_mode());
-    const int originalMachineMode = pendingMachineMode;
     int selectedIndex = 0;
 
     VerticalSelector selector(display, input);
@@ -381,12 +379,8 @@ bool emuControlsEdit(SdService& sd, EmuProfile profile, CardputerView& display, 
                 ? MsxInternalViewMode::PixelPerfect
                 : MsxInternalViewMode::Wide));
 
-        labels.emplace_back("MACHINE");
-        values.emplace_back(msx_config_machine_mode_label(static_cast<MsxMachineMode>(pendingMachineMode)));
-
         int nextIndex = static_cast<int>(def.entryCount);
         const int internalViewIndex = nextIndex++;
-        const int machineIndex = nextIndex++;
         const int saveIndex = nextIndex++;
         const int defaultsIndex = nextIndex++;
         const int cancelIndex = nextIndex++;
@@ -405,8 +399,8 @@ bool emuControlsEdit(SdService& sd, EmuProfile profile, CardputerView& display, 
             labels,
             false,
             false,
-            {},
             values,
+            {},
             false,
             true,
             true,
@@ -416,7 +410,6 @@ bool emuControlsEdit(SdService& sd, EmuProfile profile, CardputerView& display, 
         if (selection < 0) {
             s_bindings[static_cast<size_t>(profile)] = originalBindings;
             msx_config_set_internal_view_mode(static_cast<MsxInternalViewMode>(originalInternalView), false);
-            msx_config_set_machine_mode(static_cast<MsxMachineMode>(originalMachineMode), false);
             return false;
         }
 
@@ -424,6 +417,7 @@ bool emuControlsEdit(SdService& sd, EmuProfile profile, CardputerView& display, 
 
         if (selection < static_cast<int>(def.entryCount)) {
             const ControlEntry& entry = def.entries[static_cast<size_t>(selection)];
+            input.flushInput(120);
             display.topBar(capturePrompt(entry.label), false, false);
             display.subMessage("Press a key to bind", "ESC to cancel", 0);
 
@@ -459,25 +453,16 @@ bool emuControlsEdit(SdService& sd, EmuProfile profile, CardputerView& display, 
             continue;
         }
 
-        if (selection == machineIndex) {
-            pendingMachineMode = (pendingMachineMode + 1) % 3;
-            msx_config_set_machine_mode(static_cast<MsxMachineMode>(pendingMachineMode), false);
-            continue;
-        }
-
         if (selection == defaultsIndex) {
             emuControlsResetDefaults(profile);
             pendingInternalView = wideInternalView;
-            pendingMachineMode = static_cast<int>(MsxMachineMode::Auto);
             msx_config_set_internal_view_mode(MsxInternalViewMode::Wide, false);
-            msx_config_set_machine_mode(MsxMachineMode::Auto, false);
             continue;
         }
 
         if (selection == cancelIndex) {
             s_bindings[static_cast<size_t>(profile)] = originalBindings;
             msx_config_set_internal_view_mode(static_cast<MsxInternalViewMode>(originalInternalView), false);
-            msx_config_set_machine_mode(static_cast<MsxMachineMode>(originalMachineMode), false);
             return false;
         }
 
@@ -489,7 +474,6 @@ bool emuControlsEdit(SdService& sd, EmuProfile profile, CardputerView& display, 
                     : MsxInternalViewMode::Wide,
                 true
             );
-            msx_config_set_machine_mode(static_cast<MsxMachineMode>(pendingMachineMode), true);
 
             display.topBar(saved ? "CONFIG SAVED" : "SAVE FAILED", false, false);
             display.subMessage(saved ? "MSX settings updated" : "Could not write config", 700);

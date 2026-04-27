@@ -2,6 +2,7 @@
 
 #include <Arduino.h>
 #include <M5Cardputer.h>
+#include <Preferences.h>
 
 #include "../cardputer/CardputerInput.h"
 #include "../share/display_target.h"
@@ -128,6 +129,70 @@ static const char* s_textMacro = nullptr;
 static size_t s_textMacroIndex = 0;
 static uint8_t s_textMacroPhase = 0;
 static MsxMachineMode s_runtimeMachineMode = MsxMachineMode::MSX2;
+
+static constexpr const char* kMsxInputConfigNs = "msx_input";
+static constexpr const char* kMsxInputJoystickKey = "joy";
+static constexpr const char* kMsxInputKeyboardKey = "kbd";
+static constexpr const char* kMsxInputBasicKey = "basic";
+static constexpr const char* kMsxInputVausKey = "vaus";
+static constexpr const char* kMsxInputStateSlotKey = "state";
+static constexpr MsxRuntimeOptionConfig kDefaultRuntimeOptionConfig = {
+    false,
+    true,
+    false,
+    false,
+    0,
+};
+
+static MsxRuntimeOptionConfig msx_sanitize_runtime_option_config(MsxRuntimeOptionConfig config)
+{
+    config.stateSlot = static_cast<uint8_t>(config.stateSlot % 10u);
+    if (config.basicKeyboardEnabled) {
+        config.keyboardEnabled = true;
+        config.joystickEnabled = false;
+        config.vausEnabled = false;
+    }
+    if (!config.keyboardEnabled) {
+        config.basicKeyboardEnabled = false;
+    }
+    return config;
+}
+
+static void msx_persist_runtime_option_config(const MsxRuntimeOptionConfig& config)
+{
+    Preferences prefs;
+    prefs.begin(kMsxInputConfigNs, false);
+    prefs.putBool(kMsxInputJoystickKey, config.joystickEnabled);
+    prefs.putBool(kMsxInputKeyboardKey, config.keyboardEnabled);
+    prefs.putBool(kMsxInputBasicKey, config.basicKeyboardEnabled);
+    prefs.putBool(kMsxInputVausKey, config.vausEnabled);
+    prefs.putUChar(kMsxInputStateSlotKey, config.stateSlot);
+    prefs.end();
+}
+
+static MsxRuntimeOptionConfig msx_current_runtime_option_config(void)
+{
+    return {
+        s_runtimeOptions.joystickEnabled,
+        s_runtimeOptions.keyboardEnabled,
+        s_runtimeOptions.basicKeyboardEnabled,
+        s_runtimeOptions.vausEnabled,
+        s_runtimeOptions.stateSlot,
+    };
+}
+
+static void msx_apply_runtime_option_config(MsxRuntimeOptionConfig config, bool persist)
+{
+    config = msx_sanitize_runtime_option_config(config);
+    s_runtimeOptions.joystickEnabled = config.joystickEnabled;
+    s_runtimeOptions.keyboardEnabled = config.keyboardEnabled;
+    s_runtimeOptions.basicKeyboardEnabled = config.basicKeyboardEnabled;
+    s_runtimeOptions.vausEnabled = config.vausEnabled;
+    s_runtimeOptions.stateSlot = config.stateSlot;
+    if (persist) {
+        msx_persist_runtime_option_config(config);
+    }
+}
 
 static bool msx_view_toggle_allowed(void)
 {
@@ -505,6 +570,7 @@ static void msx_runtime_menu_adjust(int delta)
         int slot = s_runtimeOptions.stateSlot;
         slot = (slot + delta + 10) % 10;
         s_runtimeOptions.stateSlot = static_cast<uint8_t>(slot);
+        msx_persist_runtime_option_config(msx_input_get_runtime_option_config());
     }
 }
 
@@ -572,12 +638,14 @@ static void msx_runtime_menu_accept(void)
             if (s_runtimeOptions.joystickEnabled) {
                 s_runtimeOptions.basicKeyboardEnabled = false;
             }
+            msx_persist_runtime_option_config(msx_input_get_runtime_option_config());
             break;
         case MsxRuntimeMenuItem::Keyboard:
             s_runtimeOptions.keyboardEnabled = !s_runtimeOptions.keyboardEnabled;
             if (!s_runtimeOptions.keyboardEnabled) {
                 s_runtimeOptions.basicKeyboardEnabled = false;
             }
+            msx_persist_runtime_option_config(msx_input_get_runtime_option_config());
             break;
         case MsxRuntimeMenuItem::BasicKeyboard:
             s_runtimeOptions.basicKeyboardEnabled = !s_runtimeOptions.basicKeyboardEnabled;
@@ -586,12 +654,14 @@ static void msx_runtime_menu_accept(void)
                 s_runtimeOptions.joystickEnabled = false;
                 s_runtimeOptions.vausEnabled = false;
             }
+            msx_persist_runtime_option_config(msx_input_get_runtime_option_config());
             break;
         case MsxRuntimeMenuItem::Vaus:
             s_runtimeOptions.vausEnabled = !s_runtimeOptions.vausEnabled;
             if (s_runtimeOptions.vausEnabled) {
                 s_runtimeOptions.basicKeyboardEnabled = false;
             }
+            msx_persist_runtime_option_config(msx_input_get_runtime_option_config());
             break;
         case MsxRuntimeMenuItem::View:
             if (msx_view_toggle_allowed()) {
@@ -1152,6 +1222,31 @@ static void msx_poll_runtime_menu(const Keyboard_Class::KeysState& keys,
     }
 }
 
+MsxRuntimeOptionConfig msx_input_load_runtime_option_config(void)
+{
+    Preferences prefs;
+    prefs.begin(kMsxInputConfigNs, true);
+    MsxRuntimeOptionConfig config = {
+        prefs.getBool(kMsxInputJoystickKey, kDefaultRuntimeOptionConfig.joystickEnabled),
+        prefs.getBool(kMsxInputKeyboardKey, kDefaultRuntimeOptionConfig.keyboardEnabled),
+        prefs.getBool(kMsxInputBasicKey, kDefaultRuntimeOptionConfig.basicKeyboardEnabled),
+        prefs.getBool(kMsxInputVausKey, kDefaultRuntimeOptionConfig.vausEnabled),
+        prefs.getUChar(kMsxInputStateSlotKey, kDefaultRuntimeOptionConfig.stateSlot),
+    };
+    prefs.end();
+    return msx_sanitize_runtime_option_config(config);
+}
+
+MsxRuntimeOptionConfig msx_input_get_runtime_option_config(void)
+{
+    return msx_sanitize_runtime_option_config(msx_current_runtime_option_config());
+}
+
+void msx_input_set_runtime_option_config(const MsxRuntimeOptionConfig& config, bool persist)
+{
+    msx_apply_runtime_option_config(config, persist);
+}
+
 void msx_input_init(void)
 {
     s_backtickPressedMs = 0;
@@ -1159,7 +1254,18 @@ void msx_input_init(void)
     s_goLongHandled = false;
     s_suppressGoClick = false;
     s_suppressGoUntilMs = 0;
-    s_runtimeOptions = {false, true, false, false, 0, false, false, false, false};
+    const MsxRuntimeOptionConfig config = msx_input_load_runtime_option_config();
+    s_runtimeOptions = {
+        config.joystickEnabled,
+        config.keyboardEnabled,
+        config.basicKeyboardEnabled,
+        config.vausEnabled,
+        config.stateSlot,
+        false,
+        false,
+        false,
+        false
+    };
     s_runtimeMenu = {
         false,
         MsxRuntimeMenuPage::Main,
@@ -1182,12 +1288,13 @@ void msx_input_init(void)
 
 void msx_input_set_basic_keyboard_enabled(bool enabled)
 {
-    s_runtimeOptions.basicKeyboardEnabled = enabled;
-    if (enabled) {
-        s_runtimeOptions.keyboardEnabled = true;
-        s_runtimeOptions.joystickEnabled = false;
-        s_runtimeOptions.vausEnabled = false;
+    if (!enabled) {
+        return;
     }
+    s_runtimeOptions.basicKeyboardEnabled = enabled;
+    s_runtimeOptions.keyboardEnabled = true;
+    s_runtimeOptions.joystickEnabled = false;
+    s_runtimeOptions.vausEnabled = false;
 }
 
 void msx_input_set_cas_change_available(bool available)

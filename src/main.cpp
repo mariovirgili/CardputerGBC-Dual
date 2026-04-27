@@ -1,4 +1,5 @@
 #include <M5Cardputer.h>
+#include <Preferences.h>
 #include <select_rom.h>
 #include "cardputer/CardputerView.h"
 #include "cardputer/CardputerInput.h"
@@ -13,6 +14,7 @@
 #include "msx/run_msx.h"
 #include "msx/msx_config.h"
 #include "msx/msx_display.h"
+#include "msx/msx_input.h"
 #include "last_game.h"
 #include "esp_system.h"
 #include "esp_task_wdt.h"
@@ -54,6 +56,15 @@ struct MsxDisplayTargetSelectionResult {
   bool backToRomBrowser = false;
   emu_display_target_t target = EMU_DISPLAY_EXTERNAL;
 };
+
+enum class StartupMainMenuAction {
+  RomSelector = 0,
+  ConfigMenu = 1,
+  ConfigKeys = 2,
+};
+
+constexpr const char* kStartupMenuPrefsNs = "cardputer_emu";
+constexpr const char* kStartupMenuIndexKey = "startup_menu";
 } // namespace
 
 static MsxMachineSelectionResult selectMsxLaunchSystem(CardputerView& display, CardputerInput& input)
@@ -174,6 +185,247 @@ static MsxBoolSelectionResult selectMsxExternalFpsLock(CardputerView& display,
   result.backToRomBrowser = false;
   result.value = chosen == 1;
   return result;
+}
+
+static const char* startupBoolLabel(bool enabled)
+{
+  return enabled ? "ON" : "OFF";
+}
+
+static uint8_t loadStartupMenuIndex()
+{
+  Preferences prefs;
+  prefs.begin(kStartupMenuPrefsNs, true);
+  const uint8_t index = prefs.getUChar(kStartupMenuIndexKey, 0);
+  prefs.end();
+  return index < 3 ? index : 0;
+}
+
+static void saveStartupMenuIndex(uint8_t index)
+{
+  Preferences prefs;
+  prefs.begin(kStartupMenuPrefsNs, false);
+  prefs.putUChar(kStartupMenuIndexKey, index < 3 ? index : 0);
+  prefs.end();
+}
+
+static StartupMainMenuAction selectStartupMainMenu(CardputerView& display, CardputerInput& input)
+{
+  VerticalSelector selector(display, input);
+  const std::vector<std::string> options = {
+      "Rom selector",
+      "Config Menu",
+      "Config Keys",
+  };
+
+  const uint8_t initialIndex = loadStartupMenuIndex();
+  int selected = selector.select("STARTUP MENU",
+                                 options,
+                                 false,
+                                 false,
+                                 {},
+                                 {},
+                                 false,
+                                 true,
+                                 true,
+                                 initialIndex,
+                                 -1,
+                                 0);
+  if (selected < 0 || selected > 2) {
+    selected = 0;
+  }
+  saveStartupMenuIndex(static_cast<uint8_t>(selected));
+  return static_cast<StartupMainMenuAction>(selected);
+}
+
+static void showStartupMsxPerformanceMenu(CardputerView& display, CardputerInput& input)
+{
+  VerticalSelector selector(display, input);
+  int selectedIndex = 0;
+
+  for (;;) {
+    msx_config_load_performance_flags();
+    msx_config_load_frameskip_mode();
+    msx_config_load_fps_overlay_enabled();
+    const bool machineIsMsx2 = msx_config_load_machine_mode() != MsxMachineMode::MSX1;
+
+    const std::vector<std::string> options = {
+        "ExternalFixed30Fps",
+        "Frameskip",
+        "FpsOverlay",
+        "SliceRendering",
+        "SpriteCollision",
+        "SpriteOverflow",
+        "InstantCommands",
+        "Back",
+    };
+    const std::vector<std::string> values = {
+        startupBoolLabel(msx_config_get_performance_flag(MsxPerformanceFlag::ExternalFixed30Fps)),
+        msx_config_get_frameskip_mode_label(),
+        startupBoolLabel(msx_config_get_fps_overlay_enabled()),
+        machineIsMsx2 ? (msx_config_get_performance_flag(MsxPerformanceFlag::DisableSliceRendering) ? "OFF" : "ON") : "N/A",
+        msx_config_get_performance_flag(MsxPerformanceFlag::DisableSpriteCollision) ? "OFF" : "ON",
+        msx_config_get_performance_flag(MsxPerformanceFlag::SimplifySpriteOverflow) ? "OFF" : "ON",
+        machineIsMsx2 ? startupBoolLabel(msx_config_get_performance_flag(MsxPerformanceFlag::InstantVdpCommands)) : "N/A",
+        "",
+    };
+
+    const int selected = selector.select("Performance",
+                                         options,
+                                         false,
+                                         false,
+                                         values,
+                                         {},
+                                         false,
+                                         true,
+                                         true,
+                                         selectedIndex,
+                                         -1,
+                                         kSelectorResultBackToRomBrowser);
+    if (selected == kSelectorResultBackToRomBrowser || selected < 0 || selected == 7) {
+      input.flushInput(120);
+      return;
+    }
+
+    selectedIndex = selected;
+    switch (selected) {
+      case 0:
+        msx_config_set_performance_flag(
+            MsxPerformanceFlag::ExternalFixed30Fps,
+            !msx_config_get_performance_flag(MsxPerformanceFlag::ExternalFixed30Fps),
+            true);
+        break;
+      case 1:
+        msx_config_cycle_frameskip_mode(1, true);
+        break;
+      case 2:
+        msx_config_set_fps_overlay_enabled(!msx_config_get_fps_overlay_enabled(), true);
+        break;
+      case 3:
+        if (machineIsMsx2) {
+          msx_config_set_performance_flag(
+              MsxPerformanceFlag::DisableSliceRendering,
+              !msx_config_get_performance_flag(MsxPerformanceFlag::DisableSliceRendering),
+              true);
+        }
+        break;
+      case 4:
+        msx_config_set_performance_flag(
+            MsxPerformanceFlag::DisableSpriteCollision,
+            !msx_config_get_performance_flag(MsxPerformanceFlag::DisableSpriteCollision),
+            true);
+        break;
+      case 5:
+        msx_config_set_performance_flag(
+            MsxPerformanceFlag::SimplifySpriteOverflow,
+            !msx_config_get_performance_flag(MsxPerformanceFlag::SimplifySpriteOverflow),
+            true);
+        break;
+      case 6:
+        if (machineIsMsx2) {
+          msx_config_set_performance_flag(
+              MsxPerformanceFlag::InstantVdpCommands,
+              !msx_config_get_performance_flag(MsxPerformanceFlag::InstantVdpCommands),
+              true);
+        }
+        break;
+      default:
+        break;
+    }
+  }
+}
+
+static void showStartupMsxConfigMenu(CardputerView& display, CardputerInput& input)
+{
+  VerticalSelector selector(display, input);
+  int selectedIndex = 0;
+
+  for (;;) {
+    msx_config_load_internal_view_mode();
+    msx_config_load_performance_flags();
+    MsxRuntimeOptionConfig config = msx_input_load_runtime_option_config();
+    char stateSlotValue[8];
+    snprintf(stateSlotValue, sizeof(stateSlotValue), "< %u >", static_cast<unsigned>(config.stateSlot));
+
+    const std::vector<std::string> options = {
+        "Performance",
+        "Joystick",
+        "Keyboard",
+        "BasicKeyboard",
+        "Vaus",
+        "View",
+        "StateSlot",
+        "Back",
+    };
+    const std::vector<std::string> values = {
+        msx_config_get_performance_mode_label(),
+        startupBoolLabel(config.joystickEnabled),
+        startupBoolLabel(config.keyboardEnabled),
+        startupBoolLabel(config.basicKeyboardEnabled),
+        startupBoolLabel(config.vausEnabled),
+        msx_config_get_active_view_mode_label_for_target(g_emu_display_target == EMU_DISPLAY_EXTERNAL),
+        stateSlotValue,
+        "",
+    };
+
+    const int selected = selector.select("Config Menu",
+                                         options,
+                                         false,
+                                         false,
+                                         values,
+                                         {},
+                                         false,
+                                         true,
+                                         true,
+                                         selectedIndex,
+                                         -1,
+                                         kSelectorResultBackToRomBrowser);
+    if (selected == kSelectorResultBackToRomBrowser || selected < 0 || selected == 7) {
+      input.flushInput(120);
+      return;
+    }
+
+    selectedIndex = selected;
+    switch (selected) {
+      case 0:
+        showStartupMsxPerformanceMenu(display, input);
+        break;
+      case 1:
+        config.joystickEnabled = !config.joystickEnabled;
+        if (config.joystickEnabled) {
+          config.basicKeyboardEnabled = false;
+        }
+        msx_input_set_runtime_option_config(config, true);
+        break;
+      case 2:
+        config.keyboardEnabled = !config.keyboardEnabled;
+        if (!config.keyboardEnabled) {
+          config.basicKeyboardEnabled = false;
+        }
+        msx_input_set_runtime_option_config(config, true);
+        break;
+      case 3:
+        config.basicKeyboardEnabled = !config.basicKeyboardEnabled;
+        msx_input_set_runtime_option_config(config, true);
+        break;
+      case 4:
+        config.vausEnabled = !config.vausEnabled;
+        if (config.vausEnabled) {
+          config.basicKeyboardEnabled = false;
+        }
+        msx_input_set_runtime_option_config(config, true);
+        break;
+      case 5:
+        msx_config_toggle_active_view_mode_for_target(g_emu_display_target == EMU_DISPLAY_EXTERNAL);
+        break;
+      case 6:
+        config.stateSlot = static_cast<uint8_t>((config.stateSlot + 1u) % 10u);
+        msx_input_set_runtime_option_config(config, true);
+        break;
+      default:
+        break;
+    }
+  }
 }
 
 static void welcomeExternalTft()
@@ -423,8 +675,24 @@ void setup() {
       romPath = getLastGameFromNvs(display, input, sd);
     }
     if (romPath.empty()) {
-      romPath = reopenRomBrowser(sd, display, input, romFolder, false);
-      selectedFromBrowser = !romPath.empty();
+      bool skipRomSelectorWelcome = false;
+      while (romPath.empty()) {
+        switch (selectStartupMainMenu(display, input)) {
+          case StartupMainMenuAction::RomSelector:
+            romPath = reopenRomBrowser(sd, display, input, romFolder, skipRomSelectorWelcome);
+            selectedFromBrowser = !romPath.empty();
+            skipRomSelectorWelcome = true;
+            break;
+          case StartupMainMenuAction::ConfigMenu:
+            showStartupMsxConfigMenu(display, input);
+            break;
+          case StartupMainMenuAction::ConfigKeys:
+            share::emuControlsLoad(sd, share::EmuProfile::MSX);
+            share::emuControlsEdit(sd, share::EmuProfile::MSX, display, input);
+            input.flushInput(150);
+            break;
+        }
+      }
     } else {
       romPath = "/sd" + romPath; // ensure sd prefix
     }

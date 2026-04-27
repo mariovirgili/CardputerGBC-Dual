@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include <stdbool.h>
+#include <stdint.h>
 
 #include "msx_config.h"
 #include "core/msx_keyboard.h"
@@ -45,10 +46,21 @@ struct MsxInputOverlayState {
     uint8_t selectedIndex;
 };
 
+struct MsxRuntimeOptionConfig {
+    bool joystickEnabled;
+    bool keyboardEnabled;
+    bool basicKeyboardEnabled;
+    bool vausEnabled;
+    uint8_t stateSlot;
+};
+
 void msx_input_init(void);
 void msx_input_set_basic_keyboard_enabled(bool enabled);
 void msx_input_set_cas_change_available(bool available);
 void msx_input_set_runtime_machine_mode(MsxMachineMode mode);
+MsxRuntimeOptionConfig msx_input_load_runtime_option_config(void);
+MsxRuntimeOptionConfig msx_input_get_runtime_option_config(void);
+void msx_input_set_runtime_option_config(const MsxRuntimeOptionConfig& config, bool persist);
 void msx_input_poll(MsxInputState* state);
 void msx_input_get_overlay_state(MsxInputOverlayState* state);
 uint8_t msx_input_get_state_slot(void);
