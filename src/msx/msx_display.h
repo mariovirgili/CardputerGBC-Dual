@@ -25,4 +25,4 @@ struct MsxDisplayStatus {
 void msx_display_init(void);
 void msx_display_shutdown(void);
 void msx_display_submit_frame(const MsxDisplayFrame* frame, const MsxDisplayStatus* status);
-void msx_display_show_external_info(const char* romTitle);
+void msx_display_show_external_info(const char* romTitle, bool machineIsMsx2);

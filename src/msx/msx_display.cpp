@@ -10,6 +10,7 @@
 #include "../tft_setup.h"
 
 #include "msx_config.h"
+#include "msx_external_title_images.h"
 #include "msx_input.h"
 #include "msx_video.h"
 
@@ -26,6 +27,8 @@ static constexpr uint32_t kPlaceholderRedrawMs = 150;
 static constexpr uint32_t kDisplayDiagIntervalMs = 2000;
 static constexpr int kExternalDisplayW = 320;
 static constexpr int kExternalDisplayH = 240;
+static constexpr int kExternalTitleTextY = MSX_EXTERNAL_TITLE_HEIGHT;
+static constexpr int kExternalTitleTextH = kExternalDisplayH - MSX_EXTERNAL_TITLE_HEIGHT;
 static uint32_t s_lastPlaceholderMs = 0;
 static uint32_t s_lastDisplayDiagMs = 0;
 static MsxInternalViewMode s_lastViewMode = MsxInternalViewMode::Wide;
@@ -415,6 +418,57 @@ static void msx_display_draw_runtime_menu(const MsxInputOverlayState& overlay)
     for (uint8_t i = 0; i < kRuntimeMenuRowCount; ++i) {
         msx_display_draw_runtime_menu_row(overlay, msx_input_get_scroll_index() + i);
     }
+}
+
+static std::string msx_display_fit_external_info_title(TFT_eSPI& tft,
+                                                       const char* text,
+                                                       int font,
+                                                       int maxWidth)
+{
+    std::string title = (text && text[0] != '\0') ? text : "MSX";
+    if (tft.textWidth(title.c_str(), font) <= maxWidth) {
+        return title;
+    }
+
+    while (!title.empty()) {
+        title.pop_back();
+        const std::string candidate = title + "...";
+        if (tft.textWidth(candidate.c_str(), font) <= maxWidth) {
+            return candidate;
+        }
+    }
+
+    return "...";
+}
+
+void msx_display_show_external_info(const char* romTitle, bool machineIsMsx2)
+{
+    if (msx_display_game_on_external()) {
+        return;
+    }
+
+    msx_video_lock();
+    msx_display_prepare_external_tft();
+    auto& tft = msx_display_external_tft();
+    const uint16_t* image = machineIsMsx2 ? msx_external_title_msx2 : msx_external_title_msx1;
+
+    tft.setSwapBytes(true);
+    tft.pushImage(0, 0, MSX_EXTERNAL_TITLE_WIDTH, MSX_EXTERNAL_TITLE_HEIGHT, image);
+    tft.setSwapBytes(false);
+    tft.fillRect(0, kExternalTitleTextY, kExternalDisplayW, kExternalTitleTextH, TFT_BLACK);
+
+    const int maxWidth = kExternalDisplayW - 10;
+    int font = 2;
+    if (tft.textWidth(romTitle && romTitle[0] != '\0' ? romTitle : "MSX", font) > maxWidth) {
+        font = 1;
+    }
+    const std::string fitted = msx_display_fit_external_info_title(tft, romTitle, font, maxWidth);
+    const int y = (font == 2) ? (kExternalTitleTextY + 5) : (kExternalTitleTextY + 9);
+
+    tft.setTextDatum(TL_DATUM);
+    tft.setTextColor(TFT_WHITE, TFT_BLACK);
+    tft.drawCentreString(fitted.c_str(), kExternalDisplayW / 2, y, font);
+    msx_video_unlock();
 }
 
 static void msx_display_draw_virtual_key_picker(const MsxInputOverlayState& overlay)

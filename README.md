@@ -28,6 +28,64 @@ MSX is a registered trademark owned by MSX Licensing Corporation.
 - Virtual key picker for entering MSX keyboard characters while in joy/key modes.
 - Hidden About-page easter egg with an input diagnostic tester.
 
+## Two-Week Polish Pass
+
+v0.5 also includes a large number of small fixes and optimizations that are easy
+to miss in a short feature list, but make the firmware feel much more solid on
+real Cardputer hardware.
+
+Boot and media fixes:
+
+- MSX BIOS boot path refined for small cartridges, including 16 KB titles that
+  rely on the BIOS cartridge search and slot handoff.
+- More accurate startup slot/work-area setup for BIOS-driven ROM launch.
+- Disk and cassette paths kept separate from cartridge direct-boot behavior.
+- CAS BASIC startup refresh improved so the BASIC cursor screen appears without
+  waiting for extra input.
+- CAS change flow can return to the correct static/game display state after a
+  tape swap.
+
+Display and performance fixes:
+
+- Internal and external display paths are treated independently, avoiding
+  unnecessary redraw work on the screen that is not running the game.
+- When playing on the external TFT, the internal LCD shows the ROM title and
+  controls once, then stops refreshing.
+- When playing on the internal LCD, the external TFT now shows a static MSX1 or
+  MSX2 title panel plus the current game name, then stops refreshing.
+- External 30 fps mode, frameskip choices, FPS HUD, and MSX2 render toggles are
+  exposed as runtime performance controls.
+- Runtime overlays, CAS selector, About page, and input tester received redraw
+  throttling and centering fixes to reduce flicker.
+- View changes request an immediate redraw instead of waiting for another input
+  event.
+
+Input and control fixes:
+
+- `Config Keys` no longer treats navigation keys as automatic row shortcuts.
+- Current key bindings are shown next to each configurable action.
+- `JOY EXTEND`, `KEYB/JOY`, `BasicKeyboard`, and `Vaus` behavior was separated
+  more clearly, including `BasicKeyboard` disabling incompatible modes.
+- Control labels were renamed to match their actual behavior.
+- `START` and `MENU` mappings can be used as MSX keyboard helpers where useful.
+- Brightness and volume shortcuts were clarified, with brightness applying to
+  the internal LCD.
+- Runtime input diagnostic easter egg helps verify raw Cardputer keys, emulator
+  actions, joystick output, keyboard matrix output, and Vaus state.
+
+Virtual keyboard and CAS macro fixes:
+
+- `V` opens the virtual key picker in joy/key modes without also injecting Enter.
+- Picker navigation has debounce and controlled key repeat for left/right hold.
+- Picker redraw is throttled to avoid excessive flicker.
+- SPACE and ENTER are available from the picker as `_` and `E`.
+- `RUN CAS`, `BLOAD CAS`, `Fn + C`, and `Fn + B` type their macro and press
+  Enter automatically.
+- After CAS macros, temporary control overrides are restored to the saved
+  control configuration.
+- Returning from CAS macro selection resets the runtime menu selector to the
+  first row, avoiding stale menu focus.
+
 ## Release Binary
 
 The v0.5 flashable image is:
@@ -265,6 +323,11 @@ The firmware can run on:
 When the game runs on the external display, the internal LCD remains on and
 shows the ROM title and controls. It is not continuously redrawn during external
 gameplay, which saves time and avoids fighting the external video path.
+
+When the game runs on the internal LCD, the external TFT remains on and shows a
+static MSX1/MSX2 title panel plus the current game name. It is drawn once at
+launch or CAS change, then left untouched to avoid spending CPU time on an idle
+screen.
 
 View choices are saved and can be changed from `Config Menu`, `Config Keys`, or
 with the runtime view shortcut.

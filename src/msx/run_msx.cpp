@@ -491,6 +491,20 @@ static void msx_show_launch_controls_panel(bool useExternal,
     }
 }
 
+static void msx_show_external_static_title(bool useExternal,
+                                           const char* romName,
+                                           const char* fallbackRomTitle,
+                                           bool machineIsMsx2)
+{
+    if (useExternal) {
+        return;
+    }
+
+    const std::string title =
+        msx_title_without_extension(romName, fallbackRomTitle ? fallbackRomTitle : "MSX");
+    msx_display_show_external_info(title.c_str(), machineIsMsx2);
+}
+
 const MsxBiosImage* msx_find_problem_bios_image(const MsxBiosBundle* bios)
 {
     if (!bios) {
@@ -1251,6 +1265,10 @@ void run_msx(const uint8_t* romData, size_t romLen, const char* romName, SdServi
     printf("[MSX] BIOS bundle ready: %s\n", msx_media_bios_target_label(bios.target));
 
     msx_display_init();
+    msx_show_external_static_title(useExternal,
+                                   romName,
+                                   "MSX ROM",
+                                   bios.target == MsxBiosTarget::MSX2);
     msx_input_init();
     msx_input_set_basic_keyboard_enabled(false);
 
@@ -1491,6 +1509,10 @@ void run_msx_disk(const uint8_t* dskData, size_t dskLen, const char* dskName, Sd
     }
 
     msx_display_init();
+    msx_show_external_static_title(useExternal,
+                                   dskName,
+                                   "MSX DISK",
+                                   bios.target == MsxBiosTarget::MSX2);
     msx_input_init();
     msx_input_set_basic_keyboard_enabled(false);
 
@@ -1702,6 +1724,10 @@ void run_msx_basic(const char* name, SdService& sd)
     printf("[MSX] BIOS bundle ready: %s\n", msx_media_bios_target_label(bios.target));
 
     msx_display_init();
+    msx_show_external_static_title(useExternal,
+                                   name,
+                                   "MSX BASIC",
+                                   bios.target == MsxBiosTarget::MSX2);
     msx_input_init();
     msx_input_set_basic_keyboard_enabled(true);
 
@@ -1912,6 +1938,10 @@ void run_msx_cas(const uint8_t* casData, size_t casLen, const char* casName, SdS
     printf("[MSX] BIOS bundle ready: %s\n", msx_media_bios_target_label(bios.target));
 
     msx_display_init();
+    msx_show_external_static_title(useExternal,
+                                   casName,
+                                   "MSX CAS",
+                                   bios.target == MsxBiosTarget::MSX2);
     msx_input_init();
     msx_input_set_basic_keyboard_enabled(true);
     msx_input_set_cas_change_available(true);
@@ -1984,6 +2014,13 @@ void run_msx_cas(const uint8_t* casData, size_t casLen, const char* casName, SdS
                     "MSX CAS",
                     currentCasPath.c_str(),
                     "MSX CAS"
+                );
+            } else {
+                msx_show_external_static_title(
+                    false,
+                    currentCasPath.c_str(),
+                    "MSX CAS",
+                    bios.target == MsxBiosTarget::MSX2
                 );
             }
             nextFrameUs = esp_timer_get_time();
