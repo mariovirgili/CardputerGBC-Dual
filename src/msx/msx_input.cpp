@@ -73,7 +73,7 @@ enum class MsxRuntimeMenuItem : uint8_t {
     StateSlot,
     SaveState,
     LoadState,
-    ChangeCas,
+    CasMenu,
     Close,
     Count,
 };
@@ -81,6 +81,7 @@ enum class MsxRuntimeMenuItem : uint8_t {
 enum class MsxRuntimeMenuPage : uint8_t {
     Main = 0,
     Performance,
+    Cas,
 };
 
 enum class MsxPerformanceMenuItem : uint8_t {
@@ -95,6 +96,14 @@ enum class MsxPerformanceMenuItem : uint8_t {
     Count,
 };
 
+enum class MsxCasMenuItem : uint8_t {
+    RunCas = 0,
+    BloadCas,
+    ChangeCas,
+    Back,
+    Count,
+};
+
 struct MsxRuntimeMenuState {
     bool visible;
     MsxRuntimeMenuPage page;
@@ -102,6 +111,7 @@ struct MsxRuntimeMenuState {
     uint8_t scroll;
     uint8_t mainSelectedIndex;
     uint8_t performanceSelectedIndex;
+    uint8_t casSelectedIndex;
     bool prevHeld;
     bool nextHeld;
     bool acceptHeld;
@@ -115,6 +125,7 @@ static MsxRuntimeOptions s_runtimeOptions = {false, true, false, false, 0, false
 static MsxRuntimeMenuState s_runtimeMenu = {
     false,
     MsxRuntimeMenuPage::Main,
+    0,
     0,
     0,
     0,
@@ -222,6 +233,11 @@ static bool msx_runtime_menu_in_performance_page(void)
     return s_runtimeMenu.page == MsxRuntimeMenuPage::Performance;
 }
 
+static bool msx_runtime_menu_in_cas_page(void)
+{
+    return s_runtimeMenu.page == MsxRuntimeMenuPage::Cas;
+}
+
 static uint8_t msx_get_main_menu_item_count(void)
 {
     return s_runtimeOptions.changeCasAvailable ? 11 : 10;
@@ -232,11 +248,20 @@ static uint8_t msx_get_performance_menu_item_count(void)
     return static_cast<uint8_t>(MsxPerformanceMenuItem::Count);
 }
 
+static uint8_t msx_get_cas_menu_item_count(void)
+{
+    return static_cast<uint8_t>(MsxCasMenuItem::Count);
+}
+
 static uint8_t msx_get_menu_item_count(void)
 {
-    return msx_runtime_menu_in_performance_page()
-               ? msx_get_performance_menu_item_count()
-               : msx_get_main_menu_item_count();
+    if (msx_runtime_menu_in_performance_page()) {
+        return msx_get_performance_menu_item_count();
+    }
+    if (msx_runtime_menu_in_cas_page()) {
+        return msx_get_cas_menu_item_count();
+    }
+    return msx_get_main_menu_item_count();
 }
 
 static MsxRuntimeMenuItem msx_get_menu_item(uint8_t index)
@@ -252,7 +277,7 @@ static MsxRuntimeMenuItem msx_get_menu_item(uint8_t index)
         case 7: return MsxRuntimeMenuItem::SaveState;
         case 8: return MsxRuntimeMenuItem::LoadState;
         case 9: return s_runtimeOptions.changeCasAvailable
-                       ? MsxRuntimeMenuItem::ChangeCas
+                       ? MsxRuntimeMenuItem::CasMenu
                        : MsxRuntimeMenuItem::Close;
         case 10: return MsxRuntimeMenuItem::Close;
         default: return MsxRuntimeMenuItem::Close;
@@ -282,6 +307,17 @@ static inline bool msx_key_pressed(char key)
 static inline bool msx_key_pressed_any(char a, char b)
 {
     return msx_key_pressed(a) || msx_key_pressed(b);
+}
+
+static MsxCasMenuItem msx_get_cas_menu_item(uint8_t index)
+{
+    switch (index) {
+        case 0: return MsxCasMenuItem::RunCas;
+        case 1: return MsxCasMenuItem::BloadCas;
+        case 2: return MsxCasMenuItem::ChangeCas;
+        case 3: return MsxCasMenuItem::Back;
+        default: return MsxCasMenuItem::Back;
+    }
 }
 
 static bool msx_key_position_pressed(int x, int y)
@@ -356,6 +392,17 @@ static void msx_start_text_macro(const char* text)
     s_textMacroPhase = 0;
 }
 
+static void msx_restore_saved_runtime_option_config(void)
+{
+    msx_apply_runtime_option_config(msx_input_load_runtime_option_config(), false);
+}
+
+static void msx_start_cas_text_macro(const char* text)
+{
+    msx_restore_saved_runtime_option_config();
+    msx_start_text_macro(text);
+}
+
 static bool msx_text_macro_active(void)
 {
     return s_textMacro && s_textMacro[s_textMacroIndex] != '\0';
@@ -400,13 +447,18 @@ static void msx_keyboard_matrix_press_text_char(MsxKeyboardMatrix* matrix, char 
         return;
     }
 
+    if (ch == '\n' || ch == '\r') {
+        msx_keyboard_matrix_press_special(matrix, MsxKeyboardSpecialKey::Enter);
+        return;
+    }
+
     if (msx_text_macro_char_needs_shift(ch)) {
         msx_keyboard_matrix_press_special(matrix, MsxKeyboardSpecialKey::Shift);
     }
     msx_keyboard_matrix_press_ascii(matrix, ch);
 }
 
-static constexpr char kMsxVirtualKeyPickerChars[] = "0123456789'abcdefghijklmnopqrstuvwxyz";
+static constexpr char kMsxVirtualKeyPickerChars[] = "0123456789'abcdefghijklmnopqrstuvwxyz \n";
 static constexpr uint8_t kMsxVirtualKeyPickerCount =
     static_cast<uint8_t>(sizeof(kMsxVirtualKeyPickerChars) - 1u);
 static constexpr int kMsxVirtualKeyPickerTriggerX = 6;
@@ -428,6 +480,24 @@ static bool msx_virtual_key_picker_trigger_pressed(void)
 static char msx_virtual_key_picker_current_char(void)
 {
     return kMsxVirtualKeyPickerChars[s_virtualKeyPickerIndex % kMsxVirtualKeyPickerCount];
+}
+
+static const char* msx_virtual_key_picker_current_label(void)
+{
+    switch (msx_virtual_key_picker_current_char()) {
+        case ' ':
+            return "_";
+        case '\n':
+        case '\r':
+            return "E";
+        default:
+            break;
+    }
+
+    static char label[2];
+    label[0] = msx_virtual_key_picker_current_char();
+    label[1] = '\0';
+    return label;
 }
 
 static void msx_apply_virtual_key_step(MsxKeyboardMatrix* matrix)
@@ -523,6 +593,24 @@ static void msx_runtime_menu_open_performance_page(void)
             : 0u;
 }
 
+static void msx_runtime_menu_open_cas_page(void)
+{
+    s_runtimeMenu.page = MsxRuntimeMenuPage::Cas;
+    s_runtimeMenu.selectedIndex = s_runtimeMenu.casSelectedIndex;
+    s_runtimeMenu.scroll =
+        s_runtimeMenu.selectedIndex >= kRuntimeMenuVisibleRows
+            ? static_cast<uint8_t>(s_runtimeMenu.selectedIndex - (kRuntimeMenuVisibleRows - 1u))
+            : 0u;
+}
+
+static void msx_runtime_menu_reset_to_first_main_item(void)
+{
+    s_runtimeMenu.page = MsxRuntimeMenuPage::Main;
+    s_runtimeMenu.selectedIndex = 0;
+    s_runtimeMenu.scroll = 0;
+    s_runtimeMenu.mainSelectedIndex = 0;
+}
+
 static void msx_toggle_runtime_menu(void)
 {
     s_runtimeMenu.visible = !s_runtimeMenu.visible;
@@ -544,6 +632,14 @@ static void msx_runtime_menu_move(int delta)
 
     if (msx_runtime_menu_in_performance_page()) {
         s_runtimeMenu.performanceSelectedIndex = s_runtimeMenu.selectedIndex;
+        if (selected < s_runtimeMenu.scroll) {
+            s_runtimeMenu.scroll = static_cast<uint8_t>(selected);
+        } else if (selected >= s_runtimeMenu.scroll + kRuntimeMenuVisibleRows) {
+            s_runtimeMenu.scroll =
+                static_cast<uint8_t>(selected - (kRuntimeMenuVisibleRows - 1u));
+        }
+    } else if (msx_runtime_menu_in_cas_page()) {
+        s_runtimeMenu.casSelectedIndex = s_runtimeMenu.selectedIndex;
         if (selected < s_runtimeMenu.scroll) {
             s_runtimeMenu.scroll = static_cast<uint8_t>(selected);
         } else if (selected >= s_runtimeMenu.scroll + kRuntimeMenuVisibleRows) {
@@ -661,6 +757,18 @@ static void msx_clamp_runtime_menu_selection(void)
         return;
     }
 
+    if (msx_runtime_menu_in_cas_page()) {
+        s_runtimeMenu.casSelectedIndex = s_runtimeMenu.selectedIndex;
+        if (s_runtimeMenu.scroll > s_runtimeMenu.selectedIndex) {
+            s_runtimeMenu.scroll = s_runtimeMenu.selectedIndex;
+        }
+        if (s_runtimeMenu.selectedIndex >= s_runtimeMenu.scroll + kRuntimeMenuVisibleRows) {
+            s_runtimeMenu.scroll =
+                static_cast<uint8_t>(s_runtimeMenu.selectedIndex - (kRuntimeMenuVisibleRows - 1u));
+        }
+        return;
+    }
+
     s_runtimeMenu.mainSelectedIndex = s_runtimeMenu.selectedIndex;
     if (s_runtimeMenu.scroll > s_runtimeMenu.selectedIndex) {
         s_runtimeMenu.scroll = s_runtimeMenu.selectedIndex;
@@ -680,7 +788,9 @@ static void msx_runtime_log_options(void)
                 s_runtimeOptions.basicKeyboardEnabled ? "on" : "off",
                 s_runtimeOptions.vausEnabled ? "on" : "off",
                 msx_config_get_performance_mode_label(),
-                msx_runtime_menu_in_performance_page() ? "perf" : "main",
+                msx_runtime_menu_in_performance_page()
+                    ? "perf"
+                    : (msx_runtime_menu_in_cas_page() ? "cas" : "main"),
                 s_runtimeOptions.changeCasAvailable ? "on" : "off",
                 msx_runtime_view_label(),
                 s_runtimeMenu.visible ? "open" : "closed");
@@ -697,6 +807,38 @@ static void msx_runtime_menu_accept(void)
             msx_runtime_toggle_performance_item(msx_get_performance_menu_item(s_runtimeMenu.selectedIndex));
         }
         msx_runtime_log_options();
+        return;
+    }
+
+    if (msx_runtime_menu_in_cas_page()) {
+        switch (msx_get_cas_menu_item(s_runtimeMenu.selectedIndex)) {
+            case MsxCasMenuItem::RunCas:
+                msx_runtime_menu_reset_to_first_main_item();
+                msx_start_cas_text_macro("RUN\"CAS:\"\n");
+                s_runtimeMenu.visible = false;
+                break;
+            case MsxCasMenuItem::BloadCas:
+                msx_runtime_menu_reset_to_first_main_item();
+                msx_start_cas_text_macro("BLOAD\"CAS:\",R\n");
+                s_runtimeMenu.visible = false;
+                break;
+            case MsxCasMenuItem::ChangeCas:
+                if (s_runtimeOptions.changeCasAvailable) {
+                    s_runtimeOptions.changeCasRequested = true;
+                    s_runtimeMenu.visible = false;
+                }
+                break;
+            case MsxCasMenuItem::Back:
+            case MsxCasMenuItem::Count:
+            default:
+                msx_runtime_menu_open_main_page();
+                msx_clamp_runtime_menu_selection();
+                break;
+        }
+        msx_runtime_log_options();
+        if (!s_runtimeMenu.visible) {
+            msx_reset_menu_latches();
+        }
         return;
     }
 
@@ -740,6 +882,12 @@ static void msx_runtime_menu_accept(void)
             s_runtimeMenu.mainSelectedIndex = s_runtimeMenu.selectedIndex;
             msx_runtime_menu_open_performance_page();
             break;
+        case MsxRuntimeMenuItem::CasMenu:
+            if (s_runtimeOptions.changeCasAvailable) {
+                s_runtimeMenu.mainSelectedIndex = s_runtimeMenu.selectedIndex;
+                msx_runtime_menu_open_cas_page();
+            }
+            break;
         case MsxRuntimeMenuItem::StateSlot:
             msx_runtime_menu_adjust(1);
             break;
@@ -768,12 +916,6 @@ static void msx_runtime_menu_accept(void)
                 M5Cardputer.Display.fillScreen(TFT_BLACK);
                 break;
             }
-        case MsxRuntimeMenuItem::ChangeCas:
-            if (s_runtimeOptions.changeCasAvailable) {
-                s_runtimeOptions.changeCasRequested = true;
-                s_runtimeMenu.visible = false;
-            }
-            break;
         case MsxRuntimeMenuItem::Close:
             s_runtimeMenu.visible = false;
             break;
@@ -1641,7 +1783,7 @@ static void msx_poll_runtime_menu(const Keyboard_Class::KeysState& keys,
         msx_runtime_menu_adjust(1);
     }
     if (msx_menu_edge(msx_menu_back_pressed(keys, bindings, padState), &s_runtimeMenu.backHeld)) {
-        if (msx_runtime_menu_in_performance_page()) {
+        if (msx_runtime_menu_in_performance_page() || msx_runtime_menu_in_cas_page()) {
             msx_runtime_menu_open_main_page();
             msx_clamp_runtime_menu_selection();
         } else {
@@ -1809,6 +1951,7 @@ void msx_input_init(void)
         0,
         0,
         0,
+        0,
         false,
         false,
         false,
@@ -1840,6 +1983,9 @@ void msx_input_set_cas_change_available(bool available)
     s_runtimeOptions.changeCasAvailable = available;
     if (!available) {
         s_runtimeOptions.changeCasRequested = false;
+        if (msx_runtime_menu_in_cas_page()) {
+            msx_runtime_menu_open_main_page();
+        }
     }
     msx_clamp_runtime_menu_selection();
 }
@@ -1884,9 +2030,9 @@ void msx_input_poll(MsxInputState* state)
         if (!s_fnCasMacroHandled) {
             s_fnCasMacroHandled = true;
             if (msx_key_pressed('b')) {
-                msx_start_text_macro("BLOAD\"CAS:\",R");
+                msx_start_cas_text_macro("BLOAD\"CAS:\",R\n");
             } else {
-                msx_start_text_macro("RUN\"CAS:\"");
+                msx_start_cas_text_macro("RUN\"CAS:\"\n");
             }
         }
     } else {
@@ -1949,7 +2095,9 @@ void msx_input_poll(MsxInputState* state)
     }
 
     const bool basicKeyboardEnabled = s_runtimeOptions.basicKeyboardEnabled;
-    const bool effectiveKeyboardEnabled = s_runtimeOptions.keyboardEnabled || basicKeyboardEnabled;
+    const bool textMacroActive = msx_text_macro_active();
+    const bool effectiveKeyboardEnabled =
+        s_runtimeOptions.keyboardEnabled || basicKeyboardEnabled || textMacroActive;
     state->joystickMode = s_runtimeOptions.joystickEnabled && !basicKeyboardEnabled;
     state->joystickEnabled = s_runtimeOptions.joystickEnabled && !basicKeyboardEnabled;
     state->keyboardEnabled = effectiveKeyboardEnabled;
@@ -2019,6 +2167,7 @@ void msx_input_get_overlay_state(MsxInputOverlayState* state)
 
     state->menuVisible = s_runtimeMenu.visible;
     state->performanceSubmenuVisible = msx_runtime_menu_in_performance_page();
+    state->casSubmenuVisible = msx_runtime_menu_in_cas_page();
     state->machineIsMsx2 = (s_runtimeMachineMode == MsxMachineMode::MSX2);
     state->joystickEnabled = s_runtimeOptions.joystickEnabled;
     state->keyboardEnabled = s_runtimeOptions.keyboardEnabled;
@@ -2041,8 +2190,8 @@ void msx_input_get_overlay_state(MsxInputOverlayState* state)
     state->virtualKeyPickerVisible = s_virtualKeyPickerVisible;
     std::snprintf(state->virtualKeyPickerLabel,
                   sizeof(state->virtualKeyPickerLabel),
-                  "%c",
-                  msx_virtual_key_picker_current_char());
+                  "%s",
+                  msx_virtual_key_picker_current_label());
     state->selectedIndex = s_runtimeMenu.selectedIndex;
 }
 

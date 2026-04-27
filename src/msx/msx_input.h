@@ -30,6 +30,7 @@ struct MsxInputState {
 struct MsxInputOverlayState {
     bool menuVisible;
     bool performanceSubmenuVisible;
+    bool casSubmenuVisible;
     bool machineIsMsx2;
     bool joystickEnabled;
     bool keyboardEnabled;

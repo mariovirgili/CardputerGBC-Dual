@@ -203,6 +203,16 @@ static const char* msx_display_runtime_menu_label(const MsxInputOverlayState& ov
         }
     }
 
+    if (overlay.casSubmenuVisible) {
+        switch (index) {
+            case 0u: return "RUN CAS";
+            case 1u: return "BLOAD CAS";
+            case 2u: return "CHANGE CAS";
+            case 3u: return "BACK";
+            default: return "";
+        }
+    }
+
     if (msx_display_game_on_external()) {
         switch (index) {
             case 0u: return "PERF TUNE";
@@ -214,7 +224,7 @@ static const char* msx_display_runtime_menu_label(const MsxInputOverlayState& ov
             case 6u: return "SELECT SLOT";
             case 7u: return "SAVE SLOT";
             case 8u: return "LOAD SLOT";
-            case 9u: return overlay.casChangeAvailable ? "CHANGE CAS" : "CLOSE";
+            case 9u: return overlay.casChangeAvailable ? "CAS MENU" : "CLOSE";
             case 10u: return overlay.casChangeAvailable ? "CLOSE" : "";
             default: return "";
         }
@@ -229,7 +239,7 @@ static const char* msx_display_runtime_menu_label(const MsxInputOverlayState& ov
             case 6u: return "STATE SLOT";
             case 7u: return "SAVE STATE";
             case 8u: return "LOAD STATE";
-            case 9u: return overlay.casChangeAvailable ? "CHANGE CAS" : "CLOSE";
+            case 9u: return overlay.casChangeAvailable ? "CAS MENU" : "CLOSE";
             case 10u: return overlay.casChangeAvailable ? "CLOSE" : "";
             default: return "";
         }
@@ -268,6 +278,10 @@ static const char* msx_display_runtime_menu_value(const MsxInputOverlayState& ov
         }
     }
 
+    if (overlay.casSubmenuVisible) {
+        return nullptr;
+    }
+
     switch (index) {
         case 0u:
             return msx_config_get_performance_mode_label();
@@ -299,13 +313,15 @@ static void msx_display_draw_runtime_menu_shell(const MsxInputOverlayState& over
     const int boxX = msx_display_runtime_menu_box_x();
     const int boxY = msx_display_runtime_menu_box_y();
     const int innerX = boxX + kRuntimeMenuInnerPad;
-    const char* title = overlay.performanceSubmenuVisible ? "PERF TUNING" : "MSX MENU";
+    const char* title = overlay.performanceSubmenuVisible
+                            ? "PERF TUNING"
+                            : (overlay.casSubmenuVisible ? "CAS MENU" : "MSX MENU");
     const char* hint1 = overlay.performanceSubmenuVisible
                             ? "GO toggle  DEL back"
-                            : "\\ switch view  GO toggle";
-    const char* hint2 = overlay.performanceSubmenuVisible
-                            ? "Hold GO closes menu"
-                            : "Hold GO closes menu";
+                            : (overlay.casSubmenuVisible
+                                   ? "GO select  DEL back"
+                                   : "\\ switch view  GO toggle");
+    const char* hint2 = "Hold GO closes menu";
 
     if (msx_display_game_on_external()) {
         msx_display_prepare_external_tft();
@@ -446,6 +462,7 @@ static bool msx_display_runtime_menu_overlay_equals(const MsxInputOverlayState& 
 {
     return a.menuVisible == b.menuVisible &&
            a.performanceSubmenuVisible == b.performanceSubmenuVisible &&
+           a.casSubmenuVisible == b.casSubmenuVisible &&
            a.machineIsMsx2 == b.machineIsMsx2 &&
            a.joystickEnabled == b.joystickEnabled &&
            a.keyboardEnabled == b.keyboardEnabled &&
@@ -531,7 +548,8 @@ void msx_display_submit_frame(const MsxDisplayFrame* frame, const MsxDisplayStat
         const uint8_t scrollIndex = msx_input_get_scroll_index();
         const bool fullMenuRedraw =
             !s_lastMenuVisible ||
-            overlay.performanceSubmenuVisible != s_lastMenuOverlay.performanceSubmenuVisible;
+            overlay.performanceSubmenuVisible != s_lastMenuOverlay.performanceSubmenuVisible ||
+            overlay.casSubmenuVisible != s_lastMenuOverlay.casSubmenuVisible;
         const bool overlayChanged =
             !msx_display_runtime_menu_overlay_equals(overlay, s_lastMenuOverlay);
         const bool scrollChanged = scrollIndex != s_lastScrollIndex;
