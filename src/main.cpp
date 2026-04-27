@@ -11,6 +11,7 @@
 #include <stdio.h>
 #include <stdint.h>
 #include <string.h>
+#include <cctype>
 #include "msx/run_msx.h"
 #include "msx/msx_config.h"
 #include "msx/msx_display.h"
@@ -61,6 +62,7 @@ enum class StartupMainMenuAction {
   RomSelector = 0,
   ConfigMenu = 1,
   ConfigKeys = 2,
+  About = 3,
 };
 
 constexpr const char* kStartupMenuPrefsNs = "cardputer_emu";
@@ -198,14 +200,14 @@ static uint8_t loadStartupMenuIndex()
   prefs.begin(kStartupMenuPrefsNs, true);
   const uint8_t index = prefs.getUChar(kStartupMenuIndexKey, 0);
   prefs.end();
-  return index < 3 ? index : 0;
+  return index < 4 ? index : 0;
 }
 
 static void saveStartupMenuIndex(uint8_t index)
 {
   Preferences prefs;
   prefs.begin(kStartupMenuPrefsNs, false);
-  prefs.putUChar(kStartupMenuIndexKey, index < 3 ? index : 0);
+  prefs.putUChar(kStartupMenuIndexKey, index < 4 ? index : 0);
   prefs.end();
 }
 
@@ -216,6 +218,7 @@ static StartupMainMenuAction selectStartupMainMenu(CardputerView& display, Cardp
       "Rom selector",
       "Config Menu",
       "Config Keys",
+      "About",
   };
 
   const uint8_t initialIndex = loadStartupMenuIndex();
@@ -231,11 +234,252 @@ static StartupMainMenuAction selectStartupMainMenu(CardputerView& display, Cardp
                                  initialIndex,
                                  -1,
                                  0);
-  if (selected < 0 || selected > 2) {
+  if (selected < 0 || selected > 3) {
     selected = 0;
   }
   saveStartupMenuIndex(static_cast<uint8_t>(selected));
   return static_cast<StartupMainMenuAction>(selected);
+}
+
+static bool startupKeyWordPressed(char lower)
+{
+  const Keyboard_Class::KeysState keys = M5Cardputer.Keyboard.keysState();
+  for (char ch : keys.word) {
+    if (static_cast<char>(std::tolower(static_cast<unsigned char>(ch))) == lower) {
+      return true;
+    }
+  }
+  return false;
+}
+
+static bool startupEscapePressed()
+{
+  return M5Cardputer.BtnA.wasClicked() ||
+         startupKeyWordPressed('`') ||
+         startupKeyWordPressed('~');
+}
+
+static bool startupKonamiStepPressed(size_t step)
+{
+  switch (step) {
+    case 0:
+    case 1:
+      return M5Cardputer.Keyboard.isKeyPressed(KEY_ARROW_UP) ||
+             share::emuControlPressed(share::EmuProfile::MSX, share::EmuAction::Up);
+    case 2:
+    case 3:
+      return M5Cardputer.Keyboard.isKeyPressed(KEY_ARROW_DOWN) ||
+             share::emuControlPressed(share::EmuProfile::MSX, share::EmuAction::Down);
+    case 4:
+    case 6:
+      return M5Cardputer.Keyboard.isKeyPressed(KEY_ARROW_LEFT) ||
+             share::emuControlPressed(share::EmuProfile::MSX, share::EmuAction::Left);
+    case 5:
+    case 7:
+      return M5Cardputer.Keyboard.isKeyPressed(KEY_ARROW_RIGHT) ||
+             share::emuControlPressed(share::EmuProfile::MSX, share::EmuAction::Right);
+    case 8:
+      return startupKeyWordPressed('b') ||
+             share::emuControlPressed(share::EmuProfile::MSX, share::EmuAction::B);
+    case 9:
+      return startupKeyWordPressed('a') ||
+             share::emuControlPressed(share::EmuProfile::MSX, share::EmuAction::A);
+    default:
+      return false;
+  }
+}
+
+static bool startupAnyKonamiInputPressed()
+{
+  return M5Cardputer.Keyboard.isKeyPressed(KEY_ARROW_UP) ||
+         M5Cardputer.Keyboard.isKeyPressed(KEY_ARROW_DOWN) ||
+         M5Cardputer.Keyboard.isKeyPressed(KEY_ARROW_LEFT) ||
+         M5Cardputer.Keyboard.isKeyPressed(KEY_ARROW_RIGHT) ||
+         startupKeyWordPressed('a') ||
+         startupKeyWordPressed('b') ||
+         share::emuControlPressed(share::EmuProfile::MSX, share::EmuAction::Up) ||
+         share::emuControlPressed(share::EmuProfile::MSX, share::EmuAction::Down) ||
+         share::emuControlPressed(share::EmuProfile::MSX, share::EmuAction::Left) ||
+         share::emuControlPressed(share::EmuProfile::MSX, share::EmuAction::Right) ||
+         share::emuControlPressed(share::EmuProfile::MSX, share::EmuAction::A) ||
+         share::emuControlPressed(share::EmuProfile::MSX, share::EmuAction::B);
+}
+
+static MsxRuntimeOptionConfig sanitizeStartupTesterConfig(MsxRuntimeOptionConfig config)
+{
+  config.stateSlot = static_cast<uint8_t>(config.stateSlot % 10u);
+  if (config.basicKeyboardEnabled) {
+    config.keyboardEnabled = true;
+    config.joystickEnabled = false;
+    config.vausEnabled = false;
+  }
+  if (!config.keyboardEnabled) {
+    config.basicKeyboardEnabled = false;
+  }
+  return config;
+}
+
+static void drawStartupInputTester(const MsxRuntimeOptionConfig& config,
+                                   const MsxInputDiagnosticState& state)
+{
+  auto& tft = M5Cardputer.Display;
+  tft.fillRect(0, TOP_BAR_HEIGHT, tft.width(), tft.height() - TOP_BAR_HEIGHT, TFT_BLACK);
+  tft.setTextDatum(top_left);
+  tft.setTextSize(TEXT_SMALL);
+  tft.setTextColor(PRIMARY_COLOR, TFT_BLACK);
+  tft.drawString("FN+J/K/B/V toggles", 8, 34);
+  tft.setTextColor(TEXT_COLOR, TFT_BLACK);
+
+  char modeLine[48];
+  snprintf(modeLine,
+           sizeof(modeLine),
+           "J:%s K:%s B:%s V:%s",
+           config.joystickEnabled ? "ON" : "OFF",
+           config.keyboardEnabled ? "ON" : "OFF",
+           config.basicKeyboardEnabled ? "ON" : "OFF",
+           config.vausEnabled ? "ON" : "OFF");
+  tft.drawString(modeLine, 8, 48);
+  tft.drawString((std::string("RAW: ") + state.rawLabel).c_str(), 8, 64);
+  tft.drawString((std::string("EMU: ") + state.actionLabel).c_str(), 8, 78);
+  tft.drawString((std::string("JOY: ") + state.joystickLabel).c_str(), 8, 92);
+  tft.drawString((std::string("KBD: ") + state.keyboardLabel).c_str(), 8, 106);
+  tft.drawString((std::string("VAUS: ") + state.vausLabel).c_str(), 8, 120);
+  tft.setTextColor(PRIMARY_COLOR, TFT_BLACK);
+  tft.drawString("GO / LEFT / ` = back", 8, 136);
+  tft.setTextDatum(middle_center);
+}
+
+static std::string startupInputTesterSnapshot(const MsxRuntimeOptionConfig& config,
+                                              const MsxInputDiagnosticState& state)
+{
+  char modeLine[64];
+  snprintf(modeLine,
+           sizeof(modeLine),
+           "J:%u K:%u B:%u V:%u",
+           config.joystickEnabled ? 1u : 0u,
+           config.keyboardEnabled ? 1u : 0u,
+           config.basicKeyboardEnabled ? 1u : 0u,
+           config.vausEnabled ? 1u : 0u);
+  return std::string(modeLine) + "|" +
+         state.rawLabel + "|" +
+         state.actionLabel + "|" +
+         state.joystickLabel + "|" +
+         state.keyboardLabel + "|" +
+         state.vausLabel;
+}
+
+static void showStartupInputTester(CardputerView& display, CardputerInput& input)
+{
+  MsxRuntimeOptionConfig config = sanitizeStartupTesterConfig(msx_input_load_runtime_option_config());
+  MsxInputDiagnosticState diagnostic = {};
+  uint32_t lastDraw = 0;
+  std::string lastSnapshot;
+  bool toggleLatch = false;
+
+  display.topBar("MSX INPUT TEST", false, false);
+  input.flushInput(150);
+
+  for (;;) {
+    msx_input_poll_diagnostic(config, &diagnostic);
+    const Keyboard_Class::KeysState keys = M5Cardputer.Keyboard.keysState();
+    if (diagnostic.exitRequested) {
+      input.flushInput(150);
+      return;
+    }
+
+    bool togglePressed = false;
+    if (keys.fn) {
+      if (startupKeyWordPressed('j')) {
+        config.joystickEnabled = !config.joystickEnabled;
+        if (config.joystickEnabled) {
+          config.basicKeyboardEnabled = false;
+        }
+        togglePressed = true;
+      } else if (startupKeyWordPressed('k')) {
+        config.keyboardEnabled = !config.keyboardEnabled;
+        if (!config.keyboardEnabled) {
+          config.basicKeyboardEnabled = false;
+        }
+        togglePressed = true;
+      } else if (startupKeyWordPressed('b')) {
+        config.basicKeyboardEnabled = !config.basicKeyboardEnabled;
+        togglePressed = true;
+      } else if (startupKeyWordPressed('v')) {
+        config.vausEnabled = !config.vausEnabled;
+        if (config.vausEnabled) {
+          config.basicKeyboardEnabled = false;
+        }
+        togglePressed = true;
+      }
+    }
+
+    if (togglePressed && !toggleLatch) {
+      config = sanitizeStartupTesterConfig(config);
+      lastSnapshot.clear();
+    }
+    toggleLatch = togglePressed;
+
+    const uint32_t now = millis();
+    const std::string snapshot = startupInputTesterSnapshot(config, diagnostic);
+    if ((lastDraw == 0 || now - lastDraw >= 180u) && snapshot != lastSnapshot) {
+      drawStartupInputTester(config, diagnostic);
+      lastSnapshot = snapshot;
+      lastDraw = now;
+    }
+    delay(8);
+  }
+}
+
+static void drawStartupAboutPage()
+{
+  auto& tft = M5Cardputer.Display;
+  tft.fillScreen(TFT_BLACK);
+  tft.setTextDatum(middle_center);
+  tft.setTextColor(TEXT_COLOR, TFT_BLACK);
+  tft.setTextSize(TEXT_WIDE);
+  tft.drawCenterString("Msx ADV Emulators v0.5", tft.width() / 2, 24);
+  tft.setTextSize(TEXT_TINY);
+  tft.drawCenterString("MSX is a registered trademark", tft.width() / 2, 58);
+  tft.drawCenterString("owned by MSX Licensing", tft.width() / 2, 74);
+  tft.drawCenterString("Corporation", tft.width() / 2, 90);
+  tft.setTextSize(TEXT_SMALL);
+  tft.setTextColor(PRIMARY_COLOR, TFT_BLACK);
+  tft.drawCenterString("GO / LEFT / ` = back", tft.width() / 2, 124);
+}
+
+static void showStartupAboutPage(SdService& sd, CardputerView& display, CardputerInput& input)
+{
+  share::emuControlsLoad(sd, share::EmuProfile::MSX);
+  static constexpr size_t kKonamiLength = 10;
+  size_t konamiProgress = 0;
+
+  drawStartupAboutPage();
+  input.flushInput(150);
+
+  for (;;) {
+    M5Cardputer.update();
+    if (startupEscapePressed() ||
+        (konamiProgress == 0 && M5Cardputer.Keyboard.isKeyPressed(KEY_ARROW_LEFT))) {
+      input.flushInput(150);
+      return;
+    }
+
+    if (M5Cardputer.Keyboard.isChange() && M5Cardputer.Keyboard.isPressed()) {
+      if (startupKonamiStepPressed(konamiProgress)) {
+        ++konamiProgress;
+      } else if (startupAnyKonamiInputPressed()) {
+        konamiProgress = startupKonamiStepPressed(0) ? 1u : 0u;
+      }
+
+      if (konamiProgress >= kKonamiLength) {
+        showStartupInputTester(display, input);
+        drawStartupAboutPage();
+        konamiProgress = 0;
+        input.flushInput(150);
+      }
+    }
+    delay(8);
+  }
 }
 
 static void showStartupMsxPerformanceMenu(CardputerView& display, CardputerInput& input)
@@ -690,6 +934,9 @@ void setup() {
             share::emuControlsLoad(sd, share::EmuProfile::MSX);
             share::emuControlsEdit(sd, share::EmuProfile::MSX, display, input);
             input.flushInput(150);
+            break;
+          case StartupMainMenuAction::About:
+            showStartupAboutPage(sd, display, input);
             break;
         }
       }

@@ -18,6 +18,7 @@
 #include <cctype>
 #include <cstdio>
 #include <cstring>
+#include <cstdarg>
 
 #ifndef MSX_RUNTIME_MENU_LOG_ENABLED
 #define MSX_RUNTIME_MENU_LOG_ENABLED 0
@@ -1180,6 +1181,171 @@ static bool msx_menu_back_pressed(const Keyboard_Class::KeysState& keys,
            ((padState & (share::PAD_B | share::PAD_SELECT)) != 0u);
 }
 
+static void msx_diag_append(char* dst, size_t dstSize, const char* text)
+{
+    if (!dst || dstSize == 0 || !text || text[0] == '\0') {
+        return;
+    }
+
+    const size_t used = std::strlen(dst);
+    if (used >= dstSize - 1) {
+        return;
+    }
+
+    std::snprintf(dst + used,
+                  dstSize - used,
+                  "%s%s",
+                  used == 0 ? "" : " ",
+                  text);
+}
+
+static void msx_diag_appendf(char* dst, size_t dstSize, const char* fmt, ...)
+{
+    if (!dst || dstSize == 0 || !fmt) {
+        return;
+    }
+
+    char buffer[24];
+    va_list args;
+    va_start(args, fmt);
+    std::vsnprintf(buffer, sizeof(buffer), fmt, args);
+    va_end(args);
+    msx_diag_append(dst, dstSize, buffer);
+}
+
+static const char* msx_diag_keyboard_bit_label(uint8_t row, uint8_t bit)
+{
+    static const char* const labels[kMsxKeyboardRowCount][8] = {
+        {"0", "1", "2", "3", "4", "5", "6", "7"},
+        {"8", "9", "-", "=", "\\", "[", "]", ";"},
+        {"'", "", ",", ".", "/", "", "A", "B"},
+        {"C", "D", "E", "F", "G", "H", "I", "J"},
+        {"K", "L", "M", "N", "O", "P", "Q", "R"},
+        {"S", "T", "U", "V", "W", "X", "Y", "Z"},
+        {"SHIFT", "CTRL", "GRAPH", "CAPS", "CODE", "F1", "F2", "F3"},
+        {"F4", "F5", "ESC", "TAB", "STOP", "BKSP", "SELECT", "ENTER"},
+        {"SPACE", "HOME", "INS", "DEL", "LEFT", "UP", "DOWN", "RIGHT"},
+        {"", "", "", "", "", "", "", ""},
+        {"", "", "", "", "", "", "", ""},
+    };
+
+    if (row >= kMsxKeyboardRowCount || bit >= 8u) {
+        return "";
+    }
+    return labels[row][bit];
+}
+
+static void msx_diag_keyboard_label(const MsxKeyboardMatrix& matrix, char* dst, size_t dstSize)
+{
+    if (!dst || dstSize == 0) {
+        return;
+    }
+
+    dst[0] = '\0';
+    for (uint8_t row = 0; row < kMsxKeyboardRowCount; ++row) {
+        const uint8_t value = matrix.rows[row];
+        if (value == 0xFFu) {
+            continue;
+        }
+        for (uint8_t bit = 0; bit < 8u; ++bit) {
+            if ((value & (1u << bit)) != 0u) {
+                continue;
+            }
+            const char* label = msx_diag_keyboard_bit_label(row, bit);
+            if (label[0] != '\0') {
+                msx_diag_append(dst, dstSize, label);
+            } else {
+                msx_diag_appendf(dst, dstSize, "R%uB%u", row, bit);
+            }
+        }
+    }
+
+    if (dst[0] == '\0') {
+        std::snprintf(dst, dstSize, "IDLE");
+    }
+}
+
+static void msx_diag_raw_label(const Keyboard_Class::KeysState& keys, char* dst, size_t dstSize)
+{
+    if (!dst || dstSize == 0) {
+        return;
+    }
+
+    dst[0] = '\0';
+    if (M5Cardputer.BtnA.isPressed()) {
+        msx_diag_append(dst, dstSize, "GO");
+    }
+    if (M5Cardputer.Keyboard.isKeyPressed(KEY_ARROW_UP)) {
+        msx_diag_append(dst, dstSize, "UP");
+    }
+    if (M5Cardputer.Keyboard.isKeyPressed(KEY_ARROW_DOWN)) {
+        msx_diag_append(dst, dstSize, "DOWN");
+    }
+    if (M5Cardputer.Keyboard.isKeyPressed(KEY_ARROW_LEFT)) {
+        msx_diag_append(dst, dstSize, "LEFT");
+    }
+    if (M5Cardputer.Keyboard.isKeyPressed(KEY_ARROW_RIGHT)) {
+        msx_diag_append(dst, dstSize, "RIGHT");
+    }
+    if (keys.enter) {
+        msx_diag_append(dst, dstSize, "ENTER");
+    }
+    if (keys.del) {
+        msx_diag_append(dst, dstSize, "DEL");
+    }
+    if (keys.tab) {
+        msx_diag_append(dst, dstSize, "TAB");
+    }
+    if (keys.space) {
+        msx_diag_append(dst, dstSize, "SPACE");
+    }
+    for (char ch : keys.word) {
+        char label[2] = {ch, '\0'};
+        msx_diag_append(dst, dstSize, label);
+    }
+
+    if (dst[0] == '\0') {
+        std::snprintf(dst, dstSize, "NONE");
+    }
+}
+
+static void msx_diag_action_label(const MsxInputBindingCache& bindings, char* dst, size_t dstSize)
+{
+    if (!dst || dstSize == 0) {
+        return;
+    }
+
+    dst[0] = '\0';
+    if (msx_binding_pressed(bindings.up)) {
+        msx_diag_append(dst, dstSize, "UP");
+    }
+    if (msx_binding_pressed(bindings.down)) {
+        msx_diag_append(dst, dstSize, "DOWN");
+    }
+    if (msx_binding_pressed(bindings.left)) {
+        msx_diag_append(dst, dstSize, "LEFT");
+    }
+    if (msx_binding_pressed(bindings.right)) {
+        msx_diag_append(dst, dstSize, "RIGHT");
+    }
+    if (msx_binding_pressed(bindings.fire1)) {
+        msx_diag_append(dst, dstSize, "PRIMARY");
+    }
+    if (msx_binding_pressed(bindings.fire2)) {
+        msx_diag_append(dst, dstSize, "SECONDARY");
+    }
+    if (msx_binding_pressed(bindings.start)) {
+        msx_diag_append(dst, dstSize, "START");
+    }
+    if (msx_binding_pressed(bindings.select)) {
+        msx_diag_append(dst, dstSize, "MENU");
+    }
+
+    if (dst[0] == '\0') {
+        std::snprintf(dst, dstSize, "NONE");
+    }
+}
+
 static void msx_poll_runtime_menu(const Keyboard_Class::KeysState& keys,
                                   const MsxInputBindingCache& bindings,
                                   uint32_t padState,
@@ -1245,6 +1411,112 @@ MsxRuntimeOptionConfig msx_input_get_runtime_option_config(void)
 void msx_input_set_runtime_option_config(const MsxRuntimeOptionConfig& config, bool persist)
 {
     msx_apply_runtime_option_config(config, persist);
+}
+
+void msx_input_poll_diagnostic(const MsxRuntimeOptionConfig& requestedConfig,
+                               MsxInputDiagnosticState* diagnostic)
+{
+    if (!diagnostic) {
+        return;
+    }
+
+    std::memset(diagnostic, 0, sizeof(*diagnostic));
+    std::snprintf(diagnostic->rawLabel, sizeof(diagnostic->rawLabel), "NONE");
+    std::snprintf(diagnostic->actionLabel, sizeof(diagnostic->actionLabel), "NONE");
+    std::snprintf(diagnostic->joystickLabel, sizeof(diagnostic->joystickLabel), "OFF");
+    std::snprintf(diagnostic->keyboardLabel, sizeof(diagnostic->keyboardLabel), "OFF");
+    std::snprintf(diagnostic->vausLabel, sizeof(diagnostic->vausLabel), "OFF");
+
+    M5Cardputer.update();
+    const Keyboard_Class::KeysState keys = M5Cardputer.Keyboard.keysState();
+    MsxInputBindingCache bindings = {};
+    msx_load_binding_cache(&bindings);
+
+    MsxRuntimeOptionConfig config = msx_sanitize_runtime_option_config(requestedConfig);
+    const bool basicKeyboardEnabled = config.basicKeyboardEnabled;
+    const bool joystickEnabled = config.joystickEnabled && !basicKeyboardEnabled;
+    const bool keyboardEnabled = config.keyboardEnabled;
+    const bool vausEnabled = config.vausEnabled && !basicKeyboardEnabled;
+
+    msx_diag_raw_label(keys, diagnostic->rawLabel, sizeof(diagnostic->rawLabel));
+    msx_diag_action_label(bindings, diagnostic->actionLabel, sizeof(diagnostic->actionLabel));
+    diagnostic->hasInput = std::strcmp(diagnostic->rawLabel, "NONE") != 0;
+    diagnostic->exitRequested =
+        M5Cardputer.BtnA.wasClicked() ||
+        M5Cardputer.Keyboard.isKeyPressed(KEY_ARROW_LEFT) ||
+        msx_key_pressed_any('`', '~');
+
+    MsxInputState state = {};
+    msx_keyboard_matrix_clear(&state.keyboardMatrix);
+    state.joystickEnabled = joystickEnabled;
+    state.keyboardEnabled = keyboardEnabled;
+    state.basicKeyboardEnabled = basicKeyboardEnabled;
+    state.vausEnabled = vausEnabled;
+
+    if (!basicKeyboardEnabled && (joystickEnabled || vausEnabled)) {
+        msx_apply_joystick_mode_actions(&state, bindings);
+    }
+    if (keyboardEnabled && !basicKeyboardEnabled) {
+        msx_apply_shared_actions(&state, keys, bindings);
+    }
+
+    msx_build_keyboard_matrix(&state.keyboardMatrix,
+                              keys,
+                              &state,
+                              bindings,
+                              keyboardEnabled,
+                              config.joystickEnabled,
+                              basicKeyboardEnabled);
+
+    if (joystickEnabled) {
+        char buttons[24] = "";
+        if (state.up) {
+            msx_diag_append(buttons, sizeof(buttons), "U");
+        }
+        if (state.down) {
+            msx_diag_append(buttons, sizeof(buttons), "D");
+        }
+        if (state.left) {
+            msx_diag_append(buttons, sizeof(buttons), "L");
+        }
+        if (state.right) {
+            msx_diag_append(buttons, sizeof(buttons), "R");
+        }
+        if (state.fire1) {
+            msx_diag_append(buttons, sizeof(buttons), "A");
+        }
+        if (state.fire2) {
+            msx_diag_append(buttons, sizeof(buttons), "B");
+        }
+        std::snprintf(diagnostic->joystickLabel,
+                      sizeof(diagnostic->joystickLabel),
+                      "%s %s",
+                      vausEnabled ? "PORTB" : "PORTA",
+                      buttons[0] != '\0' ? buttons : "IDLE");
+    }
+
+    if (keyboardEnabled) {
+        msx_diag_keyboard_label(state.keyboardMatrix,
+                                diagnostic->keyboardLabel,
+                                sizeof(diagnostic->keyboardLabel));
+    }
+
+    if (vausEnabled) {
+        char vaus[24] = "";
+        if (state.left) {
+            msx_diag_append(vaus, sizeof(vaus), "LEFT");
+        }
+        if (state.right) {
+            msx_diag_append(vaus, sizeof(vaus), "RIGHT");
+        }
+        if (state.fire1 || state.fire2 || state.start) {
+            msx_diag_append(vaus, sizeof(vaus), "BUTTON");
+        }
+        std::snprintf(diagnostic->vausLabel,
+                      sizeof(diagnostic->vausLabel),
+                      "%s",
+                      vaus[0] != '\0' ? vaus : "IDLE");
+    }
 }
 
 void msx_input_init(void)

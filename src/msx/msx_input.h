@@ -54,6 +54,16 @@ struct MsxRuntimeOptionConfig {
     uint8_t stateSlot;
 };
 
+struct MsxInputDiagnosticState {
+    bool hasInput;
+    bool exitRequested;
+    char rawLabel[32];
+    char actionLabel[64];
+    char joystickLabel[48];
+    char keyboardLabel[80];
+    char vausLabel[48];
+};
+
 void msx_input_init(void);
 void msx_input_set_basic_keyboard_enabled(bool enabled);
 void msx_input_set_cas_change_available(bool available);
@@ -61,6 +71,7 @@ void msx_input_set_runtime_machine_mode(MsxMachineMode mode);
 MsxRuntimeOptionConfig msx_input_load_runtime_option_config(void);
 MsxRuntimeOptionConfig msx_input_get_runtime_option_config(void);
 void msx_input_set_runtime_option_config(const MsxRuntimeOptionConfig& config, bool persist);
+void msx_input_poll_diagnostic(const MsxRuntimeOptionConfig& config, MsxInputDiagnosticState* state);
 void msx_input_poll(MsxInputState* state);
 void msx_input_get_overlay_state(MsxInputOverlayState* state);
 uint8_t msx_input_get_state_slot(void);
