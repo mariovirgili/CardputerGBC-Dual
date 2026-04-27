@@ -1959,6 +1959,7 @@ void run_msx_cas(const uint8_t* casData, size_t casLen, const char* casName, SdS
     uint32_t lastLogMs = millis();
     MsxRuntimeTimingWindow timingWindow = {};
     MsxFpsOverlayWindow fpsOverlay = {};
+    bool casBasicBootRefreshPending = true;
     msx_runtime_reset_fps_overlay(&fpsOverlay, lastLogMs);
     msx_video_set_fps_overlay_value(0u);
 
@@ -2010,6 +2011,20 @@ void run_msx_cas(const uint8_t* casData, size_t casLen, const char* casName, SdS
             msx_runtime_timing_add(&timingWindow, &core);
             const size_t audioSampleCount = msx_core_drain_audio(&core, audioMix, audioMixCapacity);
             msx_sound_end_mix(audioSampleCount);
+        }
+
+        if (casBasicBootRefreshPending &&
+            !menuPaused &&
+            core.frameCounter >= 120u &&
+            core.vdp.frameReady &&
+            msx_vdp_display_enabled(&core.vdp) &&
+            (core.vdp.mode == MsxVdpMode::Text40 || core.vdp.mode == MsxVdpMode::Text80)) {
+            msx_video_request_full_redraw();
+            core.vdp.dirty = true;
+            if (core.displayFrame.indexed8) {
+                msx_video_present_frame(&core.displayFrame);
+            }
+            casBasicBootRefreshPending = false;
         }
 
         char casLine[48];
