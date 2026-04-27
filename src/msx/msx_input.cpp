@@ -43,6 +43,7 @@ struct MsxInputBindingCache {
 static constexpr uint32_t kBacktickLongPressMs = 700;
 static constexpr uint32_t kGoLongPressMs = 700;
 static constexpr uint32_t kViewToggleDebounceMs = 250;
+static constexpr int kBrightnessStep = 24;
 static uint32_t s_backtickPressedMs = 0;
 static bool s_backtickLongHandled = false;
 static bool s_goLongHandled = false;
@@ -957,12 +958,12 @@ static void msx_apply_system_keys(const Keyboard_Class::KeysState& status)
 
     if (status.fn && msx_key_pressed_any(']', '}')) {
         const int brightness = M5Cardputer.Display.getBrightness();
-        M5Cardputer.Display.setBrightness(std::min(brightness + 2, 255));
+        M5Cardputer.Display.setBrightness(std::min(brightness + kBrightnessStep, 255));
     }
 
     if (status.fn && msx_key_pressed_any('[', '{')) {
         const int brightness = M5Cardputer.Display.getBrightness();
-        M5Cardputer.Display.setBrightness(std::max(brightness - 2, 0));
+        M5Cardputer.Display.setBrightness(std::max(brightness - kBrightnessStep, 0));
     }
 }
 

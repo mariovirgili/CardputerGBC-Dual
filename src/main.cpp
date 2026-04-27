@@ -1155,7 +1155,7 @@ void setup() {
   vfs_xip_register();
 
   // Show keymapping
-  display.topBar("- + SOUND [ ] BRIGHT", false, false);
+  display.topBar("FN +/- SOUND FN [] BRIGHT", false, false);
   display.showControlBindings(
     share::emuControlActionLabels(emuProfile),
     share::emuControlKeyLabels(emuProfile),
@@ -1170,7 +1170,7 @@ void setup() {
     if (key == KEY_ESC_LONG_CUSTOM) {
       share::emuControlsEdit(sd, emuProfile, display, input);
       input.flushInput(150);
-      display.topBar("- + SOUND [ ] BRIGHT", false, false);
+      display.topBar("FN +/- SOUND FN [] BRIGHT", false, false);
       display.showControlBindings(
         share::emuControlActionLabels(emuProfile),
         share::emuControlKeyLabels(emuProfile),
@@ -1193,7 +1193,7 @@ void setup() {
         case 1: display.topBar("KEY \\ SCREEN MODE",       false, false); break;
         case 2: display.topBar("IN GAME: GO = QUIT",       false, false); break;
         case 3: display.topBar("FN + ARROWS FOR ZOOM",     false, false); break;
-        case 4: display.topBar("- + SOUND [ ] BRIGHT",     false, false); break;
+        case 4: display.topBar("FN +/- SOUND FN [] BRIGHT", false, false); break;
         case 5: display.topBar("IN GAME: HOLD GO = MENU",  false, false); break;
       }
     }

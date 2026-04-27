@@ -1,231 +1,135 @@
-# CardputerGBC-Dual
+# Msx ADV Emulators v0.5
 
 ![CardputerGBC-Dual external title screen](images/Externaltitle.png)
 
-CardputerGBC-Dual is a dual-screen emulator firmware for the M5Stack Cardputer.
-This branch focuses on MSX/MSX1 and ColecoVision support, with selectable output
-on the internal Cardputer LCD or on an external SPI TFT display.
+Msx ADV Emulators v0.5 is an MSX-focused firmware for the M5Stack Cardputer
+with support for internal LCD play and optional external SPI TFT output.
 
-Version 0.2 adds a dual-core MSX runtime, an embedded C-BIOS fallback, a
-ColecoVision emulator, save states, fast save/load shortcuts, SD reliability
-improvements, and indexed ROM browsing for large SD card collections.
+This release is built for the `m5stack-stamps3-max-spiffs-msx2-flash`
+environment. It keeps the official MSX2 BIOS files out of the firmware image:
+on first MSX2 use, the firmware can validate `MSX2.ROM` and `MSX2EXT.ROM` from
+the SD card and cache them into a dedicated flash partition.
 
-The project started from the excellent work in
-[Cardputer-Game-Station-Emulators](https://github.com/geo-tp/Cardputer-Game-Station-Emulators)
-by /u/geo-tp, and keeps adapting the firmware around the Cardputer hardware.
+MSX is a registered trademark owned by MSX Licensing Corporation.
 
-## Version 0.2 Highlights
+## v0.5 Highlights
 
-- MSX/MSX1 emulation with a dual-core runtime on ESP32-S3.
-- Embedded C-BIOS fallback for MSX ROM loading, suggested by /u/geo-tp.
-- Official MSX BIOS support from SD for full BASIC and `.dsk` disk usage.
-- `STARTBASIC.ROM` helper ROM for launching MSX BASIC from the ROM selector.
-- ColecoVision emulation on internal LCD and external TFT.
-- ColecoVision external display output at 60 fps.
-- Internal and external display target selection before launch.
-- 16-bit and 12-bit external TFT color-depth modes.
-- Runtime config menu with save-state slot selection.
-- Save/load state support from the runtime menu.
-- Fast save and fast load with `Fn + S` and `Fn + L`.
-- SD access fixes while the external display is active.
-- ROM selector index files for large folders.
-- ROM selector refresh option for rebuilding directory indexes.
+- MSX1 and MSX2 runtime on ESP32-S3 without PSRAM.
+- Flash-backed MSX2 BIOS cache partition for `MSX2.ROM` and `MSX2EXT.ROM`.
+- Embedded C-BIOS fallback for MSX1 cartridge loading.
+- `.rom`, `.dsk`, and `.cas` launch support.
+- CAS runtime menu with `RUN"CAS:"`, `BLOAD"CAS:",R`, and CAS change actions.
+- Cartridge mapper support for plain ROMs, ASCII, and Konami-style cartridges.
+- MSX1 VDP and MSX2 V9938-oriented video paths, including MSX2 bitmap modes.
+- Save states with selectable slots and quick save/load shortcuts.
+- Runtime configuration menu, startup configuration shortcuts, and editable keys.
+- Internal LCD or external SPI TFT output, with saved view settings.
+- External-screen helper overlay on the internal LCD showing ROM title and keys.
+- Virtual key picker for entering MSX keyboard characters while in joy/key modes.
+- Hidden About-page easter egg with an input diagnostic tester.
 
-## Supported Systems
+## Release Binary
 
-| System | Extensions | Display | Save States | Notes |
-| --- | --- | --- | --- | --- |
-| MSX/MSX1 cartridge | `.rom`, `.mx1` | Internal LCD or external TFT | Yes | Embedded C-BIOS fallback available |
-| MSX disk image | `.dsk` | Internal LCD or external TFT | Yes | Requires official MSX BIOS and Disk ROM |
-| MSX BASIC launcher | `STARTBASIC.ROM` | Internal LCD or external TFT | Yes | Requires official MSX BIOS |
-| ColecoVision | `.col` | Internal LCD or external TFT | Yes | Requires ColecoVision BIOS on SD |
-
-ROMs must be uncompressed. Do not use `.zip`, `.7z`, or `.rar`.
-
-## MSX Support
-
-The MSX runtime is built around a dual-core architecture:
-
-- the emulation loop runs on one ESP32-S3 core
-- VDP/rendering work is pushed to the other core where possible
-- external TFT output can run while SD access remains usable
-
-The current release targets MSX/MSX1. MSX2 is not included in v0.2 because the
-current Cardputer hardware has no PSRAM. After testing and optimization work,
-MSX2 is not realistic on this device without additional RAM.
-
-The MSX2 work is still available in the GitHub repository on the
-`msx2-dualcore` branch. If M5Stack releases a Cardputer-like device with PSRAM,
-that branch can be resumed.
-
-### MSX BIOS And C-BIOS
-
-The firmware embeds C-BIOS as a fallback BIOS for MSX cartridge ROM loading.
-If no valid official `MSX.ROM` is found on the SD card, the loader copies the
-embedded C-BIOS from flash to RAM and uses it automatically.
-
-When the fallback is used, the serial log includes a line similar to:
+The v0.5 flashable image is:
 
 ```text
-[MSX][BIOS] accept embedded C-BIOS size=32768 md5=...
+release/MsxADV-Emulators-v0.5-m5stack-stamps3-max-spiffs-msx2-flash-flashable.bin
 ```
 
-C-BIOS is useful for many cartridge ROMs, but it does not replace the official
-MSX BIOS for every use case.
-
-To boot MSX BASIC, use the official MSX BIOS:
+SHA-256:
 
 ```text
-/sd/bios/msx/MSX.ROM
+21309A1389CDC1A7040CCB2824AF060D79073351FD0B94954D72BB55380AAF2C
 ```
 
-To boot `.dsk` disk images, also provide:
+Flash it at offset `0x0`:
 
-```text
-/sd/bios/msx/DISK.ROM
+```powershell
+C:\Users\user\.platformio\penv\Scripts\python.exe -X utf8 C:\Users\user\.platformio\packages\tool-esptoolpy\esptool.py --chip esp32s3 --port COM4 --baud 921600 write_flash 0x0 release\MsxADV-Emulators-v0.5-m5stack-stamps3-max-spiffs-msx2-flash-flashable.bin
 ```
 
-Reference hashes:
+## Supported Media
+
+| Type | Extensions | Notes |
+| --- | --- | --- |
+| MSX cartridge ROM | `.rom` | 8 KB aligned cartridge images. |
+| MSX disk image | `.dsk` | Uses the MSX disk path and Disk ROM support. |
+| MSX cassette image | `.cas` | Can boot to BASIC, then use CAS macros. |
+
+ROM files must be uncompressed. Do not use `.zip`, `.7z`, or `.rar`.
+
+## SD Card Layout
+
+Suggested folders:
 
 ```text
-MSX.ROM   364a1a579fe5cb8dba54519bcfcdac0d
-DISK.ROM  80dcd1ad1a4cf65d64b7ba10504e8190
-```
-
-The loader searches the configured BIOS path first, then common SD locations
-such as:
-
-```text
+/sd/roms/MSX/
+/sd/bios/private/
 /sd/bios/msx/
 /sd/msx/
 ```
 
-### STARTBASIC.ROM
-
-Version 0.2 includes `STARTBASIC.ROM`, a small helper ROM that can be copied to:
+For the default v0.5 flash build, place legally obtained MSX2 BIOS files here
+before first MSX2 launch:
 
 ```text
-/sd/roms/MSX/STARTBASIC.ROM
+/sd/bios/private/MSX2.ROM
+/sd/bios/private/MSX2EXT.ROM
 ```
 
-It appears in the ROM selector and lets you start MSX BASIC more conveniently.
+The firmware validates them and writes them into the `msx2bios` flash
+partition. After that, MSX2 can start without loading those two files into RAM.
 
-`STARTBASIC.ROM` does not replace the official MSX BIOS. To actually boot into
-BASIC, you still need:
+Other useful BIOS files:
 
 ```text
 /sd/bios/msx/MSX.ROM
-```
-
-For `.dsk` disk support, you should also provide:
-
-```text
 /sd/bios/msx/DISK.ROM
+/sd/bios/msx/MSXDOS2.ROM
+/sd/bios/msx/FMPAC.ROM
 ```
 
-Recommended BASIC and disk setup:
+Reference hashes shown by the firmware:
 
 ```text
-/sd/roms/MSX/STARTBASIC.ROM
-/sd/bios/msx/MSX.ROM
-/sd/bios/msx/DISK.ROM
+MSX.ROM      364a1a579fe5cb8dba54519bcfcdac0d
+DISK.ROM     80dcd1ad1a4cf65d64b7ba10504e8190
+MSXDOS2.ROM  6418d091cd6907bbcf940324339e43bb
+FMPAC.ROM    6f69cc8b5ed761b03afd78000dfb0e19
 ```
 
-## ColecoVision Support
+## Startup Flow
 
-ColecoVision emulation is implemented in `src/coleco` and supports:
+At boot, the firmware can offer to resume the last ROM. If you do not resume,
+the startup menu contains:
 
-- `.col` cartridge ROMs
-- internal Cardputer LCD output
-- external SPI TFT output
-- 60 fps video output
-- 12-bit and 16-bit external TFT modes
-- runtime menu integration
-- save states
-- fast save and fast load
+- `Rom selector`
+- `Config Menu`
+- `Config Keys`
+- `About`
 
-The ColecoVision BIOS is not embedded. Put the official BIOS on the SD card,
-for example:
+The selected startup menu item is saved and restored next time.
 
-```text
-/sd/bios/coleco.rom
-/sd/bios/coleco/coleco.rom
-```
+Holding `G0` during boot provides boot options:
 
-### ColecoVision Emulator Lineage
-
-The ColecoVision emulator is not a direct port of ColEm, CoolCV, or SMS Plus.
-
-Short version: it uses a fMSX/EMULib foundation by Marat Fayzullin, Z80
-adaptation work from the esplay-fMSX area, and a custom ColecoVision core
-implemented for this project.
-
-More specifically:
-
-- Z80 CPU: based on the fMSX Z80 engine by Marat Fayzullin, as ported to ESP32
-  in esplay-fMSX.
-- SN76489 audio: from EMULib by Marat Fayzullin, copyright 1996-1998.
-- TMS9918/VDP: local implementation in `src/coleco/core/coleco_vdp.cpp`, with
-  some logic and comments inspired by fMSX, especially around Screen 2 and
-  addressing behavior.
-- ColecoVision memory map, I/O, input, Cardputer video output, save states, SD
-  integration, and internal/external display support are custom or adapted
-  specifically for CardputerGBC-Dual.
-
-## SD Card Layout
-
-Suggested SD card folders:
-
-```text
-/sd/roms/MSX/
-/sd/roms/Coleco/
-/sd/bios/msx/
-/sd/bios/coleco/
-```
-
-Useful files:
-
-```text
-/sd/roms/MSX/STARTBASIC.ROM
-/sd/bios/msx/MSX.ROM
-/sd/bios/msx/DISK.ROM
-/sd/bios/coleco.rom
-```
-
-Save-state files are created automatically in per-system folders on the SD card
-and are linked to the ROM filename.
+- hold about 900 ms: force ROM selector and skip auto launch
+- hold longer: reset saved ROM history and browser path
 
 ## ROM Selector
 
-The ROM selector supports `.rom`, `.mx1`, `.dsk`, and `.col` files.
+The ROM selector supports folders, filtering, and cached directory indexes.
 
-Large ROM folders can be slow or unstable to scan directly on embedded hardware,
-so the selector now uses index files. Index files are created automatically the
-first time you open a ROM directory.
-
-After an index exists, the selector loads the cached file list instead of
-rescanning the whole folder every time. This makes navigation much faster and
-more reliable with large SD collections.
-
-If you add, remove, or rename ROM files, refresh the index from the selector:
-
-1. Open the ROM selector.
-2. Long-press `G0`.
-3. Select the refresh index option.
-
-This rebuilds the index for the current ROM directory.
-
-### ROM Selector Controls
+Controls:
 
 - `E` = up
 - `Z` = down
 - `A` = jump backward by 4 entries
 - `D` = jump forward by 4 entries
 - hold `A` or `D` = fast repeat scrolling
-- `P` or `Enter` = open folder / select ROM
-- `K` = go back to parent folder
-- typing letters/numbers = filter the list
-- `Del` = remove characters from the filter
+- `P` or `Enter` = open folder or select file
+- `K` = parent folder or back
+- type letters/numbers = filter list
+- `Del` = delete filter character
 - long-press `G0` = selector options, including index refresh
 
 On the `RESUME LAST GAME?` prompt:
@@ -233,133 +137,218 @@ On the `RESUME LAST GAME?` prompt:
 - `D`, `Right`, or `Enter` = yes
 - `A`, `Left`, or `G0` = no
 
-## Display Workflow
+## Config Menu
 
-- The internal LCD shows the startup splash and supported formats.
-- The external TFT shows a dedicated startup screen when connected/enabled.
-- Before launching a supported ROM, the firmware asks whether to use the
-  internal LCD or the external TFT.
-- When the external TFT is selected, the firmware can use 16-bit or 12-bit color
-  depth depending on the saved setting.
-- Display target and color depth are saved per core in NVS.
+The startup `Config Menu` and the in-game MSX menu share the same runtime
+settings where applicable.
 
-## In-Game Controls
+Main options:
 
-### Runtime Menu And Save States
+- `Performance`: opens performance tuning.
+- `JOY EXTEND`: enables joystick plus extra MSX keyboard helper mappings.
+- `KEYB/JOY`: maps configured controls to MSX keyboard actions while keeping
+  keyboard input available.
+- `BasicKeyboard`: direct Cardputer keyboard to MSX keyboard mode. When enabled,
+  joystick and Vaus are disabled.
+- `Vaus`: Arkanoid-style Vaus input mode.
+- `View`: cycles the active view mode for the selected display.
+- `StateSlot`: selects save slot `0` to `9`.
+- `SaveState`: writes the selected save slot.
+- `LoadState`: loads the selected save slot.
+- `CAS MENU`: appears only when a `.cas` is loaded.
+- `Close`: returns to the emulator.
 
-Save states are supported for both MSX and ColecoVision.
+Performance options:
 
-During gameplay, long-press `G0` to open the runtime config menu. From there you
-can:
+- `EXT 30FPS`: fixed 30 fps external display mode.
+- `FRAMESKP`: frameskip mode, including adaptive and fixed ratios.
+- `FPS HUD`: show or hide frame statistics.
+- `SLICE RENDER`: MSX2 rendering strategy toggle.
+- `SPR COLL`: sprite collision behavior toggle.
+- `8-SPR FLAGS`: sprite overflow simplification.
+- `INSTANT CMD`: V9938 command timing simplification.
+- `BACK`: return to the main menu.
 
-- select the active save slot
-- save the current state
-- load a previous state
-- close the menu and return to gameplay
+CAS menu options:
 
-Quick shortcuts are also available:
+- `RUN CAS`: closes the menu and types `RUN"CAS:"` followed by Enter.
+- `BLOAD CAS`: closes the menu and types `BLOAD"CAS:",R` followed by Enter.
+- `CHANGE CAS`: opens a CAS selector and swaps the current tape.
+- `BACK`: return to the main menu.
 
-- `Fn + S` = fast save
-- `Fn + L` = fast load
+## Config Keys
 
-Fast save/load uses the currently selected slot.
-
-### Global Runtime Keys
-
-- short `G0` press during emulation = quit safely and return to the ROM selector
-- backtick long press during emulation = quit safely and return to the ROM selector
-- `+` / `-` = audio volume
-- `[` / `]` = LCD brightness
-- `\` = screen mode toggle
-- `Fn + Left / Right` = zoom out / zoom in
-
-### Pre-Launch Controls
-
-Before a game starts, the firmware shows the current bindings for the selected
-core.
-
-- any normal key starts the game
-- long-press `G0` opens the control editor for the current core
+`Config Keys` edits the MSX control bindings and stores them on SD.
 
 Default bindings:
 
-- directions: `E`, `S`, `A`, `D`
-- buttons: `K`, `L`
-- `Start`: `1`
-- `Select`: `2`
+| Action | Default key |
+| --- | --- |
+| `UP` | `E` |
+| `DOWN` | `S` |
+| `LEFT` | `A` |
+| `RIGHT` | `D` |
+| `PRIMARY` | `L` |
+| `SECONDARY` | `K` |
+| `START` | `1` |
+| `MENU` | `2` |
 
-## SD Reliability
+The editor shows the current key next to each action. Move to an action and
+confirm to capture a new key. `SAVE` writes the config, `DEFAULTS` restores the
+defaults, and `CANCEL` returns without saving.
 
-SD initialization and access are tuned for the shared hardware constraints:
+`INT VIEW` in the same editor switches the internal view style.
 
-- the SPI bus is reset before mounting
-- CS is forced high before init
-- mount retries use several SPI speeds, from 40 MHz down to 1 MHz
-- root directory access is verified after mount
-- external display writes are paused when needed so SD transfers can complete
+## In-Game Controls
 
-## Flash Layouts
+Global runtime controls:
 
-The recommended release environment is:
+- short `G0` = quit safely and return to the ROM selector
+- long `G0` = open or close the runtime menu
+- long backtick = quit safely and return to the ROM selector
+- `Fn + S` = quick save to the selected slot
+- `Fn + L` = quick load from the selected slot
+- `Fn + C` = type `RUN"CAS:"` plus Enter
+- `Fn + B` = type `BLOAD"CAS:",R` plus Enter
+- `Fn + =` or `Fn + +` = volume up
+- `Fn + -` or `Fn + _` = volume down
+- `Fn + ]` or `Fn + }` = internal LCD brightness up
+- `Fn + [` or `Fn + {` = internal LCD brightness down
+- `\` = change view
+- `Fn + ,` / `Fn + /` = zoom controls where supported
+
+MSX keyboard helpers:
+
+- `Fn + 1` to `Fn + 5` = MSX `F1` to `F5`
+- `Fn + Tab` = `STOP`
+- `Fn + Del` = `DEL`
+- `Fn + Enter` = `SELECT`
+- `Fn + Space` = `HOME`
+- `Fn + ,` = cursor left
+- `Fn + .` = cursor down
+- `Fn + /` = cursor right
+- `Fn + ;` = cursor up
+- backtick = `ESC`
+- Cardputer `Opt` = MSX `GRAPH`
+- Cardputer `Alt` = MSX `CODE`
+- Cardputer Shift/Ctrl/Caps map to MSX Shift/Ctrl/Caps
+
+`JOY EXTEND` extras:
+
+- `;` = MSX cursor up
+- `.` = MSX cursor down
+- `,` = MSX cursor left
+- `/` = MSX cursor right
+- `1` to `5` = MSX `F1` to `F5`
+
+## Virtual Key Picker
+
+When `JOY EXTEND` or `KEYB/JOY` is active, press `V` to open a small on-screen
+key picker. Use left/right to choose a character and `PRIMARY`, `START`, or
+Enter to inject it as an MSX keyboard key. `SECONDARY`, `MENU`, or `V` cancels.
+
+The picker includes:
 
 ```text
-m5stack-stamps3-max-spiffs
+0 1 2 3 4 5 6 7 8 9 ' a b c ... z SPACE ENTER
 ```
 
-It currently uses the 8 MB partition table configured in `platformio.ini`.
+On screen, SPACE is displayed as `_` and ENTER as `E`.
 
-Layout:
+## Display Modes
 
-- app partition: `0x340000` bytes
-- ROM partition (`spiffs`): `0x4B0000` bytes
+The firmware can run on:
 
-The older launcher-driven runtime repartitioning flow is disabled in this
-branch. Partition layout is chosen at build/flash time.
+- internal Cardputer LCD
+- external SPI TFT
 
-## Build And Flash
+When the game runs on the external display, the internal LCD remains on and
+shows the ROM title and controls. It is not continuously redrawn during external
+gameplay, which saves time and avoids fighting the external video path.
 
-Recommended build:
+View choices are saved and can be changed from `Config Menu`, `Config Keys`, or
+with the runtime view shortcut.
 
-```powershell
-C:\Users\user\.platformio\penv\Scripts\platformio.exe run --environment m5stack-stamps3-max-spiffs
-```
+## About And Easter Egg
 
-The merged flashable image is stored at:
+The startup `About` page shows:
 
 ```text
-release/CardputerGBC-Dual-max-spiffs-flashable.bin
+Msx ADV Emulators v0.5
+MSX is a registered trademark owned by MSX Licensing Corporation
 ```
 
-Important: when regenerating the merged image manually, keep the bootloader
-flash mode as `DIO`. Do not force `QIO`.
+There is also a small hidden input tester in the About page. It is intended for
+diagnosing how Cardputer keys are seen by the MSX layer in `JOY EXTEND`,
+`KEYB/JOY`, `BasicKeyboard`, and `Vaus` modes.
 
-Example flash command:
+## Differences From fMSX
+
+This project uses fMSX and EMULib lineage where it makes sense, especially
+around the Z80/MSX heritage, but v0.5 is not a stock fMSX port.
+
+Major differences:
+
+- Cardputer-specific startup, ROM selector, SD indexing, and NVS settings.
+- Dual display workflow for internal LCD and external SPI TFT.
+- Flash-partition MSX2 BIOS cache to avoid heap pressure from `MSX2EXT.ROM`.
+- Custom MSX boot integration for MSX1/MSX2, sub-ROM, disk, and CAS workflows.
+- Local VDP work for Cardputer rendering, external display output, and MSX2
+  modes on an ESP32-S3 without PSRAM.
+- Runtime menus, save states, CAS macros, control editor, and virtual key
+  picker are project-specific.
+- Hardware-specific input handling for Cardputer keyboard, `G0`, and optional
+  M5Stack I2C joystick.
+
+Known limitations compared with a full desktop MSX emulator:
+
+- YM2413/FM-PAC audio synthesis is not enabled in this build.
+- SCC and SCC-I/SCC+ audio synthesis is not included in this build.
+- The goal is practical playability on Cardputer hardware, not cycle-perfect
+  emulation of every MSX peripheral.
+- Official BIOS ROMs are not distributed. You must provide your own legally
+  obtained BIOS files if you want the official MSX2 path.
+
+## Build
+
+Recommended release environment:
+
+```text
+m5stack-stamps3-max-spiffs-msx2-flash
+```
+
+Build:
 
 ```powershell
-C:\Users\user\.platformio\penv\Scripts\python.exe -X utf8 C:\Users\user\.platformio\packages\tool-esptoolpy\esptool.py --chip esp32s3 --port COM4 --baud 921600 write_flash 0x0 release\CardputerGBC-Dual-max-spiffs-flashable.bin
+C:\Users\user\.platformio\penv\Scripts\platformio.exe run -e m5stack-stamps3-max-spiffs-msx2-flash
 ```
 
-## Acknowledgements
+The flash layout is defined by:
+
+```text
+partitions_a2600_8mb_msx2bios.csv
+```
+
+Layout summary:
+
+- app partition: `0x340000`
+- SPIFFS/ROM data partition: `0x4A4000`
+- MSX2 BIOS cache partition `msx2bios`: `0xC000`
+
+To regenerate the merged v0.5 flashable image:
+
+```powershell
+C:\Users\user\.platformio\penv\Scripts\python.exe C:\Users\user\.platformio\packages\tool-esptoolpy\esptool.py --chip esp32s3 merge_bin -o release\MsxADV-Emulators-v0.5-m5stack-stamps3-max-spiffs-msx2-flash-flashable.bin --flash_mode dio --flash_freq 80m --flash_size 8MB 0x0 .pio\build\m5stack-stamps3-max-spiffs-msx2-flash\bootloader.bin 0x8000 .pio\build\m5stack-stamps3-max-spiffs-msx2-flash\partitions.bin 0xe000 C:\Users\user\.platformio\packages\framework-arduinoespressif32\tools\partitions\boot_app0.bin 0x10000 .pio\build\m5stack-stamps3-max-spiffs-msx2-flash\firmware.bin
+```
+
+Keep flash mode as `DIO`.
+
+## Credits
 
 Thanks to:
 
-- /u/geo-tp for the Cardputer Game Station emulator work and for suggesting the
-  C-BIOS fallback path.
 - Marat Fayzullin for fMSX and EMULib.
 - the esplay-fMSX project for ESP32-oriented fMSX/Z80 adaptation work.
-- M5Stack and the Cardputer community for testing and feedback.
-
-## M5Stack Joystick
-
-You can use the M5Stack Joystick v1.1 (U024-C) or Joystick2 (U024-V2). Plug it
-in before launching a game and it will be detected automatically.
-
-<img src="images/m5stack_joysticks.jpg" alt="A photo of the M5Stack Joysticks" width="800" height="400">
-
-## D-Pad 3D Model
-
-[Cardputer-Accessories repo](https://github.com/AndreiVladescu/Cardputer-Accessories)
-contains a printable D-Pad model that fits the Cardputer keyboard. Thanks to
-@AndreiVladescu.
-
-[![A render of the 3D DPAD model](images/cardputer_gamepad_render.jpg)](https://github.com/AndreiVladescu/Cardputer-Accessories)
+- /u/geo-tp and the Cardputer Game Station emulator work that helped inspire
+  this Cardputer firmware direction.
+- M5Stack and the Cardputer community for testing, hardware, and feedback.
