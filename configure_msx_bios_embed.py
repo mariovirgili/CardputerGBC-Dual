@@ -60,3 +60,7 @@ for rom_option in rom_options:
     embed_file = ensure_embed_file(config, rom_option["path"])
     env.AppendUnique(CPPDEFINES=[rom_option["define"]])
     print(f"[msx-bios] embedding {rom_option['label']} from {embed_file}")
+
+if option_enabled(env.GetProjectOption("custom_msx2_flash_partition", "no")):
+    env.AppendUnique(CPPDEFINES=[("MSX_MSX2_FLASH_PARTITION", 1)])
+    print("[msx-bios] using flash partition cache for official MSX2 ROM bundle")

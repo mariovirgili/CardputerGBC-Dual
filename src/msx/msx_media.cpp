@@ -2,8 +2,11 @@
 
 #include <SD.h>
 #include <esp_heap_caps.h>
+#include <esp_partition.h>
+#include <esp_spi_flash.h>
 #include <mbedtls/md5.h>
 
+#include <cstdint>
 #include <cstdio>
 #include <cstring>
 
@@ -34,6 +37,10 @@ extern const uint8_t official_msx2ext_rom_end[] asm("_binary_bios_private_MSX2EX
 #define MSX_EMBED_OFFICIAL_MSX2 0
 #endif
 
+#ifndef MSX_MSX2_FLASH_PARTITION
+#define MSX_MSX2_FLASH_PARTITION 0
+#endif
+
 #if MSX_BIOS_LOG_ENABLED
 #define MSX_BIOS_LOG(...) std::printf(__VA_ARGS__)
 #else
@@ -61,12 +68,22 @@ constexpr const char* kMsxEmbeddedCbiosSubName = "C-BIOS MSX2 SUB";
 constexpr const char* kMsxEmbeddedCbiosSubPath = "[embedded]/cbios_sub.rom";
 constexpr const char* kMsxEmbeddedOfficialMainPath = "[embedded]/MSX2.ROM";
 constexpr const char* kMsxEmbeddedOfficialSubPath = "[embedded]/MSX2EXT.ROM";
+constexpr const char* kMsxFlashOfficialMainPath = "[flash]/MSX2.ROM";
+constexpr const char* kMsxFlashOfficialSubPath = "[flash]/MSX2EXT.ROM";
+constexpr const char* kMsx2FlashPartitionLabel = "msx2bios";
+constexpr size_t kMsx2FlashMainOffset = 0x0000;
+constexpr size_t kMsx2FlashSubOffset = 0x8000;
+constexpr size_t kMsx2FlashPartitionSize = 0xC000;
+constexpr const char* kMsx2FlashMainMd5 = "ec3a01c91f24fbddcbcab0ad301bc9ef";
+constexpr const char* kMsx2FlashSubMd5 = "2183c2aff17cf4297bdb496de78c2e8a";
 constexpr size_t kMsxMainBiosStaticOffset = EMU_STATIC_POOL_SIZE - kMsxMainBiosStaticSize;
 
 static_assert(EMU_STATIC_POOL_SIZE >= (kMsxMainBiosStaticSize + kMsxPageSize8K),
               "MSX static pool too small for official BIOS fallback");
 
 static bool s_msxMainBiosStaticUsed = false;
+static spi_flash_mmap_handle_t s_msx2BiosFlashMmap = 0;
+static const uint8_t* s_msx2BiosFlashData = nullptr;
 
 uint8_t* msx_main_bios_static_buffer_if_acquired()
 {
@@ -225,6 +242,46 @@ bool msx_compute_md5_hex(const uint8_t* data, size_t size, char out[33])
     return ok;
 }
 
+bool msx_md5_finish_hex(mbedtls_md5_context* ctx, char out[33])
+{
+    if (!ctx || !out) {
+        return false;
+    }
+
+    unsigned char digest[16] = {0};
+    if (mbedtls_md5_finish_ret(ctx, digest) != 0) {
+        out[0] = '\0';
+        return false;
+    }
+
+    static const char kHex[] = "0123456789abcdef";
+    for (size_t i = 0; i < sizeof(digest); ++i) {
+        out[i * 2] = kHex[(digest[i] >> 4) & 0x0F];
+        out[i * 2 + 1] = kHex[digest[i] & 0x0F];
+    }
+    out[32] = '\0';
+    return true;
+}
+
+bool msx_media_is_flash_msx2bios_pointer(const uint8_t* data)
+{
+    if (!data || !s_msx2BiosFlashData) {
+        return false;
+    }
+    const uintptr_t address = reinterpret_cast<uintptr_t>(data);
+    const uintptr_t start = reinterpret_cast<uintptr_t>(s_msx2BiosFlashData);
+    return address >= start && address < (start + kMsx2FlashPartitionSize);
+}
+
+void msx_release_flash_msx2bios_map(void)
+{
+    if (s_msx2BiosFlashMmap) {
+        spi_flash_munmap(s_msx2BiosFlashMmap);
+        s_msx2BiosFlashMmap = 0;
+    }
+    s_msx2BiosFlashData = nullptr;
+}
+
 uint8_t* msx_alloc_image_buffer(size_t size)
 {
     uint8_t* buffer = static_cast<uint8_t*>(heap_caps_malloc(size, MALLOC_CAP_8BIT));
@@ -350,6 +407,8 @@ void msx_release_image(MsxBiosImage* image)
 
     if (image->data && msx_media_is_static_main_bios_pointer(image->data)) {
         s_msxMainBiosStaticUsed = false;
+    } else if (image->data && msx_media_is_flash_msx2bios_pointer(image->data)) {
+        // Shared mmap for MSX2.ROM + MSX2EXT.ROM is released with the bundle.
     } else if (image->data && image->ownsData) {
         heap_caps_free(image->data);
     }
@@ -380,6 +439,7 @@ void msx_reset_bios_bundle(MsxBiosBundle* bundle)
 
     msx_release_image(&bundle->mainRom);
     msx_release_image(&bundle->subRom);
+    msx_release_flash_msx2bios_map();
     bundle->target = MsxBiosTarget::None;
     bundle->compatible = false;
     bundle->subRomRequired = false;
@@ -491,6 +551,377 @@ bool msx_try_candidates(MsxBiosImage* image,
         }
     }
     return false;
+}
+
+bool msx_partition_region_md5_hex(const esp_partition_t* part, size_t offset, size_t size, char out[33])
+{
+#if !MSX_MSX2_FLASH_PARTITION
+    (void)part;
+    (void)offset;
+    (void)size;
+    (void)out;
+    return false;
+#else
+    if (!part || !out || size == 0u || offset > part->size || size > (part->size - offset)) {
+        return false;
+    }
+
+    mbedtls_md5_context ctx;
+    mbedtls_md5_init(&ctx);
+    bool ok = mbedtls_md5_starts_ret(&ctx) == 0;
+    uint8_t buffer[512];
+    size_t consumed = 0u;
+    while (ok && consumed < size) {
+        size_t chunk = size - consumed;
+        if (chunk > sizeof(buffer)) {
+            chunk = sizeof(buffer);
+        }
+        if (esp_partition_read(part, offset + consumed, buffer, chunk) != ESP_OK ||
+            mbedtls_md5_update_ret(&ctx, buffer, chunk) != 0) {
+            ok = false;
+            break;
+        }
+        consumed += chunk;
+    }
+    if (ok) {
+        ok = msx_md5_finish_hex(&ctx, out);
+    }
+    mbedtls_md5_free(&ctx);
+    return ok;
+#endif
+}
+
+void msx_set_flash_msx2_image(MsxBiosImage* image,
+                              const uint8_t* data,
+                              size_t size,
+                              const char* path,
+                              const char* expectedName,
+                              const char* expectedMd5,
+                              const char* foundMd5)
+{
+    if (!image || !data) {
+        return;
+    }
+
+    msx_release_image(image);
+    image->data = const_cast<uint8_t*>(data);
+    image->size = size;
+    image->status = MsxImageLoadStatus::Loaded;
+    image->ownsData = false;
+    msx_copy_string(image->path, sizeof(image->path), path);
+    msx_copy_string(image->expectedName, sizeof(image->expectedName), expectedName);
+    msx_copy_string(image->expectedMd5, sizeof(image->expectedMd5), expectedMd5);
+    msx_copy_string(image->foundMd5, sizeof(image->foundMd5), foundMd5 ? foundMd5 : "");
+}
+
+bool msx_map_flash_msx2bios_partition(const esp_partition_t* part,
+                                      MsxBiosBundle* bundle,
+                                      const char* mainMd5,
+                                      const char* subMd5,
+                                      char* detailMessage,
+                                      size_t detailMessageSize)
+{
+#if !MSX_MSX2_FLASH_PARTITION
+    (void)part;
+    (void)bundle;
+    (void)mainMd5;
+    (void)subMd5;
+    (void)detailMessage;
+    (void)detailMessageSize;
+    return false;
+#else
+    if (!part || !bundle || part->size < kMsx2FlashPartitionSize) {
+        return false;
+    }
+
+    msx_release_flash_msx2bios_map();
+    const void* ptr = nullptr;
+    if (esp_partition_mmap(part,
+                           0,
+                           kMsx2FlashPartitionSize,
+                           SPI_FLASH_MMAP_DATA,
+                           &ptr,
+                           &s_msx2BiosFlashMmap) != ESP_OK ||
+        !ptr) {
+        if (detailMessage && detailMessageSize > 0) {
+            std::snprintf(detailMessage, detailMessageSize, "MSX2 BIOS flash mmap failed");
+        }
+        s_msx2BiosFlashMmap = 0;
+        return false;
+    }
+
+    s_msx2BiosFlashData = static_cast<const uint8_t*>(ptr);
+    msx_set_flash_msx2_image(&bundle->mainRom,
+                             s_msx2BiosFlashData + kMsx2FlashMainOffset,
+                             kMsxMainBiosStaticSize,
+                             kMsxFlashOfficialMainPath,
+                             kMsx2BiosName,
+                             kMsx2FlashMainMd5,
+                             mainMd5);
+    msx_set_flash_msx2_image(&bundle->subRom,
+                             s_msx2BiosFlashData + kMsx2FlashSubOffset,
+                             kMsxSubRomExactSize,
+                             kMsxFlashOfficialSubPath,
+                             kMsx2ExtBiosName,
+                             kMsx2FlashSubMd5,
+                             subMd5);
+
+    if (detailMessage && detailMessageSize > 0) {
+        std::snprintf(detailMessage, detailMessageSize, "MSX2 BIOS flash cache loaded");
+    }
+    MSX_BIOS_LOG("[MSX][BIOS] accept flash MSX2 BIOS partition main=%s sub=%s\n",
+                 mainMd5 ? mainMd5 : "-",
+                 subMd5 ? subMd5 : "-");
+    return true;
+#endif
+}
+
+bool msx_install_msx2_flash_region_from_file(const char* path,
+                                             const esp_partition_t* part,
+                                             size_t partitionOffset,
+                                             size_t expectedSize,
+                                             const char* expectedMd5,
+                                             const char* expectedName,
+                                             char outMd5[33],
+                                             char* detailMessage,
+                                             size_t detailMessageSize)
+{
+#if !MSX_MSX2_FLASH_PARTITION
+    (void)path;
+    (void)part;
+    (void)partitionOffset;
+    (void)expectedSize;
+    (void)expectedMd5;
+    (void)expectedName;
+    (void)outMd5;
+    (void)detailMessage;
+    (void)detailMessageSize;
+    return false;
+#else
+    if (outMd5) {
+        outMd5[0] = '\0';
+    }
+    if (!path || !part || !expectedMd5 || !expectedName ||
+        partitionOffset > part->size || expectedSize > (part->size - partitionOffset)) {
+        return false;
+    }
+
+    const char* openPath = msx_sd_open_path(path);
+    File file = SD.open(openPath, FILE_READ);
+    if (!file || file.isDirectory()) {
+        if (file) {
+            file.close();
+        }
+        if (detailMessage && detailMessageSize > 0) {
+            std::snprintf(detailMessage, detailMessageSize, "missing %s", openPath);
+        }
+        return false;
+    }
+
+    const size_t size = static_cast<size_t>(file.size());
+    if (size != expectedSize) {
+        file.close();
+        if (detailMessage && detailMessageSize > 0) {
+            std::snprintf(detailMessage, detailMessageSize, "%s size invalid", expectedName);
+        }
+        return false;
+    }
+
+    mbedtls_md5_context ctx;
+    mbedtls_md5_init(&ctx);
+    bool ok = mbedtls_md5_starts_ret(&ctx) == 0;
+    uint8_t buffer[512];
+    size_t written = 0u;
+    while (ok && written < size) {
+        size_t chunk = size - written;
+        if (chunk > sizeof(buffer)) {
+            chunk = sizeof(buffer);
+        }
+        const size_t readBytes = file.read(buffer, chunk);
+        if (readBytes != chunk ||
+            mbedtls_md5_update_ret(&ctx, buffer, chunk) != 0 ||
+            esp_partition_write(part, partitionOffset + written, buffer, chunk) != ESP_OK) {
+            ok = false;
+            break;
+        }
+        written += chunk;
+    }
+    file.close();
+
+    char md5Hex[33] = {0};
+    if (ok) {
+        ok = msx_md5_finish_hex(&ctx, md5Hex);
+    }
+    mbedtls_md5_free(&ctx);
+
+    if (!ok || written != size || std::strcmp(md5Hex, expectedMd5) != 0) {
+        if (detailMessage && detailMessageSize > 0) {
+            std::snprintf(detailMessage,
+                          detailMessageSize,
+                          ok ? "%s MD5 mismatch" : "%s flash write failed",
+                          expectedName);
+        }
+        MSX_BIOS_LOG("[MSX][BIOS] reject flash install path=%s md5=%s expected=%s\n",
+                     path,
+                     md5Hex[0] ? md5Hex : "-",
+                     expectedMd5);
+        return false;
+    }
+
+    if (outMd5) {
+        msx_copy_string(outMd5, 33, md5Hex);
+    }
+    MSX_BIOS_LOG("[MSX][BIOS] installed %s flash cache from %s md5=%s\n",
+                 expectedName,
+                 path,
+                 md5Hex);
+    return true;
+#endif
+}
+
+bool msx_install_msx2_flash_region_from_candidates(const CandidateList& candidates,
+                                                   const esp_partition_t* part,
+                                                   size_t partitionOffset,
+                                                   size_t expectedSize,
+                                                   const char* expectedMd5,
+                                                   const char* expectedName,
+                                                   char outMd5[33],
+                                                   char* detailMessage,
+                                                   size_t detailMessageSize)
+{
+#if !MSX_MSX2_FLASH_PARTITION
+    (void)candidates;
+    (void)part;
+    (void)partitionOffset;
+    (void)expectedSize;
+    (void)expectedMd5;
+    (void)expectedName;
+    (void)outMd5;
+    (void)detailMessage;
+    (void)detailMessageSize;
+    return false;
+#else
+    char lastDetail[128] = {0};
+    for (size_t i = 0; i < candidates.count; ++i) {
+        const CandidateEntry& candidate = candidates.entries[i];
+        MSX_BIOS_LOG("[MSX][BIOS] flash-cache probe path=%s open=%s expected=%s\n",
+                     candidate.path,
+                     msx_sd_open_path(candidate.path),
+                     expectedName);
+        if (msx_install_msx2_flash_region_from_file(candidate.path,
+                                                    part,
+                                                    partitionOffset,
+                                                    expectedSize,
+                                                    expectedMd5,
+                                                    expectedName,
+                                                    outMd5,
+                                                    lastDetail,
+                                                    sizeof(lastDetail))) {
+            return true;
+        }
+        MSX_BIOS_LOG("[MSX][BIOS] flash-cache skip path=%s reason=%s\n",
+                     candidate.path,
+                     lastDetail[0] ? lastDetail : "not usable");
+    }
+
+    if (detailMessage && detailMessageSize > 0) {
+        msx_copy_string(detailMessage,
+                        detailMessageSize,
+                        lastDetail[0] ? lastDetail : "MSX2 BIOS flash source missing");
+    }
+    return false;
+#endif
+}
+
+bool msx_load_flash_cached_official_msx2_bundle(MsxBiosBundle* bundle,
+                                                const CandidateList& mainCandidates,
+                                                const CandidateList& subCandidates,
+                                                char* detailMessage,
+                                                size_t detailMessageSize)
+{
+#if !MSX_MSX2_FLASH_PARTITION
+    (void)bundle;
+    (void)mainCandidates;
+    (void)subCandidates;
+    (void)detailMessage;
+    (void)detailMessageSize;
+    return false;
+#else
+    if (!bundle) {
+        return false;
+    }
+
+    const esp_partition_t* part = esp_partition_find_first(ESP_PARTITION_TYPE_DATA,
+                                                           ESP_PARTITION_SUBTYPE_ANY,
+                                                           kMsx2FlashPartitionLabel);
+    if (!part || part->size < kMsx2FlashPartitionSize) {
+        if (detailMessage && detailMessageSize > 0) {
+            std::snprintf(detailMessage, detailMessageSize, "MSX2 BIOS flash partition missing");
+        }
+        return false;
+    }
+
+    char mainMd5[33] = {0};
+    char subMd5[33] = {0};
+    if (msx_partition_region_md5_hex(part, kMsx2FlashMainOffset, kMsxMainBiosStaticSize, mainMd5) &&
+        msx_partition_region_md5_hex(part, kMsx2FlashSubOffset, kMsxSubRomExactSize, subMd5) &&
+        std::strcmp(mainMd5, kMsx2FlashMainMd5) == 0 &&
+        std::strcmp(subMd5, kMsx2FlashSubMd5) == 0 &&
+        msx_map_flash_msx2bios_partition(part, bundle, mainMd5, subMd5, detailMessage, detailMessageSize)) {
+        return true;
+    }
+
+    msx_release_flash_msx2bios_map();
+    if (esp_partition_erase_range(part, 0, part->size) != ESP_OK) {
+        if (detailMessage && detailMessageSize > 0) {
+            std::snprintf(detailMessage, detailMessageSize, "MSX2 BIOS flash erase failed");
+        }
+        return false;
+    }
+
+    char installDetail[128] = {0};
+    if (!msx_install_msx2_flash_region_from_candidates(mainCandidates,
+                                                       part,
+                                                       kMsx2FlashMainOffset,
+                                                       kMsxMainBiosStaticSize,
+                                                       kMsx2FlashMainMd5,
+                                                       kMsx2BiosName,
+                                                       mainMd5,
+                                                       installDetail,
+                                                       sizeof(installDetail)) ||
+        !msx_install_msx2_flash_region_from_candidates(subCandidates,
+                                                       part,
+                                                       kMsx2FlashSubOffset,
+                                                       kMsxSubRomExactSize,
+                                                       kMsx2FlashSubMd5,
+                                                       kMsx2ExtBiosName,
+                                                       subMd5,
+                                                       installDetail,
+                                                       sizeof(installDetail))) {
+        (void)esp_partition_erase_range(part, 0, part->size);
+        if (detailMessage && detailMessageSize > 0) {
+            msx_copy_string(detailMessage,
+                            detailMessageSize,
+                            installDetail[0] ? installDetail : "MSX2 BIOS flash install failed");
+        }
+        bundle->mainRom.status = MsxImageLoadStatus::Missing;
+        bundle->subRom.status = MsxImageLoadStatus::Missing;
+        return false;
+    }
+
+    if (!msx_partition_region_md5_hex(part, kMsx2FlashMainOffset, kMsxMainBiosStaticSize, mainMd5) ||
+        !msx_partition_region_md5_hex(part, kMsx2FlashSubOffset, kMsxSubRomExactSize, subMd5) ||
+        std::strcmp(mainMd5, kMsx2FlashMainMd5) != 0 ||
+        std::strcmp(subMd5, kMsx2FlashSubMd5) != 0) {
+        (void)esp_partition_erase_range(part, 0, part->size);
+        if (detailMessage && detailMessageSize > 0) {
+            std::snprintf(detailMessage, detailMessageSize, "MSX2 BIOS flash verify failed");
+        }
+        return false;
+    }
+
+    return msx_map_flash_msx2bios_partition(part, bundle, mainMd5, subMd5, detailMessage, detailMessageSize);
+#endif
 }
 
 bool msx_load_embedded_cbios_msx1(MsxBiosImage* image,
@@ -814,6 +1245,7 @@ bool msx_load_for_target(MsxBiosBundle* bundle, MsxBiosTarget target, const MsxB
     if (target == MsxBiosTarget::MSX2) {
         msx_append_candidate(&mainCandidates, config->msx2BiosPath, kMsx2BiosName, kMsx2BiosMd5);
         msx_append_candidate(&mainCandidates, config->genericBiosPath, kMsx2BiosName, kMsx2BiosMd5);
+        msx_append_candidate(&mainCandidates, "/sd/bios/private/MSX2.ROM", kMsx2BiosName, kMsx2BiosMd5);
         msx_append_candidate(&mainCandidates, "/sd/bios/msx/MSX2.ROM", kMsx2BiosName, kMsx2BiosMd5);
         msx_append_candidate(&mainCandidates, "/sd/msx/MSX2.ROM", kMsx2BiosName, kMsx2BiosMd5);
     } else {
@@ -846,6 +1278,28 @@ bool msx_load_for_target(MsxBiosBundle* bundle, MsxBiosTarget target, const MsxB
         return false;
     }
 
+    CandidateList subCandidates = {};
+    char subDetailMessage[128] = {0};
+    msx_append_candidate(&subCandidates, config->msx2SubRomPath, kMsx2ExtBiosName, kMsx2ExtBiosMd5);
+    msx_append_candidate(&subCandidates, "/sd/bios/private/MSX2EXT.ROM", kMsx2ExtBiosName, kMsx2ExtBiosMd5);
+    msx_append_candidate(&subCandidates, "/sd/bios/msx/MSX2EXT.ROM", kMsx2ExtBiosName, kMsx2ExtBiosMd5);
+    msx_append_candidate(&subCandidates, "/sd/msx/MSX2EXT.ROM", kMsx2ExtBiosName, kMsx2ExtBiosMd5);
+
+#if MSX_MSX2_FLASH_PARTITION
+    if (msx_load_flash_cached_official_msx2_bundle(bundle,
+                                                   mainCandidates,
+                                                   subCandidates,
+                                                   detailMessage,
+                                                   sizeof(detailMessage))) {
+        bundle->compatible = true;
+        msx_set_message(bundle, "MSX2 BIOS flash cache loaded");
+        return true;
+    }
+
+    msx_set_message(bundle, detailMessage[0] != '\0' ? detailMessage : "MSX2 BIOS flash cache unavailable");
+    return false;
+#endif
+
     bool mainEmbedded = false;
     if (msx_load_embedded_official_msx2_mainrom(&bundle->mainRom,
                                                 detailMessage,
@@ -861,11 +1315,6 @@ bool msx_load_for_target(MsxBiosBundle* bundle, MsxBiosTarget target, const MsxB
         return false;
     }
 
-    CandidateList subCandidates = {};
-    char subDetailMessage[128] = {0};
-    msx_append_candidate(&subCandidates, config->msx2SubRomPath, kMsx2ExtBiosName, kMsx2ExtBiosMd5);
-    msx_append_candidate(&subCandidates, "/sd/bios/msx/MSX2EXT.ROM", kMsx2ExtBiosName, kMsx2ExtBiosMd5);
-    msx_append_candidate(&subCandidates, "/sd/msx/MSX2EXT.ROM", kMsx2ExtBiosName, kMsx2ExtBiosMd5);
     bool subEmbeddedOfficial = false;
     bool subEmbeddedCbios = false;
     if (msx_load_embedded_official_msx2_subrom(&bundle->subRom,
