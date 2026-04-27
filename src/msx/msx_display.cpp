@@ -204,8 +204,8 @@ static const char* msx_display_runtime_menu_label(const MsxInputOverlayState& ov
     if (msx_display_game_on_external()) {
         switch (index) {
             case 0u: return "PERF TUNE";
-            case 1u: return "JOY";
-            case 2u: return "KEYBOARD";
+            case 1u: return "JOY EXTEND";
+            case 2u: return "KEYB/JOY";
             case 3u: return "BASIC KBD";
             case 4u: return "VAUS";
             case 5u: return "VIEW";
@@ -219,8 +219,8 @@ static const char* msx_display_runtime_menu_label(const MsxInputOverlayState& ov
     } else {
         switch (index) {
             case 0u: return "PERF TUNE";
-            case 1u: return "JOY";
-            case 2u: return "KEYBOARD";
+            case 1u: return "JOY EXTEND";
+            case 2u: return "KEYB/JOY";
             case 3u: return "BASIC KBD";
             case 4u: return "VAUS";
             case 5u: return "VIEW";

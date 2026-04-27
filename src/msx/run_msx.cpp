@@ -364,19 +364,22 @@ static std::string msx_initial_cas_display_path(const char* casName)
     return casName ? std::string(casName) : std::string();
 }
 
-static std::string msx_cas_title_without_extension(const char* casName)
+static void msx_trim_spaces_in_place(std::string& value);
+
+static std::string msx_title_without_extension(const char* fileName, const char* fallback)
 {
-    std::string title = msx_file_label(casName);
-    if (title.size() >= 4u) {
-        std::string ext = title.substr(title.size() - 4u);
-        for (char& ch : ext) {
-            ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
-        }
-        if (ext == ".cas") {
-            title.resize(title.size() - 4u);
-        }
+    std::string title = msx_file_label(fileName);
+    if (title.empty() && fallback) {
+        title = fallback;
     }
-    return title.empty() ? std::string("MSX CAS") : title;
+
+    const size_t dot = title.find_last_of('.');
+    if (dot != std::string::npos && dot > 0) {
+        title.resize(dot);
+    }
+
+    msx_trim_spaces_in_place(title);
+    return title.empty() && fallback ? std::string(fallback) : title;
 }
 
 static void msx_trim_spaces_in_place(std::string& value)
@@ -439,7 +442,7 @@ static std::pair<std::string, std::string> msx_split_title_two_lines_no_ellipsis
     return {line1, line2};
 }
 
-static void msx_draw_cas_help_title_two_lines(const std::string& title)
+static void msx_draw_internal_title_two_lines(const std::string& title)
 {
     auto& display = M5Cardputer.Display;
     display.fillRect(0, 0, display.width(), TOP_BAR_HEIGHT, BACKGROUND_COLOR);
@@ -463,6 +466,29 @@ static void msx_draw_cas_help_title_two_lines(const std::string& title)
     display.drawString(lines.first.c_str(), x1, 3);
     display.drawString(lines.second.c_str(), x2, 16);
     display.drawFastHLine(centerX - 12, 28, 24, PRIMARY_COLOR);
+}
+
+static void msx_show_launch_controls_panel(bool useExternal,
+                                           const char* internalTitle,
+                                           const char* romName,
+                                           const char* fallbackRomTitle)
+{
+    CardputerView display;
+    display.initialize();
+    if (!useExternal) {
+        display.topBar(internalTitle ? internalTitle : "MSX", false, false);
+    }
+    display.showControlBindings(
+        share::emuControlActionLabels(share::EmuProfile::MSX),
+        share::emuControlKeyLabels(share::EmuProfile::MSX),
+        "GO = QUIT  HOLD GO = MENU"
+    );
+
+    if (useExternal) {
+        msx_draw_internal_title_two_lines(
+            msx_title_without_extension(romName, fallbackRomTitle ? fallbackRomTitle : "MSX")
+        );
+    }
 }
 
 const MsxBiosImage* msx_find_problem_bios_image(const MsxBiosBundle* bios)
@@ -850,6 +876,18 @@ static void msx_end_state_overlay(bool useExternal)
     msx_video_request_full_redraw();
 }
 
+static void msx_apply_runtime_view_toggle(MsxCoreState* core, bool useExternal)
+{
+    msx_config_toggle_active_view_mode_for_target(useExternal);
+    msx_video_request_full_redraw();
+    if (core) {
+        core->vdp.dirty = true;
+        if (core->displayFrame.indexed8) {
+            msx_video_present_frame(&core->displayFrame);
+        }
+    }
+}
+
 static bool msx_sd_root_accessible(void)
 {
     File root = SD.open("/");
@@ -1145,16 +1183,12 @@ void run_msx(const uint8_t* romData, size_t romLen, const char* romName, SdServi
 {
     const bool useExternal = (g_emu_display_target == EMU_DISPLAY_EXTERNAL);
     MsxViewModeOverrideGuard viewModeGuard;
-    {
-        CardputerView display;
-        display.initialize();
-        display.topBar(useExternal ? "MSX ON EXTERNAL TFT" : "MSX ON INTERNAL LCD", false, false);
-        display.showControlBindings(
-            share::emuControlActionLabels(share::EmuProfile::MSX),
-            share::emuControlKeyLabels(share::EmuProfile::MSX),
-            "GO = QUIT  HOLD GO = MENU"
-        );
-    }
+    msx_show_launch_controls_panel(
+        useExternal,
+        useExternal ? "MSX ON EXTERNAL TFT" : "MSX ON INTERNAL LCD",
+        romName,
+        "MSX ROM"
+    );
 
     msx_config_load_internal_view_mode();
     msx_config_load_performance_mode();
@@ -1257,7 +1291,7 @@ void run_msx(const uint8_t* romData, size_t romLen, const char* romName, SdServi
         }
 
         if (input.toggleViewRequested) {
-            msx_config_toggle_active_view_mode_for_target(useExternal);
+            msx_apply_runtime_view_toggle(&core, useExternal);
         }
 
         if (msx_input_get_save_requested()) {
@@ -1383,16 +1417,12 @@ void run_msx_disk(const uint8_t* dskData, size_t dskLen, const char* dskName, Sd
 
     const bool useExternal = (g_emu_display_target == EMU_DISPLAY_EXTERNAL);
     MsxViewModeOverrideGuard viewModeGuard;
-    {
-        CardputerView display;
-        display.initialize();
-        display.topBar(useExternal ? "MSX DISK EXT TFT" : "MSX DISK", false, false);
-        display.showControlBindings(
-            share::emuControlActionLabels(share::EmuProfile::MSX),
-            share::emuControlKeyLabels(share::EmuProfile::MSX),
-            "GO = QUIT  HOLD GO = MENU"
-        );
-    }
+    msx_show_launch_controls_panel(
+        useExternal,
+        useExternal ? "MSX DISK EXT TFT" : "MSX DISK",
+        dskName,
+        "MSX DISK"
+    );
 
     msx_config_load_internal_view_mode();
     msx_config_load_performance_mode();
@@ -1492,7 +1522,7 @@ void run_msx_disk(const uint8_t* dskData, size_t dskLen, const char* dskName, Sd
         }
 
         if (input.toggleViewRequested) {
-            msx_config_toggle_active_view_mode_for_target(useExternal);
+            msx_apply_runtime_view_toggle(&core, useExternal);
         }
 
         if (msx_input_get_save_requested()) {
@@ -1611,16 +1641,12 @@ void run_msx_basic(const char* name, SdService& sd)
 {
     const bool useExternal = (g_emu_display_target == EMU_DISPLAY_EXTERNAL);
     MsxViewModeOverrideGuard viewModeGuard;
-    {
-        CardputerView display;
-        display.initialize();
-        display.topBar(useExternal ? "MSX BASIC EXT TFT" : "MSX BASIC", false, false);
-        display.showControlBindings(
-            share::emuControlActionLabels(share::EmuProfile::MSX),
-            share::emuControlKeyLabels(share::EmuProfile::MSX),
-            "GO = QUIT  HOLD GO = MENU"
-        );
-    }
+    msx_show_launch_controls_panel(
+        useExternal,
+        useExternal ? "MSX BASIC EXT TFT" : "MSX BASIC",
+        name,
+        "MSX BASIC"
+    );
 
     msx_config_load_internal_view_mode();
     msx_config_load_performance_mode();
@@ -1705,7 +1731,7 @@ void run_msx_basic(const char* name, SdService& sd)
         }
 
         if (input.toggleViewRequested) {
-            msx_config_toggle_active_view_mode_for_target(useExternal);
+            msx_apply_runtime_view_toggle(&core, useExternal);
         }
 
         if (msx_input_get_save_requested()) {
@@ -1824,25 +1850,12 @@ void run_msx_cas(const uint8_t* casData, size_t casLen, const char* casName, SdS
 
     const bool useExternal = (g_emu_display_target == EMU_DISPLAY_EXTERNAL);
     MsxViewModeOverrideGuard viewModeGuard;
-    {
-        CardputerView display;
-        display.initialize();
-        if (useExternal) {
-            display.showControlBindings(
-                share::emuControlActionLabels(share::EmuProfile::MSX),
-                share::emuControlKeyLabels(share::EmuProfile::MSX),
-                "GO = QUIT  HOLD GO = MENU"
-            );
-            msx_draw_cas_help_title_two_lines(msx_cas_title_without_extension(casName));
-        } else {
-            display.topBar("MSX CAS", false, false);
-            display.showControlBindings(
-                share::emuControlActionLabels(share::EmuProfile::MSX),
-                share::emuControlKeyLabels(share::EmuProfile::MSX),
-                "GO = QUIT  HOLD GO = MENU"
-            );
-        }
-    }
+    msx_show_launch_controls_panel(
+        useExternal,
+        "MSX CAS",
+        casName,
+        "MSX CAS"
+    );
 
     msx_config_load_internal_view_mode();
     msx_config_load_performance_mode();
@@ -1934,12 +1947,20 @@ void run_msx_cas(const uint8_t* casData, size_t casLen, const char* casName, SdS
         }
 
         if (input.toggleViewRequested) {
-            msx_config_toggle_active_view_mode_for_target(useExternal);
+            msx_apply_runtime_view_toggle(&core, useExternal);
         }
 
         if (msx_input_get_change_cas_requested()) {
             msx_sound_set_paused(true);
             msx_handle_change_cas(&core, currentCasPath, runtimeCasBuffer, useExternal, sd);
+            if (useExternal) {
+                msx_show_launch_controls_panel(
+                    true,
+                    "MSX CAS",
+                    currentCasPath.c_str(),
+                    "MSX CAS"
+                );
+            }
             nextFrameUs = esp_timer_get_time();
             continue;
         }

@@ -274,6 +274,25 @@ static inline bool msx_key_pressed_any(char a, char b)
     return msx_key_pressed(a) || msx_key_pressed(b);
 }
 
+static bool msx_key_position_pressed(int x, int y)
+{
+    const auto& keys = M5Cardputer.Keyboard.keyList();
+    for (const auto& key : keys) {
+        if (key.x == x && key.y == y) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static constexpr int kMsxViewToggleKeyX = 13;
+static constexpr int kMsxViewToggleKeyY = 1;
+
+static bool msx_physical_view_toggle_pressed(void)
+{
+    return msx_key_position_pressed(kMsxViewToggleKeyX, kMsxViewToggleKeyY);
+}
+
 static inline bool msx_is_view_toggle_key(char ch)
 {
     return ch == CARDPUTER_SCREEN_TOGGLE || ch == '|';
@@ -296,13 +315,13 @@ static bool msx_poll_view_toggle_request(const Keyboard_Class::KeysState& keys)
         return false;
     }
 
-    const bool viewTogglePressed = msx_key_pressed_any(CARDPUTER_SCREEN_TOGGLE, '|');
-    const bool viewToggleTyped = msx_keys_contain_view_toggle_char(keys);
-    const bool typedEdge = viewToggleTyped && (!viewTogglePressed || !s_viewToggleHeld);
-    const bool pressedEdge = viewTogglePressed && !s_viewToggleHeld;
+    const bool viewToggleDown =
+        msx_physical_view_toggle_pressed() ||
+        msx_key_pressed_any(CARDPUTER_SCREEN_TOGGLE, '|') ||
+        msx_keys_contain_view_toggle_char(keys);
 
     bool toggleRequested = false;
-    if (typedEdge || pressedEdge) {
+    if (viewToggleDown && !s_viewToggleHeld) {
         const uint32_t nowMs = millis();
         if (s_lastViewToggleMs == 0u ||
             static_cast<uint32_t>(nowMs - s_lastViewToggleMs) >= kViewToggleDebounceMs) {
@@ -311,7 +330,7 @@ static bool msx_poll_view_toggle_request(const Keyboard_Class::KeysState& keys)
         }
     }
 
-    s_viewToggleHeld = viewTogglePressed;
+    s_viewToggleHeld = viewToggleDown;
     return toggleRequested;
 }
 
@@ -684,6 +703,11 @@ static void msx_runtime_menu_accept(void)
             break;
         case MsxRuntimeMenuItem::LoadState:
             {
+                if (g_emu_display_target == EMU_DISPLAY_EXTERNAL) {
+                    s_runtimeOptions.loadRequested = true;
+                    s_runtimeMenu.visible = false;
+                    break;
+                }
                 CardputerView view;
                 CardputerInput cinput;
                 ConfirmationSelector confirm(view, cinput);

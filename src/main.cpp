@@ -665,8 +665,8 @@ static void showStartupMsxConfigMenu(CardputerView& display, CardputerInput& inp
 
     const std::vector<std::string> options = {
         "Performance",
-        "Joystick",
-        "Keyboard",
+        "JOY EXTEND",
+        "KEYB/JOY",
         "BasicKeyboard",
         "Vaus",
         "View",
