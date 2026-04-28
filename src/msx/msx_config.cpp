@@ -11,6 +11,7 @@ constexpr const char* kMsxViewKey = "int_view";
 constexpr const char* kMsxMachineKey = "machine";
 constexpr const char* kMsxPerformanceKey = "perf_mode";
 constexpr const char* kMsxPerformanceFlagsKey = "perf_flags";
+constexpr const char* kMsxPerformancePresetKey = "perf_preset";
 constexpr const char* kMsxFrameskipKey = "frameskip";
 constexpr const char* kMsxFpsOverlayKey = "fps_hud";
 constexpr const char* kMsxBiosPathKey = "bios_path";
@@ -19,11 +20,21 @@ constexpr const char* kMsx2BiosPathKey = "bios_msx2";
 constexpr const char* kMsx2SubRomPathKey = "bios_sub2";
 constexpr MsxInternalViewMode kMsxDefaultInternalViewMode = MsxInternalViewMode::Wide;
 constexpr MsxMachineMode kMsxDefaultMachineMode = MsxMachineMode::MSX2;
-constexpr uint8_t kMsxFastPerformancePresetFlags =
+constexpr uint8_t kMsxLegacyFastPerformancePresetFlags =
     static_cast<uint8_t>(MsxPerformanceFlag::DisableSpriteCollision) |
     static_cast<uint8_t>(MsxPerformanceFlag::SimplifySpriteOverflow) |
     static_cast<uint8_t>(MsxPerformanceFlag::InstantVdpCommands);
+constexpr uint8_t kMsxFastPerformancePresetFlags =
+    static_cast<uint8_t>(MsxPerformanceFlag::DisableSliceRendering) |
+    static_cast<uint8_t>(MsxPerformanceFlag::DisableSpriteCollision) |
+    static_cast<uint8_t>(MsxPerformanceFlag::SimplifySpriteOverflow) |
+    static_cast<uint8_t>(MsxPerformanceFlag::InstantVdpCommands) |
+    static_cast<uint8_t>(MsxPerformanceFlag::ExternalFixed30Fps);
+constexpr uint8_t kMsxAlestePerformancePresetFlags =
+    kMsxLegacyFastPerformancePresetFlags |
+    static_cast<uint8_t>(MsxPerformanceFlag::ExternalFixed30Fps);
 constexpr MsxPerformanceMode kMsxDefaultPerformanceMode = MsxPerformanceMode::Performance;
+constexpr MsxPerformancePreset kMsxDefaultPerformancePreset = MsxPerformancePreset::Fast;
 constexpr uint8_t kMsxDefaultPerformanceFlags = kMsxFastPerformancePresetFlags;
 constexpr MsxFrameskipMode kMsxDefaultFrameskipMode = MsxFrameskipMode::Adaptive;
 constexpr bool kMsxDefaultFpsOverlayEnabled = true;
@@ -33,6 +44,7 @@ MsxInternalViewMode s_viewModeOverride = kMsxDefaultInternalViewMode;
 bool s_viewModeOverrideEnabled = false;
 MsxMachineMode s_machineMode = kMsxDefaultMachineMode;
 MsxPerformanceMode s_performanceMode = kMsxDefaultPerformanceMode;
+MsxPerformancePreset s_performancePreset = kMsxDefaultPerformancePreset;
 uint8_t s_performanceFlags = kMsxDefaultPerformanceFlags;
 MsxFrameskipMode s_frameskipMode = kMsxDefaultFrameskipMode;
 bool s_fpsOverlayEnabled = kMsxDefaultFpsOverlayEnabled;
@@ -82,6 +94,55 @@ uint8_t msx_sanitize_performance_flags(uint8_t value)
         static_cast<uint8_t>(MsxPerformanceFlag::InstantVdpCommands) |
         static_cast<uint8_t>(MsxPerformanceFlag::ExternalFixed30Fps);
     return static_cast<uint8_t>(value & supportedFlags);
+}
+
+MsxPerformancePreset msx_sanitize_performance_preset(uint8_t value)
+{
+    switch (value) {
+        case static_cast<uint8_t>(MsxPerformancePreset::Normal):
+            return MsxPerformancePreset::Normal;
+        case static_cast<uint8_t>(MsxPerformancePreset::Fast):
+            return MsxPerformancePreset::Fast;
+        case static_cast<uint8_t>(MsxPerformancePreset::Aleste):
+            return MsxPerformancePreset::Aleste;
+        case static_cast<uint8_t>(MsxPerformancePreset::Custom):
+            return MsxPerformancePreset::Custom;
+        default:
+            return kMsxDefaultPerformancePreset;
+    }
+}
+
+uint8_t msx_performance_preset_flags(MsxPerformancePreset preset)
+{
+    switch (preset) {
+        case MsxPerformancePreset::Normal:
+            return 0u;
+        case MsxPerformancePreset::Fast:
+            return kMsxFastPerformancePresetFlags;
+        case MsxPerformancePreset::Aleste:
+            return kMsxAlestePerformancePresetFlags;
+        case MsxPerformancePreset::Custom:
+        default:
+            return s_performanceFlags;
+    }
+}
+
+MsxPerformancePreset msx_performance_preset_from_flags(uint8_t flags)
+{
+    flags = msx_sanitize_performance_flags(flags);
+    if (flags == 0u) {
+        return MsxPerformancePreset::Normal;
+    }
+    if (flags == kMsxFastPerformancePresetFlags) {
+        return MsxPerformancePreset::Fast;
+    }
+    if (flags == kMsxAlestePerformancePresetFlags) {
+        return MsxPerformancePreset::Aleste;
+    }
+    if (flags == kMsxLegacyFastPerformancePresetFlags) {
+        return MsxPerformancePreset::Aleste;
+    }
+    return MsxPerformancePreset::Custom;
 }
 
 MsxFrameskipMode msx_sanitize_frameskip_mode(uint8_t value)
@@ -178,6 +239,7 @@ void msx_store_performance_flags(uint8_t flags)
     prefs.begin(kMsxConfigNs, false);
     prefs.putUChar(kMsxPerformanceFlagsKey, s_performanceFlags);
     prefs.putUChar(kMsxPerformanceKey, static_cast<uint8_t>(s_performanceMode));
+    prefs.putUChar(kMsxPerformancePresetKey, static_cast<uint8_t>(s_performancePreset));
     prefs.end();
 }
 
@@ -403,15 +465,29 @@ const char* msx_config_performance_mode_label(MsxPerformanceMode mode)
     return mode == MsxPerformanceMode::Performance ? "FAST" : "NORMAL";
 }
 
+MsxPerformancePreset msx_config_get_performance_preset(void)
+{
+    return s_performancePreset;
+}
+
+const char* msx_config_performance_preset_label(MsxPerformancePreset preset)
+{
+    switch (preset) {
+        case MsxPerformancePreset::Normal:
+            return "NORMAL";
+        case MsxPerformancePreset::Fast:
+            return "FAST";
+        case MsxPerformancePreset::Aleste:
+            return "ALESTE";
+        case MsxPerformancePreset::Custom:
+        default:
+            return "CUSTOM";
+    }
+}
+
 const char* msx_config_get_performance_mode_label(void)
 {
-    if (s_performanceFlags == 0u) {
-        return "NORMAL";
-    }
-    if (s_performanceFlags == kMsxFastPerformancePresetFlags) {
-        return "FAST";
-    }
-    return "CUSTOM";
+    return msx_config_performance_preset_label(s_performancePreset);
 }
 
 uint8_t msx_config_load_performance_flags(void)
@@ -420,7 +496,12 @@ uint8_t msx_config_load_performance_flags(void)
     prefs.begin(kMsxConfigNs, true);
     const bool hasSavedFlags = prefs.isKey(kMsxPerformanceFlagsKey);
     const bool hasLegacyMode = prefs.isKey(kMsxPerformanceKey);
+    const bool hasSavedPreset = prefs.isKey(kMsxPerformancePresetKey);
     const uint8_t savedFlags = prefs.getUChar(kMsxPerformanceFlagsKey, kMsxDefaultPerformanceFlags);
+    const uint8_t savedPreset = prefs.getUChar(
+        kMsxPerformancePresetKey,
+        static_cast<uint8_t>(kMsxDefaultPerformancePreset)
+    );
     const uint8_t legacyMode = prefs.getUChar(
         kMsxPerformanceKey,
         static_cast<uint8_t>(kMsxDefaultPerformanceMode)
@@ -429,15 +510,24 @@ uint8_t msx_config_load_performance_flags(void)
 
     if (hasSavedFlags) {
         s_performanceFlags = msx_sanitize_performance_flags(savedFlags);
+        s_performancePreset = hasSavedPreset
+                                  ? msx_sanitize_performance_preset(savedPreset)
+                                  : msx_performance_preset_from_flags(s_performanceFlags);
     } else if (hasLegacyMode &&
                msx_sanitize_performance_mode(legacyMode) == MsxPerformanceMode::Performance) {
         s_performanceFlags = kMsxFastPerformancePresetFlags;
+        s_performancePreset = MsxPerformancePreset::Fast;
     } else {
         s_performanceFlags = kMsxDefaultPerformanceFlags;
+        s_performancePreset = kMsxDefaultPerformancePreset;
+    }
+
+    if (s_performancePreset != MsxPerformancePreset::Custom) {
+        s_performanceFlags = msx_performance_preset_flags(s_performancePreset);
     }
     msx_update_performance_mode_from_flags();
 
-    if (!hasSavedFlags) {
+    if (!hasSavedFlags || !hasSavedPreset) {
         msx_store_performance_flags(s_performanceFlags);
     }
 
@@ -459,6 +549,7 @@ void msx_config_set_performance_flags(uint8_t flags, bool persist)
 {
     s_performanceFlags = msx_sanitize_performance_flags(flags);
     msx_update_performance_mode_from_flags();
+    s_performancePreset = msx_performance_preset_from_flags(s_performanceFlags);
     if (persist) {
         msx_store_performance_flags(s_performanceFlags);
     }
@@ -475,9 +566,31 @@ void msx_config_set_performance_flag(MsxPerformanceFlag flag, bool enabled, bool
 
 void msx_config_set_performance_mode(bool enabled, bool persist)
 {
-    msx_config_set_performance_flags(enabled ? kMsxFastPerformancePresetFlags
-                                             : kMsxDefaultPerformanceFlags,
-                                     persist);
+    msx_config_set_performance_preset(enabled ? MsxPerformancePreset::Fast
+                                              : MsxPerformancePreset::Normal,
+                                      persist);
+}
+
+void msx_config_set_performance_preset(MsxPerformancePreset preset, bool persist)
+{
+    s_performancePreset = msx_sanitize_performance_preset(static_cast<uint8_t>(preset));
+    if (s_performancePreset != MsxPerformancePreset::Custom) {
+        s_performanceFlags = msx_performance_preset_flags(s_performancePreset);
+    }
+    msx_update_performance_mode_from_flags();
+    if (persist) {
+        msx_store_performance_flags(s_performanceFlags);
+    }
+}
+
+void msx_config_cycle_performance_preset(int delta, bool persist)
+{
+    int preset = static_cast<int>(s_performancePreset);
+    preset = (preset + (delta >= 0 ? 1 : -1) + 4) % 4;
+    msx_config_set_performance_preset(
+        static_cast<MsxPerformancePreset>(preset),
+        persist
+    );
 }
 
 void msx_config_toggle_performance_mode(void)

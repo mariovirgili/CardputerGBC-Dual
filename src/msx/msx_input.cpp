@@ -731,6 +731,11 @@ static void msx_runtime_menu_adjust(int delta)
         return;
     }
 
+    if (msx_get_menu_item(s_runtimeMenu.selectedIndex) == MsxRuntimeMenuItem::Performance) {
+        msx_config_cycle_performance_preset(delta, true);
+        return;
+    }
+
     if (msx_get_menu_item(s_runtimeMenu.selectedIndex) == MsxRuntimeMenuItem::StateSlot) {
         int slot = s_runtimeOptions.stateSlot;
         slot = (slot + delta + 10) % 10;
@@ -880,8 +885,10 @@ static void msx_runtime_menu_accept(void)
             }
             break;
         case MsxRuntimeMenuItem::Performance:
-            s_runtimeMenu.mainSelectedIndex = s_runtimeMenu.selectedIndex;
-            msx_runtime_menu_open_performance_page();
+            if (msx_config_get_performance_preset() == MsxPerformancePreset::Custom) {
+                s_runtimeMenu.mainSelectedIndex = s_runtimeMenu.selectedIndex;
+                msx_runtime_menu_open_performance_page();
+            }
             break;
         case MsxRuntimeMenuItem::CasMenu:
             if (s_runtimeOptions.changeCasAvailable) {
@@ -2175,6 +2182,7 @@ void msx_input_get_overlay_state(MsxInputOverlayState* state)
     state->basicKeyboardEnabled = s_runtimeOptions.basicKeyboardEnabled;
     state->vausEnabled = s_runtimeOptions.vausEnabled;
     state->performanceMode = msx_config_get_performance_mode();
+    state->performancePreset = msx_config_get_performance_preset();
     state->perfDisableSliceRendering =
         msx_config_get_performance_flag(MsxPerformanceFlag::DisableSliceRendering);
     state->perfDisableSpriteCollision =

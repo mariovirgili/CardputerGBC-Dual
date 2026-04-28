@@ -699,7 +699,11 @@ static void showStartupMsxConfigMenu(CardputerView& display, CardputerInput& inp
     selectedIndex = selected;
     switch (selected) {
       case 0:
-        showStartupMsxPerformanceMenu(display, input);
+        if (msx_config_get_performance_preset() == MsxPerformancePreset::Custom) {
+          showStartupMsxPerformanceMenu(display, input);
+        } else {
+          msx_config_cycle_performance_preset(1, true);
+        }
         break;
       case 1:
         config.joystickEnabled = !config.joystickEnabled;

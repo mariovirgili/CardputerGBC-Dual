@@ -28,6 +28,13 @@ enum class MsxPerformanceMode : uint8_t {
     Performance = 1,
 };
 
+enum class MsxPerformancePreset : uint8_t {
+    Normal = 0,
+    Fast = 1,
+    Aleste = 2,
+    Custom = 3,
+};
+
 enum class MsxPerformanceFlag : uint8_t {
     DisableSliceRendering = 0x01,
     DisableSpriteCollision = 0x02,
@@ -73,6 +80,8 @@ MsxPerformanceMode msx_config_load_performance_mode(void);
 MsxPerformanceMode msx_config_get_performance_mode_value(void);
 bool msx_config_get_performance_mode(void);
 const char* msx_config_performance_mode_label(MsxPerformanceMode mode);
+MsxPerformancePreset msx_config_get_performance_preset(void);
+const char* msx_config_performance_preset_label(MsxPerformancePreset preset);
 const char* msx_config_get_performance_mode_label(void);
 uint8_t msx_config_load_performance_flags(void);
 uint8_t msx_config_get_performance_flags(void);
@@ -80,6 +89,8 @@ bool msx_config_get_performance_flag(MsxPerformanceFlag flag);
 void msx_config_set_performance_flags(uint8_t flags, bool persist);
 void msx_config_set_performance_flag(MsxPerformanceFlag flag, bool enabled, bool persist);
 void msx_config_set_performance_mode(bool enabled, bool persist);
+void msx_config_set_performance_preset(MsxPerformancePreset preset, bool persist);
+void msx_config_cycle_performance_preset(int delta, bool persist);
 void msx_config_toggle_performance_mode(void);
 MsxFrameskipMode msx_config_load_frameskip_mode(void);
 MsxFrameskipMode msx_config_get_frameskip_mode(void);

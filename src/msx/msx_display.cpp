@@ -287,7 +287,7 @@ static const char* msx_display_runtime_menu_value(const MsxInputOverlayState& ov
 
     switch (index) {
         case 0u:
-            return msx_config_get_performance_mode_label();
+            return msx_config_performance_preset_label(overlay.performancePreset);
         case 1u:
             return overlay.joystickEnabled ? "ON" : "OFF";
         case 2u:
@@ -318,7 +318,7 @@ static void msx_display_draw_runtime_menu_shell(const MsxInputOverlayState& over
     const int innerX = boxX + kRuntimeMenuInnerPad;
     const char* title = overlay.performanceSubmenuVisible
                             ? "PERF TUNING"
-                            : (overlay.casSubmenuVisible ? "CAS MENU" : "MSX MENU");
+                            : (overlay.casSubmenuVisible ? "CAS MENU" : "CONFIG MENU");
     const char* hint1 = overlay.performanceSubmenuVisible
                             ? "GO toggle  DEL back"
                             : (overlay.casSubmenuVisible
@@ -336,7 +336,7 @@ static void msx_display_draw_runtime_menu_shell(const MsxInputOverlayState& over
         tft.setTextDatum(TL_DATUM);
         tft.setTextColor(PRIMARY_COLOR, TFT_BLACK);
         const int titleX = boxX + (kRuntimeMenuBoxW - tft.textWidth(title, 2)) / 2;
-        tft.drawString(title, titleX, boxY + 6, 2);
+        tft.drawString(title, titleX, boxY + 4, 2);
         tft.setTextColor(TEXT_COLOR, TFT_BLACK);
         tft.drawString(hint1, innerX, boxY + kRuntimeMenuBoxH - 19, 1);
         tft.drawString(hint2, innerX, boxY + kRuntimeMenuBoxH - 10, 1);
@@ -352,7 +352,7 @@ static void msx_display_draw_runtime_menu_shell(const MsxInputOverlayState& over
     display.setFont(&fonts::Font2);
     display.setTextColor(PRIMARY_COLOR, TFT_BLACK);
     const int titleX = boxX + (kRuntimeMenuBoxW - display.textWidth(title)) / 2;
-    display.drawString(title, titleX, boxY + 6);
+    display.drawString(title, titleX, boxY + 4);
     display.setFont(&fonts::Font0);
     display.setTextColor(TEXT_COLOR, TFT_BLACK);
     display.drawString(hint1, innerX, boxY + kRuntimeMenuBoxH - 19);
@@ -376,6 +376,7 @@ static void msx_display_draw_runtime_menu_row_state(const MsxInputOverlayState& 
     const int rowY = y - 2;
     const int rowW = kRuntimeMenuBoxW - 16;
     const int rowH = kRuntimeMenuRowH - 1;
+    const int valueClearW = (boxX + kRuntimeMenuBoxW - 4) - valueX;
     const char* label = msx_display_runtime_menu_label(overlay, index);
     const char* value = msx_display_runtime_menu_value(overlay, index, stateSlot);
 
@@ -388,6 +389,7 @@ static void msx_display_draw_runtime_menu_row_state(const MsxInputOverlayState& 
         tft.setTextColor(rowFg, rowBg);
         tft.drawString(label, innerX, y, 1);
         if (value) {
+            tft.fillRect(valueX, rowY, valueClearW, rowH, rowBg);
             tft.drawString(value, valueX, y, 1);
         }
         return;
@@ -399,6 +401,7 @@ static void msx_display_draw_runtime_menu_row_state(const MsxInputOverlayState& 
     display.setTextColor(selected ? PRIMARY_COLOR : TEXT_COLOR, selected ? RECT_COLOR_DARK : TFT_BLACK);
     display.drawString(label, innerX, y);
     if (value) {
+        display.fillRect(valueX, rowY, valueClearW, rowH, selected ? RECT_COLOR_DARK : TFT_BLACK);
         display.drawString(value, valueX, y);
     }
 }
@@ -523,6 +526,7 @@ static bool msx_display_runtime_menu_overlay_equals(const MsxInputOverlayState& 
            a.basicKeyboardEnabled == b.basicKeyboardEnabled &&
            a.vausEnabled == b.vausEnabled &&
            a.performanceMode == b.performanceMode &&
+           a.performancePreset == b.performancePreset &&
            a.perfDisableSliceRendering == b.perfDisableSliceRendering &&
            a.perfDisableSpriteCollision == b.perfDisableSpriteCollision &&
            a.perfSimplifySpriteOverflow == b.perfSimplifySpriteOverflow &&

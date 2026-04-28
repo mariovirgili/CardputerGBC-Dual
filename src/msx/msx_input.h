@@ -37,6 +37,7 @@ struct MsxInputOverlayState {
     bool basicKeyboardEnabled;
     bool vausEnabled;
     bool performanceMode;
+    MsxPerformancePreset performancePreset;
     bool perfDisableSliceRendering;
     bool perfDisableSpriteCollision;
     bool perfSimplifySpriteOverflow;
