@@ -34,6 +34,33 @@
 namespace {
 
 constexpr int kMsxFrameCycles60Hz = 59659;
+constexpr unsigned kMsxTotalScanlines60Hz = 262u;
+constexpr uint16_t kMsxScanlineTargetCycles60Hz[kMsxTotalScanlines60Hz] = {
+    227u, 455u, 683u, 910u, 1138u, 1366u, 1593u, 1821u, 2049u, 2277u, 2504u, 2732u,
+    2960u, 3187u, 3415u, 3643u, 3871u, 4098u, 4326u, 4554u, 4781u, 5009u, 5237u, 5464u,
+    5692u, 5920u, 6148u, 6375u, 6603u, 6831u, 7058u, 7286u, 7514u, 7742u, 7969u, 8197u,
+    8425u, 8652u, 8880u, 9108u, 9335u, 9563u, 9791u, 10019u, 10246u, 10474u, 10702u, 10929u,
+    11157u, 11385u, 11613u, 11840u, 12068u, 12296u, 12523u, 12751u, 12979u, 13206u, 13434u, 13662u,
+    13890u, 14117u, 14345u, 14573u, 14800u, 15028u, 15256u, 15484u, 15711u, 15939u, 16167u, 16394u,
+    16622u, 16850u, 17077u, 17305u, 17533u, 17761u, 17988u, 18216u, 18444u, 18671u, 18899u, 19127u,
+    19355u, 19582u, 19810u, 20038u, 20265u, 20493u, 20721u, 20948u, 21176u, 21404u, 21632u, 21859u,
+    22087u, 22315u, 22542u, 22770u, 22998u, 23226u, 23453u, 23681u, 23909u, 24136u, 24364u, 24592u,
+    24819u, 25047u, 25275u, 25503u, 25730u, 25958u, 26186u, 26413u, 26641u, 26869u, 27097u, 27324u,
+    27552u, 27780u, 28007u, 28235u, 28463u, 28690u, 28918u, 29146u, 29374u, 29601u, 29829u, 30057u,
+    30284u, 30512u, 30740u, 30968u, 31195u, 31423u, 31651u, 31878u, 32106u, 32334u, 32561u, 32789u,
+    33017u, 33245u, 33472u, 33700u, 33928u, 34155u, 34383u, 34611u, 34839u, 35066u, 35294u, 35522u,
+    35749u, 35977u, 36205u, 36432u, 36660u, 36888u, 37116u, 37343u, 37571u, 37799u, 38026u, 38254u,
+    38482u, 38710u, 38937u, 39165u, 39393u, 39620u, 39848u, 40076u, 40303u, 40531u, 40759u, 40987u,
+    41214u, 41442u, 41670u, 41897u, 42125u, 42353u, 42581u, 42808u, 43036u, 43264u, 43491u, 43719u,
+    43947u, 44174u, 44402u, 44630u, 44858u, 45085u, 45313u, 45541u, 45768u, 45996u, 46224u, 46452u,
+    46679u, 46907u, 47135u, 47362u, 47590u, 47818u, 48045u, 48273u, 48501u, 48729u, 48956u, 49184u,
+    49412u, 49639u, 49867u, 50095u, 50323u, 50550u, 50778u, 51006u, 51233u, 51461u, 51689u, 51916u,
+    52144u, 52372u, 52600u, 52827u, 53055u, 53283u, 53510u, 53738u, 53966u, 54194u, 54421u, 54649u,
+    54877u, 55104u, 55332u, 55560u, 55787u, 56015u, 56243u, 56471u, 56698u, 56926u, 57154u, 57381u,
+    57609u, 57837u, 58065u, 58292u, 58520u, 58748u, 58975u, 59203u, 59431u, 59659u
+};
+static_assert(kMsxScanlineTargetCycles60Hz[kMsxTotalScanlines60Hz - 1u] == kMsxFrameCycles60Hz,
+              "MSX scanline target table must end at the frame cycle budget");
 // BIOS-only boot starts with all pages on primary slot 0.
 // Cartridge-assisted boot needs the cart visible at 4000h-BFFFh while page 0
 // stays on BIOS and page 3 stays on expanded RAM.
@@ -854,7 +881,7 @@ void msx_core_step_frame(MsxCoreState* state)
     const MsxCpuRunState prevRunState = state->cpu.runState;
     if (vdpSliceMode) {
         const unsigned visibleLines = state->vdp.activeHeight != 0u ? state->vdp.activeHeight : 212u;
-        const unsigned totalLines = 262u;
+        const unsigned totalLines = kMsxTotalScanlines60Hz;
         const unsigned vblankLine = visibleLines > 192u ? 230u : 220u;
         uint32_t executedCycles = 0u;
 #if MSX_CORE_TIMING_ENABLED || MSX_PROFILE_LOG_ENABLED
@@ -879,10 +906,7 @@ void msx_core_step_frame(MsxCoreState* state)
                 vdpRenderUs += static_cast<uint32_t>(esp_timer_get_time() - vdpStartUs);
 #endif
             }
-            const uint32_t targetCycles =
-                static_cast<uint32_t>((static_cast<uint64_t>(line + 1u) *
-                                       static_cast<uint64_t>(kMsxFrameCycles60Hz)) /
-                                      static_cast<uint64_t>(totalLines));
+            const uint32_t targetCycles = kMsxScanlineTargetCycles60Hz[line];
             const int sliceBudget = targetCycles > executedCycles
                                         ? static_cast<int>(targetCycles - executedCycles)
                                         : 0;
