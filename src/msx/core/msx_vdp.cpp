@@ -1,6 +1,7 @@
 #include "msx_vdp.h"
 
 #include <array>
+#include <esp_attr.h>
 #include <esp_heap_caps.h>
 
 #include <cstdio>
@@ -910,31 +911,42 @@ void msx_vdp_init_palette(MsxVdpState* state)
     }
 }
 
+inline uint32_t msx_vdp_pack_pixels4(uint8_t p0, uint8_t p1, uint8_t p2, uint8_t p3)
+{
+    return static_cast<uint32_t>(p0)
+         | (static_cast<uint32_t>(p1) << 8)
+         | (static_cast<uint32_t>(p2) << 16)
+         | (static_cast<uint32_t>(p3) << 24);
+}
+
+inline void msx_vdp_write_pattern_pixels_packed(uint8_t* dst, uint8_t pattern, uint8_t fg, uint8_t bg)
+{
+    const std::array<uint8_t, 8>& selector = s_msxPatternExpandLut[pattern];
+    const uint8_t fgXorBg = static_cast<uint8_t>(fg ^ bg);
+    uint32_t* const dst32 = reinterpret_cast<uint32_t*>(dst);
+
+    dst32[0] = msx_vdp_pack_pixels4(
+        static_cast<uint8_t>(bg ^ (selector[0] & fgXorBg)),
+        static_cast<uint8_t>(bg ^ (selector[1] & fgXorBg)),
+        static_cast<uint8_t>(bg ^ (selector[2] & fgXorBg)),
+        static_cast<uint8_t>(bg ^ (selector[3] & fgXorBg))
+    );
+    dst32[1] = msx_vdp_pack_pixels4(
+        static_cast<uint8_t>(bg ^ (selector[4] & fgXorBg)),
+        static_cast<uint8_t>(bg ^ (selector[5] & fgXorBg)),
+        static_cast<uint8_t>(bg ^ (selector[6] & fgXorBg)),
+        static_cast<uint8_t>(bg ^ (selector[7] & fgXorBg))
+    );
+}
+
 inline void msx_vdp_write_pattern_pixels(uint8_t* dst, uint8_t pattern, uint8_t fg, uint8_t bg)
 {
-    dst[0] = (pattern & 0x80u) != 0u ? fg : bg;
-    dst[1] = (pattern & 0x40u) != 0u ? fg : bg;
-    dst[2] = (pattern & 0x20u) != 0u ? fg : bg;
-    dst[3] = (pattern & 0x10u) != 0u ? fg : bg;
-    dst[4] = (pattern & 0x08u) != 0u ? fg : bg;
-    dst[5] = (pattern & 0x04u) != 0u ? fg : bg;
-    dst[6] = (pattern & 0x02u) != 0u ? fg : bg;
-    dst[7] = (pattern & 0x01u) != 0u ? fg : bg;
+    msx_vdp_write_pattern_pixels_packed(dst, pattern, fg, bg);
 }
 
 inline void msx_vdp_write_pattern_pixels_msx1(uint8_t* dst, uint8_t pattern, uint8_t fg, uint8_t bg)
 {
-    const std::array<uint8_t, 8>& selector = s_msxPatternExpandLut[pattern];
-    const uint8_t fgXorBg = static_cast<uint8_t>(fg ^ bg);
-
-    dst[0] = static_cast<uint8_t>(bg ^ (selector[0] & fgXorBg));
-    dst[1] = static_cast<uint8_t>(bg ^ (selector[1] & fgXorBg));
-    dst[2] = static_cast<uint8_t>(bg ^ (selector[2] & fgXorBg));
-    dst[3] = static_cast<uint8_t>(bg ^ (selector[3] & fgXorBg));
-    dst[4] = static_cast<uint8_t>(bg ^ (selector[4] & fgXorBg));
-    dst[5] = static_cast<uint8_t>(bg ^ (selector[5] & fgXorBg));
-    dst[6] = static_cast<uint8_t>(bg ^ (selector[6] & fgXorBg));
-    dst[7] = static_cast<uint8_t>(bg ^ (selector[7] & fgXorBg));
+    msx_vdp_write_pattern_pixels_packed(dst, pattern, fg, bg);
 }
 
 inline void msx_vdp_write_text40_pixels(uint8_t* dst, uint8_t pattern, uint8_t fg, uint8_t bg)
@@ -4316,7 +4328,7 @@ static void msx_vdp_render_graphics3_range(MsxVdpState* state, unsigned yStart, 
     }
 }
 
-static void msx_vdp_render_bitmap4_range(MsxVdpState* state, unsigned yStart, unsigned yEnd, bool finalizeFrame)
+static void IRAM_ATTR msx_vdp_render_bitmap4_range(MsxVdpState* state, unsigned yStart, unsigned yEnd, bool finalizeFrame)
 {
     if (!state) {
         return;
