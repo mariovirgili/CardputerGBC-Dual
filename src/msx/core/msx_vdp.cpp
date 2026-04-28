@@ -234,10 +234,24 @@ static uint32_t s_msxSpriteTransparentEntries = 0;
 static uint32_t s_msxSpritePixelsDrawn = 0;
 static MsxDisplayFrame s_msx2StreamVideoFrame = {};
 static bool s_msx2StreamActive = false;
+static uint8_t s_msxVdpPerformanceFlags =
+    static_cast<uint8_t>(MsxPerformanceFlag::DisableSpriteCollision) |
+    static_cast<uint8_t>(MsxPerformanceFlag::SimplifySpriteOverflow) |
+    static_cast<uint8_t>(MsxPerformanceFlag::InstantVdpCommands);
 #if MSX_VDP_BOOT_DIAG_ENABLED
 static uint32_t s_msxBootDiagLastFrame = 0xFFFFFFFFu;
 static uint16_t s_msxBootDiagCount = 0u;
 #endif
+
+inline void msx_vdp_refresh_performance_flags(void)
+{
+    s_msxVdpPerformanceFlags = msx_config_get_performance_flags();
+}
+
+inline bool msx_vdp_performance_flag_enabled(MsxPerformanceFlag flag)
+{
+    return (s_msxVdpPerformanceFlags & static_cast<uint8_t>(flag)) != 0u;
+}
 
 static bool msx_vdp_color_sprite_snapshot_is_empty(const uint8_t* spriteAttr)
 {
@@ -2353,7 +2367,7 @@ void msx_vdp_advance_command_engine_internal(MsxVdpState* state, uint32_t target
         return;
     }
 
-    if (msx_config_get_performance_flag(MsxPerformanceFlag::InstantVdpCommands)) {
+    if (msx_vdp_performance_flag_enabled(MsxPerformanceFlag::InstantVdpCommands)) {
         msx_vdp_update_mode_geometry(state);
         const int liveModeIndex = msx_vdp_command_mode_index(state);
         const uint8_t liveScreenMode =
@@ -2598,7 +2612,7 @@ void msx_vdp_command_execute(MsxVdpState* state, uint8_t opcode)
             line.lineYMajor = lineYMajor;
             line.cycleStamp = state->currentFrameCpuCycles;
             state->status[2] |= 0x01u;
-            if (msx_config_get_performance_flag(MsxPerformanceFlag::InstantVdpCommands)) {
+            if (msx_vdp_performance_flag_enabled(MsxPerformanceFlag::InstantVdpCommands)) {
                 msx_vdp_command_complete_async_bulk(state, screenMode);
             }
             return;
@@ -2609,7 +2623,7 @@ void msx_vdp_command_execute(MsxVdpState* state, uint8_t opcode)
                                            screenMode,
                                            logicOp,
                                            false);
-            if (msx_config_get_performance_flag(MsxPerformanceFlag::InstantVdpCommands)) {
+            if (msx_vdp_performance_flag_enabled(MsxPerformanceFlag::InstantVdpCommands)) {
                 msx_vdp_command_complete_async_bulk(state, screenMode);
             }
             return;
@@ -2621,7 +2635,7 @@ void msx_vdp_command_execute(MsxVdpState* state, uint8_t opcode)
                                            screenMode,
                                            logicOp,
                                            false);
-            if (msx_config_get_performance_flag(MsxPerformanceFlag::InstantVdpCommands)) {
+            if (msx_vdp_performance_flag_enabled(MsxPerformanceFlag::InstantVdpCommands)) {
                 msx_vdp_command_complete_async_bulk(state, screenMode);
             }
             return;
@@ -2641,7 +2655,7 @@ void msx_vdp_command_execute(MsxVdpState* state, uint8_t opcode)
                                            screenMode,
                                            logicOp,
                                            true);
-            if (msx_config_get_performance_flag(MsxPerformanceFlag::InstantVdpCommands)) {
+            if (msx_vdp_performance_flag_enabled(MsxPerformanceFlag::InstantVdpCommands)) {
                 msx_vdp_command_complete_async_bulk(state, screenMode);
             }
             return;
@@ -2653,7 +2667,7 @@ void msx_vdp_command_execute(MsxVdpState* state, uint8_t opcode)
                                            screenMode,
                                            logicOp,
                                            true);
-            if (msx_config_get_performance_flag(MsxPerformanceFlag::InstantVdpCommands)) {
+            if (msx_vdp_performance_flag_enabled(MsxPerformanceFlag::InstantVdpCommands)) {
                 msx_vdp_command_complete_async_bulk(state, screenMode);
             }
             return;
@@ -2665,7 +2679,7 @@ void msx_vdp_command_execute(MsxVdpState* state, uint8_t opcode)
                                            screenMode,
                                            logicOp,
                                            true);
-            if (msx_config_get_performance_flag(MsxPerformanceFlag::InstantVdpCommands)) {
+            if (msx_vdp_performance_flag_enabled(MsxPerformanceFlag::InstantVdpCommands)) {
                 msx_vdp_command_complete_async_bulk(state, screenMode);
             }
             return;
@@ -3067,9 +3081,9 @@ void msx_vdp_render_mono_sprites_line(MsxVdpState* state, unsigned y, uint8_t* d
         if (s_msxMonoSpriteCacheValid) {
             const MsxMonoSpriteLineCache& cache = s_msxMonoSpriteLines[y];
             const bool accurateSpriteOverflow =
-                !msx_config_get_performance_flag(MsxPerformanceFlag::SimplifySpriteOverflow);
+                !msx_vdp_performance_flag_enabled(MsxPerformanceFlag::SimplifySpriteOverflow);
             const bool detectSpriteCollision =
-                !msx_config_get_performance_flag(MsxPerformanceFlag::DisableSpriteCollision);
+                !msx_vdp_performance_flag_enabled(MsxPerformanceFlag::DisableSpriteCollision);
 
             if (cache.hasOverflow && accurateSpriteOverflow) {
                 msx_vdp_record_sprite_overflow(state, cache.overflowIndex);
@@ -3142,9 +3156,9 @@ void msx_vdp_render_mono_sprites_line(MsxVdpState* state, unsigned y, uint8_t* d
     uint8_t lastIndex = 31u;
     const unsigned spriteLimit = kMsxMaxSpritesLineMsx1;
     const bool accurateSpriteOverflow =
-        !msx_config_get_performance_flag(MsxPerformanceFlag::SimplifySpriteOverflow);
+        !msx_vdp_performance_flag_enabled(MsxPerformanceFlag::SimplifySpriteOverflow);
     const bool detectSpriteCollision =
-        !msx_config_get_performance_flag(MsxPerformanceFlag::DisableSpriteCollision);
+        !msx_vdp_performance_flag_enabled(MsxPerformanceFlag::DisableSpriteCollision);
 
     for (uint8_t index = 0; index < 32u; ++index) {
         const uint32_t attr = attrBase + static_cast<uint32_t>(index) * 4u;
@@ -3552,9 +3566,9 @@ bool msx_vdp_render_color_sprites_line(MsxVdpState* state, unsigned y, uint8_t* 
     uint8_t lastIndex = 31u;
     uint8_t orMask = 0u;
     const bool accurateSpriteOverflow =
-        !msx_config_get_performance_flag(MsxPerformanceFlag::SimplifySpriteOverflow);
+        !msx_vdp_performance_flag_enabled(MsxPerformanceFlag::SimplifySpriteOverflow);
     const bool detectSpriteCollision =
-        !msx_config_get_performance_flag(MsxPerformanceFlag::DisableSpriteCollision);
+        !msx_vdp_performance_flag_enabled(MsxPerformanceFlag::DisableSpriteCollision);
 
     for (uint8_t index = 0; index < 32u; ++index) {
         const uint8_t rawSpriteY = attrPtr[index * 4u];
@@ -5381,6 +5395,8 @@ bool msx_vdp_begin_frame(MsxVdpState* state)
     if (!state) {
         return false;
     }
+
+    msx_vdp_refresh_performance_flags();
 
     if (!msx_vdp_is_msx2(state)) {
         state->status[0] |= 0x80u;
