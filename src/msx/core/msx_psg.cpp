@@ -17,7 +17,7 @@ constexpr uint16_t kMsxVausMax = 309u;
 constexpr uint16_t kMsxVausCenter = 236u;
 constexpr uint8_t kMsxVausBits = 9u;
 constexpr uint16_t kMsxVausStep = 4u;
-constexpr int16_t kMsxPsgVolumeTable[16] = {
+static const int16_t DRAM_ATTR kMsxPsgVolumeTable[16] = {
     0, 64, 90, 128, 181, 256, 362, 512,
     724, 1024, 1448, 2048, 2896, 4096, 5792, 8192,
 };

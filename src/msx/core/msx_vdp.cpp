@@ -93,6 +93,11 @@ constexpr unsigned kMsxFrameWidth = 256;
 constexpr unsigned kMsxWideFrameWidth = 512;
 constexpr unsigned kMsxFrameHeightMsx1 = 192;
 constexpr unsigned kMsxFrameHeightMsx2 = 212;
+constexpr uint32_t kMsxVdpFrameScanlines = 262u;
+constexpr uint32_t kMsxVdpFrameCycles60Hz = 59659u;
+constexpr uint32_t kMsxVdpLineCycles60Hz =
+    (kMsxVdpFrameCycles60Hz + kMsxVdpFrameScanlines - 1u) / kMsxVdpFrameScanlines;
+constexpr uint32_t kMsxVdpHblankStart60Hz = (kMsxVdpLineCycles60Hz * 5u) / 6u;
 constexpr unsigned kMsxSpriteColorLineWidth = kMsxFrameWidth + 64u;
 constexpr size_t kMsxFramePixels = static_cast<size_t>(kMsxFrameWidth) * kMsxFrameHeightMsx2;
 constexpr uint8_t kMsxMaxSpritesLineMsx1 = 4u;
@@ -1170,15 +1175,27 @@ inline void msx_vdp_refresh_timing_flags(MsxVdpState* state)
         return;
     }
 
-    const uint32_t totalLines = 262u;
     const uint32_t visibleLines = state->activeHeight != 0u ? state->activeHeight : 212u;
     const uint32_t vblankLine = visibleLines > 192u ? 230u : 220u;
     const uint32_t lineIrqActiveEnd = visibleLines > 192u ? 245u : 235u;
-    const uint32_t lineCycles =
-        state->frameCycleBudget != 0u ? (state->frameCycleBudget + totalLines - 1u) / totalLines : 1u;
-    const uint32_t scanline = (state->currentFrameCpuCycles / lineCycles) % totalLines;
-    const uint32_t linePhase = state->currentFrameCpuCycles % lineCycles;
-    const uint32_t hblankStart = (lineCycles * 5u) / 6u;
+    uint32_t scanline = 0u;
+    uint32_t linePhase = 0u;
+    uint32_t hblankStart = kMsxVdpHblankStart60Hz;
+    if (state->frameCycleBudget == kMsxVdpFrameCycles60Hz) {
+        scanline = state->currentFrameCpuCycles / kMsxVdpLineCycles60Hz;
+        if (scanline >= kMsxVdpFrameScanlines) {
+            scanline = kMsxVdpFrameScanlines - 1u;
+        }
+        linePhase = state->currentFrameCpuCycles - (scanline * kMsxVdpLineCycles60Hz);
+    } else {
+        const uint32_t lineCycles =
+            state->frameCycleBudget != 0u
+                ? (state->frameCycleBudget + kMsxVdpFrameScanlines - 1u) / kMsxVdpFrameScanlines
+                : 1u;
+        scanline = (state->currentFrameCpuCycles / lineCycles) % kMsxVdpFrameScanlines;
+        linePhase = state->currentFrameCpuCycles % lineCycles;
+        hblankStart = (lineCycles * 5u) / 6u;
+    }
     const bool fieldSelectEnabled = (state->regs[9] & 0x0Cu) != 0u;
     const uint8_t eoBit =
         fieldSelectEnabled ? static_cast<uint8_t>(((state->frameCounter - 1u) & 0x01u) << 1) : 0u;
