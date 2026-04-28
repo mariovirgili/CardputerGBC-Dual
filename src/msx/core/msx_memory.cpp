@@ -858,7 +858,8 @@ uint8_t msx_memory_read8(const MsxMemoryState* state, uint16_t address)
     }
 
     uint8_t mirroredValue = 0xFFu;
-    if (msx_memory_try_cart_header_mirror_read(state, address, &mirroredValue)) {
+    if (address < 0x0010u &&
+        msx_memory_try_cart_header_mirror_read(state, address, &mirroredValue)) {
         return mirroredValue;
     }
 

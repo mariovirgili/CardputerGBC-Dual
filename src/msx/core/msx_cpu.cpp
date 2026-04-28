@@ -847,7 +847,7 @@ uint8_t msx_cpu_fetch8(MsxCpuState* state, const MsxMemoryState* memory)
         }
     }
 
-    if (msx_cpu_fetch_should_return_open_bus_ret(memory, pc)) {
+    if (value == 0xFFu && msx_cpu_fetch_should_return_open_bus_ret(memory, pc)) {
         value = kMsxOpenBusFetchOpcodeRet;
     }
     state->pc = static_cast<uint16_t>(pc + 1u);
