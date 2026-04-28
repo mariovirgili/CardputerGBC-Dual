@@ -816,15 +816,59 @@ uint8_t* msx_load_bios_file(const char* filename, size_t expectedSize, size_t* o
     return nullptr;
 }
 
-static String msx_get_savestate_path(const char* romName, uint8_t slot) {
-    String name(romName);
+static String msx_savestate_title_component(const char* romName)
+{
+    String name(romName ? romName : "");
     int dot = name.lastIndexOf('/');
     if (dot >= 0) name = name.substring(dot + 1);
     dot = name.lastIndexOf('\\');
     if (dot >= 0) name = name.substring(dot + 1);
     dot = name.lastIndexOf('.');
     if (dot > 0) name = name.substring(0, dot);
-    
+
+    name.trim();
+    String cleanName;
+    bool lastWasSpace = false;
+    for (int i = 0; i < name.length(); i++) {
+        char c = name[i];
+        if (static_cast<unsigned char>(c) < 0x20u ||
+            c == '<' || c == '>' || c == ':' || c == '"' ||
+            c == '/' || c == '\\' || c == '|' || c == '?' || c == '*') {
+            c = ' ';
+        }
+
+        if (std::isspace(static_cast<unsigned char>(c))) {
+            if (!lastWasSpace && cleanName.length() > 0) {
+                cleanName += ' ';
+                lastWasSpace = true;
+            }
+            continue;
+        }
+
+        cleanName += c;
+        lastWasSpace = false;
+    }
+
+    cleanName.trim();
+    while (cleanName.endsWith(".")) {
+        cleanName.remove(cleanName.length() - 1);
+        cleanName.trim();
+    }
+
+    if (cleanName.length() == 0) cleanName = "default";
+    return cleanName;
+}
+
+static String msx_legacy_savestate_title_component(const char* romName)
+{
+    String name(romName ? romName : "");
+    int dot = name.lastIndexOf('/');
+    if (dot >= 0) name = name.substring(dot + 1);
+    dot = name.lastIndexOf('\\');
+    if (dot >= 0) name = name.substring(dot + 1);
+    dot = name.lastIndexOf('.');
+    if (dot > 0) name = name.substring(0, dot);
+
     String cleanName = "";
     for (int i = 0; i < name.length(); i++) {
         char c = name[i];
@@ -833,16 +877,35 @@ static String msx_get_savestate_path(const char* romName, uint8_t slot) {
     }
     if (cleanName.length() == 0) cleanName = "default";
     if (cleanName.length() > 8) cleanName = cleanName.substring(0, 8);
+    return cleanName;
+}
 
+static bool msx_ensure_savestate_base_dirs()
+{
     if (!SD.exists("/msx")) {
         bool ok = SD.mkdir("/msx");
         std::printf("[MSX][STATE] mkdir /msx %s\n", ok ? "OK" : "FAIL");
+        if (!ok && !SD.exists("/msx")) {
+            return false;
+        }
     }
     if (!SD.exists("/msx/states")) {
         bool ok = SD.mkdir("/msx/states");
         std::printf("[MSX][STATE] mkdir /msx/states %s\n", ok ? "OK" : "FAIL");
+        if (!ok && !SD.exists("/msx/states")) {
+            return false;
+        }
     }
-    
+
+    return true;
+}
+
+static String msx_get_savestate_path(const char* romName, uint8_t slot) {
+    const String cleanName = msx_savestate_title_component(romName);
+    if (!msx_ensure_savestate_base_dirs()) {
+        return "/msx_slot" + String(slot) + ".sav";
+    }
+
     String path = "/msx/states/" + cleanName;
     if (!SD.exists(path)) {
         bool ok = SD.mkdir(path);
@@ -850,6 +913,10 @@ static String msx_get_savestate_path(const char* romName, uint8_t slot) {
     }
 
     return path + "/Slot" + String(slot) + ".sav";
+}
+
+static String msx_get_legacy_savestate_path(const char* romName, uint8_t slot) {
+    return "/msx/states/" + msx_legacy_savestate_title_component(romName) + "/Slot" + String(slot) + ".sav";
 }
 
 static void msx_draw_osd_message(const char* msg, bool useExternal) {
@@ -1193,10 +1260,18 @@ static void msx_handle_load_state(MsxCoreState* core, const char* stateName, boo
         if (msx_core_load_state(core, path.c_str())) {
             loaded = true;
         } else {
-            String fallbackPath = "/msx_slot" + String(stateSlot) + ".sav";
-            if (msx_core_load_state(core, fallbackPath.c_str())) {
+            String legacyPath = msx_get_legacy_savestate_path(stateName, stateSlot);
+            if (legacyPath != path && msx_core_load_state(core, legacyPath.c_str())) {
                 loaded = true;
-                loadedFromRoot = true;
+            } else {
+                String fallbackPath = "/msx_slot" + String(stateSlot) + ".sav";
+                if (msx_core_load_state(core, fallbackPath.c_str())) {
+                    loaded = true;
+                    loadedFromRoot = true;
+                }
+            }
+            if (loaded && !loadedFromRoot && legacyPath != path) {
+                std::printf("[MSX][STATE] Loaded legacy state path: %s\n", legacyPath.c_str());
             }
         }
     }
