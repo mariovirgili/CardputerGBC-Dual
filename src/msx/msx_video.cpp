@@ -2,6 +2,7 @@
 
 #include <M5Cardputer.h>
 #include <TFT_eSPI.h>
+#include <esp_attr.h>
 #include <esp_heap_caps.h>
 
 #include <algorithm>
@@ -75,20 +76,22 @@ struct MsxLineStreamState {
     int nextDstY;
 };
 
-void msx_video_pack_indexed_rgb444_line(const uint8_t* src,
-                                        uint8_t* dst,
-                                        int pixelCount,
-                                        uint16_t paletteEntries);
-void msx_video_pack_mapped_rgb444_line(const uint8_t* src,
-                                       uint8_t* dst,
-                                       int pixelCount,
-                                       const int16_t* xmap,
-                                       uint16_t paletteEntries);
+void IRAM_ATTR msx_video_pack_indexed_rgb444_line(const uint8_t* src,
+                                                  uint8_t* dst,
+                                                  int pixelCount,
+                                                  uint16_t paletteEntries);
+void IRAM_ATTR msx_video_pack_mapped_rgb444_line(const uint8_t* src,
+                                                 uint8_t* dst,
+                                                 int pixelCount,
+                                                 const int16_t* xmap,
+                                                 uint16_t paletteEntries);
 
 static uint16_t* s_lineBuf = nullptr;
 static int s_lineCap = 0;
+static bool s_lineBufDma = false;
 static uint8_t* s_lineBuf12 = nullptr;
 static int s_lineBuf12Cap = 0;
+static bool s_lineBuf12Dma = false;
 static int16_t* s_xmap = nullptr;
 static int s_xmapCap = 0;
 static int16_t* s_ymap = nullptr;
@@ -119,6 +122,7 @@ static bool s_extTftColorModeLogged = false;
 static bool s_externalUiActive = false;
 static bool s_runtimeMenuActive = false;
 static bool s_stateOverlayActive = false;
+static bool s_dmaAllocLogged = false;
 static MsxLineStreamState s_lineStream = {};
 static bool s_externalFixedSkipNextPresent = false;
 static uint16_t s_fpsHudValue10 = 0u;
@@ -433,10 +437,12 @@ void msx_video_release_scratch_buffers(void)
     free(s_lineBuf);
     s_lineBuf = nullptr;
     s_lineCap = 0;
+    s_lineBufDma = false;
 
     free(s_lineBuf12);
     s_lineBuf12 = nullptr;
     s_lineBuf12Cap = 0;
+    s_lineBuf12Dma = false;
 
     free(s_xmap);
     s_xmap = nullptr;
@@ -662,8 +668,12 @@ bool msx_video_prepare_buffers(const MsxVideoPlan& plan, bool layoutChanged)
             static_cast<size_t>(neededLineWidth) * kBatchLines * sizeof(uint16_t),
             MALLOC_CAP_DMA | MALLOC_CAP_8BIT
         ));
+        s_lineBufDma = s_lineBuf != nullptr;
         if (!s_lineBuf) s_lineBuf = static_cast<uint16_t*>(malloc(static_cast<size_t>(neededLineWidth) * kBatchLines * sizeof(uint16_t)));
         s_lineCap = s_lineBuf ? neededLineWidth : 0;
+        if (!s_lineBufDma && s_lineBuf) {
+            std::printf("[MSX][VIDEO] WARNING: lineBuf fallback malloc, no DMA\n");
+        }
     }
 
     if (msx_video_game_on_external()) {
@@ -671,8 +681,12 @@ bool msx_video_prepare_buffers(const MsxVideoPlan& plan, bool layoutChanged)
         if (neededBytes > s_lineBuf12Cap) {
             free(s_lineBuf12);
             s_lineBuf12 = static_cast<uint8_t*>(heap_caps_malloc(static_cast<size_t>(neededBytes), MALLOC_CAP_DMA | MALLOC_CAP_8BIT));
+            s_lineBuf12Dma = s_lineBuf12 != nullptr;
             if (!s_lineBuf12) s_lineBuf12 = static_cast<uint8_t*>(malloc(static_cast<size_t>(neededBytes)));
             s_lineBuf12Cap = s_lineBuf12 ? neededBytes : 0;
+            if (!s_lineBuf12Dma && s_lineBuf12) {
+                std::printf("[MSX][VIDEO] WARNING: lineBuf12 fallback malloc, no DMA\n");
+            }
         }
     }
 
@@ -711,10 +725,19 @@ bool msx_video_prepare_buffers(const MsxVideoPlan& plan, bool layoutChanged)
         }
     }
 
+    if (!s_dmaAllocLogged && s_lineBuf) {
+        s_dmaAllocLogged = true;
+        std::printf("[MSX][VIDEO] DMA buffers: lineBuf=%s bytes=%u lineBuf12=%s bytes=%u\n",
+                    s_lineBuf ? (s_lineBufDma ? "DMA" : "fallback") : "missing",
+                    static_cast<unsigned>(static_cast<size_t>(s_lineCap) * kBatchLines * sizeof(uint16_t)),
+                    s_lineBuf12 ? (s_lineBuf12Dma ? "DMA" : "fallback") : (msx_video_game_on_external() ? "missing" : "unused"),
+                    static_cast<unsigned>(s_lineBuf12Cap));
+    }
+
     return true;
 }
 
-void msx_video_pack_rgb444_line(const uint16_t* src, int pixelCount, uint8_t* dst)
+void IRAM_ATTR msx_video_pack_rgb444_line(const uint16_t* src, int pixelCount, uint8_t* dst)
 {
     if (!src || !dst || pixelCount <= 0) {
         return;
@@ -1207,10 +1230,10 @@ void msx_video_prepare_external_ui(void)
 
 namespace {
 
-void msx_video_pack_indexed_rgb444_line(const uint8_t* src,
-                                        uint8_t* dst,
-                                        int pixelCount,
-                                        uint16_t paletteEntries)
+void IRAM_ATTR msx_video_pack_indexed_rgb444_line(const uint8_t* src,
+                                                  uint8_t* dst,
+                                                  int pixelCount,
+                                                  uint16_t paletteEntries)
 {
     if (!src || !dst || pixelCount <= 0) {
         return;
@@ -1279,11 +1302,11 @@ void msx_video_pack_indexed_rgb444_line(const uint8_t* src,
     }
 }
 
-void msx_video_pack_mapped_rgb444_line(const uint8_t* src,
-                                       uint8_t* dst,
-                                       int pixelCount,
-                                       const int16_t* xmap,
-                                       uint16_t paletteEntries)
+void IRAM_ATTR msx_video_pack_mapped_rgb444_line(const uint8_t* src,
+                                                 uint8_t* dst,
+                                                 int pixelCount,
+                                                 const int16_t* xmap,
+                                                 uint16_t paletteEntries)
 {
     if (!src || !dst || pixelCount <= 0 || !xmap) {
         return;

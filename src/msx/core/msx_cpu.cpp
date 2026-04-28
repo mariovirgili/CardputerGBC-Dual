@@ -1,5 +1,6 @@
 #include "msx_cpu.h"
 
+#include <esp_attr.h>
 #include <cstdio>
 #include <cstring>
 #include "../msx_media.h"
@@ -554,7 +555,7 @@ void msx_cpu_log_opcode(const MsxCpuState* state,
     ++s_opcodeLogCount;
 }
 
-inline uint8_t msx_cpu_mem_read8(const MsxMemoryState* memory, uint16_t address)
+inline uint8_t IRAM_ATTR msx_cpu_mem_read8(const MsxMemoryState* memory, uint16_t address)
 {
     uint8_t mirroredValue = 0xFFu;
     if (address < 0x0010u &&
@@ -823,12 +824,12 @@ uint16_t* msx_cpu_stack_reg16_ptr(MsxCpuState* state, uint8_t pair)
     }
 }
 
-uint16_t msx_cpu_fetch16(MsxCpuState* state, const MsxMemoryState* memory);
+uint16_t IRAM_ATTR msx_cpu_fetch16(MsxCpuState* state, const MsxMemoryState* memory);
 
 // Forward declaration: msx_cpu_step_xy's default case re-dispatches here
 int msx_cpu_step_opcode(MsxCpuState* state, MsxMemoryState* memory);
 
-uint8_t msx_cpu_fetch8(MsxCpuState* state, const MsxMemoryState* memory)
+uint8_t IRAM_ATTR msx_cpu_fetch8(MsxCpuState* state, const MsxMemoryState* memory)
 {
     const uint16_t pc = state->pc;
     uint8_t value;
@@ -855,7 +856,7 @@ uint8_t msx_cpu_fetch8(MsxCpuState* state, const MsxMemoryState* memory)
     return value;
 }
 
-uint16_t msx_cpu_fetch16(MsxCpuState* state, const MsxMemoryState* memory)
+uint16_t IRAM_ATTR msx_cpu_fetch16(MsxCpuState* state, const MsxMemoryState* memory)
 {
     const uint8_t lo = msx_cpu_fetch8(state, memory);
     const uint8_t hi = msx_cpu_fetch8(state, memory);
