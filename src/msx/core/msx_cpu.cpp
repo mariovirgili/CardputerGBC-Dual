@@ -2367,7 +2367,7 @@ int msx_cpu_run_cycles(MsxCpuState* state, MsxMemoryState* memory, int cycleBudg
         return 0;
     }
 
-    constexpr uint32_t kPsgBatchCycles = 128u;
+    constexpr uint32_t kPsgBatchCycles = 512u;
     int usedCycles = 0;
     uint32_t pendingPsgCycles = 0u;
     auto flushPsg = [&]() {

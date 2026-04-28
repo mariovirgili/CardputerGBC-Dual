@@ -1,5 +1,6 @@
 #include "msx_psg.h"
 
+#include <esp_attr.h>
 #include <esp_heap_caps.h>
 
 #include <cstring>
@@ -24,7 +25,7 @@ constexpr int16_t kMsxPsgVolumeTable[16] = {
 static int32_t s_dcFilterX = 0;
 static int32_t s_dcFilterY = 0;
 
-size_t msx_psg_ring_samples()
+size_t IRAM_ATTR msx_psg_ring_samples()
 {
     return s_psgRingSamples != 0u ? s_psgRingSamples : kMsxPsgRingSamplesDefault;
 }
@@ -213,7 +214,7 @@ void msx_psg_restart_envelope(MsxPsgState* state)
     state->envelopeVolume = static_cast<uint8_t>((state->envelopeDirection > 0) ? 0u : 15u);
 }
 
-void msx_psg_step_envelope(MsxPsgState* state)
+void IRAM_ATTR msx_psg_step_envelope(MsxPsgState* state)
 {
     if (!state || state->envelopeHolding) {
         return;
@@ -247,26 +248,27 @@ void msx_psg_step_envelope(MsxPsgState* state)
     }
 }
 
-void msx_psg_push_sample(MsxPsgState* state, int16_t sample)
+void IRAM_ATTR msx_psg_push_sample(MsxPsgState* state, int16_t sample)
 {
     if (!state || !state->ready || !state->ring) {
         return;
     }
 
     const size_t ringSamples = msx_psg_ring_samples();
+    const uint16_t ringMask = static_cast<uint16_t>(ringSamples - 1u);
     if (state->ringCount >= ringSamples) {
-        state->ringReadIndex = static_cast<uint16_t>((state->ringReadIndex + 1u) % ringSamples);
+        state->ringReadIndex = static_cast<uint16_t>((state->ringReadIndex + 1u) & ringMask);
         state->ringCount--;
         state->droppedSamples++;
     }
 
     state->ring[state->ringWriteIndex] = sample;
-    state->ringWriteIndex = static_cast<uint16_t>((state->ringWriteIndex + 1u) % ringSamples);
+    state->ringWriteIndex = static_cast<uint16_t>((state->ringWriteIndex + 1u) & ringMask);
     state->ringCount++;
     state->generatedSamples++;
 }
 
-int16_t msx_psg_render_sample(MsxPsgState* state)
+int16_t IRAM_ATTR msx_psg_render_sample(MsxPsgState* state)
 {
     if (!state) {
         return 0;
@@ -515,7 +517,7 @@ void msx_psg_set_vaus_input(MsxPsgState* state, bool moveLeft, bool moveRight, b
     state->vausButtonPressed = buttonPressed;
 }
 
-void msx_psg_run_cycles(MsxPsgState* state, uint32_t cpuCycles)
+void IRAM_ATTR msx_psg_run_cycles(MsxPsgState* state, uint32_t cpuCycles)
 {
     if (!state || !state->ready || state->sampleRate == 0u || cpuCycles == 0u) {
         return;
@@ -536,9 +538,10 @@ size_t msx_psg_read_samples(MsxPsgState* state, int16_t* dst, size_t maxSamples)
 
     size_t count = 0u;
     const size_t ringSamples = msx_psg_ring_samples();
+    const uint16_t ringMask = static_cast<uint16_t>(ringSamples - 1u);
     while (count < maxSamples && state->ringCount > 0u) {
         dst[count++] = state->ring[state->ringReadIndex];
-        state->ringReadIndex = static_cast<uint16_t>((state->ringReadIndex + 1u) % ringSamples);
+        state->ringReadIndex = static_cast<uint16_t>((state->ringReadIndex + 1u) & ringMask);
         state->ringCount--;
     }
     return count;
@@ -554,7 +557,8 @@ void msx_psg_discard_samples(MsxPsgState* state, size_t sampleCount)
         sampleCount = state->ringCount;
     }
 
-    state->ringReadIndex = static_cast<uint16_t>((state->ringReadIndex + sampleCount) % msx_psg_ring_samples());
+    const uint16_t ringMask = static_cast<uint16_t>(msx_psg_ring_samples() - 1u);
+    state->ringReadIndex = static_cast<uint16_t>((state->ringReadIndex + sampleCount) & ringMask);
     state->ringCount = static_cast<uint16_t>(state->ringCount - sampleCount);
 }
 
