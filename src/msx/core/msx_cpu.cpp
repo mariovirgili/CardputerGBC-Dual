@@ -22,6 +22,16 @@ constexpr uint8_t kMsxOpenBusFetchOpcodeRet = 0xC9u;
 constexpr uint8_t kMsxBootSlotCart = 0xD4u;
 constexpr uint8_t kMsxBootSecondaryCart = 0xA0u;
 
+#if defined(__GNUC__)
+#define MSX_CPU_FORCE_INLINE inline __attribute__((always_inline))
+#define MSX_CPU_LIKELY(expr) __builtin_expect(!!(expr), 1)
+#define MSX_CPU_UNLIKELY(expr) __builtin_expect(!!(expr), 0)
+#else
+#define MSX_CPU_FORCE_INLINE inline
+#define MSX_CPU_LIKELY(expr) (expr)
+#define MSX_CPU_UNLIKELY(expr) (expr)
+#endif
+
 constexpr uint8_t kFlagC = 0x01;
 constexpr uint8_t kFlagN = 0x02;
 constexpr uint8_t kFlagPV = 0x04;
@@ -776,7 +786,7 @@ inline void msx_cpu_mem_write16(MsxMemoryState* memory, uint16_t address, uint16
     msx_cpu_mem_write8(memory, static_cast<uint16_t>(address + 1u), static_cast<uint8_t>(value >> 8));
 }
 
-uint8_t msx_cpu_get_reg8(const MsxCpuState* state, const MsxMemoryState* memory, uint8_t reg)
+MSX_CPU_FORCE_INLINE uint8_t IRAM_ATTR msx_cpu_get_reg8(const MsxCpuState* state, const MsxMemoryState* memory, uint8_t reg)
 {
     switch (reg & 0x07u) {
         case 0: return msx_hi(state->bc);
@@ -790,7 +800,7 @@ uint8_t msx_cpu_get_reg8(const MsxCpuState* state, const MsxMemoryState* memory,
     }
 }
 
-void msx_cpu_set_reg8(MsxCpuState* state, MsxMemoryState* memory, uint8_t reg, uint8_t value)
+MSX_CPU_FORCE_INLINE void IRAM_ATTR msx_cpu_set_reg8(MsxCpuState* state, MsxMemoryState* memory, uint8_t reg, uint8_t value)
 {
     switch (reg & 0x07u) {
         case 0: msx_set_hi(&state->bc, value); break;
@@ -804,7 +814,7 @@ void msx_cpu_set_reg8(MsxCpuState* state, MsxMemoryState* memory, uint8_t reg, u
     }
 }
 
-uint16_t* msx_cpu_reg16_ptr(MsxCpuState* state, uint8_t pair)
+MSX_CPU_FORCE_INLINE uint16_t* IRAM_ATTR msx_cpu_reg16_ptr(MsxCpuState* state, uint8_t pair)
 {
     switch (pair & 0x03u) {
         case 0: return &state->bc;
@@ -814,7 +824,7 @@ uint16_t* msx_cpu_reg16_ptr(MsxCpuState* state, uint8_t pair)
     }
 }
 
-uint16_t* msx_cpu_stack_reg16_ptr(MsxCpuState* state, uint8_t pair)
+MSX_CPU_FORCE_INLINE uint16_t* IRAM_ATTR msx_cpu_stack_reg16_ptr(MsxCpuState* state, uint8_t pair)
 {
     switch (pair & 0x03u) {
         case 0: return &state->bc;
@@ -834,11 +844,11 @@ uint8_t IRAM_ATTR msx_cpu_fetch8(MsxCpuState* state, const MsxMemoryState* memor
     const uint16_t pc = state->pc;
     uint8_t value;
 
-    if (state->currentPcAddress == pc && state->fetchMapEpoch == memory->mapEpoch) {
+    if (MSX_CPU_LIKELY(state->currentPcAddress == pc && state->fetchMapEpoch == memory->mapEpoch)) {
         value = *state->currentPcPtr++;
         state->currentPcAddress = static_cast<uint16_t>(pc + 1u);
     } else {
-        if (msx_cpu_fetch_can_use_direct_map(memory, pc)) {
+        if (MSX_CPU_LIKELY(msx_cpu_fetch_can_use_direct_map(memory, pc))) {
             msx_cpu_rebase_fetch_ptr(state, memory, pc);
             value = *state->currentPcPtr++;
             state->currentPcAddress = static_cast<uint16_t>(pc + 1u);
@@ -848,7 +858,7 @@ uint8_t IRAM_ATTR msx_cpu_fetch8(MsxCpuState* state, const MsxMemoryState* memor
         }
     }
 
-    if (value == 0xFFu && msx_cpu_fetch_should_return_open_bus_ret(memory, pc)) {
+    if (MSX_CPU_UNLIKELY(value == 0xFFu) && msx_cpu_fetch_should_return_open_bus_ret(memory, pc)) {
         value = kMsxOpenBusFetchOpcodeRet;
     }
     state->pc = static_cast<uint16_t>(pc + 1u);
@@ -880,7 +890,7 @@ uint16_t msx_cpu_pop16(MsxCpuState* state, const MsxMemoryState* memory)
     return value;
 }
 
-bool msx_cpu_condition(const MsxCpuState* state, uint8_t condition)
+MSX_CPU_FORCE_INLINE bool IRAM_ATTR msx_cpu_condition(const MsxCpuState* state, uint8_t condition)
 {
     const uint8_t flags = msx_cpu_f(state);
     switch (condition & 0x07u) {
