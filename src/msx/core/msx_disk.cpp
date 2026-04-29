@@ -80,6 +80,17 @@ const MsxDiskMediaInfo* msx_disk_media_info(uint8_t mediaDescriptor)
     return &kMsxDiskMediaInfo[index];
 }
 
+uint8_t msx_disk_media_from_total_sectors(uint32_t totalSectors)
+{
+    for (uint8_t i = 0u; i < static_cast<uint8_t>(sizeof(kMsxDiskMediaInfo) / sizeof(kMsxDiskMediaInfo[0])); ++i) {
+        if (kMsxDiskMediaInfo[i].sectors == totalSectors) {
+            return static_cast<uint8_t>(0xF8u + i);
+        }
+    }
+
+    return 0xF9u;
+}
+
 bool msx_disk_trace_slot(uint32_t* counter)
 {
     if (!counter) {
@@ -183,6 +194,37 @@ void msx_disk_log_boot_sector_summary(const uint8_t* boot, const char* prefix)
 uint8_t msx_disk_current_side(const MsxDiskState* state)
 {
     return state->driveAndSide & 0x01u;
+}
+
+uint8_t msx_disk_irq_drq(const MsxDiskState* state)
+{
+    if (!state || !state->ready) {
+        return 0x00u;
+    }
+
+    const uint16_t transferSize =
+        state->transferSize ? state->transferSize : static_cast<uint16_t>(kMsxDskSectorSize);
+    if (state->bufPos < transferSize) {
+        return 0x40u; // DRQ
+    }
+
+    return 0x80u; // IRQ, commands complete immediately in this lightweight model.
+}
+
+void msx_disk_set_side(MsxDiskState* state, uint8_t side)
+{
+    if (!state) {
+        return;
+    }
+    state->driveAndSide = static_cast<uint8_t>((state->driveAndSide & 0xFEu) | (side & 0x01u));
+}
+
+void msx_disk_set_drive(MsxDiskState* state, uint8_t drive)
+{
+    if (!state) {
+        return;
+    }
+    state->driveAndSide = static_cast<uint8_t>((state->driveAndSide & 0xF9u) | ((drive & 0x03u) << 1));
 }
 
 // Loads the sector identified by (trackReg, sectorReg, side) into sectorBuf.
@@ -541,7 +583,7 @@ uint8_t msx_disk_in(MsxDiskState* state, uint8_t port)
         }
 
         case 0xD4u:
-            return state->driveAndSide;
+            return msx_disk_irq_drq(state);
 
         default:
             return 0xFFu;
@@ -586,13 +628,71 @@ void msx_disk_out(MsxDiskState* state, uint8_t port, uint8_t value)
             if (msx_disk_trace_wd(&s_wdPortTraceCount)) {
                 MSX_DISK_LOG("[MSX][WD] OUT D4 drive/side=%02X side=%u drive=%u\n",
                              static_cast<unsigned>(value),
-                             static_cast<unsigned>(value & 0x01u),
-                             static_cast<unsigned>((value >> 1) & 0x03u));
+                             static_cast<unsigned>((value & 0x10u) ? 1u : 0u),
+                             static_cast<unsigned>((value >> 1) & 0x01u));
             }
-            state->driveAndSide = value;
+            // Brazilian DiskROM I/O layout used by fMSX: [xxxSxxDx],
+            // with side inverted in the WD1793 system register.
+            msx_disk_set_side(state, (value & 0x10u) ? 1u : 0u);
+            msx_disk_set_drive(state, static_cast<uint8_t>((value >> 1) & 0x01u));
             break;
         default:
             break;
+    }
+}
+
+bool msx_disk_memory_read(MsxDiskState* state, uint16_t address, uint8_t* value)
+{
+    if (!state || !state->ready || !value) {
+        return false;
+    }
+
+    switch (address) {
+        case 0x7FF8u: case 0xBFF8u: case 0x7F80u: case 0x7FB8u:
+        case 0x7FF9u: case 0xBFF9u: case 0x7F81u: case 0x7FB9u:
+        case 0x7FFAu: case 0xBFFAu: case 0x7F82u: case 0x7FBAu:
+        case 0x7FFBu: case 0xBFFBu: case 0x7F83u: case 0x7FBBu:
+            *value = msx_disk_in(state, static_cast<uint8_t>(0xD0u + (address & 0x0003u)));
+            return true;
+
+        case 0x7FFFu: case 0xBFFFu: case 0x7F84u: case 0x7FBCu:
+            *value = msx_disk_irq_drq(state);
+            return true;
+
+        default:
+            return false;
+    }
+}
+
+bool msx_disk_memory_write(MsxDiskState* state, uint16_t address, uint8_t value)
+{
+    if (!state || !state->ready) {
+        return false;
+    }
+
+    switch (address) {
+        case 0x7FF8u: case 0xBFF8u: case 0x7F80u: case 0x7FB8u:
+        case 0x7FF9u: case 0xBFF9u: case 0x7F81u: case 0x7FB9u:
+        case 0x7FFAu: case 0xBFFAu: case 0x7F82u: case 0x7FBAu:
+        case 0x7FFBu: case 0xBFFBu: case 0x7F83u: case 0x7FBBu:
+            msx_disk_out(state, static_cast<uint8_t>(0xD0u + (address & 0x0003u)), value);
+            return true;
+
+        case 0x7FFCu: case 0xBFFCu:
+            msx_disk_set_side(state, value & 0x01u);
+            return true;
+
+        case 0x7FFDu: case 0xBFFDu:
+            msx_disk_set_drive(state, static_cast<uint8_t>(value & 0x01u));
+            return true;
+
+        case 0x7F84u: case 0x7FBCu:
+            msx_disk_set_drive(state, static_cast<uint8_t>(value & 0x03u));
+            msx_disk_set_side(state, (value & 0x04u) ? 1u : 0u);
+            return true;
+
+        default:
+            return false;
     }
 }
 
@@ -849,15 +949,48 @@ static void patch_getdpb(MsxCpuState* cpu, MsxMemoryState* memory)
         msx_disk_log_boot_sector_summary(boot, "[MSX][DSK] GETDPB boot");
     }
 
-    const int bytesPerSector  = static_cast<int>(boot[0x0Cu]) * 256 + boot[0x0Bu];
-    const int sectorsPerDisk  = static_cast<int>(boot[0x14u]) * 256 + boot[0x13u];
-    const int sectorsPerFat   = static_cast<int>(boot[0x17u]) * 256 + boot[0x16u];
-    const int reservedSectors = static_cast<int>(boot[0x0Fu]) * 256 + boot[0x0Eu];
+    uint8_t mediaDescriptor = boot[0x15u];
+    const uint32_t totalLogicalSectors = msx_disk_total_logical_sectors(disk);
+    if (!msx_disk_media_info(mediaDescriptor)) {
+        mediaDescriptor = msx_disk_media_from_total_sectors(totalLogicalSectors);
+    }
+    const MsxDiskMediaInfo* mediaInfo = msx_disk_media_info(mediaDescriptor);
+
+    int bytesPerSector  = static_cast<int>(boot[0x0Cu]) * 256 + boot[0x0Bu];
+    int sectorsPerCluster = boot[0x0Du];
+    int reservedSectors = static_cast<int>(boot[0x0Fu]) * 256 + boot[0x0Eu];
+    int fatCount = boot[0x10u];
+    int directoryEntries = boot[0x11u];
+    int sectorsPerDisk  = static_cast<int>(boot[0x14u]) * 256 + boot[0x13u];
+    int sectorsPerFat   = static_cast<int>(boot[0x17u]) * 256 + boot[0x16u];
+    const bool validBpb =
+        (bytesPerSector == static_cast<int>(kMsxDskSectorSize)) &&
+        sectorsPerCluster > 0 &&
+        reservedSectors > 0 &&
+        fatCount > 0 &&
+        directoryEntries > 0 &&
+        sectorsPerDisk > 0 &&
+        sectorsPerFat > 0;
+
+    if (!validBpb && mediaInfo) {
+        MSX_DISK_LOG("[MSX][DSK] GETDPB fallback media=%02X totalSectors=%lu bps=%d spc=%d\n",
+                     static_cast<unsigned>(mediaDescriptor),
+                     static_cast<unsigned long>(totalLogicalSectors),
+                     bytesPerSector,
+                     sectorsPerCluster);
+        bytesPerSector = static_cast<int>(kMsxDskSectorSize);
+        sectorsPerCluster = mediaInfo->sectorsPerCluster;
+        reservedSectors = 1;
+        fatCount = 2;
+        directoryEntries = mediaInfo->directoryEntries;
+        sectorsPerDisk = mediaInfo->sectors;
+        sectorsPerFat = mediaInfo->sectorsPerFat;
+    }
 
     uint16_t addr = static_cast<uint16_t>(cpu->hl + 1u);
-    msx_memory_write8(memory, addr++, boot[0x15u]);
-    msx_memory_write8(memory, addr++, boot[0x0Bu]);
-    msx_memory_write8(memory, addr++, boot[0x0Cu]);
+    msx_memory_write8(memory, addr++, mediaDescriptor);
+    msx_memory_write8(memory, addr++, static_cast<uint8_t>(bytesPerSector & 0xFF));
+    msx_memory_write8(memory, addr++, static_cast<uint8_t>((bytesPerSector >> 8) & 0xFF));
 
     int value = (bytesPerSector >> 5) - 1;
     int shift = 0;
@@ -867,7 +1000,7 @@ static void patch_getdpb(MsxCpuState* cpu, MsxMemoryState* memory)
     msx_memory_write8(memory, addr++, static_cast<uint8_t>(value));
     msx_memory_write8(memory, addr++, static_cast<uint8_t>(shift));
 
-    value = static_cast<int>(boot[0x0Du]) - 1;
+    value = sectorsPerCluster - 1;
     shift = 0;
     while (value & (1 << shift)) {
         ++shift;
@@ -875,23 +1008,23 @@ static void patch_getdpb(MsxCpuState* cpu, MsxMemoryState* memory)
     msx_memory_write8(memory, addr++, static_cast<uint8_t>(value));
     msx_memory_write8(memory, addr++, static_cast<uint8_t>(shift + 1));
 
-    msx_memory_write8(memory, addr++, boot[0x0Eu]);
-    msx_memory_write8(memory, addr++, boot[0x0Fu]);
-    msx_memory_write8(memory, addr++, boot[0x10u]);
-    msx_memory_write8(memory, addr++, boot[0x11u]);
+    msx_memory_write8(memory, addr++, static_cast<uint8_t>(reservedSectors & 0xFF));
+    msx_memory_write8(memory, addr++, static_cast<uint8_t>((reservedSectors >> 8) & 0xFF));
+    msx_memory_write8(memory, addr++, static_cast<uint8_t>(fatCount & 0xFF));
+    msx_memory_write8(memory, addr++, static_cast<uint8_t>(directoryEntries & 0xFF));
 
-    value = reservedSectors + static_cast<int>(boot[0x10u]) * sectorsPerFat;
-    value += 32 * static_cast<int>(boot[0x11u]) / bytesPerSector;
+    value = reservedSectors + fatCount * sectorsPerFat;
+    value += 32 * directoryEntries / bytesPerSector;
     msx_memory_write8(memory, addr++, static_cast<uint8_t>(value & 0xFF));
     msx_memory_write8(memory, addr++, static_cast<uint8_t>((value >> 8) & 0xFF));
 
-    value = (sectorsPerDisk - value) / static_cast<int>(boot[0x0Du]);
+    value = (sectorsPerDisk - value) / sectorsPerCluster;
     msx_memory_write8(memory, addr++, static_cast<uint8_t>(value & 0xFF));
     msx_memory_write8(memory, addr++, static_cast<uint8_t>((value >> 8) & 0xFF));
 
-    msx_memory_write8(memory, addr++, boot[0x16u]);
+    msx_memory_write8(memory, addr++, static_cast<uint8_t>(sectorsPerFat & 0xFF));
 
-    value = reservedSectors + static_cast<int>(boot[0x10u]) * sectorsPerFat;
+    value = reservedSectors + fatCount * sectorsPerFat;
     msx_memory_write8(memory, addr++, static_cast<uint8_t>(value & 0xFF));
     msx_memory_write8(memory, addr, static_cast<uint8_t>((value >> 8) & 0xFF));
 

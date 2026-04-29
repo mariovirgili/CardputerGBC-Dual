@@ -15,7 +15,7 @@
 //   0xD1  W/R = track register
 //   0xD2  W/R = sector register  (1-based)
 //   0xD3  W/R = data register    (data stream during sector read)
-//   0xD4  W/R = drive/side select (bit 0 = side, bits 1-2 = drive number)
+//   0xD4  W = drive/side select, R = IRQ/DRQ latch
 
 constexpr size_t  kMsxDskSectorSize       = 512u;
 constexpr uint8_t kMsxDskSectorsPerTrack  = 9u;
@@ -55,6 +55,8 @@ void    msx_disk_init(MsxDiskState* state, const uint8_t* dskData, size_t dskSiz
 void    msx_disk_reset(MsxDiskState* state);
 uint8_t msx_disk_in(MsxDiskState* state, uint8_t port);
 void    msx_disk_out(MsxDiskState* state, uint8_t port, uint8_t value);
+bool    msx_disk_memory_read(MsxDiskState* state, uint16_t address, uint8_t* value);
+bool    msx_disk_memory_write(MsxDiskState* state, uint16_t address, uint8_t value);
 bool    msx_disk_read_logical_sector(const MsxDiskState* state, uint32_t logicalSector, uint8_t* dest);
 
 // Apply ED FE C9 patches to the DISK ROM buffer at the standard BIOS entry points

@@ -96,6 +96,27 @@ bool msx_memory_primary_slot_has_secondary_register(const MsxMemoryState* state,
            state->slot3Expanded;
 }
 
+bool msx_memory_disk_controller_visible(const MsxMemoryState* state, uint16_t address)
+{
+    if (!state || !state->disk || !state->slot3Expanded) {
+        return false;
+    }
+
+    if ((address & 0x3F88u) != 0x3F88u) {
+        return false;
+    }
+
+    const uint8_t page = static_cast<uint8_t>(address >> 14);
+    const uint8_t slot = msx_slot_for_page(state->slotRegister, page);
+    if (slot != kMsxPrimarySlotExpanded) {
+        return false;
+    }
+
+    return msx_secondary_slot_for_page(
+               msx_memory_effective_secondary_slot_reg(state, kMsxPrimarySlotExpanded),
+               page) == kMsxSecondarySlotDiskRom;
+}
+
 bool msx_memory_has_mapper(const MsxMemoryState* state)
 {
     return state && state->mapperEnabled && state->ramSegmentCount > 4u;
@@ -1469,6 +1490,12 @@ uint8_t IRAM_ATTR msx_memory_read8(const MsxMemoryState* state, uint16_t address
         return msx_memory_raw_page3_read8(state, address);
     }
 
+    uint8_t diskValue = 0xFFu;
+    if (msx_memory_disk_controller_visible(state, address) &&
+        msx_disk_memory_read(state->disk, address, &diskValue)) {
+        return diskValue;
+    }
+
     if (msx_memory_scc_classic_read_visible(state, address)) {
         return msx_scc_read(s_attachedScc, static_cast<uint8_t>(address & 0xFFu));
     }
@@ -1516,6 +1543,11 @@ void msx_memory_write8(MsxMemoryState* state, uint16_t address, uint8_t value)
     const uint8_t bank = static_cast<uint8_t>(address >> 13);
     if (msx_memory_use_raw_page3_window_impl(address)) {
         msx_memory_raw_page3_write8(state, address, value);
+        return;
+    }
+
+    if (msx_memory_disk_controller_visible(state, address) &&
+        msx_disk_memory_write(state->disk, address, value)) {
         return;
     }
 

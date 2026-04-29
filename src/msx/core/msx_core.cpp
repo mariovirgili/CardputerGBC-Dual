@@ -254,6 +254,12 @@ size_t msx_core_select_msx2_ram_size()
     return (budget > kMsxRamSizeMsx2) ? kMsxRamSizeMsx2 : budget;
 }
 
+size_t msx_core_select_system_ram_size(MsxMachineMode machineMode)
+{
+    return (machineMode == MsxMachineMode::MSX1) ? kMsxRamSizeMsx1
+                                                 : kMsxRamSizeMsx2;
+}
+
 void msx_core_set_status(MsxCoreState* state, const char* format, ...)
 {
     if (!state || !format) {
@@ -1232,8 +1238,11 @@ bool msx_core_init_basic(MsxCoreState* state,
 
     std::memset(&state->cart, 0, sizeof(state->cart));
 
+    const size_t requestedRamSize = msx_core_select_system_ram_size(state->machineMode);
     std::printf("[MSX] core init_basic: memory begin\n");
-    if (!msx_memory_init(&state->memory, state->machineMode, &state->bios, &state->cart, 0u)) {
+    std::printf("[MSX] core init_basic: ram requested=%u\n",
+                static_cast<unsigned>(requestedRamSize));
+    if (!msx_memory_init(&state->memory, state->machineMode, &state->bios, &state->cart, requestedRamSize)) {
         std::printf("[MSX] core init_basic failed at memory init\n");
         msx_bios_shutdown(&state->bios);
         return false;
@@ -1283,8 +1292,11 @@ bool msx_core_init_disk(MsxCoreState* state,
 
     std::memset(&state->cart, 0, sizeof(state->cart));
 
+    const size_t requestedRamSize = msx_core_select_system_ram_size(state->machineMode);
     std::printf("[MSX] core init_disk: memory begin\n");
-    if (!msx_memory_init(&state->memory, state->machineMode, &state->bios, &state->cart, 0u)) {
+    std::printf("[MSX] core init_disk: ram requested=%u\n",
+                static_cast<unsigned>(requestedRamSize));
+    if (!msx_memory_init(&state->memory, state->machineMode, &state->bios, &state->cart, requestedRamSize)) {
         std::printf("[MSX] core init_disk failed at memory init\n");
         msx_bios_shutdown(&state->bios);
         return false;
@@ -1317,9 +1329,7 @@ bool msx_core_init_disk(MsxCoreState* state,
 
     msx_core_finish_no_cart_init(state);
     if (diskRomData) {
-        if (!msx_core_try_boot_disk_sector(state)) {
-            std::printf("[MSX] disk boot: staying on BIOS entry path\n");
-        }
+        std::printf("[MSX] disk boot: using BIOS/DISK ROM entry path\n");
     }
     msx_core_set_status(state,
                         "DISK %s %s",
@@ -1358,8 +1368,11 @@ bool msx_core_init_cas(MsxCoreState* state,
 
     std::memset(&state->cart, 0, sizeof(state->cart));
 
+    const size_t requestedRamSize = msx_core_select_system_ram_size(state->machineMode);
     std::printf("[MSX] core init_cas: memory begin\n");
-    if (!msx_memory_init(&state->memory, state->machineMode, &state->bios, &state->cart, 0u)) {
+    std::printf("[MSX] core init_cas: ram requested=%u\n",
+                static_cast<unsigned>(requestedRamSize));
+    if (!msx_memory_init(&state->memory, state->machineMode, &state->bios, &state->cart, requestedRamSize)) {
         std::printf("[MSX] core init_cas failed at memory init\n");
         msx_bios_shutdown(&state->bios);
         return false;
