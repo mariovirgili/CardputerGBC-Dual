@@ -39,6 +39,7 @@ static bool s_sccRealPlusWindow = false;
 static MsxVirtualSccMode s_virtualSccMode = MsxVirtualSccMode::Off;
 static uint8_t* s_virtualSccRam = nullptr;
 static uint8_t s_virtualSccRamBanks[4] = {0u, 1u, 2u, 3u};
+static bool s_virtualSccPlusMapped = true;
 static bool s_virtualSccPlusRegsEnabled = true;
 
 constexpr uint8_t kMsxNoramByte = 0xFFu;
@@ -138,6 +139,60 @@ bool msx_memory_virtual_scc_ram_should_map(const MsxMemoryState* state)
 bool msx_memory_virtual_scc_ram_context_allows(const MsxMemoryState* state)
 {
     return state && (!state->cart.ready || state->cart.rom == nullptr);
+}
+
+bool msx_memory_scc_hardware_detect_strict(void)
+{
+    return msx_config_get_scc_hardware_detect_enabled();
+}
+
+bool msx_memory_slot_is_virtual_scc_slot(const MsxMemoryState* state, uint16_t address)
+{
+    if (!state) {
+        return false;
+    }
+    const uint8_t page = static_cast<uint8_t>(address >> 14);
+    return msx_slot_for_page(state->slotRegister, page) == kMsxPrimarySlotCartridge;
+}
+
+bool msx_memory_virtual_scc_visible_at(const MsxMemoryState* state, uint16_t address)
+{
+    if (s_virtualSccMode == MsxVirtualSccMode::Off) {
+        return false;
+    }
+    return !msx_memory_scc_hardware_detect_strict() ||
+           msx_memory_slot_is_virtual_scc_slot(state, address);
+}
+
+bool msx_memory_virtual_scc_plus_regs_visible_at(const MsxMemoryState* state, uint16_t address)
+{
+    if (s_virtualSccMode != MsxVirtualSccMode::SccI || !s_virtualSccPlusRegsEnabled) {
+        return false;
+    }
+    if (msx_memory_scc_hardware_detect_strict() && !s_virtualSccPlusMapped) {
+        return false;
+    }
+    return !msx_memory_scc_hardware_detect_strict() ||
+           msx_memory_slot_is_virtual_scc_slot(state, address);
+}
+
+bool msx_memory_virtual_scc_control_context_allows(const MsxMemoryState* state,
+                                                   uint16_t address,
+                                                   uint8_t slot)
+{
+    return state &&
+           s_virtualSccMode == MsxVirtualSccMode::SccI &&
+           slot == kMsxPrimarySlotCartridge &&
+           msx_memory_virtual_scc_ram_context_allows(state) &&
+           (!msx_memory_scc_hardware_detect_strict() ||
+            msx_memory_slot_is_virtual_scc_slot(state, address));
+}
+
+void msx_memory_reset_virtual_scc_plus_mapping(void)
+{
+    const bool permissive = !msx_memory_scc_hardware_detect_strict();
+    s_virtualSccPlusMapped = permissive;
+    s_virtualSccPlusRegsEnabled = permissive;
 }
 
 void msx_memory_reset_virtual_scc_ram_banks(void)
@@ -970,7 +1025,9 @@ bool msx_memory_virtual_scc_plus_enabled(void)
 
 bool msx_memory_virtual_scc_plus_regs_visible(void)
 {
-    return msx_memory_virtual_scc_plus_enabled() && s_virtualSccPlusRegsEnabled;
+    return msx_memory_virtual_scc_plus_enabled() &&
+           s_virtualSccPlusMapped &&
+           s_virtualSccPlusRegsEnabled;
 }
 
 const char* msx_memory_real_scc_mode_label(void)
@@ -989,7 +1046,8 @@ const char* msx_memory_active_scc_mode_label(void)
     if (s_virtualSccMode == MsxVirtualSccMode::Off) {
         return "OFF";
     }
-    if (msx_memory_virtual_scc_plus_enabled()) {
+    if (msx_memory_virtual_scc_plus_enabled() &&
+        (!msx_memory_scc_hardware_detect_strict() || s_virtualSccPlusMapped)) {
         return "SCC-I";
     }
     if (msx_memory_virtual_scc_enabled()) {
@@ -1005,7 +1063,9 @@ void msx_memory_apply_scc_windows(void)
     }
 
     const bool virtualClassic = msx_memory_virtual_scc_enabled();
-    const bool virtualPlus = msx_memory_virtual_scc_plus_enabled();
+    const bool virtualPlus =
+        msx_memory_virtual_scc_plus_enabled() &&
+        (!msx_memory_scc_hardware_detect_strict() || s_virtualSccPlusMapped);
     msx_scc_set_windows(s_attachedScc,
                         s_sccRealClassicWindow || virtualClassic,
                         s_sccRealPlusWindow || virtualPlus);
@@ -1029,7 +1089,8 @@ bool msx_memory_scc_classic_read_visible(const MsxMemoryState* state, uint16_t a
     if (address < 0x9800u || address >= 0x9880u) {
         return false;
     }
-    return msx_memory_virtual_scc_enabled() || msx_memory_real_scc_visible(state, address);
+    return msx_memory_virtual_scc_visible_at(state, address) ||
+           msx_memory_real_scc_visible(state, address);
 }
 
 bool msx_memory_scc_plus_read_visible(const MsxMemoryState* state, uint16_t address)
@@ -1040,7 +1101,8 @@ bool msx_memory_scc_plus_read_visible(const MsxMemoryState* state, uint16_t addr
     if (address < 0xB800u || address >= 0xB8A0u) {
         return false;
     }
-    return msx_memory_virtual_scc_plus_regs_visible() || msx_memory_real_scc_visible(state, address);
+    return msx_memory_virtual_scc_plus_regs_visible_at(state, address) ||
+           msx_memory_real_scc_visible(state, address);
 }
 
 bool msx_memory_scc_classic_write_visible(const MsxMemoryState* state, uint16_t address)
@@ -1051,7 +1113,8 @@ bool msx_memory_scc_classic_write_visible(const MsxMemoryState* state, uint16_t 
     if (address < 0x9800u || address >= 0xA000u) {
         return false;
     }
-    return msx_memory_virtual_scc_enabled() || msx_memory_real_scc_visible(state, address);
+    return msx_memory_virtual_scc_visible_at(state, address) ||
+           msx_memory_real_scc_visible(state, address);
 }
 
 bool msx_memory_scc_plus_write_visible(const MsxMemoryState* state, uint16_t address)
@@ -1065,7 +1128,8 @@ bool msx_memory_scc_plus_write_visible(const MsxMemoryState* state, uint16_t add
     if (address == 0xBFFEu) {
         return false;
     }
-    return msx_memory_virtual_scc_plus_regs_visible() || msx_memory_real_scc_visible(state, address);
+    return msx_memory_virtual_scc_plus_regs_visible_at(state, address) ||
+           msx_memory_real_scc_visible(state, address);
 }
 
 bool msx_memory_virtual_scc_ram_handle_control_write(MsxMemoryState* state,
@@ -1074,33 +1138,51 @@ bool msx_memory_virtual_scc_ram_handle_control_write(MsxMemoryState* state,
                                                      uint8_t slot)
 {
     if (!state ||
-        slot != kMsxPrimarySlotCartridge ||
-        !msx_memory_virtual_scc_ram_should_map(state)) {
+        !msx_memory_virtual_scc_control_context_allows(state, address, slot)) {
         return false;
     }
 
     if (address == 0xBFFEu) {
+        const bool oldMapped = s_virtualSccPlusMapped;
         const bool oldRegsEnabled = s_virtualSccPlusRegsEnabled;
-        if ((value & 0x20u) != 0u) {
+        if (msx_memory_scc_hardware_detect_strict()) {
+            s_virtualSccPlusMapped = (value & 0x20u) != 0u;
+            s_virtualSccPlusRegsEnabled = false;
+        } else if ((value & 0x20u) != 0u) {
+            s_virtualSccPlusMapped = true;
             s_virtualSccPlusRegsEnabled = false;
         }
-        if (oldRegsEnabled != s_virtualSccPlusRegsEnabled) {
-            std::printf("[MSX][SCC-I RAM] mode BFFE=%02X plusRegs=%u\n",
+        if (oldMapped != s_virtualSccPlusMapped ||
+            oldRegsEnabled != s_virtualSccPlusRegsEnabled) {
+            std::printf("[MSX][SCC-I RAM] mode BFFE=%02X plusMap=%u plusRegs=%u strict=%u\n",
                         static_cast<unsigned>(value),
-                        s_virtualSccPlusRegsEnabled ? 1u : 0u);
+                        s_virtualSccPlusMapped ? 1u : 0u,
+                        s_virtualSccPlusRegsEnabled ? 1u : 0u,
+                        msx_memory_scc_hardware_detect_strict() ? 1u : 0u);
+            msx_memory_apply_scc_windows();
             msx_memory_refresh_maps(state);
         }
         return true;
     }
 
     if (address == 0xB000u && (value & 0x80u) != 0u) {
-        if (!s_virtualSccPlusRegsEnabled) {
-            std::printf("[MSX][SCC-I RAM] SCC+ regs enabled B000=%02X\n",
+        if (!msx_memory_scc_hardware_detect_strict() || s_virtualSccPlusMapped) {
+            if (!s_virtualSccPlusRegsEnabled) {
+                std::printf("[MSX][SCC-I RAM] SCC+ regs enabled B000=%02X strict=%u\n",
+                            static_cast<unsigned>(value),
+                            msx_memory_scc_hardware_detect_strict() ? 1u : 0u);
+            }
+            s_virtualSccPlusRegsEnabled = true;
+            msx_memory_refresh_maps(state);
+        } else {
+            std::printf("[MSX][SCC-I RAM] SCC+ regs ignored B000=%02X plusMap=0 strict=1\n",
                         static_cast<unsigned>(value));
         }
-        s_virtualSccPlusRegsEnabled = true;
-        msx_memory_refresh_maps(state);
         return true;
+    }
+
+    if (!msx_memory_virtual_scc_ram_should_map(state)) {
+        return false;
     }
 
     uint8_t window = 0xFFu;
@@ -1156,7 +1238,7 @@ void msx_memory_set_virtual_scc_mode(MsxMemoryState* state, MsxVirtualSccMode mo
     const MsxVirtualSccMode previous = s_virtualSccMode;
     s_virtualSccMode = mode;
     if (s_virtualSccMode == MsxVirtualSccMode::SccI) {
-        s_virtualSccPlusRegsEnabled = true;
+        msx_memory_reset_virtual_scc_plus_mapping();
         if (msx_memory_virtual_scc_ram_context_allows(state)) {
             (void)msx_memory_ensure_virtual_scc_ram();
         } else {
@@ -1164,7 +1246,7 @@ void msx_memory_set_virtual_scc_mode(MsxMemoryState* state, MsxVirtualSccMode mo
             msx_memory_release_virtual_scc_ram();
         }
     } else {
-        s_virtualSccPlusRegsEnabled = true;
+        msx_memory_reset_virtual_scc_plus_mapping();
         msx_memory_release_virtual_scc_ram();
     }
     msx_memory_apply_scc_windows();
@@ -1174,6 +1256,20 @@ void msx_memory_set_virtual_scc_mode(MsxMemoryState* state, MsxVirtualSccMode mo
                     msx_memory_real_scc_mode_label(),
                     msx_memory_active_scc_mode_label());
     }
+    if (state && state->ready) {
+        msx_memory_refresh_maps(state);
+    }
+}
+
+void msx_memory_refresh_scc_hardware_detect(MsxMemoryState* state)
+{
+    msx_memory_reset_virtual_scc_plus_mapping();
+    msx_memory_apply_scc_windows();
+    std::printf("[MSX][SCC] HDW Detect=%u virtual=%s plusMap=%u plusRegs=%u\n",
+                msx_memory_scc_hardware_detect_strict() ? 1u : 0u,
+                msx_config_virtual_scc_mode_label(s_virtualSccMode),
+                s_virtualSccPlusMapped ? 1u : 0u,
+                s_virtualSccPlusRegsEnabled ? 1u : 0u);
     if (state && state->ready) {
         msx_memory_refresh_maps(state);
     }
@@ -1204,14 +1300,14 @@ void msx_memory_restore_scc_window_state(MsxMemoryState* state,
     s_sccRealPlusWindow = realPlusWindow;
     s_virtualSccMode = virtualMode;
     if (s_virtualSccMode == MsxVirtualSccMode::SccI) {
-        s_virtualSccPlusRegsEnabled = true;
+        msx_memory_reset_virtual_scc_plus_mapping();
         if (msx_memory_virtual_scc_ram_context_allows(state)) {
             (void)msx_memory_ensure_virtual_scc_ram();
         } else {
             msx_memory_release_virtual_scc_ram();
         }
     } else {
-        s_virtualSccPlusRegsEnabled = true;
+        msx_memory_reset_virtual_scc_plus_mapping();
         msx_memory_release_virtual_scc_ram();
     }
     msx_memory_apply_scc_windows();
@@ -1241,7 +1337,7 @@ void msx_memory_shutdown(MsxMemoryState* state)
     s_sccRealClassicWindow = false;
     s_sccRealPlusWindow = false;
     s_virtualSccMode = MsxVirtualSccMode::Off;
-    s_virtualSccPlusRegsEnabled = true;
+    msx_memory_reset_virtual_scc_plus_mapping();
     std::memset(state, 0, sizeof(*state));
 }
 
@@ -1263,7 +1359,7 @@ void msx_memory_reset(MsxMemoryState* state)
     }
     s_sccRealClassicWindow = false;
     s_sccRealPlusWindow = false;
-    s_virtualSccPlusRegsEnabled = true;
+    msx_memory_reset_virtual_scc_plus_mapping();
     if (s_virtualSccMode == MsxVirtualSccMode::SccI &&
         msx_memory_virtual_scc_ram_context_allows(state)) {
         (void)msx_memory_ensure_virtual_scc_ram();

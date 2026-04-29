@@ -5,6 +5,8 @@
 #include <cstring>
 #include <cstdio>
 
+#include "../msx_config.h"
+
 #ifndef MSX_SCC_LOG_ENABLED
 #define MSX_SCC_LOG_ENABLED 0
 #endif
@@ -459,6 +461,20 @@ void msx_scc_write_plus(MsxSccState* state, uint8_t reg, uint8_t value)
     }
 
     if (reg < 0xA0u) {
+        if (msx_config_get_scc_hardware_detect_enabled() &&
+            reg >= 0x80u &&
+            (state->regs[0xAFu] & 0x20u) == 0u) {
+#if MSX_SCC_LOG_ENABLED
+            static uint8_t s_plusWave5GateLogCount = 0u;
+            if (s_plusWave5GateLogCount < 8u) {
+                std::printf("[MSX][SCC] plus-wave5 blocked reg=%02X af=%02X\n",
+                            static_cast<unsigned>(reg),
+                            static_cast<unsigned>(state->regs[0xAFu]));
+                ++s_plusWave5GateLogCount;
+            }
+#endif
+            return;
+        }
 #if MSX_SCC_LOG_ENABLED
         static uint8_t s_plusWaveLogCount = 0u;
         if (s_plusWaveLogCount < 8u) {

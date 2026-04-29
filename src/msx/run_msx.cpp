@@ -1031,9 +1031,14 @@ static void msx_apply_runtime_view_toggle(MsxCoreState* core, bool useExternal)
 static void msx_apply_runtime_sound_config(MsxCoreState* core,
                                            MsxVirtualSccMode* activeVirtualSccMode,
                                            uint8_t* activeSoundVolume,
-                                           uint16_t* activeSccGainPercent)
+                                           uint16_t* activeSccGainPercent,
+                                           bool* activeSccHardwareDetect)
 {
-    if (!core || !activeVirtualSccMode || !activeSoundVolume || !activeSccGainPercent) {
+    if (!core ||
+        !activeVirtualSccMode ||
+        !activeSoundVolume ||
+        !activeSccGainPercent ||
+        !activeSccHardwareDetect) {
         return;
     }
 
@@ -1041,6 +1046,12 @@ static void msx_apply_runtime_sound_config(MsxCoreState* core,
     if (requestedMode != *activeVirtualSccMode) {
         *activeVirtualSccMode = requestedMode;
         msx_core_set_virtual_scc_mode(core, requestedMode);
+    }
+
+    const bool requestedHardwareDetect = msx_config_get_scc_hardware_detect_enabled();
+    if (requestedHardwareDetect != *activeSccHardwareDetect) {
+        *activeSccHardwareDetect = requestedHardwareDetect;
+        msx_core_set_scc_hardware_detect(core, requestedHardwareDetect);
     }
 
     const uint8_t requestedVolume = msx_config_get_sound_volume();
@@ -1059,6 +1070,7 @@ static void msx_apply_runtime_sound_config(MsxCoreState* core,
 static void msx_load_sound_config(void)
 {
     msx_config_load_virtual_scc_mode();
+    msx_config_load_scc_hardware_detect_enabled();
     msx_config_load_sound_volume();
     msx_config_load_scc_gain_percent();
     msx_sound_set_volume(msx_config_get_sound_volume());
@@ -1676,6 +1688,7 @@ void run_msx(const uint8_t* romData, size_t romLen, const char* romName, SdServi
     MsxVirtualSccMode activeVirtualSccMode = msx_config_get_virtual_scc_mode();
     uint8_t activeSoundVolume = msx_config_get_sound_volume();
     uint16_t activeSccGainPercent = msx_config_get_scc_gain_percent();
+    bool activeSccHardwareDetect = msx_config_get_scc_hardware_detect_enabled();
 
     while (!quitRequested) {
         MsxInputState input = {};
@@ -1692,7 +1705,8 @@ void run_msx(const uint8_t* romData, size_t romLen, const char* romName, SdServi
             &core,
             &activeVirtualSccMode,
             &activeSoundVolume,
-            &activeSccGainPercent
+            &activeSccGainPercent,
+            &activeSccHardwareDetect
         );
 
         if (msx_input_get_save_requested()) {
@@ -1925,6 +1939,7 @@ void run_msx_disk(const uint8_t* dskData, size_t dskLen, const char* dskName, Sd
     MsxVirtualSccMode activeVirtualSccMode = msx_config_get_virtual_scc_mode();
     uint8_t activeSoundVolume = msx_config_get_sound_volume();
     uint16_t activeSccGainPercent = msx_config_get_scc_gain_percent();
+    bool activeSccHardwareDetect = msx_config_get_scc_hardware_detect_enabled();
 
     while (!quitRequested) {
         MsxInputState input = {};
@@ -1941,7 +1956,8 @@ void run_msx_disk(const uint8_t* dskData, size_t dskLen, const char* dskName, Sd
             &core,
             &activeVirtualSccMode,
             &activeSoundVolume,
-            &activeSccGainPercent
+            &activeSccGainPercent,
+            &activeSccHardwareDetect
         );
 
         if (msx_input_get_change_dsk_requested()) {
@@ -2169,6 +2185,7 @@ void run_msx_basic(const char* name, SdService& sd)
     MsxVirtualSccMode activeVirtualSccMode = msx_config_get_virtual_scc_mode();
     uint8_t activeSoundVolume = msx_config_get_sound_volume();
     uint16_t activeSccGainPercent = msx_config_get_scc_gain_percent();
+    bool activeSccHardwareDetect = msx_config_get_scc_hardware_detect_enabled();
 
     while (!quitRequested) {
         MsxInputState input = {};
@@ -2185,7 +2202,8 @@ void run_msx_basic(const char* name, SdService& sd)
             &core,
             &activeVirtualSccMode,
             &activeSoundVolume,
-            &activeSccGainPercent
+            &activeSccGainPercent,
+            &activeSccHardwareDetect
         );
 
         if (msx_input_get_save_requested()) {
@@ -2398,6 +2416,7 @@ void run_msx_cas(const uint8_t* casData, size_t casLen, const char* casName, SdS
     MsxVirtualSccMode activeVirtualSccMode = msx_config_get_virtual_scc_mode();
     uint8_t activeSoundVolume = msx_config_get_sound_volume();
     uint16_t activeSccGainPercent = msx_config_get_scc_gain_percent();
+    bool activeSccHardwareDetect = msx_config_get_scc_hardware_detect_enabled();
 
     while (!quitRequested) {
         MsxInputState input = {};
@@ -2414,7 +2433,8 @@ void run_msx_cas(const uint8_t* casData, size_t casLen, const char* casName, SdS
             &core,
             &activeVirtualSccMode,
             &activeSoundVolume,
-            &activeSccGainPercent
+            &activeSccGainPercent,
+            &activeSccHardwareDetect
         );
 
         if (msx_input_get_change_cas_requested()) {

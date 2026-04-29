@@ -16,6 +16,7 @@ constexpr const char* kMsxPerformancePresetKey = "perf_preset";
 constexpr const char* kMsxFrameskipKey = "frameskip";
 constexpr const char* kMsxFpsOverlayKey = "fps_hud";
 constexpr const char* kMsxVirtualSccKey = "virt_scc";
+constexpr const char* kMsxSccHardwareDetectKey = "scc_hdw";
 constexpr const char* kMsxSoundVolumeKey = "snd_vol";
 constexpr const char* kMsxSccGainKey = "scc_gain";
 constexpr const char* kMsxBiosPathKey = "bios_path";
@@ -43,6 +44,7 @@ constexpr uint8_t kMsxDefaultPerformanceFlags = kMsxFastPerformancePresetFlags;
 constexpr MsxFrameskipMode kMsxDefaultFrameskipMode = MsxFrameskipMode::Adaptive;
 constexpr bool kMsxDefaultFpsOverlayEnabled = true;
 constexpr MsxVirtualSccMode kMsxDefaultVirtualSccMode = MsxVirtualSccMode::Off;
+constexpr bool kMsxDefaultSccHardwareDetectEnabled = false;
 constexpr uint8_t kMsxDefaultSoundVolume = 112;
 constexpr uint16_t kMsxDefaultSccGainPercent = 150;
 constexpr uint16_t kMsxMinSccGainPercent = 0;
@@ -58,6 +60,7 @@ uint8_t s_performanceFlags = kMsxDefaultPerformanceFlags;
 MsxFrameskipMode s_frameskipMode = kMsxDefaultFrameskipMode;
 bool s_fpsOverlayEnabled = kMsxDefaultFpsOverlayEnabled;
 MsxVirtualSccMode s_virtualSccMode = kMsxDefaultVirtualSccMode;
+bool s_sccHardwareDetectEnabled = kMsxDefaultSccHardwareDetectEnabled;
 uint8_t s_soundVolume = kMsxDefaultSoundVolume;
 uint16_t s_sccGainPercent = kMsxDefaultSccGainPercent;
 char s_genericBiosPath[96] = {0};
@@ -865,6 +868,44 @@ void msx_config_cycle_virtual_scc_mode(int delta, bool persist)
     mode = (mode + (delta >= 0 ? 1 : -1) + static_cast<int>(MsxVirtualSccMode::Count)) %
            static_cast<int>(MsxVirtualSccMode::Count);
     msx_config_set_virtual_scc_mode(static_cast<MsxVirtualSccMode>(mode), persist);
+}
+
+bool msx_config_load_scc_hardware_detect_enabled(void)
+{
+    Preferences prefs;
+    prefs.begin(kMsxConfigNs, true);
+    const bool hasSavedValue = prefs.isKey(kMsxSccHardwareDetectKey);
+    const bool savedValue = prefs.getBool(kMsxSccHardwareDetectKey,
+                                          kMsxDefaultSccHardwareDetectEnabled);
+    prefs.end();
+
+    s_sccHardwareDetectEnabled =
+        hasSavedValue ? savedValue : kMsxDefaultSccHardwareDetectEnabled;
+    if (!hasSavedValue) {
+        Preferences writePrefs;
+        writePrefs.begin(kMsxConfigNs, false);
+        writePrefs.putBool(kMsxSccHardwareDetectKey, s_sccHardwareDetectEnabled);
+        writePrefs.end();
+    }
+    return s_sccHardwareDetectEnabled;
+}
+
+bool msx_config_get_scc_hardware_detect_enabled(void)
+{
+    return s_sccHardwareDetectEnabled;
+}
+
+void msx_config_set_scc_hardware_detect_enabled(bool enabled, bool persist)
+{
+    s_sccHardwareDetectEnabled = enabled;
+    if (!persist) {
+        return;
+    }
+
+    Preferences prefs;
+    prefs.begin(kMsxConfigNs, false);
+    prefs.putBool(kMsxSccHardwareDetectKey, s_sccHardwareDetectEnabled);
+    prefs.end();
 }
 
 uint8_t msx_config_load_sound_volume(void)

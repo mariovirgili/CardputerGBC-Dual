@@ -1121,6 +1121,17 @@ void msx_core_set_virtual_scc_mode(MsxCoreState* state, MsxVirtualSccMode mode)
     }
 }
 
+void msx_core_set_scc_hardware_detect(MsxCoreState* state, bool enabled)
+{
+    (void)enabled;
+    if (!state || !state->initialized) {
+        return;
+    }
+
+    msx_cpu_flush_pending_psg(&state->memory);
+    msx_memory_refresh_scc_hardware_detect(&state->memory);
+}
+
 size_t msx_core_drain_audio(MsxCoreState* state, int16_t* dst, size_t capacity)
 {
     if (!state || !state->initialized || !state->audioHookReady) {

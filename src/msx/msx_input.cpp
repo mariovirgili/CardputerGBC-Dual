@@ -112,6 +112,7 @@ enum class MsxCasMenuItem : uint8_t {
 
 enum class MsxSoundMenuItem : uint8_t {
     VirtualScc = 0,
+    HardwareDetect,
     SoundVolume,
     SccVolume,
     Back,
@@ -372,9 +373,10 @@ static MsxSoundMenuItem msx_get_sound_menu_item(uint8_t index)
 {
     switch (index) {
         case 0: return MsxSoundMenuItem::VirtualScc;
-        case 1: return MsxSoundMenuItem::SoundVolume;
-        case 2: return MsxSoundMenuItem::SccVolume;
-        case 3: return MsxSoundMenuItem::Back;
+        case 1: return MsxSoundMenuItem::HardwareDetect;
+        case 2: return MsxSoundMenuItem::SoundVolume;
+        case 3: return MsxSoundMenuItem::SccVolume;
+        case 4: return MsxSoundMenuItem::Back;
         default: return MsxSoundMenuItem::Back;
     }
 }
@@ -801,6 +803,12 @@ static void msx_runtime_toggle_sound_item(MsxSoundMenuItem item, int delta)
     switch (item) {
         case MsxSoundMenuItem::VirtualScc:
             msx_config_cycle_virtual_scc_mode(step, true);
+            break;
+        case MsxSoundMenuItem::HardwareDetect:
+            msx_config_set_scc_hardware_detect_enabled(
+                !msx_config_get_scc_hardware_detect_enabled(),
+                true
+            );
             break;
         case MsxSoundMenuItem::SoundVolume:
             msx_config_cycle_sound_volume(step, true);
@@ -2345,6 +2353,7 @@ void msx_input_get_overlay_state(MsxInputOverlayState* state)
     state->perfShowFpsOverlay = msx_config_get_fps_overlay_enabled();
     state->perfFrameskipMode = msx_config_get_frameskip_mode();
     state->virtualSccMode = msx_config_get_virtual_scc_mode();
+    state->sccHardwareDetectEnabled = msx_config_get_scc_hardware_detect_enabled();
     state->soundVolume = msx_config_get_sound_volume();
     state->sccGainPercent = msx_config_get_scc_gain_percent();
     state->casChangeAvailable = s_runtimeOptions.changeCasAvailable;

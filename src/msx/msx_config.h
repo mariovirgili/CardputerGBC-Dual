@@ -117,6 +117,9 @@ const char* msx_config_virtual_scc_mode_label(MsxVirtualSccMode mode);
 const char* msx_config_get_virtual_scc_mode_label(void);
 void msx_config_set_virtual_scc_mode(MsxVirtualSccMode mode, bool persist);
 void msx_config_cycle_virtual_scc_mode(int delta, bool persist);
+bool msx_config_load_scc_hardware_detect_enabled(void);
+bool msx_config_get_scc_hardware_detect_enabled(void);
+void msx_config_set_scc_hardware_detect_enabled(bool enabled, bool persist);
 
 uint8_t msx_config_load_sound_volume(void);
 uint8_t msx_config_get_sound_volume(void);

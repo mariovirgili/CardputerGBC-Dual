@@ -47,6 +47,7 @@ struct MsxInputOverlayState {
     bool perfShowFpsOverlay;
     MsxFrameskipMode perfFrameskipMode;
     MsxVirtualSccMode virtualSccMode;
+    bool sccHardwareDetectEnabled;
     uint8_t soundVolume;
     uint16_t sccGainPercent;
     bool casChangeAvailable;

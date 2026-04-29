@@ -219,9 +219,10 @@ static const char* msx_display_runtime_menu_label(const MsxInputOverlayState& ov
     if (overlay.soundSubmenuVisible) {
         switch (index) {
             case 0u: return "VIRTUAL SCC";
-            case 1u: return "MASTER VOL";
-            case 2u: return "SCC VOL";
-            case 3u: return "BACK";
+            case 1u: return "HDW DETECT";
+            case 2u: return "MASTER VOL";
+            case 3u: return "SCC VOL";
+            case 4u: return "BACK";
             default: return "";
         }
     }
@@ -300,8 +301,10 @@ static const char* msx_display_runtime_menu_value(const MsxInputOverlayState& ov
             case 0u:
                 return msx_config_virtual_scc_mode_label(overlay.virtualSccMode);
             case 1u:
-                return msx_config_sound_volume_label(overlay.soundVolume);
+                return overlay.sccHardwareDetectEnabled ? "ON" : "OFF";
             case 2u:
+                return msx_config_sound_volume_label(overlay.soundVolume);
+            case 3u:
                 return msx_config_scc_gain_label(overlay.sccGainPercent);
             default:
                 return nullptr;
@@ -565,6 +568,7 @@ static bool msx_display_runtime_menu_overlay_equals(const MsxInputOverlayState& 
            a.perfFrameskipMode == b.perfFrameskipMode &&
            a.perfShowFpsOverlay == b.perfShowFpsOverlay &&
            a.virtualSccMode == b.virtualSccMode &&
+           a.sccHardwareDetectEnabled == b.sccHardwareDetectEnabled &&
            a.soundVolume == b.soundVolume &&
            a.sccGainPercent == b.sccGainPercent &&
            a.casChangeAvailable == b.casChangeAvailable &&
