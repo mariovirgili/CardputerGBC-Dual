@@ -1,5 +1,6 @@
 ﻿#include "msx_memory.h"
 
+#include <esp_attr.h>
 #include <esp_heap_caps.h>
 
 #include <cstdio>
@@ -852,7 +853,7 @@ void msx_memory_refresh_maps(MsxMemoryState* state)
     }
 }
 
-uint8_t msx_memory_read8(const MsxMemoryState* state, uint16_t address)
+uint8_t IRAM_ATTR msx_memory_read8(const MsxMemoryState* state, uint16_t address)
 {
     if (!state || !state->ready) {
         return 0xFFu;
