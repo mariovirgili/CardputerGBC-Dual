@@ -17,7 +17,9 @@ namespace {
 constexpr size_t kDefaultDirectoryLimit = 1024;
 constexpr size_t kDefaultRomBrowserLimit = 1024;
 constexpr const char* kDirectoryIndexFileName = ".cardputer.idx";
-constexpr const char* kDirectoryIndexHeader = "CARDPUTER_ROM_IDX_V3";
+constexpr const char* kDirectoryIndexHeader = "CARDPUTER_ROM_IDX_V5";
+constexpr const char* kDirectoryIndexLegacyHeaderV4 = "CARDPUTER_ROM_IDX_V4";
+constexpr const char* kDirectoryIndexLegacyHeaderV3 = "CARDPUTER_ROM_IDX_V3";
 constexpr size_t kInitialScanReserve = 48;
 
 #if defined(CONFIG_IDF_TARGET_ESP32S2) || defined(CONFIG_IDF_TARGET_ESP32S3)
@@ -81,22 +83,6 @@ bool hasAllowedExtension(const char* path, size_t len, const std::vector<std::st
     }
 
     return false;
-}
-
-std::string trimIndexLine(const std::string& value) {
-    size_t first = 0;
-    while (first < value.size() &&
-           std::isspace(static_cast<unsigned char>(value[first])) != 0) {
-        ++first;
-    }
-
-    size_t last = value.size();
-    while (last > first &&
-           std::isspace(static_cast<unsigned char>(value[last - 1])) != 0) {
-        --last;
-    }
-
-    return value.substr(first, last - first);
 }
 
 bool trimIndexLineBuffer(char* buffer, size_t& length) {
@@ -200,114 +186,38 @@ std::vector<std::string> scanDirectoryNames(
     return names;
 }
 
-bool isIndexedDirectory(const std::string& dirPath, const std::string& name) {
-    char fullPath[512];
-    int written = 0;
-
-    if (dirPath.empty() || dirPath == "/") {
-        written = std::snprintf(fullPath, sizeof(fullPath), "/%s", name.c_str());
-    } else if (dirPath.back() == '/') {
-        written = std::snprintf(fullPath, sizeof(fullPath), "%s%s", dirPath.c_str(), name.c_str());
-    } else {
-        written = std::snprintf(fullPath, sizeof(fullPath), "%s/%s", dirPath.c_str(), name.c_str());
-    }
-
-    if (written <= 0 || static_cast<size_t>(written) >= sizeof(fullPath)) {
-        return false;
-    }
-
-    File entry = SD.open(fullPath);
-    if (entry && entry.isDirectory()) {
-        entry.close();
-        return true;
-    }
-    if (entry) {
-        entry.close();
-    }
-    return false;
-}
-
-void sortIndexedDirectoryElements(const std::string& dirPath,
-                                  std::vector<std::string>& indexedElements) {
-    size_t folderEnd = 0;
-    while (folderEnd < indexedElements.size() &&
-           isIndexedDirectory(dirPath, indexedElements[folderEnd])) {
-        ++folderEnd;
-    }
-
-    std::sort(indexedElements.begin(), indexedElements.begin() + folderEnd);
-    std::sort(indexedElements.begin() + folderEnd, indexedElements.end());
-}
-
 size_t writeDirectoryIndexPass(File& indexFile,
                                const std::string& dirPath,
                                size_t limit,
                                const std::vector<std::string>* allowedExts,
-                               bool wantDirectories) {
-    File dir = SD.open(dirPath.c_str());
-    if (!dir || !dir.isDirectory()) {
-        if (dir) {
-            dir.close();
-        }
-        return 0;
-    }
+                               bool wantDirectories,
+                               std::vector<std::string>* collectedElements = nullptr) {
+    std::vector<std::string> names = scanDirectoryNames(dirPath, limit, allowedExts, wantDirectories);
+    const char entryType = wantDirectories ? 'D' : 'F';
 
-    dir.setBufferSize(1024);
-    dir.rewindDirectory();
-
-    size_t written = 0;
-    while (true) {
-        bool isDir = false;
-        String sname = dir.getNextFileName(&isDir);
-        if (!sname.length()) {
-            break;
-        }
-
-        if (isDir != wantDirectories) {
-            continue;
-        }
-
-        const char* p = sname.c_str();
-        size_t len = sname.length();
-        if (len && p[len - 1] == '/') {
-            --len;
-        }
-
-        size_t start = 0;
-        for (size_t k = len; k > 0; --k) {
-            if (p[k - 1] == '/') {
-                start = k;
-                break;
-            }
-        }
-
-        const size_t namelen = (len > start) ? (len - start) : 0;
-        if (namelen == 0 || p[start] == '.') {
-            continue;
-        }
-
-        if (!isDir && allowedExts != nullptr &&
-            !hasAllowedExtension(p + start, namelen, *allowedExts)) {
-            continue;
-        }
-
-        indexFile.write(reinterpret_cast<const uint8_t*>(p + start), namelen);
+    for (const std::string& name : names) {
+        indexFile.write(entryType);
+        indexFile.write('\t');
+        indexFile.write(reinterpret_cast<const uint8_t*>(name.data()), name.size());
         indexFile.write('\n');
-        ++written;
-
-        if (limit > 0 && written >= limit) {
-            break;
-        }
     }
 
-    dir.close();
-    return written;
+    if (collectedElements != nullptr) {
+        collectedElements->insert(
+            collectedElements->end(),
+            std::make_move_iterator(names.begin()),
+            std::make_move_iterator(names.end())
+        );
+    }
+
+    return names.size();
 }
 
 bool writeDirectoryIndexFile(const std::string& indexPath,
                              const std::string& dirPath,
                              const std::vector<std::string>* allowedExts,
-                             size_t limit) {
+                             size_t limit,
+                             std::vector<std::string>* collectedElements = nullptr) {
     if (SD.exists(indexPath.c_str())) {
         (void)SD.remove(indexPath.c_str());
     }
@@ -323,11 +233,29 @@ bool writeDirectoryIndexFile(const std::string& indexPath,
     indexFile.print(kDirectoryIndexHeader);
     indexFile.write('\n');
 
-    const size_t folderCount = writeDirectoryIndexPass(indexFile, dirPath, limit, allowedExts, true);
+    if (collectedElements != nullptr) {
+        collectedElements->clear();
+        collectedElements->reserve(kInitialScanReserve);
+    }
 
+    const size_t folderCount = writeDirectoryIndexPass(
+        indexFile,
+        dirPath,
+        limit,
+        allowedExts,
+        true,
+        collectedElements
+    );
     if (limit == 0 || folderCount < limit) {
         const size_t remaining = (limit == 0) ? 0 : (limit - folderCount);
-        (void)writeDirectoryIndexPass(indexFile, dirPath, remaining, allowedExts, false);
+        (void)writeDirectoryIndexPass(
+            indexFile,
+            dirPath,
+            remaining,
+            allowedExts,
+            false,
+            collectedElements
+        );
     }
 
     indexFile.close();
@@ -341,6 +269,18 @@ SdService::SdService()
 {}
 
 bool SdService::begin() {
+    if (sdCardMounted) {
+        File root = SD.open("/");
+        if (root && root.isDirectory()) {
+            root.close();
+            return true;
+        }
+        if (root) {
+            root.close();
+        }
+        sdCardMounted = false;
+    }
+
     printf("[SD] Initializing SD card on %s...\n", kSdSpiBusName);
     SD.end();
     sdCardSPI.end();
@@ -570,14 +510,23 @@ std::vector<std::string> SdService::getCachedDirectoryElements(
         const std::string indexPath = getDirectoryIndexPath(path);
 
         if (forceRefresh) {
-            (void)writeDirectoryIndexFile(indexPath, path, allowedExts, limit);
+            std::vector<std::string> refreshedElements;
+            if (writeDirectoryIndexFile(
+                    indexPath,
+                    path,
+                    allowedExts,
+                    limit,
+                    &refreshedElements)) {
+                return refreshedElements;
+            }
             return {};
         }
 
-        if (isFile(indexPath)) {
+        {
             File indexFile = SD.open(indexPath.c_str(), FILE_READ);
             if (indexFile && !indexFile.isDirectory()) {
                 std::vector<std::string> indexedElements;
+                indexedElements.reserve(kInitialScanReserve);
                 bool headerSeen = false;
                 char lineBuffer[256];
                 bool truncatedByMemory = false;
@@ -589,6 +538,11 @@ std::vector<std::string> SdService::getCachedDirectoryElements(
                         continue;
                     }
                     if (!headerSeen) {
+                        if (std::strcmp(lineBuffer, kDirectoryIndexLegacyHeaderV4) == 0 ||
+                            std::strcmp(lineBuffer, kDirectoryIndexLegacyHeaderV3) == 0) {
+                            indexedElements.clear();
+                            break;
+                        }
                         if (std::strcmp(lineBuffer, kDirectoryIndexHeader) != 0) {
                             indexedElements.clear();
                             break;
@@ -596,27 +550,41 @@ std::vector<std::string> SdService::getCachedDirectoryElements(
                         headerSeen = true;
                         continue;
                     }
-                    if (lineBuffer[0] == '.') {
+
+                    if (lineLen < 3u || lineBuffer[1] != '\t') {
+                        continue;
+                    }
+                    const bool isFolder = lineBuffer[0] == 'D';
+                    if (!isFolder && lineBuffer[0] != 'F') {
+                        continue;
+                    }
+
+                    const char* entryName = lineBuffer + 2;
+                    const size_t entryLen = lineLen - 2u;
+                    if (entryName[0] == '.') {
                         continue;
                     }
 
                     size_t requiredLargestBlock = 1024u;
-                    if (indexedElements.size() >= indexedElements.capacity()) {
+                    const bool needsCapacityGrow = indexedElements.size() >= indexedElements.capacity();
+                    if (needsCapacityGrow) {
                         size_t nextCapacity = indexedElements.capacity() == 0 ? 1u : indexedElements.capacity() * 2u;
                         requiredLargestBlock += nextCapacity * sizeof(std::string);
                     }
-                    if (lineLen > 15u) {
-                        requiredLargestBlock += lineLen + 1u;
+                    if (entryLen > 15u) {
+                        requiredLargestBlock += entryLen + 1u;
                     }
 
-                    const size_t largestFreeBlock = heap_caps_get_largest_free_block(MALLOC_CAP_8BIT);
-                    const size_t freeHeap = heap_caps_get_free_size(MALLOC_CAP_8BIT);
-                    if (largestFreeBlock < requiredLargestBlock || freeHeap < (requiredLargestBlock + 4096u)) {
-                        truncatedByMemory = true;
-                        break;
+                    if (needsCapacityGrow || (indexedElements.size() & 31u) == 0u) {
+                        const size_t largestFreeBlock = heap_caps_get_largest_free_block(MALLOC_CAP_8BIT);
+                        const size_t freeHeap = heap_caps_get_free_size(MALLOC_CAP_8BIT);
+                        if (largestFreeBlock < requiredLargestBlock || freeHeap < (requiredLargestBlock + 4096u)) {
+                            truncatedByMemory = true;
+                            break;
+                        }
                     }
 
-                    indexedElements.emplace_back(lineBuffer, lineLen);
+                    indexedElements.emplace_back(entryName, entryLen);
                     if (limit > 0 && indexedElements.size() >= limit) {
                         break;
                     }
@@ -633,7 +601,6 @@ std::vector<std::string> SdService::getCachedDirectoryElements(
 #endif
                 }
                 if (headerSeen) {
-                    sortIndexedDirectoryElements(path, indexedElements);
                     return indexedElements;
                 }
             } else if (indexFile) {
@@ -641,11 +608,17 @@ std::vector<std::string> SdService::getCachedDirectoryElements(
             }
         }
 
-        if (!writeDirectoryIndexFile(indexPath, path, allowedExts, limit)) {
+        std::vector<std::string> indexedElements;
+        if (!writeDirectoryIndexFile(
+                indexPath,
+                path,
+                allowedExts,
+                limit,
+                &indexedElements)) {
             return listElements(path, limit, allowedExts);
         }
 
-        return getCachedDirectoryElements(path, allowedExts, limit, false);
+        return indexedElements;
     }
 
     return listElements(path, limit, allowedExts);
