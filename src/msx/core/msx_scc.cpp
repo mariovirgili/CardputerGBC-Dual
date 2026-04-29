@@ -435,9 +435,6 @@ void msx_scc_write(MsxSccState* state, uint8_t reg, uint8_t value)
         }
 #endif
         state->regs[reg] = value;
-        if (reg >= 0x60u) {
-            state->regs[reg + 0x20u] = value;
-        }
         return;
     }
 
