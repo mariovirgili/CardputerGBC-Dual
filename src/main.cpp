@@ -23,17 +23,18 @@
 #include "share/emu_controls.h"
 #include "share/display_target.h"
 #include <TFT_eSPI.h>
+#include <algorithm>
 #include "tft_setup.h"
 #include "cardputer/Welcome.h"
 #include "cardputer/WelcomeExternalImage.h"
 #include "cardputer/VerticalSelector.h"
 
+static TFT_eSPI& startupExternalTft();
+
 static void showExternalRomSelectorTft()
 {
   emu_set_aux_screen_locked(false);
-  TFT_eSPI extTft;
-  extTft.begin();
-  extTft.setRotation(3);
+  TFT_eSPI& extTft = startupExternalTft();
   extTft.setSwapBytes(true);
   extTft.pushImage(0, 0, BGGAMESTATION_DS_EXT_WIDTH, BGGAMESTATION_DS_EXT_HEIGHT, bggamestation_ds_ext);
   extTft.setSwapBytes(false);
@@ -50,6 +51,222 @@ static TFT_eSPI& startupExternalTft()
     initialized = true;
   }
   return extTft;
+}
+
+static std::string lowerCopy(std::string value)
+{
+  std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) {
+    return static_cast<char>(std::tolower(c));
+  });
+  return value;
+}
+
+static bool containsToken(const std::string& text, const char* token)
+{
+  return text.find(token) != std::string::npos;
+}
+
+static void appendInfoToken(std::string& line, const char* token)
+{
+  if (!line.empty()) {
+    line += " ";
+  }
+  line += token;
+}
+
+static void appendInfoToken(std::string& line, const std::string& token)
+{
+  if (!token.empty()) {
+    appendInfoToken(line, token.c_str());
+  }
+}
+
+static std::string detectYearToken(const std::string& name)
+{
+  for (size_t i = 0; i + 5 < name.size(); ++i) {
+    if ((name[i] != '(' && name[i] != '[') || !std::isdigit(static_cast<unsigned char>(name[i + 1]))) {
+      continue;
+    }
+    bool fourDigits = true;
+    for (size_t d = 1; d <= 4; ++d) {
+      if (!std::isdigit(static_cast<unsigned char>(name[i + d]))) {
+        fourDigits = false;
+        break;
+      }
+    }
+    if (fourDigits && (name[i + 5] == ')' || name[i + 5] == ']')) {
+      return name.substr(i + 1, 4);
+    }
+  }
+  return "";
+}
+
+static bool parseUnsignedAt(const std::string& text, size_t& pos, int& value)
+{
+  if (pos >= text.size() || !std::isdigit(static_cast<unsigned char>(text[pos]))) {
+    return false;
+  }
+
+  int parsed = 0;
+  while (pos < text.size() && std::isdigit(static_cast<unsigned char>(text[pos]))) {
+    parsed = parsed * 10 + (text[pos] - '0');
+    ++pos;
+  }
+
+  value = parsed;
+  return true;
+}
+
+static std::string normalizeDiskTag(const std::string& tag)
+{
+  std::string normalized;
+  normalized.reserve(tag.size());
+  for (char c : tag) {
+    if (!std::isspace(static_cast<unsigned char>(c))) {
+      normalized.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
+    }
+  }
+  return normalized;
+}
+
+static std::string detectDiskToken(const std::string& name)
+{
+  for (size_t start = 0; start < name.size(); ++start) {
+    if (name[start] != '(' && name[start] != '[') {
+      continue;
+    }
+
+    const char close = name[start] == '(' ? ')' : ']';
+    const size_t end = name.find(close, start + 1);
+    if (end == std::string::npos) {
+      continue;
+    }
+
+    const std::string tag = normalizeDiskTag(name.substr(start + 1, end - start - 1));
+    const size_t diskPos = tag.find("disk");
+    if (diskPos == std::string::npos) {
+      continue;
+    }
+
+    size_t pos = diskPos + 4;
+    int diskNumber = 0;
+    int diskTotal = 0;
+    if (!parseUnsignedAt(tag, pos, diskNumber)) {
+      continue;
+    }
+    if (tag.compare(pos, 2, "of") != 0) {
+      continue;
+    }
+    pos += 2;
+    if (!parseUnsignedAt(tag, pos, diskTotal)) {
+      continue;
+    }
+
+    char buffer[24];
+    snprintf(buffer, sizeof(buffer), "Disk %d of %d", diskNumber, diskTotal);
+    return std::string(buffer);
+  }
+
+  return "";
+}
+
+static std::string buildRomBrowserInfoLine(const std::string& folder, const std::string& entry)
+{
+  if (entry == "..") {
+    return "Parent";
+  }
+
+  const std::string combined = folder + "/" + entry;
+  const std::string lower = lowerCopy(combined);
+  std::string line;
+
+  appendInfoToken(line, detectDiskToken(entry));
+
+  if (containsToken(lower, "scc+")) {
+    appendInfoToken(line, "SCC+");
+  } else if (containsToken(lower, "scc")) {
+    appendInfoToken(line, "SCC");
+  }
+
+  if (containsToken(lower, "[t]")) {
+    appendInfoToken(line, "Trained");
+  }
+  if (containsToken(lower, "[a]")) {
+    appendInfoToken(line, "Altern");
+  }
+  if (containsToken(lower, "[a2]")) {
+    appendInfoToken(line, "Altern2");
+  }
+  if (containsToken(lower, "[a3]")) {
+    appendInfoToken(line, "Altern3");
+  }
+  if (containsToken(lower, "[b]")) {
+    appendInfoToken(line, "Bad");
+  }
+  if (containsToken(lower, "[o]")) {
+    appendInfoToken(line, "Overdump");
+  }
+  if (containsToken(lower, "[cr")) {
+    appendInfoToken(line, "Cracked");
+  }
+  if (containsToken(lower, "(beta)") || containsToken(lower, "[beta]")) {
+    appendInfoToken(line, "Beta");
+  }
+  if (containsToken(lower, "(jp)") || containsToken(lower, "[jp]")) {
+    appendInfoToken(line, "Jap");
+  }
+  if (containsToken(lower, "(es)") || containsToken(lower, "[es]")) {
+    appendInfoToken(line, "Espanol");
+  }
+  if (containsToken(lower, "(it)") || containsToken(lower, "[it]")) {
+    appendInfoToken(line, "Italiano");
+  }
+  if (containsToken(lower, "(kr)") || containsToken(lower, "[kr]")) {
+    appendInfoToken(line, "Korean");
+  }
+
+  const std::string year = detectYearToken(entry);
+  if (!year.empty()) {
+    appendInfoToken(line, year);
+  }
+
+  return line.empty() ? "No tags" : line;
+}
+
+static std::string fitExternalInfoText(TFT_eSPI& tft, const std::string& text, int font, int maxWidth)
+{
+  if (tft.textWidth(text.c_str(), font) <= maxWidth) {
+    return text;
+  }
+
+  std::string clipped = text;
+  while (!clipped.empty() && tft.textWidth((clipped + "...").c_str(), font) > maxWidth) {
+    clipped.pop_back();
+  }
+  return clipped.empty() ? std::string("...") : clipped + "...";
+}
+
+static void drawExternalRomBrowserInfo(const std::string& folder,
+                                       const std::string& entry,
+                                       void* context)
+{
+  (void)context;
+  if (entry.empty()) {
+    return;
+  }
+
+  TFT_eSPI& tft = startupExternalTft();
+  constexpr int kInfoY = 210;
+  constexpr int kInfoH = 30;
+  constexpr int kInfoW = 320;
+  tft.fillRect(0, kInfoY, kInfoW, kInfoH, TFT_BLACK);
+  tft.drawFastHLine(0, kInfoY, kInfoW, TFT_DARKGREY);
+  tft.setTextDatum(TL_DATUM);
+  tft.setTextColor(TFT_WHITE, TFT_BLACK);
+  const std::string infoLine = fitExternalInfoText(tft, buildRomBrowserInfoLine(folder, entry), 2, kInfoW - 8);
+  const int textW = tft.textWidth(infoLine.c_str(), 2);
+  const int textX = std::max(4, (kInfoW - textW) / 2);
+  tft.drawString(infoLine.c_str(), textX, kInfoY + 8, 2);
 }
 
 namespace {
@@ -927,7 +1144,8 @@ static bool ensureSelectedRomFitsPartition(
 
     saveRomFolderToSd(sd, browserFolder);
     input.waitPress();
-    romPath = getRomPath(sd, display, input, browserFolder, true);
+    showExternalRomSelectorTft();
+    romPath = getRomPath(sd, display, input, browserFolder, true, drawExternalRomBrowserInfo, nullptr);
   }
 
   return false;
@@ -944,7 +1162,7 @@ static std::string reopenRomBrowser(
 
   while (true) {
     showExternalRomSelectorTft();
-    std::string romPath = getRomPath(sd, display, input, browserFolder, skipWelcome);
+    std::string romPath = getRomPath(sd, display, input, browserFolder, skipWelcome, drawExternalRomBrowserInfo, nullptr);
     if (!romPath.empty()) {
       return romPath;
     }

@@ -18,7 +18,9 @@ int VerticalSelector::select(
         bool romBrowserControls,
         int initialIndex,
         int longEscResult,
-        int shortEscResult) 
+        int shortEscResult,
+        VerticalSelectorChangedCallback changedCallback,
+        void* changedContext)
 {
     int currentIndex = 0, lastIndex = -1, lastQuerySize = 0;
     char key = KEY_NONE;
@@ -104,6 +106,9 @@ int VerticalSelector::select(
             display.topBar(searchQuery.empty() ? title : searchQuery, subMenu, searchBar);
             display.verticalSelection(*activeOptions, currentIndex, VISIBLE_ROWS, options2, shortcuts, visibleMention);
             if (!activeOptions->empty()) mBase = (*activeOptions)[currentIndex];
+            if (changedCallback && !activeOptions->empty()) {
+                changedCallback(title, (*activeOptions)[currentIndex], changedContext);
+            }
             offset = 0;
             lastMs = millis();
             lastIndex = currentIndex;

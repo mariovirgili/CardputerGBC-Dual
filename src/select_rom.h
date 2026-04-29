@@ -22,6 +22,29 @@ enum RomType {
     ROM_TYPE_MSX_CAS
 };
 
+using RomBrowserSelectionInfoCallback = void (*)(const std::string& folder,
+                                                 const std::string& entry,
+                                                 void* context);
+
+struct RomBrowserSelectionInfoContext {
+    const std::string* folder = nullptr;
+    RomBrowserSelectionInfoCallback callback = nullptr;
+    void* callbackContext = nullptr;
+};
+
+static inline void romBrowserSelectionChanged(const std::string& title,
+                                              const std::string& option,
+                                              void* context) {
+    RomBrowserSelectionInfoContext* info =
+        static_cast<RomBrowserSelectionInfoContext*>(context);
+    if (!info || !info->callback) {
+        return;
+    }
+
+    const std::string& folder = info->folder ? *info->folder : title;
+    info->callback(folder, option, info->callbackContext);
+}
+
 static inline bool hasRomExt(const std::string& path) {
     if (path.size() < 3) return false;
 
@@ -94,7 +117,13 @@ static inline int findPreferredRomIndex(
     return 0;
 }
 
-static inline std::string getRomPath(SdService& sdService, CardputerView& display, CardputerInput& input, const std::string& initialFolder = "/", bool skipWelcome = false) {
+static inline std::string getRomPath(SdService& sdService,
+                                     CardputerView& display,
+                                     CardputerInput& input,
+                                     const std::string& initialFolder = "/",
+                                     bool skipWelcome = false,
+                                     RomBrowserSelectionInfoCallback infoCallback = nullptr,
+                                     void* infoCallbackContext = nullptr) {
     VerticalSelector verticalSelector(display, input);
     std::vector<std::string> supportedExts = {".rom", ".dsk", ".cas"};
     static constexpr size_t kRomBrowserMaxElements = 1024;
@@ -157,6 +186,10 @@ static inline std::string getRomPath(SdService& sdService, CardputerView& displa
     std::string previousPath;
     const std::string lastRomPath = getLastGamePathFromNvs();
     std::vector<std::string> elementNames;
+    RomBrowserSelectionInfoContext infoContext;
+    infoContext.folder = &currentPath;
+    infoContext.callback = infoCallback;
+    infoContext.callbackContext = infoCallbackContext;
 
     while (true) {
         if (currentPath != previousPath) {
@@ -199,7 +232,9 @@ static inline std::string getRomPath(SdService& sdService, CardputerView& displa
             true,
             preferredIndex,
             kRomBrowserMenuResult,
-            -1
+            -1,
+            infoCallback ? romBrowserSelectionChanged : nullptr,
+            infoCallback ? &infoContext : nullptr
         );
 
         if (selectedIndex == kRomBrowserMenuResult) {

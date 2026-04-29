@@ -7,10 +7,14 @@
 #include <cardputer/CardputerView.h>
 #include <cardputer/CardputerInput.h>
 
+using VerticalSelectorChangedCallback = void (*)(const std::string& title,
+                                                 const std::string& option,
+                                                 void* context);
+
 class VerticalSelector {
 public:
     VerticalSelector(CardputerView& display, CardputerInput& input);
-    int select(const std::string& title, const std::vector<std::string>& options, bool subMenu = false, bool searchBar = false,  const std::vector<std::string>& options2={},  const std::vector<std::string>& shortcuts={}, bool visibleMention=false, bool handleInactivity=true, bool romBrowserControls=false, int initialIndex=0, int longEscResult=-1, int shortEscResult=-1);
+    int select(const std::string& title, const std::vector<std::string>& options, bool subMenu = false, bool searchBar = false,  const std::vector<std::string>& options2={},  const std::vector<std::string>& shortcuts={}, bool visibleMention=false, bool handleInactivity=true, bool romBrowserControls=false, int initialIndex=0, int longEscResult=-1, int shortEscResult=-1, VerticalSelectorChangedCallback changedCallback=nullptr, void* changedContext=nullptr);
 
 private:
     CardputerView& display;
