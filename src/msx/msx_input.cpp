@@ -62,6 +62,8 @@ struct MsxRuntimeOptions {
     bool loadRequested;
     bool changeCasAvailable;
     bool changeCasRequested;
+    bool changeDskAvailable;
+    bool changeDskRequested;
 };
 
 enum class MsxRuntimeMenuItem : uint8_t {
@@ -75,6 +77,7 @@ enum class MsxRuntimeMenuItem : uint8_t {
     StateSlot,
     SaveState,
     LoadState,
+    ChangeDsk,
     CasMenu,
     Close,
     Count,
@@ -133,7 +136,7 @@ struct MsxRuntimeMenuState {
 };
 
 static constexpr uint8_t kRuntimeMenuVisibleRows = 5u;
-static MsxRuntimeOptions s_runtimeOptions = {false, true, false, false, 0, false, false, false, false};
+static MsxRuntimeOptions s_runtimeOptions = {false, true, false, false, 0, false, false, false, false, false, false};
 static MsxRuntimeMenuState s_runtimeMenu = {
     false,
     MsxRuntimeMenuPage::Main,
@@ -258,7 +261,14 @@ static bool msx_runtime_menu_in_cas_page(void)
 
 static uint8_t msx_get_main_menu_item_count(void)
 {
-    return s_runtimeOptions.changeCasAvailable ? 12 : 11;
+    uint8_t count = 11u;
+    if (s_runtimeOptions.changeDskAvailable) {
+        ++count;
+    }
+    if (s_runtimeOptions.changeCasAvailable) {
+        ++count;
+    }
+    return count;
 }
 
 static uint8_t msx_get_performance_menu_item_count(void)
@@ -303,12 +313,23 @@ static MsxRuntimeMenuItem msx_get_menu_item(uint8_t index)
         case 7: return MsxRuntimeMenuItem::StateSlot;
         case 8: return MsxRuntimeMenuItem::SaveState;
         case 9: return MsxRuntimeMenuItem::LoadState;
-        case 10: return s_runtimeOptions.changeCasAvailable
-                       ? MsxRuntimeMenuItem::CasMenu
-                       : MsxRuntimeMenuItem::Close;
-        case 11: return MsxRuntimeMenuItem::Close;
-        default: return MsxRuntimeMenuItem::Close;
+        default: break;
     }
+
+    uint8_t dynamicIndex = 10u;
+    if (s_runtimeOptions.changeDskAvailable) {
+        if (index == dynamicIndex) {
+            return MsxRuntimeMenuItem::ChangeDsk;
+        }
+        ++dynamicIndex;
+    }
+    if (s_runtimeOptions.changeCasAvailable) {
+        if (index == dynamicIndex) {
+            return MsxRuntimeMenuItem::CasMenu;
+        }
+        ++dynamicIndex;
+    }
+    return MsxRuntimeMenuItem::Close;
 }
 
 static MsxPerformanceMenuItem msx_get_performance_menu_item(uint8_t index)
@@ -997,6 +1018,12 @@ static void msx_runtime_menu_accept(void)
         case MsxRuntimeMenuItem::Sound:
             s_runtimeMenu.mainSelectedIndex = s_runtimeMenu.selectedIndex;
             msx_runtime_menu_open_sound_page();
+            break;
+        case MsxRuntimeMenuItem::ChangeDsk:
+            if (s_runtimeOptions.changeDskAvailable) {
+                s_runtimeOptions.changeDskRequested = true;
+                s_runtimeMenu.visible = false;
+            }
             break;
         case MsxRuntimeMenuItem::CasMenu:
             if (s_runtimeOptions.changeCasAvailable) {
@@ -2060,6 +2087,8 @@ void msx_input_init(void)
         false,
         false,
         false,
+        false,
+        false,
         false
     };
     s_runtimeMenu = {
@@ -2104,6 +2133,15 @@ void msx_input_set_cas_change_available(bool available)
         if (msx_runtime_menu_in_cas_page()) {
             msx_runtime_menu_open_main_page();
         }
+    }
+    msx_clamp_runtime_menu_selection();
+}
+
+void msx_input_set_dsk_change_available(bool available)
+{
+    s_runtimeOptions.changeDskAvailable = available;
+    if (!available) {
+        s_runtimeOptions.changeDskRequested = false;
     }
     msx_clamp_runtime_menu_selection();
 }
@@ -2310,6 +2348,7 @@ void msx_input_get_overlay_state(MsxInputOverlayState* state)
     state->soundVolume = msx_config_get_sound_volume();
     state->sccGainPercent = msx_config_get_scc_gain_percent();
     state->casChangeAvailable = s_runtimeOptions.changeCasAvailable;
+    state->dskChangeAvailable = s_runtimeOptions.changeDskAvailable;
     state->virtualKeyPickerVisible = s_virtualKeyPickerVisible;
     std::snprintf(state->virtualKeyPickerLabel,
                   sizeof(state->virtualKeyPickerLabel),
@@ -2341,5 +2380,11 @@ bool msx_input_get_load_requested(void) {
 bool msx_input_get_change_cas_requested(void) {
     bool r = s_runtimeOptions.changeCasRequested;
     s_runtimeOptions.changeCasRequested = false;
+    return r;
+}
+
+bool msx_input_get_change_dsk_requested(void) {
+    bool r = s_runtimeOptions.changeDskRequested;
+    s_runtimeOptions.changeDskRequested = false;
     return r;
 }

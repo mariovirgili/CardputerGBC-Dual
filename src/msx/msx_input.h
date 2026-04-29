@@ -50,6 +50,7 @@ struct MsxInputOverlayState {
     uint8_t soundVolume;
     uint16_t sccGainPercent;
     bool casChangeAvailable;
+    bool dskChangeAvailable;
     bool virtualKeyPickerVisible;
     char virtualKeyPickerLabel[8];
     uint8_t selectedIndex;
@@ -76,6 +77,7 @@ struct MsxInputDiagnosticState {
 void msx_input_init(void);
 void msx_input_set_basic_keyboard_enabled(bool enabled);
 void msx_input_set_cas_change_available(bool available);
+void msx_input_set_dsk_change_available(bool available);
 void msx_input_set_runtime_machine_mode(MsxMachineMode mode);
 MsxRuntimeOptionConfig msx_input_load_runtime_option_config(void);
 MsxRuntimeOptionConfig msx_input_get_runtime_option_config(void);
@@ -88,3 +90,4 @@ uint8_t msx_input_get_scroll_index(void);
 bool msx_input_get_save_requested(void);
 bool msx_input_get_load_requested(void);
 bool msx_input_get_change_cas_requested(void);
+bool msx_input_get_change_dsk_requested(void);

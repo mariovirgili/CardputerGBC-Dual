@@ -1367,6 +1367,30 @@ bool msx_core_change_cas(MsxCoreState* state,
     return state->cas.ready;
 }
 
+bool msx_core_change_dsk(MsxCoreState* state,
+                         const uint8_t* dskData, size_t dskSize,
+                         const char* name)
+{
+    if (!state || !state->initialized) {
+        std::printf("[MSX] core change_dsk failed: core not initialized\n");
+        return false;
+    }
+
+    msx_disk_init(&state->disk, dskData, dskSize);
+    state->memory.disk = &state->disk;
+    std::snprintf(state->romName, sizeof(state->romName),
+                  "%s", (name && name[0] != '\0') ? name : "MSX DISK");
+    msx_core_set_status(state,
+                        "DISK %s",
+                        state->disk.ready ? "changed" : "not ready");
+    std::printf("[MSX] core change_dsk: name=%s size=%u ready=%s sides=%u\n",
+                state->romName,
+                static_cast<unsigned>(dskSize),
+                state->disk.ready ? "yes" : "no",
+                static_cast<unsigned>(state->disk.sides));
+    return state->disk.ready;
+}
+
 bool msx_core_save_state(MsxCoreState* state, const char* path)
 {
     if (!state) return false;

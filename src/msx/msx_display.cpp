@@ -226,39 +226,37 @@ static const char* msx_display_runtime_menu_label(const MsxInputOverlayState& ov
         }
     }
 
-    if (msx_display_game_on_external()) {
-        switch (index) {
-            case 0u: return "PERF TUNE";
-            case 1u: return "SOUND";
-            case 2u: return "JOY EXTEND";
-            case 3u: return "KEYB/JOY";
-            case 4u: return "BASIC KBD";
-            case 5u: return "VAUS";
-            case 6u: return "VIEW";
-            case 7u: return "SELECT SLOT";
-            case 8u: return "SAVE SLOT";
-            case 9u: return "LOAD SLOT";
-            case 10u: return overlay.casChangeAvailable ? "CAS MENU" : "CLOSE";
-            case 11u: return overlay.casChangeAvailable ? "CLOSE" : "";
-            default: return "";
-        }
-    } else {
-        switch (index) {
-            case 0u: return "PERF TUNE";
-            case 1u: return "SOUND";
-            case 2u: return "JOY EXTEND";
-            case 3u: return "KEYB/JOY";
-            case 4u: return "BASIC KBD";
-            case 5u: return "VAUS";
-            case 6u: return "VIEW";
-            case 7u: return "STATE SLOT";
-            case 8u: return "SAVE STATE";
-            case 9u: return "LOAD STATE";
-            case 10u: return overlay.casChangeAvailable ? "CAS MENU" : "CLOSE";
-            case 11u: return overlay.casChangeAvailable ? "CLOSE" : "";
-            default: return "";
-        }
+    switch (index) {
+        case 0u: return "PERF TUNE";
+        case 1u: return "SOUND";
+        case 2u: return "JOY EXTEND";
+        case 3u: return "KEYB/JOY";
+        case 4u: return "BASIC KBD";
+        case 5u: return "VAUS";
+        case 6u: return "VIEW";
+        case 7u: return msx_display_game_on_external() ? "SELECT SLOT" : "STATE SLOT";
+        case 8u: return msx_display_game_on_external() ? "SAVE SLOT" : "SAVE STATE";
+        case 9u: return msx_display_game_on_external() ? "LOAD SLOT" : "LOAD STATE";
+        default: break;
     }
+
+    uint8_t dynamicIndex = 10u;
+    if (overlay.dskChangeAvailable) {
+        if (index == dynamicIndex) {
+            return "CHANGE DSK";
+        }
+        ++dynamicIndex;
+    }
+    if (overlay.casChangeAvailable) {
+        if (index == dynamicIndex) {
+            return "CAS MENU";
+        }
+        ++dynamicIndex;
+    }
+    if (index == dynamicIndex) {
+        return "CLOSE";
+    }
+    return "";
 }
 
 static const char* msx_display_runtime_menu_value(const MsxInputOverlayState& overlay,
@@ -570,6 +568,7 @@ static bool msx_display_runtime_menu_overlay_equals(const MsxInputOverlayState& 
            a.soundVolume == b.soundVolume &&
            a.sccGainPercent == b.sccGainPercent &&
            a.casChangeAvailable == b.casChangeAvailable &&
+           a.dskChangeAvailable == b.dskChangeAvailable &&
            a.selectedIndex == b.selectedIndex;
 }
 

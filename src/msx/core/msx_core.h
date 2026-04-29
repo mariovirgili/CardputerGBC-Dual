@@ -87,6 +87,10 @@ bool msx_core_change_cas(MsxCoreState* state,
                          const uint8_t* casData, size_t casSize,
                          const char* name);
 
+bool msx_core_change_dsk(MsxCoreState* state,
+                         const uint8_t* dskData, size_t dskSize,
+                         const char* name);
+
 void msx_core_attach_disk_rom(MsxCoreState* state,
                               const uint8_t* diskRomData,
                               size_t diskRomSize);

@@ -63,6 +63,7 @@ extern uint8_t msx_input_get_state_slot(void);
 extern bool msx_input_get_save_requested(void);
 extern bool msx_input_get_load_requested(void);
 extern bool msx_input_get_change_cas_requested(void);
+extern bool msx_input_get_change_dsk_requested(void);
 bool msx_core_save_state(MsxCoreState* state, const char* path);
 bool msx_core_load_state(MsxCoreState* state, const char* path);
 
@@ -353,6 +354,20 @@ static bool msx_path_has_cas_ext(const std::string& path)
     return ext == "cas";
 }
 
+static bool msx_path_has_dsk_ext(const std::string& path)
+{
+    const size_t dot = path.find_last_of('.');
+    if (dot == std::string::npos || dot + 1 >= path.size()) {
+        return false;
+    }
+
+    std::string ext = path.substr(dot + 1);
+    for (char& ch : ext) {
+        ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+    }
+    return ext == "dsk";
+}
+
 static std::string msx_join_browser_path(const std::string& folder, const std::string& entry)
 {
     if (folder.empty() || folder == "/") {
@@ -377,6 +392,14 @@ static std::string msx_cas_display_path_from_browser_path(const std::string& bro
     return "/sd" + normalizeRomFolderPath(browserPath);
 }
 
+static std::string msx_dsk_display_path_from_browser_path(const std::string& browserPath)
+{
+    if (browserPath.rfind("/sd/", 0) == 0 || browserPath == "/sd") {
+        return browserPath;
+    }
+    return "/sd" + normalizeRomFolderPath(browserPath);
+}
+
 static std::string msx_initial_cas_display_path(const char* casName)
 {
     const std::string savedPath = getLastGamePathFromNvs();
@@ -388,6 +411,19 @@ static std::string msx_initial_cas_display_path(const char* casName)
     }
 
     return casName ? std::string(casName) : std::string();
+}
+
+static std::string msx_initial_dsk_display_path(const char* dskName)
+{
+    const std::string savedPath = getLastGamePathFromNvs();
+    if (!savedPath.empty() && msx_path_has_dsk_ext(savedPath)) {
+        const char* savedLabel = msx_file_label(savedPath.c_str());
+        if (!dskName || std::strcmp(savedLabel, dskName) == 0) {
+            return savedPath;
+        }
+    }
+
+    return dskName ? std::string(dskName) : std::string();
 }
 
 static void msx_trim_spaces_in_place(std::string& value);
@@ -1215,6 +1251,130 @@ static bool msx_select_cas_file(SdService& sd,
     }
 }
 
+static void msx_filter_dsk_browser_elements(SdService& sd,
+                                            const std::string& folder,
+                                            std::vector<std::string>& elements)
+{
+    std::vector<std::string> filtered;
+    filtered.reserve(elements.size());
+    for (const std::string& name : elements) {
+        const std::string path = msx_join_browser_path(folder, name);
+        if (sd.isDirectory(path) || msx_path_has_dsk_ext(name)) {
+            filtered.push_back(name);
+        }
+    }
+    elements.swap(filtered);
+}
+
+static bool msx_select_dsk_file(SdService& sd,
+                                const std::string& currentDskPath,
+                                std::string* selectedDisplayPath,
+                                size_t* selectedSize)
+{
+    if (!selectedDisplayPath || !selectedSize) {
+        return false;
+    }
+
+    CardputerView display;
+    CardputerInput input;
+    VerticalSelector selector(display, input);
+    const std::vector<std::string> dskExts = {".dsk"};
+    const std::string normalizedCurrentPath = normalizeRomBrowserPath(currentDskPath);
+    const std::string originalFolder = extractRomFolder(normalizedCurrentPath);
+    const std::string originalName = msx_file_label(normalizedCurrentPath.c_str());
+    std::string currentFolder = originalFolder.empty() ? "/" : originalFolder;
+    std::string previousFolder;
+    std::vector<std::string> elements;
+
+    display.initialize();
+    input.flushInput(80);
+
+    while (true) {
+        if (currentFolder != previousFolder) {
+            display.topBar("CHANGE DSK", true, true);
+            display.subMessage("Loading disks...", 0);
+            elements = sd.getCachedDirectoryElements(currentFolder, &dskExts, 1024);
+            msx_filter_dsk_browser_elements(sd, currentFolder, elements);
+            if (currentFolder != "/") {
+                elements.insert(elements.begin(), "..");
+            }
+            previousFolder = currentFolder;
+        }
+
+        if (elements.empty()) {
+            display.topBar("CHANGE DSK", true, false);
+            display.subMessage("No DSK files found", 1000);
+            input.flushInput(120);
+            return false;
+        }
+
+        int initialIndex = 0;
+        if (currentFolder == originalFolder) {
+            for (size_t i = 0; i < elements.size(); ++i) {
+                if (elements[i] == originalName) {
+                    initialIndex = static_cast<int>(i);
+                    break;
+                }
+            }
+        }
+
+        const int selected = selector.select(
+            currentFolder,
+            elements,
+            true,
+            true,
+            {},
+            {},
+            false,
+            false,
+            true,
+            initialIndex,
+            -1,
+            -1
+        );
+
+        if (selected < 0 || selected >= static_cast<int>(elements.size())) {
+            input.flushInput(120);
+            return false;
+        }
+
+        const std::string& entry = elements[static_cast<size_t>(selected)];
+        if (entry == "..") {
+            const std::string parent = sd.getParentDirectory(currentFolder);
+            currentFolder = parent.empty() ? "/" : parent;
+            previousFolder.clear();
+            continue;
+        }
+
+        const std::string browserPath = msx_join_browser_path(currentFolder, entry);
+        if (sd.isDirectory(browserPath)) {
+            currentFolder = browserPath;
+            previousFolder.clear();
+            continue;
+        }
+
+        if (!msx_path_has_dsk_ext(browserPath)) {
+            display.subMessage("Select a .DSK file", 700);
+            input.flushInput(120);
+            continue;
+        }
+
+        display.topBar("CHANGE DSK", true, false);
+        display.subMessage("Preparing disk...", 0);
+        size_t dskSize = 0;
+        if (!sd.getFileSize(browserPath, dskSize) || dskSize < 512u || (dskSize % 512u) != 0u) {
+            display.subMessage("Invalid DSK file", 900);
+            input.flushInput(120);
+            continue;
+        }
+
+        *selectedDisplayPath = msx_dsk_display_path_from_browser_path(browserPath);
+        *selectedSize = dskSize;
+        input.flushInput(120);
+        return true;
+    }
+}
+
 static bool msx_handle_change_cas(MsxCoreState* core,
                                   std::string& currentCasPath,
                                   std::vector<uint8_t>& runtimeCasBuffer,
@@ -1269,6 +1429,66 @@ static bool msx_handle_change_cas(MsxCoreState* core,
     }
 
     msx_draw_osd_message(changed ? "CAS CHANGED" : "CAS UNCHANGED", useExternal);
+    delay(500);
+    msx_end_state_overlay(useExternal);
+    return changed;
+}
+
+static bool msx_handle_change_dsk(MsxCoreState* core,
+                                  std::string& currentDskPath,
+                                  bool useExternal,
+                                  SdService& sd)
+{
+    msx_begin_state_overlay(useExternal);
+    msx_draw_osd_message("CHANGE DSK...", useExternal);
+
+    bool changed = false;
+    bool xipTouched = false;
+    std::string selectedPath;
+    size_t selectedSize = 0;
+
+    if (msx_prepare_sd_for_state(sd) &&
+        msx_select_dsk_file(sd, currentDskPath, &selectedPath, &selectedSize)) {
+        const esp_partition_t* romPart = findRomPartition("spiffs");
+        if (!romPart) {
+            std::printf("[MSX][DSK] change failed: ROM partition not found\n");
+        } else if (selectedSize > romPart->size) {
+            std::printf("[MSX][DSK] change failed: file too large size=%u partition=%u\n",
+                        static_cast<unsigned>(selectedSize),
+                        static_cast<unsigned>(romPart->size));
+        } else {
+            msx_draw_osd_message("FLASHING DSK...", useExternal);
+            xipTouched = true;
+            xip_unmap();
+            size_t copiedSize = 0;
+            if (!copyFileToPartition(selectedPath.c_str(), romPart, &copiedSize, nullptr, nullptr)) {
+                std::printf("[MSX][DSK] change failed: copy to XIP partition failed path=%s\n",
+                            selectedPath.c_str());
+            } else if ((copiedSize % 512u) != 0u) {
+                std::printf("[MSX][DSK] change failed: copied size is not sector aligned size=%u\n",
+                            static_cast<unsigned>(copiedSize));
+            } else if (xip_map_rom_partition("spiffs", copiedSize) != 0 || !get_rom_ptr()) {
+                std::printf("[MSX][DSK] change failed: XIP remap failed size=%u\n",
+                            static_cast<unsigned>(copiedSize));
+            } else {
+                const char* selectedName = msx_file_label(selectedPath.c_str());
+                changed = msx_core_change_dsk(core,
+                                              get_rom_ptr(),
+                                              get_rom_size(),
+                                              selectedName);
+                if (changed) {
+                    currentDskPath = selectedPath;
+                }
+            }
+        }
+    }
+
+    if (!changed && xipTouched) {
+        (void)msx_core_change_dsk(core, nullptr, 0, "MSX DISK");
+        currentDskPath = "MSX DISK";
+    }
+
+    msx_draw_osd_message(changed ? "DSK CHANGED" : (xipTouched ? "DSK CHANGE FAILED" : "DSK UNCHANGED"), useExternal);
     delay(500);
     msx_end_state_overlay(useExternal);
     return changed;
@@ -1661,6 +1881,7 @@ void run_msx_disk(const uint8_t* dskData, size_t dskLen, const char* dskName, Sd
                                    bios.target == MsxBiosTarget::MSX2);
     msx_input_init();
     msx_input_set_basic_keyboard_enabled(false);
+    msx_input_set_dsk_change_available(true);
 
     printf("[MSX] core init_disk begin\n");
     MsxCoreState core = {};
@@ -1686,6 +1907,11 @@ void run_msx_disk(const uint8_t* dskData, size_t dskLen, const char* dskName, Sd
     audioInitOk = msx_runtime_init_audio_hook(kMsxSkeletonSampleRate, kMsxSkeletonChannels);
 
     printf("[MSX] entering disk main loop\n");
+
+    std::string currentDskPath = msx_initial_dsk_display_path(dskName);
+    if (currentDskPath.empty()) {
+        currentDskPath = dskName ? std::string(dskName) : std::string("MSX DISK");
+    }
 
     const uint32_t frameUs = static_cast<uint32_t>(std::lround(1000000.0 / kMsxSkeletonFps));
     uint64_t nextFrameUs = esp_timer_get_time();
@@ -1718,12 +1944,35 @@ void run_msx_disk(const uint8_t* dskData, size_t dskLen, const char* dskName, Sd
             &activeSccGainPercent
         );
 
+        if (msx_input_get_change_dsk_requested()) {
+            msx_sound_set_paused(true);
+            msx_handle_change_dsk(&core, currentDskPath, useExternal, sd);
+            if (useExternal) {
+                msx_show_launch_controls_panel(
+                    true,
+                    "MSX DISK EXT TFT",
+                    currentDskPath.c_str(),
+                    "MSX DISK"
+                );
+            } else {
+                msx_show_external_static_title(
+                    false,
+                    currentDskPath.c_str(),
+                    "MSX DISK",
+                    bios.target == MsxBiosTarget::MSX2
+                );
+            }
+            msx_video_request_full_redraw();
+            nextFrameUs = esp_timer_get_time();
+            continue;
+        }
+
         if (msx_input_get_save_requested()) {
-            msx_handle_save_state(&core, dskName, useExternal, sd);
+            msx_handle_save_state(&core, currentDskPath.c_str(), useExternal, sd);
         }
 
         if (msx_input_get_load_requested()) {
-            msx_handle_load_state(&core, dskName, useExternal, sd);
+            msx_handle_load_state(&core, currentDskPath.c_str(), useExternal, sd);
         }
 
         const bool menuPaused = input.menuVisible || input.virtualKeyPickerVisible;
@@ -1751,7 +2000,7 @@ void run_msx_disk(const uint8_t* dskData, size_t dskLen, const char* dskName, Sd
         std::snprintf(modeLine,
                       sizeof(modeLine),
                       "DISK: %s",
-                      dskLen > 0u ? msx_file_label(dskName) : "(no disk)");
+                      (core.disk.ready && core.disk.dskData) ? msx_file_label(currentDskPath.c_str()) : "(no disk)");
         std::snprintf(machineLine,
                       sizeof(machineLine),
                       "MACHINE: %s -> %s",
