@@ -445,7 +445,7 @@ void msx_psg_shutdown(MsxPsgState* state)
     std::memset(state, 0, sizeof(*state));
 }
 
-void IRAM_ATTR msx_psg_select_register(MsxPsgState* state, uint8_t value)
+void msx_psg_select_register(MsxPsgState* state, uint8_t value)
 {
     if (!state || !state->ready) {
         return;
@@ -454,7 +454,7 @@ void IRAM_ATTR msx_psg_select_register(MsxPsgState* state, uint8_t value)
     state->selectedReg = static_cast<uint8_t>(value & 0x0Fu);
 }
 
-void IRAM_ATTR msx_psg_write_data(MsxPsgState* state, uint8_t value)
+void msx_psg_write_data(MsxPsgState* state, uint8_t value)
 {
     if (!state || !state->ready) {
         return;
@@ -504,7 +504,7 @@ void IRAM_ATTR msx_psg_write_data(MsxPsgState* state, uint8_t value)
     }
 }
 
-uint8_t IRAM_ATTR msx_psg_read_data(const MsxPsgState* state)
+uint8_t msx_psg_read_data(const MsxPsgState* state)
 {
     if (!state || !state->ready) {
         return 0xFFu;
@@ -528,12 +528,12 @@ uint8_t IRAM_ATTR msx_psg_read_data(const MsxPsgState* state)
     return state->regs[reg];
 }
 
-void IRAM_ATTR msx_psg_set_joystick(MsxPsgState* state, uint8_t portA)
+void msx_psg_set_joystick(MsxPsgState* state, uint8_t portA)
 {
     msx_psg_set_joysticks(state, portA, 0xFFu);
 }
 
-void IRAM_ATTR msx_psg_set_joysticks(MsxPsgState* state, uint8_t portA, uint8_t portB)
+void msx_psg_set_joysticks(MsxPsgState* state, uint8_t portA, uint8_t portB)
 {
     if (!state) {
         return;
