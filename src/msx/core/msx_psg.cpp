@@ -46,9 +46,9 @@ bool msx_psg_ensure_ring()
     for (size_t i = 0; i < (sizeof(kRingCandidates) / sizeof(kRingCandidates[0])); ++i) {
         const size_t samples = kRingCandidates[i];
         const size_t bytes = samples * sizeof(int16_t);
-        s_psgRing = static_cast<int16_t*>(heap_caps_malloc(bytes, MALLOC_CAP_8BIT));
+        s_psgRing = static_cast<int16_t*>(heap_caps_malloc(bytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
         if (!s_psgRing) {
-            s_psgRing = static_cast<int16_t*>(heap_caps_malloc(bytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+            s_psgRing = static_cast<int16_t*>(heap_caps_malloc(bytes, MALLOC_CAP_8BIT));
         }
         if (!s_psgRing) {
             s_psgRing = static_cast<int16_t*>(heap_caps_malloc(bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
@@ -135,26 +135,26 @@ uint8_t msx_psg_read_vaus_port(const MsxPsgState* state)
     return value;
 }
 
-uint16_t msx_psg_tone_period(const MsxPsgState* state, uint8_t channel)
+uint16_t IRAM_ATTR msx_psg_tone_period(const MsxPsgState* state, uint8_t channel)
 {
     const uint8_t base = static_cast<uint8_t>(channel * 2u);
     uint16_t period = static_cast<uint16_t>(state->regs[base] | ((state->regs[base + 1u] & 0x0Fu) << 8));
     return period == 0u ? 1u : period;
 }
 
-uint16_t msx_psg_noise_period(const MsxPsgState* state)
+uint16_t IRAM_ATTR msx_psg_noise_period(const MsxPsgState* state)
 {
     const uint16_t period = static_cast<uint16_t>(state->regs[6] & 0x1Fu);
     return period == 0u ? 1u : period;
 }
 
-uint16_t msx_psg_envelope_period(const MsxPsgState* state)
+uint16_t IRAM_ATTR msx_psg_envelope_period(const MsxPsgState* state)
 {
     const uint16_t period = static_cast<uint16_t>(state->regs[11] | (static_cast<uint16_t>(state->regs[12]) << 8));
     return period == 0u ? 1u : period;
 }
 
-uint32_t msx_psg_compute_step(uint32_t clockHz, uint32_t divider, uint16_t period, uint32_t sampleRate)
+uint32_t IRAM_ATTR msx_psg_compute_step(uint32_t clockHz, uint32_t divider, uint16_t period, uint32_t sampleRate)
 {
     if (sampleRate == 0u) {
         return 0u;
@@ -173,7 +173,7 @@ uint32_t msx_psg_compute_step(uint32_t clockHz, uint32_t divider, uint16_t perio
     return static_cast<uint32_t>(step);
 }
 
-void msx_psg_update_cached_steps(MsxPsgState* state)
+void IRAM_ATTR msx_psg_update_cached_steps(MsxPsgState* state)
 {
     if (!state || state->sampleRate == 0u) {
         return;
@@ -203,7 +203,7 @@ void msx_psg_update_cached_steps(MsxPsgState* state)
     );
 }
 
-void msx_psg_update_tone_step(MsxPsgState* state, uint8_t channel)
+void IRAM_ATTR msx_psg_update_tone_step(MsxPsgState* state, uint8_t channel)
 {
     if (!state || state->sampleRate == 0u || channel >= 3u) {
         return;
@@ -217,7 +217,7 @@ void msx_psg_update_tone_step(MsxPsgState* state, uint8_t channel)
     );
 }
 
-void msx_psg_update_noise_step(MsxPsgState* state)
+void IRAM_ATTR msx_psg_update_noise_step(MsxPsgState* state)
 {
     if (!state || state->sampleRate == 0u) {
         return;
@@ -231,7 +231,7 @@ void msx_psg_update_noise_step(MsxPsgState* state)
     );
 }
 
-void msx_psg_update_envelope_step(MsxPsgState* state)
+void IRAM_ATTR msx_psg_update_envelope_step(MsxPsgState* state)
 {
     if (!state || state->sampleRate == 0u) {
         return;
@@ -245,7 +245,7 @@ void msx_psg_update_envelope_step(MsxPsgState* state)
     );
 }
 
-void msx_psg_restart_envelope(MsxPsgState* state)
+void IRAM_ATTR msx_psg_restart_envelope(MsxPsgState* state)
 {
     if (!state) {
         return;
@@ -355,8 +355,6 @@ int16_t IRAM_ATTR msx_psg_render_sample(MsxPsgState* state)
         msx_psg_step_envelope(state);
     }
 
-    mix /= 2;
-
     // Applica un filtro DSP Passa-Alto (DC Blocker) per eliminare i crepitii statici
     // Formula: y[n] = x[n] - x[n-1] + R * y[n-1] (con R =~ 0.99)
     int32_t dcFiltered = mix - s_dcFilterX + ((s_dcFilterY * 8110) >> 13);
@@ -447,7 +445,7 @@ void msx_psg_shutdown(MsxPsgState* state)
     std::memset(state, 0, sizeof(*state));
 }
 
-void msx_psg_select_register(MsxPsgState* state, uint8_t value)
+void IRAM_ATTR msx_psg_select_register(MsxPsgState* state, uint8_t value)
 {
     if (!state || !state->ready) {
         return;
@@ -456,7 +454,7 @@ void msx_psg_select_register(MsxPsgState* state, uint8_t value)
     state->selectedReg = static_cast<uint8_t>(value & 0x0Fu);
 }
 
-void msx_psg_write_data(MsxPsgState* state, uint8_t value)
+void IRAM_ATTR msx_psg_write_data(MsxPsgState* state, uint8_t value)
 {
     if (!state || !state->ready) {
         return;
@@ -506,7 +504,7 @@ void msx_psg_write_data(MsxPsgState* state, uint8_t value)
     }
 }
 
-uint8_t msx_psg_read_data(const MsxPsgState* state)
+uint8_t IRAM_ATTR msx_psg_read_data(const MsxPsgState* state)
 {
     if (!state || !state->ready) {
         return 0xFFu;
@@ -530,12 +528,12 @@ uint8_t msx_psg_read_data(const MsxPsgState* state)
     return state->regs[reg];
 }
 
-void msx_psg_set_joystick(MsxPsgState* state, uint8_t portA)
+void IRAM_ATTR msx_psg_set_joystick(MsxPsgState* state, uint8_t portA)
 {
     msx_psg_set_joysticks(state, portA, 0xFFu);
 }
 
-void msx_psg_set_joysticks(MsxPsgState* state, uint8_t portA, uint8_t portB)
+void IRAM_ATTR msx_psg_set_joysticks(MsxPsgState* state, uint8_t portA, uint8_t portB)
 {
     if (!state) {
         return;

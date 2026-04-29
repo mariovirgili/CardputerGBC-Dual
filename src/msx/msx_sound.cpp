@@ -21,7 +21,7 @@ namespace {
 #if MSX_AUDIO_ENABLED
 constexpr int kChannel = 0;
 constexpr size_t kMaxFrameSamples = 512;
-constexpr int kOutputGain = 2;
+constexpr int kOutputGain = 1;
 constexpr size_t kNumPlayBuffers = 4;
 constexpr TickType_t kAudioWorkerPollTicks = pdMS_TO_TICKS(20);
 static MsxAudioHookState s_audioState = {};
@@ -289,7 +289,26 @@ static uint16_t msx_sound_copy_with_gain(int16_t* dst, const int16_t* src, size_
         return 0u;
     }
 
+    if (kOutputGain == 1) {
+        std::memcpy(dst, src, count * sizeof(int16_t));
+#if MSX_AUDIO_TRACE_ENABLED
+        uint16_t peak = 0u;
+        for (size_t i = 0; i < count; ++i) {
+            const int32_t sample = src[i];
+            const uint16_t magnitude = static_cast<uint16_t>(sample < 0 ? -sample : sample);
+            if (magnitude > peak) {
+                peak = magnitude;
+            }
+        }
+        return peak;
+#else
+        return 0u;
+#endif
+    }
+
+#if MSX_AUDIO_TRACE_ENABLED
     uint16_t peak = 0u;
+#endif
     for (size_t i = 0; i < count; ++i) {
         int32_t sample = static_cast<int32_t>(src[i]) * kOutputGain;
         if (sample > 32767) {
@@ -299,13 +318,19 @@ static uint16_t msx_sound_copy_with_gain(int16_t* dst, const int16_t* src, size_
         }
 
         dst[i] = static_cast<int16_t>(sample);
+#if MSX_AUDIO_TRACE_ENABLED
         const uint16_t magnitude = static_cast<uint16_t>(sample < 0 ? -sample : sample);
         if (magnitude > peak) {
             peak = magnitude;
         }
+#endif
     }
 
+#if MSX_AUDIO_TRACE_ENABLED
     return peak;
+#else
+    return 0u;
+#endif
 }
 #endif
 
