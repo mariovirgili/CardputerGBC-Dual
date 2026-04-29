@@ -71,6 +71,11 @@ struct MsxDisplayTargetSelectionResult {
   emu_display_target_t target = EMU_DISPLAY_EXTERNAL;
 };
 
+struct MsxVirtualSccSelectionResult {
+  bool backToRomBrowser = false;
+  MsxVirtualSccMode mode = MsxVirtualSccMode::Off;
+};
+
 enum class StartupMainMenuAction {
   RomSelector = 0,
   ConfigMenu = 1,
@@ -199,6 +204,47 @@ static MsxBoolSelectionResult selectMsxExternalFpsLock(CardputerView& display,
   MsxBoolSelectionResult result;
   result.backToRomBrowser = false;
   result.value = chosen == 1;
+  return result;
+}
+
+static MsxVirtualSccSelectionResult selectMsxVirtualSccMode(CardputerView& display, CardputerInput& input)
+{
+  VerticalSelector selector(display, input);
+  const MsxVirtualSccMode persistedMode = msx_config_load_virtual_scc_mode();
+  const std::vector<std::string> options = {
+      "OFF",
+      "SCC",
+      "SCC-I",
+  };
+
+  const int initialIndex = persistedMode == MsxVirtualSccMode::Scc
+                               ? 1
+                               : (persistedMode == MsxVirtualSccMode::SccI ? 2 : 0);
+  const int selected = selector.select("MSX virtual SCC",
+                                       options,
+                                       false,
+                                       false,
+                                       {},
+                                       {},
+                                       false,
+                                       true,
+                                       true,
+                                       initialIndex,
+                                       -1,
+                                       kSelectorResultBackToRomBrowser);
+  if (selected == kSelectorResultBackToRomBrowser) {
+    MsxVirtualSccSelectionResult result;
+    result.backToRomBrowser = true;
+    result.mode = persistedMode;
+    return result;
+  }
+
+  const int chosen = selected >= 0 ? selected : initialIndex;
+  MsxVirtualSccSelectionResult result;
+  result.backToRomBrowser = false;
+  result.mode = chosen == 1
+                    ? MsxVirtualSccMode::Scc
+                    : (chosen == 2 ? MsxVirtualSccMode::SccI : MsxVirtualSccMode::Off);
   return result;
 }
 
@@ -654,12 +700,14 @@ static void showStartupMsxConfigMenu(CardputerView& display, CardputerInput& inp
   for (;;) {
     msx_config_load_internal_view_mode();
     msx_config_load_performance_flags();
+    msx_config_load_virtual_scc_mode();
     MsxRuntimeOptionConfig config = msx_input_load_runtime_option_config();
     char stateSlotValue[8];
     snprintf(stateSlotValue, sizeof(stateSlotValue), "< %u >", static_cast<unsigned>(config.stateSlot));
 
     const std::vector<std::string> options = {
         "Performance",
+        "Virtual SCC",
         "JOY EXTEND",
         "KEYB/JOY",
         "BasicKeyboard",
@@ -670,6 +718,7 @@ static void showStartupMsxConfigMenu(CardputerView& display, CardputerInput& inp
     };
     const std::vector<std::string> values = {
         msx_config_get_performance_mode_label(),
+        msx_config_get_virtual_scc_mode_label(),
         startupBoolLabel(config.joystickEnabled),
         startupBoolLabel(config.keyboardEnabled),
         startupBoolLabel(config.basicKeyboardEnabled),
@@ -691,7 +740,7 @@ static void showStartupMsxConfigMenu(CardputerView& display, CardputerInput& inp
                                          selectedIndex,
                                          -1,
                                          kSelectorResultBackToRomBrowser);
-    if (selected == kSelectorResultBackToRomBrowser || selected < 0 || selected == 7) {
+    if (selected == kSelectorResultBackToRomBrowser || selected < 0 || selected == 8) {
       input.flushInput(120);
       return;
     }
@@ -706,32 +755,35 @@ static void showStartupMsxConfigMenu(CardputerView& display, CardputerInput& inp
         }
         break;
       case 1:
+        msx_config_cycle_virtual_scc_mode(1, true);
+        break;
+      case 2:
         config.joystickEnabled = !config.joystickEnabled;
         if (config.joystickEnabled) {
           config.basicKeyboardEnabled = false;
         }
         msx_input_set_runtime_option_config(config, true);
         break;
-      case 2:
+      case 3:
         config.keyboardEnabled = !config.keyboardEnabled;
         config.basicKeyboardEnabled = false;
         msx_input_set_runtime_option_config(config, true);
         break;
-      case 3:
+      case 4:
         config.basicKeyboardEnabled = !config.basicKeyboardEnabled;
         msx_input_set_runtime_option_config(config, true);
         break;
-      case 4:
+      case 5:
         config.vausEnabled = !config.vausEnabled;
         if (config.vausEnabled) {
           config.basicKeyboardEnabled = false;
         }
         msx_input_set_runtime_option_config(config, true);
         break;
-      case 5:
+      case 6:
         msx_config_toggle_active_view_mode_for_target(g_emu_display_target == EMU_DISPLAY_EXTERNAL);
         break;
-      case 6:
+      case 7:
         config.stateSlot = static_cast<uint8_t>((config.stateSlot + 1u) % 10u);
         msx_input_set_runtime_option_config(config, true);
         break;
@@ -1114,6 +1166,12 @@ void setup() {
                                             true);
           }
         }
+        const MsxVirtualSccSelectionResult sccSelection = selectMsxVirtualSccMode(display, input);
+        if (sccSelection.backToRomBrowser) {
+          reopenMsxLaunchBrowser(romPath);
+          continue;
+        }
+        msx_config_set_virtual_scc_mode(sccSelection.mode, true);
       }
 
       display.initialize();

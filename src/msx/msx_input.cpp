@@ -66,6 +66,7 @@ struct MsxRuntimeOptions {
 
 enum class MsxRuntimeMenuItem : uint8_t {
     Performance = 0,
+    Sound,
     Joystick,
     Keyboard,
     BasicKeyboard,
@@ -82,6 +83,7 @@ enum class MsxRuntimeMenuItem : uint8_t {
 enum class MsxRuntimeMenuPage : uint8_t {
     Main = 0,
     Performance,
+    Sound,
     Cas,
 };
 
@@ -105,6 +107,14 @@ enum class MsxCasMenuItem : uint8_t {
     Count,
 };
 
+enum class MsxSoundMenuItem : uint8_t {
+    VirtualScc = 0,
+    SoundVolume,
+    SccVolume,
+    Back,
+    Count,
+};
+
 struct MsxRuntimeMenuState {
     bool visible;
     MsxRuntimeMenuPage page;
@@ -112,6 +122,7 @@ struct MsxRuntimeMenuState {
     uint8_t scroll;
     uint8_t mainSelectedIndex;
     uint8_t performanceSelectedIndex;
+    uint8_t soundSelectedIndex;
     uint8_t casSelectedIndex;
     bool prevHeld;
     bool nextHeld;
@@ -126,6 +137,7 @@ static MsxRuntimeOptions s_runtimeOptions = {false, true, false, false, 0, false
 static MsxRuntimeMenuState s_runtimeMenu = {
     false,
     MsxRuntimeMenuPage::Main,
+    0,
     0,
     0,
     0,
@@ -234,6 +246,11 @@ static bool msx_runtime_menu_in_performance_page(void)
     return s_runtimeMenu.page == MsxRuntimeMenuPage::Performance;
 }
 
+static bool msx_runtime_menu_in_sound_page(void)
+{
+    return s_runtimeMenu.page == MsxRuntimeMenuPage::Sound;
+}
+
 static bool msx_runtime_menu_in_cas_page(void)
 {
     return s_runtimeMenu.page == MsxRuntimeMenuPage::Cas;
@@ -241,7 +258,7 @@ static bool msx_runtime_menu_in_cas_page(void)
 
 static uint8_t msx_get_main_menu_item_count(void)
 {
-    return s_runtimeOptions.changeCasAvailable ? 11 : 10;
+    return s_runtimeOptions.changeCasAvailable ? 12 : 11;
 }
 
 static uint8_t msx_get_performance_menu_item_count(void)
@@ -254,10 +271,18 @@ static uint8_t msx_get_cas_menu_item_count(void)
     return static_cast<uint8_t>(MsxCasMenuItem::Count);
 }
 
+static uint8_t msx_get_sound_menu_item_count(void)
+{
+    return static_cast<uint8_t>(MsxSoundMenuItem::Count);
+}
+
 static uint8_t msx_get_menu_item_count(void)
 {
     if (msx_runtime_menu_in_performance_page()) {
         return msx_get_performance_menu_item_count();
+    }
+    if (msx_runtime_menu_in_sound_page()) {
+        return msx_get_sound_menu_item_count();
     }
     if (msx_runtime_menu_in_cas_page()) {
         return msx_get_cas_menu_item_count();
@@ -269,18 +294,19 @@ static MsxRuntimeMenuItem msx_get_menu_item(uint8_t index)
 {
     switch (index) {
         case 0: return MsxRuntimeMenuItem::Performance;
-        case 1: return MsxRuntimeMenuItem::Joystick;
-        case 2: return MsxRuntimeMenuItem::Keyboard;
-        case 3: return MsxRuntimeMenuItem::BasicKeyboard;
-        case 4: return MsxRuntimeMenuItem::Vaus;
-        case 5: return MsxRuntimeMenuItem::View;
-        case 6: return MsxRuntimeMenuItem::StateSlot;
-        case 7: return MsxRuntimeMenuItem::SaveState;
-        case 8: return MsxRuntimeMenuItem::LoadState;
-        case 9: return s_runtimeOptions.changeCasAvailable
+        case 1: return MsxRuntimeMenuItem::Sound;
+        case 2: return MsxRuntimeMenuItem::Joystick;
+        case 3: return MsxRuntimeMenuItem::Keyboard;
+        case 4: return MsxRuntimeMenuItem::BasicKeyboard;
+        case 5: return MsxRuntimeMenuItem::Vaus;
+        case 6: return MsxRuntimeMenuItem::View;
+        case 7: return MsxRuntimeMenuItem::StateSlot;
+        case 8: return MsxRuntimeMenuItem::SaveState;
+        case 9: return MsxRuntimeMenuItem::LoadState;
+        case 10: return s_runtimeOptions.changeCasAvailable
                        ? MsxRuntimeMenuItem::CasMenu
                        : MsxRuntimeMenuItem::Close;
-        case 10: return MsxRuntimeMenuItem::Close;
+        case 11: return MsxRuntimeMenuItem::Close;
         default: return MsxRuntimeMenuItem::Close;
     }
 }
@@ -318,6 +344,17 @@ static MsxCasMenuItem msx_get_cas_menu_item(uint8_t index)
         case 2: return MsxCasMenuItem::ChangeCas;
         case 3: return MsxCasMenuItem::Back;
         default: return MsxCasMenuItem::Back;
+    }
+}
+
+static MsxSoundMenuItem msx_get_sound_menu_item(uint8_t index)
+{
+    switch (index) {
+        case 0: return MsxSoundMenuItem::VirtualScc;
+        case 1: return MsxSoundMenuItem::SoundVolume;
+        case 2: return MsxSoundMenuItem::SccVolume;
+        case 3: return MsxSoundMenuItem::Back;
+        default: return MsxSoundMenuItem::Back;
     }
 }
 
@@ -594,6 +631,16 @@ static void msx_runtime_menu_open_performance_page(void)
             : 0u;
 }
 
+static void msx_runtime_menu_open_sound_page(void)
+{
+    s_runtimeMenu.page = MsxRuntimeMenuPage::Sound;
+    s_runtimeMenu.selectedIndex = s_runtimeMenu.soundSelectedIndex;
+    s_runtimeMenu.scroll =
+        s_runtimeMenu.selectedIndex >= kRuntimeMenuVisibleRows
+            ? static_cast<uint8_t>(s_runtimeMenu.selectedIndex - (kRuntimeMenuVisibleRows - 1u))
+            : 0u;
+}
+
 static void msx_runtime_menu_open_cas_page(void)
 {
     s_runtimeMenu.page = MsxRuntimeMenuPage::Cas;
@@ -633,6 +680,14 @@ static void msx_runtime_menu_move(int delta)
 
     if (msx_runtime_menu_in_performance_page()) {
         s_runtimeMenu.performanceSelectedIndex = s_runtimeMenu.selectedIndex;
+        if (selected < s_runtimeMenu.scroll) {
+            s_runtimeMenu.scroll = static_cast<uint8_t>(selected);
+        } else if (selected >= s_runtimeMenu.scroll + kRuntimeMenuVisibleRows) {
+            s_runtimeMenu.scroll =
+                static_cast<uint8_t>(selected - (kRuntimeMenuVisibleRows - 1u));
+        }
+    } else if (msx_runtime_menu_in_sound_page()) {
+        s_runtimeMenu.soundSelectedIndex = s_runtimeMenu.selectedIndex;
         if (selected < s_runtimeMenu.scroll) {
             s_runtimeMenu.scroll = static_cast<uint8_t>(selected);
         } else if (selected >= s_runtimeMenu.scroll + kRuntimeMenuVisibleRows) {
@@ -719,6 +774,26 @@ static void msx_runtime_toggle_performance_item(MsxPerformanceMenuItem item)
     }
 }
 
+static void msx_runtime_toggle_sound_item(MsxSoundMenuItem item, int delta)
+{
+    const int step = delta >= 0 ? 1 : -1;
+    switch (item) {
+        case MsxSoundMenuItem::VirtualScc:
+            msx_config_cycle_virtual_scc_mode(step, true);
+            break;
+        case MsxSoundMenuItem::SoundVolume:
+            msx_config_cycle_sound_volume(step, true);
+            break;
+        case MsxSoundMenuItem::SccVolume:
+            msx_config_cycle_scc_gain_percent(step, true);
+            break;
+        case MsxSoundMenuItem::Back:
+        case MsxSoundMenuItem::Count:
+        default:
+            break;
+    }
+}
+
 static void msx_runtime_menu_adjust(int delta)
 {
     if (msx_runtime_menu_in_performance_page()) {
@@ -728,6 +803,11 @@ static void msx_runtime_menu_adjust(int delta)
         } else {
             msx_runtime_toggle_performance_item(item);
         }
+        return;
+    }
+
+    if (msx_runtime_menu_in_sound_page()) {
+        msx_runtime_toggle_sound_item(msx_get_sound_menu_item(s_runtimeMenu.selectedIndex), delta);
         return;
     }
 
@@ -753,6 +833,18 @@ static void msx_clamp_runtime_menu_selection(void)
 
     if (msx_runtime_menu_in_performance_page()) {
         s_runtimeMenu.performanceSelectedIndex = s_runtimeMenu.selectedIndex;
+        if (s_runtimeMenu.scroll > s_runtimeMenu.selectedIndex) {
+            s_runtimeMenu.scroll = s_runtimeMenu.selectedIndex;
+        }
+        if (s_runtimeMenu.selectedIndex >= s_runtimeMenu.scroll + kRuntimeMenuVisibleRows) {
+            s_runtimeMenu.scroll =
+                static_cast<uint8_t>(s_runtimeMenu.selectedIndex - (kRuntimeMenuVisibleRows - 1u));
+        }
+        return;
+    }
+
+    if (msx_runtime_menu_in_sound_page()) {
+        s_runtimeMenu.soundSelectedIndex = s_runtimeMenu.selectedIndex;
         if (s_runtimeMenu.scroll > s_runtimeMenu.selectedIndex) {
             s_runtimeMenu.scroll = s_runtimeMenu.selectedIndex;
         }
@@ -811,6 +903,18 @@ static void msx_runtime_menu_accept(void)
             msx_clamp_runtime_menu_selection();
         } else {
             msx_runtime_toggle_performance_item(msx_get_performance_menu_item(s_runtimeMenu.selectedIndex));
+        }
+        msx_runtime_log_options();
+        return;
+    }
+
+    if (msx_runtime_menu_in_sound_page()) {
+        const MsxSoundMenuItem item = msx_get_sound_menu_item(s_runtimeMenu.selectedIndex);
+        if (item == MsxSoundMenuItem::Back) {
+            msx_runtime_menu_open_main_page();
+            msx_clamp_runtime_menu_selection();
+        } else {
+            msx_runtime_toggle_sound_item(item, 1);
         }
         msx_runtime_log_options();
         return;
@@ -889,6 +993,10 @@ static void msx_runtime_menu_accept(void)
                 s_runtimeMenu.mainSelectedIndex = s_runtimeMenu.selectedIndex;
                 msx_runtime_menu_open_performance_page();
             }
+            break;
+        case MsxRuntimeMenuItem::Sound:
+            s_runtimeMenu.mainSelectedIndex = s_runtimeMenu.selectedIndex;
+            msx_runtime_menu_open_sound_page();
             break;
         case MsxRuntimeMenuItem::CasMenu:
             if (s_runtimeOptions.changeCasAvailable) {
@@ -1791,7 +1899,9 @@ static void msx_poll_runtime_menu(const Keyboard_Class::KeysState& keys,
         msx_runtime_menu_adjust(1);
     }
     if (msx_menu_edge(msx_menu_back_pressed(keys, bindings, padState), &s_runtimeMenu.backHeld)) {
-        if (msx_runtime_menu_in_performance_page() || msx_runtime_menu_in_cas_page()) {
+        if (msx_runtime_menu_in_performance_page() ||
+            msx_runtime_menu_in_sound_page() ||
+            msx_runtime_menu_in_cas_page()) {
             msx_runtime_menu_open_main_page();
             msx_clamp_runtime_menu_selection();
         } else {
@@ -2175,6 +2285,7 @@ void msx_input_get_overlay_state(MsxInputOverlayState* state)
 
     state->menuVisible = s_runtimeMenu.visible;
     state->performanceSubmenuVisible = msx_runtime_menu_in_performance_page();
+    state->soundSubmenuVisible = msx_runtime_menu_in_sound_page();
     state->casSubmenuVisible = msx_runtime_menu_in_cas_page();
     state->machineIsMsx2 = (s_runtimeMachineMode == MsxMachineMode::MSX2);
     state->joystickEnabled = s_runtimeOptions.joystickEnabled;
@@ -2195,6 +2306,9 @@ void msx_input_get_overlay_state(MsxInputOverlayState* state)
         msx_config_get_performance_flag(MsxPerformanceFlag::ExternalFixed30Fps);
     state->perfShowFpsOverlay = msx_config_get_fps_overlay_enabled();
     state->perfFrameskipMode = msx_config_get_frameskip_mode();
+    state->virtualSccMode = msx_config_get_virtual_scc_mode();
+    state->soundVolume = msx_config_get_sound_volume();
+    state->sccGainPercent = msx_config_get_scc_gain_percent();
     state->casChangeAvailable = s_runtimeOptions.changeCasAvailable;
     state->virtualKeyPickerVisible = s_virtualKeyPickerVisible;
     std::snprintf(state->virtualKeyPickerLabel,

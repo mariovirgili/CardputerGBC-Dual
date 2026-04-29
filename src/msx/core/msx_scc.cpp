@@ -13,6 +13,10 @@
 #define MSX_SCC_NOTICE_ENABLED 1
 #endif
 
+#ifndef MSX_SCC_AUDIO_NOTICE_ENABLED
+#define MSX_SCC_AUDIO_NOTICE_ENABLED 0
+#endif
+
 namespace {
 
 constexpr uint32_t kMsxCpuClockHz = 3579545u;
@@ -20,6 +24,7 @@ constexpr size_t kMsxSccRingSamplesDefault = 1024u;
 static int16_t* s_sccRing = nullptr;
 static size_t s_sccRingSamples = 0u;
 static uint16_t s_sccRingMask = static_cast<uint16_t>(kMsxSccRingSamplesDefault - 1u);
+static uint16_t s_sccOutputGainPercent = 150u;
 
 size_t msx_scc_ring_samples()
 {
@@ -76,11 +81,11 @@ void msx_scc_update_step(MsxSccState* state, uint8_t channel)
         return;
     }
 
-    const uint64_t numerator = static_cast<uint64_t>(state->cpuClockHz) << 16;
+    const uint32_t effectivePeriod = freqReg < 16u ? 16u : freqReg;
+    const uint64_t numerator = static_cast<uint64_t>(state->cpuClockHz) << 17;
     const uint64_t denominator =
         static_cast<uint64_t>(state->sampleRate) *
-        static_cast<uint64_t>(freqReg) *
-        32u;
+        static_cast<uint64_t>(effectivePeriod);
     uint64_t step = denominator != 0u ? (numerator / denominator) : 0u;
     if (step > 0xFFFFFFFFull) {
         step = 0xFFFFFFFFull;
@@ -121,6 +126,79 @@ void msx_scc_log_write(const char* kind, uint8_t reg, uint8_t value)
 #endif
 }
 
+uint16_t msx_scc_abs16(int16_t sample)
+{
+    return sample == INT16_MIN
+               ? 32768u
+               : static_cast<uint16_t>(sample < 0 ? -sample : sample);
+}
+
+void msx_scc_log_audio_if_needed(MsxSccState* state, const int16_t* samples, size_t count)
+{
+#if MSX_SCC_AUDIO_NOTICE_ENABLED
+    if (!state || !state->outputEnabled || !samples || count == 0u) {
+        return;
+    }
+
+    uint32_t nonZero = 0u;
+    uint16_t peak = 0u;
+    for (size_t i = 0; i < count; ++i) {
+        const uint16_t mag = msx_scc_abs16(samples[i]);
+        if (mag != 0u) {
+            ++nonZero;
+            if (mag > peak) {
+                peak = mag;
+            }
+        }
+    }
+
+    if (nonZero == 0u) {
+        return;
+    }
+
+    state->audibleSamples += nonZero;
+    if (peak > state->audiblePeak) {
+        state->audiblePeak = peak;
+    }
+
+    const uint32_t minLogGap = state->sampleRate != 0u ? (state->sampleRate / 2u) : 11025u;
+    const bool firstLogs = state->audibleLogCount < 8u;
+    const bool periodicLog =
+        state->generatedSamples - state->lastAudibleLogSample >= minLogGap;
+    if (!firstLogs && !periodicLog) {
+        return;
+    }
+
+    state->lastAudibleLogSample = state->generatedSamples;
+    if (state->audibleLogCount < 255u) {
+        ++state->audibleLogCount;
+    }
+
+    std::printf("[MSX][SCC] audio mode=%s count=%u nz=%u peak=%u totalNz=%u en=%02X vol=%X/%X/%X/%X/%X step=%u/%u/%u/%u/%u\n",
+                state->sccPlusMode ? "SCC-I" : "SCC",
+                static_cast<unsigned>(count),
+                static_cast<unsigned>(nonZero),
+                static_cast<unsigned>(state->audiblePeak),
+                static_cast<unsigned>(state->audibleSamples),
+                static_cast<unsigned>(state->regs[0xAFu] & 0x1Fu),
+                static_cast<unsigned>(state->regs[0xAAu] & 0x0Fu),
+                static_cast<unsigned>(state->regs[0xABu] & 0x0Fu),
+                static_cast<unsigned>(state->regs[0xACu] & 0x0Fu),
+                static_cast<unsigned>(state->regs[0xADu] & 0x0Fu),
+                static_cast<unsigned>(state->regs[0xAEu] & 0x0Fu),
+                static_cast<unsigned>(state->step[0]),
+                static_cast<unsigned>(state->step[1]),
+                static_cast<unsigned>(state->step[2]),
+                static_cast<unsigned>(state->step[3]),
+                static_cast<unsigned>(state->step[4]));
+    state->audiblePeak = 0u;
+#else
+    (void)state;
+    (void)samples;
+    (void)count;
+#endif
+}
+
 void msx_scc_push_sample(MsxSccState* state, int16_t sample)
 {
     if (!state || !state->ready || !state->ring) {
@@ -141,7 +219,7 @@ void msx_scc_push_sample(MsxSccState* state, int16_t sample)
 
 int16_t msx_scc_render_sample(MsxSccState* state)
 {
-    if (!state || !state->enabled) {
+    if (!state || !state->enabled || !state->outputEnabled) {
         return 0;
     }
 
@@ -170,6 +248,7 @@ int16_t msx_scc_render_sample(MsxSccState* state)
         mix += static_cast<int32_t>(waveSample) * static_cast<int32_t>(volume);
     }
 
+    mix = (mix * static_cast<int32_t>(s_sccOutputGainPercent)) / 100;
     if (mix > 32767) {
         mix = 32767;
     } else if (mix < -32768) {
@@ -280,6 +359,27 @@ void msx_scc_set_windows(MsxSccState* state, bool classicWindow, bool plusWindow
                                   state->sccPlusMode,
                                   state->enabled);
     }
+}
+
+void msx_scc_set_output_enabled(MsxSccState* state, bool enabled)
+{
+    if (!state || !state->ready) {
+        return;
+    }
+    state->outputEnabled = enabled;
+}
+
+void msx_scc_set_output_gain_percent(uint16_t gainPercent)
+{
+    if (gainPercent > 300u) {
+        gainPercent = 300u;
+    }
+    s_sccOutputGainPercent = gainPercent;
+}
+
+uint16_t msx_scc_get_output_gain_percent(void)
+{
+    return s_sccOutputGainPercent;
 }
 
 void msx_scc_write(MsxSccState* state, uint8_t reg, uint8_t value)
@@ -410,6 +510,8 @@ size_t msx_scc_read_samples(MsxSccState* state, int16_t* dst, size_t maxSamples)
     if (second != 0u) {
         std::memcpy(dst + first, state->ring, second * sizeof(int16_t));
     }
+
+    msx_scc_log_audio_if_needed(state, dst, count);
 
     state->ringReadIndex = static_cast<uint16_t>((state->ringReadIndex + count) & s_sccRingMask);
     state->ringCount = static_cast<uint16_t>(state->ringCount - count);

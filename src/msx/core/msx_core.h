@@ -92,6 +92,7 @@ void msx_core_attach_disk_rom(MsxCoreState* state,
                               size_t diskRomSize);
 
 void msx_core_handle_input(MsxCoreState* state, const MsxInputState* input);
+void msx_core_set_virtual_scc_mode(MsxCoreState* state, MsxVirtualSccMode mode);
 void msx_core_step_frame(MsxCoreState* state);
 size_t msx_core_drain_audio(MsxCoreState* state, int16_t* dst, size_t capacity);
 void msx_core_shutdown(MsxCoreState* state);

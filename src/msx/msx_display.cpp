@@ -216,34 +216,46 @@ static const char* msx_display_runtime_menu_label(const MsxInputOverlayState& ov
         }
     }
 
+    if (overlay.soundSubmenuVisible) {
+        switch (index) {
+            case 0u: return "VIRTUAL SCC";
+            case 1u: return "MASTER VOL";
+            case 2u: return "SCC VOL";
+            case 3u: return "BACK";
+            default: return "";
+        }
+    }
+
     if (msx_display_game_on_external()) {
         switch (index) {
             case 0u: return "PERF TUNE";
-            case 1u: return "JOY EXTEND";
-            case 2u: return "KEYB/JOY";
-            case 3u: return "BASIC KBD";
-            case 4u: return "VAUS";
-            case 5u: return "VIEW";
-            case 6u: return "SELECT SLOT";
-            case 7u: return "SAVE SLOT";
-            case 8u: return "LOAD SLOT";
-            case 9u: return overlay.casChangeAvailable ? "CAS MENU" : "CLOSE";
-            case 10u: return overlay.casChangeAvailable ? "CLOSE" : "";
+            case 1u: return "SOUND";
+            case 2u: return "JOY EXTEND";
+            case 3u: return "KEYB/JOY";
+            case 4u: return "BASIC KBD";
+            case 5u: return "VAUS";
+            case 6u: return "VIEW";
+            case 7u: return "SELECT SLOT";
+            case 8u: return "SAVE SLOT";
+            case 9u: return "LOAD SLOT";
+            case 10u: return overlay.casChangeAvailable ? "CAS MENU" : "CLOSE";
+            case 11u: return overlay.casChangeAvailable ? "CLOSE" : "";
             default: return "";
         }
     } else {
         switch (index) {
             case 0u: return "PERF TUNE";
-            case 1u: return "JOY EXTEND";
-            case 2u: return "KEYB/JOY";
-            case 3u: return "BASIC KBD";
-            case 4u: return "VAUS";
-            case 5u: return "VIEW";
-            case 6u: return "STATE SLOT";
-            case 7u: return "SAVE STATE";
-            case 8u: return "LOAD STATE";
-            case 9u: return overlay.casChangeAvailable ? "CAS MENU" : "CLOSE";
-            case 10u: return overlay.casChangeAvailable ? "CLOSE" : "";
+            case 1u: return "SOUND";
+            case 2u: return "JOY EXTEND";
+            case 3u: return "KEYB/JOY";
+            case 4u: return "BASIC KBD";
+            case 5u: return "VAUS";
+            case 6u: return "VIEW";
+            case 7u: return "STATE SLOT";
+            case 8u: return "SAVE STATE";
+            case 9u: return "LOAD STATE";
+            case 10u: return overlay.casChangeAvailable ? "CAS MENU" : "CLOSE";
+            case 11u: return overlay.casChangeAvailable ? "CLOSE" : "";
             default: return "";
         }
     }
@@ -285,20 +297,35 @@ static const char* msx_display_runtime_menu_value(const MsxInputOverlayState& ov
         return nullptr;
     }
 
+    if (overlay.soundSubmenuVisible) {
+        switch (index) {
+            case 0u:
+                return msx_config_virtual_scc_mode_label(overlay.virtualSccMode);
+            case 1u:
+                return msx_config_sound_volume_label(overlay.soundVolume);
+            case 2u:
+                return msx_config_scc_gain_label(overlay.sccGainPercent);
+            default:
+                return nullptr;
+        }
+    }
+
     switch (index) {
         case 0u:
             return msx_config_performance_preset_label(overlay.performancePreset);
         case 1u:
-            return overlay.joystickEnabled ? "ON" : "OFF";
+            return nullptr;
         case 2u:
-            return overlay.keyboardEnabled ? "ON" : "OFF";
+            return overlay.joystickEnabled ? "ON" : "OFF";
         case 3u:
-            return overlay.basicKeyboardEnabled ? "ON" : "OFF";
+            return overlay.keyboardEnabled ? "ON" : "OFF";
         case 4u:
-            return overlay.vausEnabled ? "ON" : "OFF";
+            return overlay.basicKeyboardEnabled ? "ON" : "OFF";
         case 5u:
-            return msx_display_active_view_label();
+            return overlay.vausEnabled ? "ON" : "OFF";
         case 6u:
+            return msx_display_active_view_label();
+        case 7u:
             std::snprintf(slotStr, sizeof(slotStr), "< %u >", static_cast<unsigned>(stateSlot));
             return slotStr;
         default:
@@ -318,12 +345,16 @@ static void msx_display_draw_runtime_menu_shell(const MsxInputOverlayState& over
     const int innerX = boxX + kRuntimeMenuInnerPad;
     const char* title = overlay.performanceSubmenuVisible
                             ? "PERF TUNING"
-                            : (overlay.casSubmenuVisible ? "CAS MENU" : "CONFIG MENU");
+                            : (overlay.soundSubmenuVisible
+                                   ? "SOUND MENU"
+                                   : (overlay.casSubmenuVisible ? "CAS MENU" : "CONFIG MENU"));
     const char* hint1 = overlay.performanceSubmenuVisible
                             ? "GO toggle  DEL back"
-                            : (overlay.casSubmenuVisible
+                            : (overlay.soundSubmenuVisible
+                                   ? "GO toggle  DEL back"
+                                   : (overlay.casSubmenuVisible
                                    ? "GO select  DEL back"
-                                   : "\\ switch view  GO toggle");
+                                      : "\\ switch view  GO toggle"));
     const char* hint2 = "Hold GO closes menu";
 
     if (msx_display_game_on_external()) {
@@ -519,6 +550,7 @@ static bool msx_display_runtime_menu_overlay_equals(const MsxInputOverlayState& 
 {
     return a.menuVisible == b.menuVisible &&
            a.performanceSubmenuVisible == b.performanceSubmenuVisible &&
+           a.soundSubmenuVisible == b.soundSubmenuVisible &&
            a.casSubmenuVisible == b.casSubmenuVisible &&
            a.machineIsMsx2 == b.machineIsMsx2 &&
            a.joystickEnabled == b.joystickEnabled &&
@@ -534,6 +566,9 @@ static bool msx_display_runtime_menu_overlay_equals(const MsxInputOverlayState& 
            a.perfExternalFixed30Fps == b.perfExternalFixed30Fps &&
            a.perfFrameskipMode == b.perfFrameskipMode &&
            a.perfShowFpsOverlay == b.perfShowFpsOverlay &&
+           a.virtualSccMode == b.virtualSccMode &&
+           a.soundVolume == b.soundVolume &&
+           a.sccGainPercent == b.sccGainPercent &&
            a.casChangeAvailable == b.casChangeAvailable &&
            a.selectedIndex == b.selectedIndex;
 }
@@ -550,19 +585,31 @@ static bool msx_display_runtime_menu_row_changed(const MsxInputOverlayState& pre
         return true;
     }
 
+    char previousLabelCopy[32];
     const char* previousLabel = msx_display_runtime_menu_label(previousOverlay, index);
+    std::snprintf(previousLabelCopy,
+                  sizeof(previousLabelCopy),
+                  "%s",
+                  previousLabel ? previousLabel : "");
+
     const char* currentLabel = msx_display_runtime_menu_label(currentOverlay, index);
-    if (std::strcmp(previousLabel ? previousLabel : "", currentLabel ? currentLabel : "") != 0) {
+    if (std::strcmp(previousLabelCopy, currentLabel ? currentLabel : "") != 0) {
         return true;
     }
 
+    char previousValueCopy[32];
     const char* previousValue = msx_display_runtime_menu_value(previousOverlay, index, previousStateSlot);
+    std::snprintf(previousValueCopy,
+                  sizeof(previousValueCopy),
+                  "%s",
+                  previousValue ? previousValue : "");
+
     const char* currentValue = msx_display_runtime_menu_value(currentOverlay, index, currentStateSlot);
     if (previousValue == nullptr || currentValue == nullptr) {
         return previousValue != currentValue;
     }
 
-    return std::strcmp(previousValue, currentValue) != 0;
+    return std::strcmp(previousValueCopy, currentValue) != 0;
 }
 
 void msx_display_init(void)
@@ -607,6 +654,7 @@ void msx_display_submit_frame(const MsxDisplayFrame* frame, const MsxDisplayStat
         const bool fullMenuRedraw =
             !s_lastMenuVisible ||
             overlay.performanceSubmenuVisible != s_lastMenuOverlay.performanceSubmenuVisible ||
+            overlay.soundSubmenuVisible != s_lastMenuOverlay.soundSubmenuVisible ||
             overlay.casSubmenuVisible != s_lastMenuOverlay.casSubmenuVisible;
         const bool overlayChanged =
             !msx_display_runtime_menu_overlay_equals(overlay, s_lastMenuOverlay);

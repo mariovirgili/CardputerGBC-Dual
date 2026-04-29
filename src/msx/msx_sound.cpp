@@ -1,4 +1,5 @@
 #include "msx_sound.h"
+#include "msx_config.h"
 
 #include <Arduino.h>
 #include <M5Cardputer.h>
@@ -399,9 +400,18 @@ bool msx_sound_prestart_speaker(uint32_t sampleRate, uint8_t channels)
     if (!M5Cardputer.Speaker.isRunning()) {
         M5Cardputer.Speaker.begin();
     }
-    M5Cardputer.Speaker.setVolume(80);
+    M5Cardputer.Speaker.setVolume(msx_config_get_sound_volume());
     M5Cardputer.Speaker.stop(kChannel);
     return M5Cardputer.Speaker.isRunning();
+#endif
+}
+
+void msx_sound_set_volume(uint8_t volume)
+{
+#if MSX_AUDIO_ENABLED
+    M5Cardputer.Speaker.setVolume(volume);
+#else
+    (void)volume;
 #endif
 }
 
@@ -452,7 +462,7 @@ bool msx_sound_init(uint32_t sampleRate, uint8_t channels)
         return false;
     }
 
-    M5Cardputer.Speaker.setVolume(80);
+    M5Cardputer.Speaker.setVolume(msx_config_get_sound_volume());
     M5Cardputer.Speaker.stop(kChannel);
     std::memset(s_mixBuffer, 0, sizeof(s_mixBuffer));
     for (size_t i = 0; i < kNumPlayBuffers; ++i) {

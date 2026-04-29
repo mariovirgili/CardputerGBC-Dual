@@ -34,6 +34,9 @@ constexpr uint8_t kMsxDefaultSlotRegister = 0x00;  // all pages → slot0 (BIOS)
 static uint8_t s_openBusPage[kMsxPageSize8K];
 static bool s_openBusInitialized = false;
 static MsxSccState* s_attachedScc = nullptr;
+static bool s_sccRealClassicWindow = false;
+static bool s_sccRealPlusWindow = false;
+static MsxVirtualSccMode s_virtualSccMode = MsxVirtualSccMode::Off;
 
 constexpr uint8_t kMsxNoramByte = 0xFFu;
 constexpr uint16_t kMsxAddrSlttbl = 0xFCC5u;
@@ -847,16 +850,141 @@ uint8_t msx_memory_normalize_cart_bank(const MsxMemoryState* state, uint8_t bank
     return static_cast<uint8_t>(bank % state->cart.bankCount8K);
 }
 
+bool msx_memory_virtual_scc_enabled(void)
+{
+    return s_virtualSccMode != MsxVirtualSccMode::Off;
+}
+
+bool msx_memory_virtual_scc_plus_enabled(void)
+{
+    return s_virtualSccMode == MsxVirtualSccMode::SccI;
+}
+
+const char* msx_memory_real_scc_mode_label(void)
+{
+    if (s_sccRealPlusWindow) {
+        return "SCC-I";
+    }
+    if (s_sccRealClassicWindow) {
+        return "SCC";
+    }
+    return "OFF";
+}
+
+const char* msx_memory_active_scc_mode_label(void)
+{
+    if (s_virtualSccMode == MsxVirtualSccMode::Off) {
+        return "OFF";
+    }
+    if (msx_memory_virtual_scc_plus_enabled()) {
+        return "SCC-I";
+    }
+    if (msx_memory_virtual_scc_enabled()) {
+        return "SCC";
+    }
+    return "OFF";
+}
+
+void msx_memory_apply_scc_windows(void)
+{
+    if (!s_attachedScc || !s_attachedScc->ready) {
+        return;
+    }
+
+    const bool virtualClassic = msx_memory_virtual_scc_enabled();
+    const bool virtualPlus = msx_memory_virtual_scc_plus_enabled();
+    msx_scc_set_windows(s_attachedScc,
+                        s_sccRealClassicWindow || virtualClassic,
+                        s_sccRealPlusWindow || virtualPlus);
+}
+
+bool msx_memory_real_scc_visible(const MsxMemoryState* state, uint16_t address)
+{
+    if (!state || state->cart.type != MsxCartridgeType::KonamiScc) {
+        return false;
+    }
+
+    const uint8_t slot = msx_slot_for_page(state->slotRegister, static_cast<uint8_t>(address >> 14));
+    return slot == kMsxPrimarySlotCartridge;
+}
+
+bool msx_memory_scc_classic_read_visible(const MsxMemoryState* state, uint16_t address)
+{
+    if (!s_attachedScc || !s_attachedScc->ready || !s_attachedScc->classicWindow) {
+        return false;
+    }
+    if (address < 0x9800u || address >= 0x9880u) {
+        return false;
+    }
+    return msx_memory_virtual_scc_enabled() || msx_memory_real_scc_visible(state, address);
+}
+
+bool msx_memory_scc_plus_read_visible(const MsxMemoryState* state, uint16_t address)
+{
+    if (!s_attachedScc || !s_attachedScc->ready || !s_attachedScc->plusWindow) {
+        return false;
+    }
+    if (address < 0xB800u || address >= 0xB8A0u) {
+        return false;
+    }
+    return msx_memory_virtual_scc_plus_enabled() || msx_memory_real_scc_visible(state, address);
+}
+
+bool msx_memory_scc_classic_write_visible(const MsxMemoryState* state, uint16_t address)
+{
+    if (!s_attachedScc || !s_attachedScc->ready || !s_attachedScc->classicWindow) {
+        return false;
+    }
+    if (address < 0x9800u || address >= 0xA000u) {
+        return false;
+    }
+    return msx_memory_virtual_scc_enabled() || msx_memory_real_scc_visible(state, address);
+}
+
+bool msx_memory_scc_plus_write_visible(const MsxMemoryState* state, uint16_t address)
+{
+    if (!s_attachedScc || !s_attachedScc->ready || !s_attachedScc->plusWindow) {
+        return false;
+    }
+    if (address < 0xB800u || address >= 0xC000u) {
+        return false;
+    }
+    if (address == 0xBFFEu) {
+        return false;
+    }
+    return msx_memory_virtual_scc_plus_enabled() || msx_memory_real_scc_visible(state, address);
+}
+
 void msx_memory_attach_scc(MsxMemoryState* state, MsxSccState* scc)
 {
     (void)state;
     s_attachedScc = scc;
+    if (!scc) {
+        s_sccRealClassicWindow = false;
+        s_sccRealPlusWindow = false;
+        return;
+    }
+    msx_memory_apply_scc_windows();
 }
 
 MsxSccState* msx_memory_get_scc(MsxMemoryState* state)
 {
     (void)state;
     return s_attachedScc;
+}
+
+void msx_memory_set_virtual_scc_mode(MsxMemoryState* state, MsxVirtualSccMode mode)
+{
+    (void)state;
+    const MsxVirtualSccMode previous = s_virtualSccMode;
+    s_virtualSccMode = mode;
+    msx_memory_apply_scc_windows();
+    if (previous != s_virtualSccMode) {
+        std::printf("[MSX][SCC] virtual cartridge=%s real=%s active=%s\n",
+                    msx_config_virtual_scc_mode_label(s_virtualSccMode),
+                    msx_memory_real_scc_mode_label(),
+                    msx_memory_active_scc_mode_label());
+    }
 }
 
 void msx_memory_set_keyboard_matrix(MsxMemoryState* state, const MsxKeyboardMatrix* matrix)
@@ -876,6 +1004,9 @@ void msx_memory_shutdown(MsxMemoryState* state)
 
     msx_memory_release_ram_banks(state);
     s_attachedScc = nullptr;
+    s_sccRealClassicWindow = false;
+    s_sccRealPlusWindow = false;
+    s_virtualSccMode = MsxVirtualSccMode::Off;
     std::memset(state, 0, sizeof(*state));
 }
 
@@ -895,6 +1026,9 @@ void msx_memory_reset(MsxMemoryState* state)
     if (s_attachedScc) {
         msx_scc_reset(s_attachedScc);
     }
+    s_sccRealClassicWindow = false;
+    s_sccRealPlusWindow = false;
+    msx_memory_apply_scc_windows();
 
     state->slotRegister = kMsxDefaultSlotRegister;
     std::memset(state->secondarySlotRegs, 0, sizeof(state->secondarySlotRegs));
@@ -998,22 +1132,11 @@ uint8_t IRAM_ATTR msx_memory_read8(const MsxMemoryState* state, uint16_t address
         return msx_memory_raw_page3_read8(state, address);
     }
 
-    if (s_attachedScc &&
-        s_attachedScc->ready &&
-        state->cart.type == MsxCartridgeType::KonamiScc) {
-        const uint8_t readSlot = msx_slot_for_page(state->slotRegister, static_cast<uint8_t>(address >> 14));
-        if (readSlot == kMsxPrimarySlotCartridge) {
-            if (address >= 0x9800u &&
-                address < 0x9880u &&
-                s_attachedScc->classicWindow) {
-                return msx_scc_read(s_attachedScc, static_cast<uint8_t>(address & 0xFFu));
-            }
-            if (address >= 0xB800u &&
-                address < 0xB8A0u &&
-                s_attachedScc->plusWindow) {
-                return msx_scc_read_plus(s_attachedScc, static_cast<uint8_t>(address & 0xFFu));
-            }
-        }
+    if (msx_memory_scc_classic_read_visible(state, address)) {
+        return msx_scc_read(s_attachedScc, static_cast<uint8_t>(address & 0xFFu));
+    }
+    if (msx_memory_scc_plus_read_visible(state, address)) {
+        return msx_scc_read_plus(s_attachedScc, static_cast<uint8_t>(address & 0xFFu));
     }
 
     return state->readMap[bank][offset];
@@ -1074,6 +1197,17 @@ void msx_memory_write8(MsxMemoryState* state, uint16_t address, uint8_t value)
     (void)msx_memory_log_scc_write_route;
 #endif
 
+    if (msx_memory_scc_classic_write_visible(state, address)) {
+        msx_cpu_flush_pending_psg(state);
+        msx_scc_write(s_attachedScc, static_cast<uint8_t>(address & 0xFFu), value);
+        return;
+    }
+    if (msx_memory_scc_plus_write_visible(state, address)) {
+        msx_cpu_flush_pending_psg(state);
+        msx_scc_write_plus(s_attachedScc, static_cast<uint8_t>(address & 0xFFu), value);
+        return;
+    }
+
     if (writeMapHit) {
         state->writeMap[bank][offset] = value;
         return;
@@ -1087,26 +1221,9 @@ void msx_memory_write8(MsxMemoryState* state, uint16_t address, uint8_t value)
                 msx_cpu_flush_pending_psg(state);
                 state->cart.windowBanks[3] =
                     msx_memory_normalize_cart_bank(state, static_cast<uint8_t>(value & 0x1Fu));
-                msx_scc_set_windows(s_attachedScc,
-                                    s_attachedScc->classicWindow,
-                                    (value & 0xA0u) != 0u);
+                s_sccRealPlusWindow = (value & 0xA0u) != 0u;
+                msx_memory_apply_scc_windows();
                 msx_memory_refresh_maps(state);
-                return;
-            }
-
-            if (address >= 0x9800u &&
-                address < 0xA000u &&
-                s_attachedScc->classicWindow) {
-                msx_cpu_flush_pending_psg(state);
-                msx_scc_write(s_attachedScc, static_cast<uint8_t>(address & 0xFFu), value);
-                return;
-            }
-
-            if (address >= 0xB800u &&
-                address < 0xC000u &&
-                s_attachedScc->plusWindow) {
-                msx_cpu_flush_pending_psg(state);
-                msx_scc_write_plus(s_attachedScc, static_cast<uint8_t>(address & 0xFFu), value);
                 return;
             }
 
@@ -1115,15 +1232,19 @@ void msx_memory_write8(MsxMemoryState* state, uint16_t address, uint8_t value)
             if (bank2Write || bank3Write) {
                 msx_cpu_flush_pending_psg(state);
                 msx_cart_write(&state->cart, address, value);
-                const bool classicWindow = bank2Write ? (value == 0x3Fu) : s_attachedScc->classicWindow;
-                const bool plusWindow = bank3Write ? ((value & 0x80u) != 0u) : s_attachedScc->plusWindow;
-                msx_scc_set_windows(s_attachedScc, classicWindow, plusWindow);
+                if (bank2Write) {
+                    s_sccRealClassicWindow = value == 0x3Fu;
+                }
+                if (bank3Write) {
+                    s_sccRealPlusWindow = (value & 0x80u) != 0u;
+                }
+                msx_memory_apply_scc_windows();
 #if MSX_SCC_LOG_ENABLED
                 msx_memory_log_scc_bank_write(bank2Write ? 2u : 3u,
                                               value,
                                               bank2Write ? state->cart.windowBanks[2] : state->cart.windowBanks[3],
-                                              classicWindow,
-                                              plusWindow);
+                                              s_attachedScc->classicWindow,
+                                              s_attachedScc->plusWindow);
 #else
                 (void)msx_memory_log_scc_bank_write;
 #endif

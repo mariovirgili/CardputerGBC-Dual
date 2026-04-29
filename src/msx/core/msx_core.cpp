@@ -341,6 +341,9 @@ void msx_core_attach_runtime_devices(MsxCoreState* state)
     if (state->audioHookReady && state->scc.ready) {
         msx_memory_attach_scc(&state->memory, &state->scc);
         msx_scc_reset(&state->scc);
+        const MsxVirtualSccMode sccMode = msx_config_get_virtual_scc_mode();
+        msx_memory_set_virtual_scc_mode(&state->memory, sccMode);
+        msx_scc_set_output_enabled(&state->scc, sccMode != MsxVirtualSccMode::Off);
     } else {
         msx_memory_attach_scc(&state->memory, nullptr);
     }
@@ -596,7 +599,8 @@ void msx_core_init_audio(MsxCoreState* state, uint32_t audioSampleRate)
     }
 
     if (msx_psg_init(&state->psg, audioSampleRate)) {
-        if (state->cart.type == MsxCartridgeType::KonamiScc) {
+        if (state->cart.type == MsxCartridgeType::KonamiScc ||
+            msx_config_get_virtual_scc_mode() != MsxVirtualSccMode::Off) {
             (void)msx_scc_init(&state->scc, audioSampleRate);
         }
         state->audioHookReady = true;
@@ -715,7 +719,12 @@ bool msx_core_init(MsxCoreState* state,
                  msx_config_machine_mode_label(state->machineMode),
                  static_cast<unsigned>(state->memory.ramSize),
                  static_cast<unsigned>(state->vdp.vramSize),
-                 state->audioHookReady ? "psg" : "off");
+                 state->audioHookReady
+                     ? ((state->scc.ready &&
+                         msx_config_get_virtual_scc_mode() != MsxVirtualSccMode::Off)
+                            ? "psg+scc"
+                            : "psg")
+                     : "off");
     return true;
 }
 
@@ -1041,6 +1050,41 @@ void msx_core_step_frame(MsxCoreState* state)
 
     if (msx_core_status_needs_refresh(state)) {
         msx_core_refresh_status(state);
+    }
+}
+
+void msx_core_set_virtual_scc_mode(MsxCoreState* state, MsxVirtualSccMode mode)
+{
+    if (!state || !state->initialized) {
+        return;
+    }
+
+    if (!state->audioHookReady || state->audioSampleRate == 0u) {
+        return;
+    }
+
+    if (mode != MsxVirtualSccMode::Off && !state->scc.ready) {
+        if (msx_scc_init(&state->scc, state->audioSampleRate)) {
+            msx_memory_attach_scc(&state->memory, &state->scc);
+            msx_scc_reset(&state->scc);
+        }
+    }
+
+    if (!state->scc.ready) {
+        return;
+    }
+
+    msx_cpu_flush_pending_psg(&state->memory);
+    msx_memory_set_virtual_scc_mode(&state->memory, mode);
+    msx_scc_set_output_enabled(&state->scc, mode != MsxVirtualSccMode::Off);
+
+    if (mode == MsxVirtualSccMode::Off) {
+        const size_t sccAvailable = msx_scc_available_samples(&state->scc);
+        msx_scc_discard_samples(&state->scc, sccAvailable);
+        if (state->cart.type != MsxCartridgeType::KonamiScc) {
+            msx_memory_attach_scc(&state->memory, nullptr);
+            msx_scc_shutdown(&state->scc);
+        }
     }
 }
 

@@ -55,6 +55,13 @@ enum class MsxFrameskipMode : uint8_t {
     Count,
 };
 
+enum class MsxVirtualSccMode : uint8_t {
+    Off = 0,
+    Scc = 1,
+    SccI = 2,
+    Count,
+};
+
 MsxInternalViewMode msx_config_load_internal_view_mode(void);
 MsxInternalViewMode msx_config_get_internal_view_mode(void);
 MsxInternalViewMode msx_config_get_active_view_mode(void);
@@ -103,6 +110,24 @@ void msx_config_cycle_frameskip_mode(int delta, bool persist);
 bool msx_config_load_fps_overlay_enabled(void);
 bool msx_config_get_fps_overlay_enabled(void);
 void msx_config_set_fps_overlay_enabled(bool enabled, bool persist);
+
+MsxVirtualSccMode msx_config_load_virtual_scc_mode(void);
+MsxVirtualSccMode msx_config_get_virtual_scc_mode(void);
+const char* msx_config_virtual_scc_mode_label(MsxVirtualSccMode mode);
+const char* msx_config_get_virtual_scc_mode_label(void);
+void msx_config_set_virtual_scc_mode(MsxVirtualSccMode mode, bool persist);
+void msx_config_cycle_virtual_scc_mode(int delta, bool persist);
+
+uint8_t msx_config_load_sound_volume(void);
+uint8_t msx_config_get_sound_volume(void);
+const char* msx_config_sound_volume_label(uint8_t volume);
+void msx_config_set_sound_volume(uint8_t volume, bool persist);
+void msx_config_cycle_sound_volume(int delta, bool persist);
+uint16_t msx_config_load_scc_gain_percent(void);
+uint16_t msx_config_get_scc_gain_percent(void);
+const char* msx_config_scc_gain_label(uint16_t gainPercent);
+void msx_config_set_scc_gain_percent(uint16_t gainPercent, bool persist);
+void msx_config_cycle_scc_gain_percent(int delta, bool persist);
 
 const char* msx_config_load_bios_path(void);
 const char* msx_config_get_bios_path(void);

@@ -7,6 +7,7 @@
 #include "msx_cart.h"
 #include "msx_disk.h"
 #include "msx_keyboard.h"
+#include "../msx_config.h"
 
 struct MsxCpuState;
 struct MsxPsgState;
@@ -90,6 +91,7 @@ void msx_memory_attach_vdp(MsxMemoryState* state, MsxVdpState* vdp);
 void msx_memory_attach_psg(MsxMemoryState* state, MsxPsgState* psg);
 void msx_memory_attach_scc(MsxMemoryState* state, MsxSccState* scc);
 MsxSccState* msx_memory_get_scc(MsxMemoryState* state);
+void msx_memory_set_virtual_scc_mode(MsxMemoryState* state, MsxVirtualSccMode mode);
 void msx_memory_set_keyboard_matrix(MsxMemoryState* state, const MsxKeyboardMatrix* matrix);
 void msx_memory_shutdown(MsxMemoryState* state);
 void msx_memory_reset(MsxMemoryState* state);

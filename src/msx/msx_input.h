@@ -30,6 +30,7 @@ struct MsxInputState {
 struct MsxInputOverlayState {
     bool menuVisible;
     bool performanceSubmenuVisible;
+    bool soundSubmenuVisible;
     bool casSubmenuVisible;
     bool machineIsMsx2;
     bool joystickEnabled;
@@ -45,6 +46,9 @@ struct MsxInputOverlayState {
     bool perfExternalFixed30Fps;
     bool perfShowFpsOverlay;
     MsxFrameskipMode perfFrameskipMode;
+    MsxVirtualSccMode virtualSccMode;
+    uint8_t soundVolume;
+    uint16_t sccGainPercent;
     bool casChangeAvailable;
     bool virtualKeyPickerVisible;
     char virtualKeyPickerLabel[8];

@@ -2,6 +2,7 @@
 
 #include <Preferences.h>
 
+#include <cstdio>
 #include <cstring>
 
 namespace {
@@ -14,6 +15,9 @@ constexpr const char* kMsxPerformanceFlagsKey = "perf_flags";
 constexpr const char* kMsxPerformancePresetKey = "perf_preset";
 constexpr const char* kMsxFrameskipKey = "frameskip";
 constexpr const char* kMsxFpsOverlayKey = "fps_hud";
+constexpr const char* kMsxVirtualSccKey = "virt_scc";
+constexpr const char* kMsxSoundVolumeKey = "snd_vol";
+constexpr const char* kMsxSccGainKey = "scc_gain";
 constexpr const char* kMsxBiosPathKey = "bios_path";
 constexpr const char* kMsx1BiosPathKey = "bios_msx1";
 constexpr const char* kMsx2BiosPathKey = "bios_msx2";
@@ -38,6 +42,11 @@ constexpr MsxPerformancePreset kMsxDefaultPerformancePreset = MsxPerformancePres
 constexpr uint8_t kMsxDefaultPerformanceFlags = kMsxFastPerformancePresetFlags;
 constexpr MsxFrameskipMode kMsxDefaultFrameskipMode = MsxFrameskipMode::Adaptive;
 constexpr bool kMsxDefaultFpsOverlayEnabled = true;
+constexpr MsxVirtualSccMode kMsxDefaultVirtualSccMode = MsxVirtualSccMode::Off;
+constexpr uint8_t kMsxDefaultSoundVolume = 112;
+constexpr uint16_t kMsxDefaultSccGainPercent = 150;
+constexpr uint16_t kMsxMinSccGainPercent = 0;
+constexpr uint16_t kMsxMaxSccGainPercent = 300;
 
 MsxInternalViewMode s_internalViewMode = kMsxDefaultInternalViewMode;
 MsxInternalViewMode s_viewModeOverride = kMsxDefaultInternalViewMode;
@@ -48,6 +57,9 @@ MsxPerformancePreset s_performancePreset = kMsxDefaultPerformancePreset;
 uint8_t s_performanceFlags = kMsxDefaultPerformanceFlags;
 MsxFrameskipMode s_frameskipMode = kMsxDefaultFrameskipMode;
 bool s_fpsOverlayEnabled = kMsxDefaultFpsOverlayEnabled;
+MsxVirtualSccMode s_virtualSccMode = kMsxDefaultVirtualSccMode;
+uint8_t s_soundVolume = kMsxDefaultSoundVolume;
+uint16_t s_sccGainPercent = kMsxDefaultSccGainPercent;
 char s_genericBiosPath[96] = {0};
 char s_msx1BiosPath[96] = {0};
 char s_msx2BiosPath[96] = {0};
@@ -228,6 +240,30 @@ void msx_update_performance_mode_from_flags(void)
     s_performanceMode = s_performanceFlags == 0u
                             ? MsxPerformanceMode::Accurate
                             : MsxPerformanceMode::Performance;
+}
+
+MsxVirtualSccMode msx_sanitize_virtual_scc_mode(uint8_t value)
+{
+    switch (value) {
+        case static_cast<uint8_t>(MsxVirtualSccMode::Scc):
+            return MsxVirtualSccMode::Scc;
+        case static_cast<uint8_t>(MsxVirtualSccMode::SccI):
+            return MsxVirtualSccMode::SccI;
+        case static_cast<uint8_t>(MsxVirtualSccMode::Off):
+        default:
+            return MsxVirtualSccMode::Off;
+    }
+}
+
+uint16_t msx_sanitize_scc_gain_percent(uint16_t value)
+{
+    if (value < kMsxMinSccGainPercent) {
+        return kMsxMinSccGainPercent;
+    }
+    if (value > kMsxMaxSccGainPercent) {
+        return kMsxMaxSccGainPercent;
+    }
+    return value;
 }
 
 void msx_store_performance_flags(uint8_t flags)
@@ -760,6 +796,194 @@ void msx_config_set_fps_overlay_enabled(bool enabled, bool persist)
     prefs.begin(kMsxConfigNs, false);
     prefs.putBool(kMsxFpsOverlayKey, s_fpsOverlayEnabled);
     prefs.end();
+}
+
+MsxVirtualSccMode msx_config_load_virtual_scc_mode(void)
+{
+    Preferences prefs;
+    prefs.begin(kMsxConfigNs, true);
+    const bool hasSavedValue = prefs.isKey(kMsxVirtualSccKey);
+    const uint8_t savedValue = prefs.getUChar(
+        kMsxVirtualSccKey,
+        static_cast<uint8_t>(kMsxDefaultVirtualSccMode)
+    );
+    prefs.end();
+
+    s_virtualSccMode = hasSavedValue
+                           ? msx_sanitize_virtual_scc_mode(savedValue)
+                           : kMsxDefaultVirtualSccMode;
+
+    if (!hasSavedValue || savedValue != static_cast<uint8_t>(s_virtualSccMode)) {
+        Preferences writePrefs;
+        writePrefs.begin(kMsxConfigNs, false);
+        writePrefs.putUChar(kMsxVirtualSccKey, static_cast<uint8_t>(s_virtualSccMode));
+        writePrefs.end();
+    }
+
+    return s_virtualSccMode;
+}
+
+MsxVirtualSccMode msx_config_get_virtual_scc_mode(void)
+{
+    return s_virtualSccMode;
+}
+
+const char* msx_config_virtual_scc_mode_label(MsxVirtualSccMode mode)
+{
+    switch (mode) {
+        case MsxVirtualSccMode::Scc:
+            return "SCC";
+        case MsxVirtualSccMode::SccI:
+            return "SCC-I";
+        case MsxVirtualSccMode::Off:
+        default:
+            return "OFF";
+    }
+}
+
+const char* msx_config_get_virtual_scc_mode_label(void)
+{
+    return msx_config_virtual_scc_mode_label(s_virtualSccMode);
+}
+
+void msx_config_set_virtual_scc_mode(MsxVirtualSccMode mode, bool persist)
+{
+    s_virtualSccMode = msx_sanitize_virtual_scc_mode(static_cast<uint8_t>(mode));
+    if (!persist) {
+        return;
+    }
+
+    Preferences prefs;
+    prefs.begin(kMsxConfigNs, false);
+    prefs.putUChar(kMsxVirtualSccKey, static_cast<uint8_t>(s_virtualSccMode));
+    prefs.end();
+}
+
+void msx_config_cycle_virtual_scc_mode(int delta, bool persist)
+{
+    int mode = static_cast<int>(s_virtualSccMode);
+    mode = (mode + (delta >= 0 ? 1 : -1) + static_cast<int>(MsxVirtualSccMode::Count)) %
+           static_cast<int>(MsxVirtualSccMode::Count);
+    msx_config_set_virtual_scc_mode(static_cast<MsxVirtualSccMode>(mode), persist);
+}
+
+uint8_t msx_config_load_sound_volume(void)
+{
+    Preferences prefs;
+    prefs.begin(kMsxConfigNs, true);
+    const bool hasSavedValue = prefs.isKey(kMsxSoundVolumeKey);
+    const uint8_t savedValue = prefs.getUChar(kMsxSoundVolumeKey, kMsxDefaultSoundVolume);
+    prefs.end();
+
+    s_soundVolume = hasSavedValue ? savedValue : kMsxDefaultSoundVolume;
+    if (!hasSavedValue) {
+        Preferences writePrefs;
+        writePrefs.begin(kMsxConfigNs, false);
+        writePrefs.putUChar(kMsxSoundVolumeKey, s_soundVolume);
+        writePrefs.end();
+    }
+
+    return s_soundVolume;
+}
+
+uint8_t msx_config_get_sound_volume(void)
+{
+    return s_soundVolume;
+}
+
+const char* msx_config_sound_volume_label(uint8_t volume)
+{
+    static char label[8];
+    std::snprintf(label, sizeof(label), "%u", static_cast<unsigned>(volume));
+    return label;
+}
+
+void msx_config_set_sound_volume(uint8_t volume, bool persist)
+{
+    s_soundVolume = volume;
+    if (!persist) {
+        return;
+    }
+
+    Preferences prefs;
+    prefs.begin(kMsxConfigNs, false);
+    prefs.putUChar(kMsxSoundVolumeKey, s_soundVolume);
+    prefs.end();
+}
+
+void msx_config_cycle_sound_volume(int delta, bool persist)
+{
+    int volume = static_cast<int>(s_soundVolume);
+    volume += delta >= 0 ? 8 : -8;
+    if (volume < 0) {
+        volume = 0;
+    } else if (volume > 255) {
+        volume = 255;
+    }
+    msx_config_set_sound_volume(static_cast<uint8_t>(volume), persist);
+}
+
+uint16_t msx_config_load_scc_gain_percent(void)
+{
+    Preferences prefs;
+    prefs.begin(kMsxConfigNs, true);
+    const bool hasSavedValue = prefs.isKey(kMsxSccGainKey);
+    const uint16_t savedValue = prefs.getUShort(kMsxSccGainKey, kMsxDefaultSccGainPercent);
+    prefs.end();
+
+    s_sccGainPercent = hasSavedValue
+                           ? msx_sanitize_scc_gain_percent(savedValue)
+                           : kMsxDefaultSccGainPercent;
+
+    if (!hasSavedValue || savedValue != s_sccGainPercent) {
+        Preferences writePrefs;
+        writePrefs.begin(kMsxConfigNs, false);
+        writePrefs.putUShort(kMsxSccGainKey, s_sccGainPercent);
+        writePrefs.end();
+    }
+
+    return s_sccGainPercent;
+}
+
+uint16_t msx_config_get_scc_gain_percent(void)
+{
+    return s_sccGainPercent;
+}
+
+const char* msx_config_scc_gain_label(uint16_t gainPercent)
+{
+    static char label[8];
+    std::snprintf(label,
+                  sizeof(label),
+                  "%u.%02ux",
+                  static_cast<unsigned>(gainPercent / 100u),
+                  static_cast<unsigned>(gainPercent % 100u));
+    return label;
+}
+
+void msx_config_set_scc_gain_percent(uint16_t gainPercent, bool persist)
+{
+    s_sccGainPercent = msx_sanitize_scc_gain_percent(gainPercent);
+    if (!persist) {
+        return;
+    }
+
+    Preferences prefs;
+    prefs.begin(kMsxConfigNs, false);
+    prefs.putUShort(kMsxSccGainKey, s_sccGainPercent);
+    prefs.end();
+}
+
+void msx_config_cycle_scc_gain_percent(int delta, bool persist)
+{
+    int gain = static_cast<int>(s_sccGainPercent);
+    gain += delta >= 0 ? 25 : -25;
+    if (gain < static_cast<int>(kMsxMinSccGainPercent)) {
+        gain = static_cast<int>(kMsxMinSccGainPercent);
+    } else if (gain > static_cast<int>(kMsxMaxSccGainPercent)) {
+        gain = static_cast<int>(kMsxMaxSccGainPercent);
+    }
+    msx_config_set_scc_gain_percent(static_cast<uint16_t>(gain), persist);
 }
 
 const char* msx_config_load_bios_path(void)

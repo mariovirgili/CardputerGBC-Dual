@@ -21,6 +21,7 @@
 #include "cardputer/VerticalSelector.h"
 #include "core/msx_core.h"
 #include "core/msx_disk.h"
+#include "core/msx_scc.h"
 #include "esp_timer.h"
 #include "last_game.h"
 #include "msx_config.h"
@@ -991,6 +992,43 @@ static void msx_apply_runtime_view_toggle(MsxCoreState* core, bool useExternal)
     }
 }
 
+static void msx_apply_runtime_sound_config(MsxCoreState* core,
+                                           MsxVirtualSccMode* activeVirtualSccMode,
+                                           uint8_t* activeSoundVolume,
+                                           uint16_t* activeSccGainPercent)
+{
+    if (!core || !activeVirtualSccMode || !activeSoundVolume || !activeSccGainPercent) {
+        return;
+    }
+
+    const MsxVirtualSccMode requestedMode = msx_config_get_virtual_scc_mode();
+    if (requestedMode != *activeVirtualSccMode) {
+        *activeVirtualSccMode = requestedMode;
+        msx_core_set_virtual_scc_mode(core, requestedMode);
+    }
+
+    const uint8_t requestedVolume = msx_config_get_sound_volume();
+    if (requestedVolume != *activeSoundVolume) {
+        *activeSoundVolume = requestedVolume;
+        msx_sound_set_volume(requestedVolume);
+    }
+
+    const uint16_t requestedSccGain = msx_config_get_scc_gain_percent();
+    if (requestedSccGain != *activeSccGainPercent) {
+        *activeSccGainPercent = requestedSccGain;
+        msx_scc_set_output_gain_percent(requestedSccGain);
+    }
+}
+
+static void msx_load_sound_config(void)
+{
+    msx_config_load_virtual_scc_mode();
+    msx_config_load_sound_volume();
+    msx_config_load_scc_gain_percent();
+    msx_sound_set_volume(msx_config_get_sound_volume());
+    msx_scc_set_output_gain_percent(msx_config_get_scc_gain_percent());
+}
+
 static bool msx_input_has_keyboard_press(const MsxInputState& input)
 {
     for (uint8_t row = 0; row < kMsxKeyboardRowCount; ++row) {
@@ -1326,6 +1364,7 @@ void run_msx(const uint8_t* romData, size_t romLen, const char* romName, SdServi
     msx_config_load_performance_mode();
     msx_config_load_fps_overlay_enabled();
     msx_config_load_frameskip_mode();
+    msx_load_sound_config();
     viewModeGuard.configureForTarget(useExternal);
     const MsxMachineMode configuredMode = msx_config_load_machine_mode();
     msx_config_load_bios_path();
@@ -1414,6 +1453,9 @@ void run_msx(const uint8_t* romData, size_t romLen, const char* romName, SdServi
     msx_runtime_reset_fps_overlay(&fpsOverlay, lastLogMs);
     msx_video_set_fps_overlay_value(0u);
     bool quitRequested = false;
+    MsxVirtualSccMode activeVirtualSccMode = msx_config_get_virtual_scc_mode();
+    uint8_t activeSoundVolume = msx_config_get_sound_volume();
+    uint16_t activeSccGainPercent = msx_config_get_scc_gain_percent();
 
     while (!quitRequested) {
         MsxInputState input = {};
@@ -1426,6 +1468,12 @@ void run_msx(const uint8_t* romData, size_t romLen, const char* romName, SdServi
         if (input.toggleViewRequested) {
             msx_apply_runtime_view_toggle(&core, useExternal);
         }
+        msx_apply_runtime_sound_config(
+            &core,
+            &activeVirtualSccMode,
+            &activeSoundVolume,
+            &activeSccGainPercent
+        );
 
         if (msx_input_get_save_requested()) {
             msx_handle_save_state(&core, romName, useExternal, sd);
@@ -1562,6 +1610,7 @@ void run_msx_disk(const uint8_t* dskData, size_t dskLen, const char* dskName, Sd
     msx_config_load_performance_mode();
     msx_config_load_fps_overlay_enabled();
     msx_config_load_frameskip_mode();
+    msx_load_sound_config();
     viewModeGuard.configureForTarget(useExternal);
     const MsxMachineMode configuredMode = msx_config_load_machine_mode();
     msx_config_load_bios_path();
@@ -1647,6 +1696,9 @@ void run_msx_disk(const uint8_t* dskData, size_t dskLen, const char* dskName, Sd
     MsxFpsOverlayWindow fpsOverlay = {};
     msx_runtime_reset_fps_overlay(&fpsOverlay, lastLogMs);
     msx_video_set_fps_overlay_value(0u);
+    MsxVirtualSccMode activeVirtualSccMode = msx_config_get_virtual_scc_mode();
+    uint8_t activeSoundVolume = msx_config_get_sound_volume();
+    uint16_t activeSccGainPercent = msx_config_get_scc_gain_percent();
 
     while (!quitRequested) {
         MsxInputState input = {};
@@ -1659,6 +1711,12 @@ void run_msx_disk(const uint8_t* dskData, size_t dskLen, const char* dskName, Sd
         if (input.toggleViewRequested) {
             msx_apply_runtime_view_toggle(&core, useExternal);
         }
+        msx_apply_runtime_sound_config(
+            &core,
+            &activeVirtualSccMode,
+            &activeSoundVolume,
+            &activeSccGainPercent
+        );
 
         if (msx_input_get_save_requested()) {
             msx_handle_save_state(&core, dskName, useExternal, sd);
@@ -1788,6 +1846,7 @@ void run_msx_basic(const char* name, SdService& sd)
     msx_config_load_performance_mode();
     msx_config_load_fps_overlay_enabled();
     msx_config_load_frameskip_mode();
+    msx_load_sound_config();
     viewModeGuard.configureForTarget(useExternal);
     const MsxMachineMode configuredMode = msx_config_load_machine_mode();
     msx_config_load_bios_path();
@@ -1858,6 +1917,9 @@ void run_msx_basic(const char* name, SdService& sd)
     MsxFpsOverlayWindow fpsOverlay = {};
     msx_runtime_reset_fps_overlay(&fpsOverlay, lastLogMs);
     msx_video_set_fps_overlay_value(0u);
+    MsxVirtualSccMode activeVirtualSccMode = msx_config_get_virtual_scc_mode();
+    uint8_t activeSoundVolume = msx_config_get_sound_volume();
+    uint16_t activeSccGainPercent = msx_config_get_scc_gain_percent();
 
     while (!quitRequested) {
         MsxInputState input = {};
@@ -1870,6 +1932,12 @@ void run_msx_basic(const char* name, SdService& sd)
         if (input.toggleViewRequested) {
             msx_apply_runtime_view_toggle(&core, useExternal);
         }
+        msx_apply_runtime_sound_config(
+            &core,
+            &activeVirtualSccMode,
+            &activeSoundVolume,
+            &activeSccGainPercent
+        );
 
         if (msx_input_get_save_requested()) {
             msx_handle_save_state(&core, name, useExternal, sd);
@@ -1999,6 +2067,7 @@ void run_msx_cas(const uint8_t* casData, size_t casLen, const char* casName, SdS
     msx_config_load_performance_mode();
     msx_config_load_fps_overlay_enabled();
     msx_config_load_frameskip_mode();
+    msx_load_sound_config();
     viewModeGuard.configureForTarget(useExternal);
     const MsxMachineMode configuredMode = msx_config_load_machine_mode();
     msx_config_load_bios_path();
@@ -2077,6 +2146,9 @@ void run_msx_cas(const uint8_t* casData, size_t casLen, const char* casName, SdS
     bool casBasicBootRefreshPending = true;
     msx_runtime_reset_fps_overlay(&fpsOverlay, lastLogMs);
     msx_video_set_fps_overlay_value(0u);
+    MsxVirtualSccMode activeVirtualSccMode = msx_config_get_virtual_scc_mode();
+    uint8_t activeSoundVolume = msx_config_get_sound_volume();
+    uint16_t activeSccGainPercent = msx_config_get_scc_gain_percent();
 
     while (!quitRequested) {
         MsxInputState input = {};
@@ -2089,6 +2161,12 @@ void run_msx_cas(const uint8_t* casData, size_t casLen, const char* casName, SdS
         if (input.toggleViewRequested) {
             msx_apply_runtime_view_toggle(&core, useExternal);
         }
+        msx_apply_runtime_sound_config(
+            &core,
+            &activeVirtualSccMode,
+            &activeSoundVolume,
+            &activeSccGainPercent
+        );
 
         if (msx_input_get_change_cas_requested()) {
             msx_sound_set_paused(true);
