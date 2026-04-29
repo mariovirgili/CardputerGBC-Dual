@@ -967,6 +967,8 @@ void msx_core_step_frame(MsxCoreState* state)
 #endif
     }
 
+    msx_cpu_flush_pending_psg(&state->memory);
+
     // Log the first time the CPU enters a non-running state, and every 60 frames while stuck.
     const MsxCpuRunState curRunState = state->cpu.runState;
 #if MSX_CORE_TRACE_ENABLED
@@ -1038,6 +1040,8 @@ size_t msx_core_drain_audio(MsxCoreState* state, int16_t* dst, size_t capacity)
     if (!state || !state->initialized || !state->audioHookReady) {
         return 0u;
     }
+
+    msx_cpu_flush_pending_psg(&state->memory);
 
     if (!dst || capacity == 0u) {
         const size_t available = msx_psg_available_samples(&state->psg);
@@ -1297,6 +1301,8 @@ bool msx_core_save_state(MsxCoreState* state, const char* path)
 {
     if (!state) return false;
 
+    msx_cpu_flush_pending_psg(&state->memory);
+
     std::printf("[MSX][STATE] Saving state to %s\n", path);
     File f = SD.open(path, FILE_WRITE);
     if (!f) {
@@ -1332,6 +1338,8 @@ bool msx_core_save_state(MsxCoreState* state, const char* path)
 bool msx_core_load_state(MsxCoreState* state, const char* path)
 {
     if (!state) return false;
+
+    msx_cpu_clear_pending_psg();
 
     std::printf("[MSX][STATE] Loading state from %s\n", path);
     File f = SD.open(path, FILE_READ);

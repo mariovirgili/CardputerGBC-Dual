@@ -48,4 +48,6 @@ void msx_cpu_init(MsxCpuState* state);
 void msx_cpu_reset(MsxCpuState* state, uint16_t resetPc, uint16_t resetSp);
 void msx_cpu_request_irq(MsxCpuState* state);
 int msx_cpu_run_cycles(MsxCpuState* state, MsxMemoryState* memory, int cycleBudget);
+void msx_cpu_flush_pending_psg(MsxMemoryState* memory);
+void msx_cpu_clear_pending_psg();
 const char* msx_cpu_run_state_label(MsxCpuRunState state);

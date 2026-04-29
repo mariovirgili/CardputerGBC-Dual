@@ -777,6 +777,7 @@ void msx_memory_reset(MsxMemoryState* state)
     msx_memory_clear_ram_banks(state);
     msx_cart_reset(&state->cart);
     msx_keyboard_reset(&state->keyboard);
+    msx_cpu_clear_pending_psg();
     if (state->psg) {
         msx_psg_reset(state->psg);
     }
@@ -1103,6 +1104,7 @@ void msx_memory_out(MsxMemoryState* state, uint8_t port, uint8_t value)
         case 0xA1:
             state->lastPortA1 = value;
             if (state->psg) {
+                msx_cpu_flush_pending_psg(state);
                 const uint8_t reg = static_cast<uint8_t>(state->psg->selectedReg & 0x0Fu);
                 const uint8_t previous = state->psg->regs[reg];
                 msx_psg_write_data(state->psg, value);

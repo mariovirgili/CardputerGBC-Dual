@@ -21,6 +21,8 @@ constexpr uint8_t kMsxPrimarySlotCartridge = 1u;
 constexpr uint8_t kMsxOpenBusFetchOpcodeRet = 0xC9u;
 constexpr uint8_t kMsxBootSlotCart = 0xD4u;
 constexpr uint8_t kMsxBootSecondaryCart = 0xA0u;
+constexpr uint32_t kPsgBatchCycles = 512u;
+static uint32_t s_pendingPsgCycles = 0u;
 
 #if defined(__GNUC__)
 #define MSX_CPU_FORCE_INLINE inline __attribute__((always_inline))
@@ -109,6 +111,31 @@ inline uint8_t msx_flags_szpxy(uint8_t value)
 inline int8_t msx_signed_offset(uint8_t value)
 {
     return static_cast<int8_t>(value);
+}
+
+inline void IRAM_ATTR msx_cpu_flush_pending_psg_impl(MsxMemoryState* memory)
+{
+    if (s_pendingPsgCycles == 0u) {
+        return;
+    }
+
+    const uint32_t cycles = s_pendingPsgCycles;
+    s_pendingPsgCycles = 0u;
+    if (memory && memory->psg) {
+        msx_psg_run_cycles(memory->psg, cycles);
+    }
+}
+
+inline void IRAM_ATTR msx_cpu_accumulate_psg_cycles(MsxMemoryState* memory, uint32_t cycles)
+{
+    if (cycles == 0u) {
+        return;
+    }
+
+    s_pendingPsgCycles += cycles;
+    if (s_pendingPsgCycles >= kPsgBatchCycles) {
+        msx_cpu_flush_pending_psg_impl(memory);
+    }
 }
 
 #if MSX_CPU_TRACE_ENABLED
@@ -2321,6 +2348,7 @@ void msx_cpu_init(MsxCpuState* state)
         return;
     }
 
+    msx_cpu_clear_pending_psg();
     std::memset(state, 0, sizeof(*state));
     state->ix = 0xFFFFu;
     state->iy = 0xFFFFu;
@@ -2334,6 +2362,7 @@ void msx_cpu_reset(MsxCpuState* state, uint16_t resetPc, uint16_t resetSp)
         return;
     }
 
+    msx_cpu_clear_pending_psg();
     std::memset(state, 0, sizeof(*state));
     state->pc = resetPc;
     state->sp = resetSp;
@@ -2367,6 +2396,16 @@ void msx_cpu_request_irq(MsxCpuState* state)
     state->irqPending = true;
 }
 
+void IRAM_ATTR msx_cpu_flush_pending_psg(MsxMemoryState* memory)
+{
+    msx_cpu_flush_pending_psg_impl(memory);
+}
+
+void msx_cpu_clear_pending_psg()
+{
+    s_pendingPsgCycles = 0u;
+}
+
 int msx_cpu_run_cycles(MsxCpuState* state, MsxMemoryState* memory, int cycleBudget)
 {
     if (!state || !memory || cycleBudget <= 0) {
@@ -2377,25 +2416,14 @@ int msx_cpu_run_cycles(MsxCpuState* state, MsxMemoryState* memory, int cycleBudg
         return 0;
     }
 
-    constexpr uint32_t kPsgBatchCycles = 512u;
     int usedCycles = 0;
-    uint32_t pendingPsgCycles = 0u;
-    auto flushPsg = [&]() {
-        if (memory->psg && pendingPsgCycles != 0u) {
-            msx_psg_run_cycles(memory->psg, pendingPsgCycles);
-            pendingPsgCycles = 0u;
-        }
-    };
     while (usedCycles < cycleBudget) {
         if (state->irqPending && state->iff1) {
             const int irqCycles = msx_cpu_service_irq(state, memory);
             usedCycles += irqCycles;
             state->totalCycles += static_cast<uint32_t>(irqCycles);
             if (irqCycles > 0) {
-                pendingPsgCycles += static_cast<uint32_t>(irqCycles);
-                if (pendingPsgCycles >= kPsgBatchCycles) {
-                    flushPsg();
-                }
+                msx_cpu_accumulate_psg_cycles(memory, static_cast<uint32_t>(irqCycles));
             }
             continue;
         }
@@ -2406,7 +2434,7 @@ int msx_cpu_run_cycles(MsxCpuState* state, MsxMemoryState* memory, int cycleBudg
             usedCycles += burn;
             state->totalCycles += static_cast<uint32_t>(burn);
             if (burn > 0) {
-                pendingPsgCycles += static_cast<uint32_t>(burn);
+                msx_cpu_accumulate_psg_cycles(memory, static_cast<uint32_t>(burn));
             }
             break;
         }
@@ -2428,13 +2456,9 @@ int msx_cpu_run_cycles(MsxCpuState* state, MsxMemoryState* memory, int cycleBudg
 
         usedCycles += stepCycles;
         state->totalCycles += static_cast<uint32_t>(stepCycles);
-        pendingPsgCycles += static_cast<uint32_t>(stepCycles);
-        if (pendingPsgCycles >= kPsgBatchCycles) {
-            flushPsg();
-        }
+        msx_cpu_accumulate_psg_cycles(memory, static_cast<uint32_t>(stepCycles));
     }
 
-    flushPsg();
     return usedCycles;
 }
 
