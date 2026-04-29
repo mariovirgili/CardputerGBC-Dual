@@ -21,6 +21,10 @@ namespace {
 
 constexpr uint32_t kMsxCpuClockHz = 3579545u;
 constexpr size_t kMsxSccRingSamplesDefault = 1024u;
+constexpr uint8_t kMsxSccWaveBaseByMode[2][5] = {
+    {0u, 32u, 64u, 96u, 96u},
+    {0u, 32u, 64u, 96u, 128u},
+};
 static int16_t* s_sccRing = nullptr;
 static size_t s_sccRingSamples = 0u;
 static uint16_t s_sccRingMask = static_cast<uint16_t>(kMsxSccRingSamplesDefault - 1u);
@@ -66,6 +70,24 @@ bool msx_scc_ensure_ring()
     return s_sccRing != nullptr;
 }
 
+uint32_t msx_scc_compute_step_scale(uint32_t cpuClockHz, uint32_t sampleRate)
+{
+    if (sampleRate == 0u) {
+        return 0u;
+    }
+
+    const uint64_t scale = (static_cast<uint64_t>(cpuClockHz) << 16) / sampleRate;
+    return scale > 0xFFFFFFFFull ? 0xFFFFFFFFu : static_cast<uint32_t>(scale);
+}
+
+void msx_scc_update_step_scale(MsxSccState* state)
+{
+    if (!state) {
+        return;
+    }
+    state->stepScale = msx_scc_compute_step_scale(state->cpuClockHz, state->sampleRate);
+}
+
 void msx_scc_update_step(MsxSccState* state, uint8_t channel)
 {
     if (!state || channel >= 5u || state->sampleRate == 0u) {
@@ -81,16 +103,11 @@ void msx_scc_update_step(MsxSccState* state, uint8_t channel)
         return;
     }
 
-    const uint32_t effectivePeriod = freqReg < 16u ? 16u : freqReg;
-    const uint64_t numerator = static_cast<uint64_t>(state->cpuClockHz) << 17;
-    const uint64_t denominator =
-        static_cast<uint64_t>(state->sampleRate) *
-        static_cast<uint64_t>(effectivePeriod);
-    uint64_t step = denominator != 0u ? (numerator / denominator) : 0u;
-    if (step > 0xFFFFFFFFull) {
-        step = 0xFFFFFFFFull;
+    const uint32_t effectivePeriod = freqReg + 1u;
+    if (state->stepScale == 0u) {
+        msx_scc_update_step_scale(state);
     }
-    state->step[channel] = static_cast<uint32_t>(step);
+    state->step[channel] = state->stepScale / effectivePeriod;
 }
 
 void msx_scc_log_window_change(bool classicWindow,
@@ -229,6 +246,7 @@ int16_t msx_scc_render_sample(MsxSccState* state)
     }
 
     int32_t mix = 0;
+    const uint8_t* waveBaseByChannel = kMsxSccWaveBaseByMode[state->sccPlusMode ? 1u : 0u];
     for (uint8_t ch = 0u; ch < 5u; ++ch) {
         if ((enableMask & (1u << ch)) == 0u || state->step[ch] == 0u) {
             continue;
@@ -241,14 +259,16 @@ int16_t msx_scc_render_sample(MsxSccState* state)
 
         state->phase[ch] += state->step[ch];
         const uint8_t waveIndex = static_cast<uint8_t>((state->phase[ch] >> 16) & 0x1Fu);
-        const uint8_t waveChannel =
-            state->sccPlusMode ? ch : static_cast<uint8_t>((ch >= 4u) ? 3u : ch);
-        const uint8_t waveBase = static_cast<uint8_t>(waveChannel * 32u);
-        const int8_t waveSample = static_cast<int8_t>(state->regs[waveBase + waveIndex]);
+        const int8_t waveSample = static_cast<int8_t>(state->regs[waveBaseByChannel[ch] + waveIndex]);
         mix += static_cast<int32_t>(waveSample) * static_cast<int32_t>(volume);
     }
 
     mix = (mix * static_cast<int32_t>(s_sccOutputGainPercent)) / 100;
+    const int32_t dcFiltered = mix - state->dcFilterX + ((state->dcFilterY * 8110) >> 13);
+    state->dcFilterX = mix;
+    state->dcFilterY = dcFiltered;
+    mix = dcFiltered;
+
     if (mix > 32767) {
         mix = 32767;
     } else if (mix < -32768) {
@@ -290,6 +310,7 @@ void msx_scc_reset(MsxSccState* state)
     std::memset(state, 0, sizeof(*state));
     state->sampleRate = sampleRate;
     state->cpuClockHz = cpuClockHz;
+    msx_scc_update_step_scale(state);
     state->ring = s_sccRing;
     if (!state->ring) {
         state->ready = false;
@@ -387,6 +408,9 @@ void msx_scc_recompute_steps(MsxSccState* state)
     if (!state) {
         return;
     }
+    state->dcFilterX = 0;
+    state->dcFilterY = 0;
+    msx_scc_update_step_scale(state);
     for (uint8_t ch = 0u; ch < 5u; ++ch) {
         msx_scc_update_step(state, ch);
     }
@@ -493,7 +517,7 @@ void msx_scc_run_cycles(MsxSccState* state, uint32_t cpuCycles)
         return;
     }
 
-    state->sampleAccumulator += static_cast<uint64_t>(cpuCycles) * static_cast<uint64_t>(state->sampleRate);
+    state->sampleAccumulator += static_cast<uint64_t>(cpuCycles) * state->sampleRate;
     while (state->sampleAccumulator >= state->cpuClockHz) {
         state->sampleAccumulator -= state->cpuClockHz;
         msx_scc_push_sample(state, msx_scc_render_sample(state));

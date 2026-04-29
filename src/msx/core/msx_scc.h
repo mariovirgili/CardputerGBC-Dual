@@ -9,7 +9,10 @@ struct MsxSccState {
     uint32_t step[5];
     uint32_t sampleRate;
     uint32_t cpuClockHz;
+    uint32_t stepScale;
     uint64_t sampleAccumulator;
+    int32_t dcFilterX;
+    int32_t dcFilterY;
     uint16_t ringReadIndex;
     uint16_t ringWriteIndex;
     uint16_t ringCount;
