@@ -864,7 +864,7 @@ MSX_CPU_FORCE_INLINE uint16_t* IRAM_ATTR msx_cpu_stack_reg16_ptr(MsxCpuState* st
 uint16_t IRAM_ATTR msx_cpu_fetch16(MsxCpuState* state, const MsxMemoryState* memory);
 
 // Forward declaration: msx_cpu_step_xy's default case re-dispatches here
-int msx_cpu_step_opcode(MsxCpuState* state, MsxMemoryState* memory);
+int IRAM_ATTR msx_cpu_step_opcode(MsxCpuState* state, MsxMemoryState* memory);
 
 uint8_t IRAM_ATTR msx_cpu_fetch8(MsxCpuState* state, const MsxMemoryState* memory)
 {
@@ -1596,7 +1596,7 @@ int msx_cpu_step_xy(MsxCpuState* state, MsxMemoryState* memory, uint16_t* xy)
     }
 }
 
-int msx_cpu_step_cb(MsxCpuState* state, MsxMemoryState* memory)
+int IRAM_ATTR msx_cpu_step_cb(MsxCpuState* state, MsxMemoryState* memory)
 {
     const uint8_t opcode = msx_cpu_fetch8(state, memory);
     const uint8_t group = static_cast<uint8_t>(opcode >> 6);
@@ -1712,7 +1712,7 @@ void msx_cpu_block_ini(MsxCpuState* state, MsxMemoryState* memory, int direction
     msx_cpu_set_f(state, flags);
 }
 
-int msx_cpu_step_ed(MsxCpuState* state, MsxMemoryState* memory)
+int IRAM_ATTR msx_cpu_step_ed(MsxCpuState* state, MsxMemoryState* memory)
 {
     const uint8_t opcode = msx_cpu_fetch8(state, memory);
     const uint8_t regPair = static_cast<uint8_t>((opcode >> 4) & 0x03u);
@@ -1955,9 +1955,9 @@ int msx_cpu_step_ed(MsxCpuState* state, MsxMemoryState* memory)
     }
 }
 
-int msx_cpu_step_opcode(MsxCpuState* state, MsxMemoryState* memory)
+int IRAM_ATTR msx_cpu_step_opcode(MsxCpuState* state, MsxMemoryState* memory)
 {
-    if (!state || !memory) {
+    if (MSX_CPU_UNLIKELY(!state || !memory)) {
         return 0;
     }
 
