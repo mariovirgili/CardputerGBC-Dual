@@ -35,6 +35,7 @@ void msx_scc_set_windows(MsxSccState* state, bool classicWindow, bool plusWindow
 void msx_scc_set_output_enabled(MsxSccState* state, bool enabled);
 void msx_scc_set_output_gain_percent(uint16_t gainPercent);
 uint16_t msx_scc_get_output_gain_percent(void);
+void msx_scc_recompute_steps(MsxSccState* state);
 void msx_scc_write(MsxSccState* state, uint8_t reg, uint8_t value);
 void msx_scc_write_plus(MsxSccState* state, uint8_t reg, uint8_t value);
 uint8_t msx_scc_read(const MsxSccState* state, uint8_t reg);

@@ -92,6 +92,13 @@ void msx_memory_attach_psg(MsxMemoryState* state, MsxPsgState* psg);
 void msx_memory_attach_scc(MsxMemoryState* state, MsxSccState* scc);
 MsxSccState* msx_memory_get_scc(MsxMemoryState* state);
 void msx_memory_set_virtual_scc_mode(MsxMemoryState* state, MsxVirtualSccMode mode);
+void msx_memory_get_scc_window_state(bool* realClassicWindow,
+                                     bool* realPlusWindow,
+                                     MsxVirtualSccMode* virtualMode);
+void msx_memory_restore_scc_window_state(MsxMemoryState* state,
+                                         bool realClassicWindow,
+                                         bool realPlusWindow,
+                                         MsxVirtualSccMode virtualMode);
 void msx_memory_set_keyboard_matrix(MsxMemoryState* state, const MsxKeyboardMatrix* matrix);
 void msx_memory_shutdown(MsxMemoryState* state);
 void msx_memory_reset(MsxMemoryState* state);

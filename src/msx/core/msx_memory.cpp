@@ -987,6 +987,33 @@ void msx_memory_set_virtual_scc_mode(MsxMemoryState* state, MsxVirtualSccMode mo
     }
 }
 
+void msx_memory_get_scc_window_state(bool* realClassicWindow,
+                                     bool* realPlusWindow,
+                                     MsxVirtualSccMode* virtualMode)
+{
+    if (realClassicWindow) {
+        *realClassicWindow = s_sccRealClassicWindow;
+    }
+    if (realPlusWindow) {
+        *realPlusWindow = s_sccRealPlusWindow;
+    }
+    if (virtualMode) {
+        *virtualMode = s_virtualSccMode;
+    }
+}
+
+void msx_memory_restore_scc_window_state(MsxMemoryState* state,
+                                         bool realClassicWindow,
+                                         bool realPlusWindow,
+                                         MsxVirtualSccMode virtualMode)
+{
+    (void)state;
+    s_sccRealClassicWindow = realClassicWindow;
+    s_sccRealPlusWindow = realPlusWindow;
+    s_virtualSccMode = virtualMode;
+    msx_memory_apply_scc_windows();
+}
+
 void msx_memory_set_keyboard_matrix(MsxMemoryState* state, const MsxKeyboardMatrix* matrix)
 {
     if (!state || !state->ready || !matrix) {

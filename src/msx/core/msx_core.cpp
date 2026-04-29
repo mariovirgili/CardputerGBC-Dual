@@ -94,6 +94,39 @@ constexpr uint16_t kMsxAddrExptbl = 0xFCC1u;
 constexpr uint16_t kMsxAddrSlttbl = 0xFCC5u;
 constexpr uint16_t kMsxAddrSltatr = 0xFCCCu;  // slot attribute table (60 bytes)
 constexpr uint16_t kMsxAddrSltwrk = 0xFD09u;  // slot work area (128 bytes)
+constexpr uint32_t kMsxSaveChunkScc = 0x53434353u; // "SCCS"
+constexpr uint16_t kMsxSaveSccVersion = 1u;
+
+struct MsxSaveChunkHeader {
+    uint32_t magic;
+    uint16_t version;
+    uint16_t reserved;
+    uint32_t size;
+};
+
+struct MsxSccSavePayloadV1 {
+    uint8_t regs[256];
+    uint32_t phase[5];
+    uint32_t step[5];
+    uint32_t sampleRate;
+    uint32_t cpuClockHz;
+    uint64_t sampleAccumulator;
+    uint32_t generatedSamples;
+    uint32_t droppedSamples;
+    uint32_t audibleSamples;
+    uint32_t lastAudibleLogSample;
+    uint16_t audiblePeak;
+    uint8_t audibleLogCount;
+    uint8_t classicWindow;
+    uint8_t plusWindow;
+    uint8_t sccPlusMode;
+    uint8_t enabled;
+    uint8_t outputEnabled;
+    uint8_t ready;
+    uint8_t realClassicWindow;
+    uint8_t realPlusWindow;
+    uint8_t reserved[5];
+};
 
 #if MSX_PROFILE_LOG_ENABLED
 struct MsxProfileWindow {
@@ -1391,6 +1424,146 @@ bool msx_core_change_dsk(MsxCoreState* state,
     return state->disk.ready;
 }
 
+static void msx_core_fill_scc_save_payload(const MsxCoreState* state, MsxSccSavePayloadV1* payload)
+{
+    if (!state || !payload) {
+        return;
+    }
+
+    std::memset(payload, 0, sizeof(*payload));
+    std::memcpy(payload->regs, state->scc.regs, sizeof(payload->regs));
+    std::memcpy(payload->phase, state->scc.phase, sizeof(payload->phase));
+    std::memcpy(payload->step, state->scc.step, sizeof(payload->step));
+    payload->sampleRate = state->scc.sampleRate;
+    payload->cpuClockHz = state->scc.cpuClockHz;
+    payload->sampleAccumulator = state->scc.sampleAccumulator;
+    payload->generatedSamples = state->scc.generatedSamples;
+    payload->droppedSamples = state->scc.droppedSamples;
+    payload->audibleSamples = state->scc.audibleSamples;
+    payload->lastAudibleLogSample = state->scc.lastAudibleLogSample;
+    payload->audiblePeak = state->scc.audiblePeak;
+    payload->audibleLogCount = state->scc.audibleLogCount;
+    payload->classicWindow = state->scc.classicWindow ? 1u : 0u;
+    payload->plusWindow = state->scc.plusWindow ? 1u : 0u;
+    payload->sccPlusMode = state->scc.sccPlusMode ? 1u : 0u;
+    payload->enabled = state->scc.enabled ? 1u : 0u;
+    payload->outputEnabled = state->scc.outputEnabled ? 1u : 0u;
+    payload->ready = state->scc.ready ? 1u : 0u;
+    bool realClassic = false;
+    bool realPlus = false;
+    msx_memory_get_scc_window_state(&realClassic, &realPlus, nullptr);
+    payload->realClassicWindow = realClassic ? 1u : 0u;
+    payload->realPlusWindow = realPlus ? 1u : 0u;
+}
+
+static bool msx_core_write_scc_save_chunk(File& f, const MsxCoreState* state)
+{
+    MsxSccSavePayloadV1 payload = {};
+    msx_core_fill_scc_save_payload(state, &payload);
+    const MsxSaveChunkHeader header = {
+        kMsxSaveChunkScc,
+        kMsxSaveSccVersion,
+        0u,
+        static_cast<uint32_t>(sizeof(payload))
+    };
+    return f.write(reinterpret_cast<const uint8_t*>(&header), sizeof(header)) == sizeof(header) &&
+           f.write(reinterpret_cast<const uint8_t*>(&payload), sizeof(payload)) == sizeof(payload);
+}
+
+static bool msx_core_read_scc_save_chunk(File& f, MsxSccSavePayloadV1* payload, bool* found)
+{
+    if (!payload || !found) {
+        return false;
+    }
+
+    *found = false;
+    while (f.available() >= static_cast<int>(sizeof(MsxSaveChunkHeader))) {
+        MsxSaveChunkHeader header = {};
+        if (f.read(reinterpret_cast<uint8_t*>(&header), sizeof(header)) != sizeof(header)) {
+            return false;
+        }
+        if (header.size == 0u || header.size > static_cast<uint32_t>(f.available())) {
+            return false;
+        }
+
+        if (header.magic == kMsxSaveChunkScc &&
+            header.version == kMsxSaveSccVersion &&
+            header.size >= sizeof(MsxSccSavePayloadV1)) {
+            if (f.read(reinterpret_cast<uint8_t*>(payload), sizeof(*payload)) != sizeof(*payload)) {
+                return false;
+            }
+            const uint32_t extra = header.size - static_cast<uint32_t>(sizeof(*payload));
+            if (extra != 0u) {
+                f.seek(f.position() + extra);
+            }
+            *found = true;
+            return true;
+        }
+
+        f.seek(f.position() + header.size);
+    }
+    return true;
+}
+
+static void msx_core_apply_scc_save_payload(MsxCoreState* state, const MsxSccSavePayloadV1& payload)
+{
+    if (!state) {
+        return;
+    }
+
+    if (payload.ready == 0u) {
+        if (state->scc.ready) {
+            msx_scc_reset(&state->scc);
+        }
+        msx_memory_restore_scc_window_state(&state->memory,
+                                            payload.realClassicWindow != 0u,
+                                            payload.realPlusWindow != 0u,
+                                            msx_config_get_virtual_scc_mode());
+        return;
+    }
+
+    if (!state->scc.ready) {
+        const uint32_t sampleRate = state->audioSampleRate != 0u
+                                        ? state->audioSampleRate
+                                        : payload.sampleRate;
+        if (!msx_scc_init(&state->scc, sampleRate)) {
+            std::printf("[MSX][STATE] SCC chunk ignored: init failed\n");
+            return;
+        }
+    }
+
+    int16_t* ringPtr = state->scc.ring;
+    std::memcpy(state->scc.regs, payload.regs, sizeof(state->scc.regs));
+    std::memcpy(state->scc.phase, payload.phase, sizeof(state->scc.phase));
+    std::memcpy(state->scc.step, payload.step, sizeof(state->scc.step));
+    state->scc.sampleRate = state->audioSampleRate != 0u ? state->audioSampleRate : payload.sampleRate;
+    state->scc.cpuClockHz = payload.cpuClockHz != 0u ? payload.cpuClockHz : state->scc.cpuClockHz;
+    state->scc.sampleAccumulator = payload.sampleAccumulator;
+    state->scc.ringReadIndex = 0u;
+    state->scc.ringWriteIndex = 0u;
+    state->scc.ringCount = 0u;
+    state->scc.generatedSamples = payload.generatedSamples;
+    state->scc.droppedSamples = payload.droppedSamples;
+    state->scc.audibleSamples = payload.audibleSamples;
+    state->scc.lastAudibleLogSample = payload.lastAudibleLogSample;
+    state->scc.audiblePeak = payload.audiblePeak;
+    state->scc.audibleLogCount = payload.audibleLogCount;
+    state->scc.ring = ringPtr;
+    state->scc.classicWindow = payload.classicWindow != 0u;
+    state->scc.plusWindow = payload.plusWindow != 0u;
+    state->scc.sccPlusMode = payload.sccPlusMode != 0u;
+    state->scc.enabled = payload.enabled != 0u;
+    state->scc.outputEnabled = payload.outputEnabled != 0u;
+    state->scc.ready = true;
+
+    msx_scc_recompute_steps(&state->scc);
+    msx_memory_attach_scc(&state->memory, &state->scc);
+    msx_memory_restore_scc_window_state(&state->memory,
+                                        payload.realClassicWindow != 0u,
+                                        payload.realPlusWindow != 0u,
+                                        msx_config_get_virtual_scc_mode());
+}
+
 bool msx_core_save_state(MsxCoreState* state, const char* path)
 {
     if (!state) return false;
@@ -1422,6 +1595,12 @@ bool msx_core_save_state(MsxCoreState* state, const char* path)
         if (state->memory.ramBanks[i]) {
             f.write(state->memory.ramBanks[i], 8192);
         }
+    }
+
+    if (!msx_core_write_scc_save_chunk(f, state)) {
+        std::printf("[MSX][STATE] Error: could not write SCC chunk\n");
+        f.close();
+        return false;
     }
 
     f.close();
@@ -1502,7 +1681,23 @@ bool msx_core_load_state(MsxCoreState* state, const char* path)
         }
     }
 
+    MsxSccSavePayloadV1 sccPayload = {};
+    bool sccChunkFound = false;
+    if (!msx_core_read_scc_save_chunk(f, &sccPayload, &sccChunkFound)) {
+        std::printf("[MSX][STATE] Warning: SCC chunk read failed\n");
+    }
+
     f.close();
+
+    if (sccChunkFound) {
+        msx_core_apply_scc_save_payload(state, sccPayload);
+    } else if (state->scc.ready) {
+        msx_scc_reset(&state->scc);
+        msx_memory_restore_scc_window_state(&state->memory,
+                                            false,
+                                            false,
+                                            msx_config_get_virtual_scc_mode());
+    }
 
     state->vdp.dirty = true;
     msx_memory_refresh_maps(&state->memory);

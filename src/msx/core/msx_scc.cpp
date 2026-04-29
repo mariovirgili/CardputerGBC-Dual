@@ -382,6 +382,16 @@ uint16_t msx_scc_get_output_gain_percent(void)
     return s_sccOutputGainPercent;
 }
 
+void msx_scc_recompute_steps(MsxSccState* state)
+{
+    if (!state) {
+        return;
+    }
+    for (uint8_t ch = 0u; ch < 5u; ++ch) {
+        msx_scc_update_step(state, ch);
+    }
+}
+
 void msx_scc_write(MsxSccState* state, uint8_t reg, uint8_t value)
 {
     if (!state || !state->ready) {
