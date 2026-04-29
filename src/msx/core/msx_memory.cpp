@@ -11,10 +11,15 @@
 #include "msx_cpu.h"
 #include "msx_disk.h"
 #include "msx_psg.h"
+#include "msx_scc.h"
 #include "msx_vdp.h"
 
 #ifndef MSX_MEMORY_TRACE_ENABLED
 #define MSX_MEMORY_TRACE_ENABLED 0
+#endif
+
+#ifndef MSX_SCC_LOG_ENABLED
+#define MSX_SCC_LOG_ENABLED 0
 #endif
 
 namespace {
@@ -28,6 +33,7 @@ constexpr uint8_t kMsxMaxRamBanks = static_cast<uint8_t>(kMsxRamSizeMsx2 / kMsxP
 constexpr uint8_t kMsxDefaultSlotRegister = 0x00;  // all pages → slot0 (BIOS); BIOS probe sets final value
 static uint8_t s_openBusPage[kMsxPageSize8K];
 static bool s_openBusInitialized = false;
+static MsxSccState* s_attachedScc = nullptr;
 
 constexpr uint8_t kMsxNoramByte = 0xFFu;
 constexpr uint16_t kMsxAddrSlttbl = 0xFCC5u;
@@ -750,6 +756,101 @@ void msx_memory_attach_psg(MsxMemoryState* state, MsxPsgState* psg)
     state->psg = psg;
 }
 
+void msx_memory_log_scc_bank_write(uint8_t window,
+                                   uint8_t rawValue,
+                                   uint8_t normalizedValue,
+                                   bool classicWindow,
+                                   bool plusWindow)
+{
+#if MSX_SCC_LOG_ENABLED
+    std::printf("[MSX][SCC] bank window=%u raw=%02X mapped=%02X classic=%u plus=%u\n",
+                static_cast<unsigned>(window),
+                static_cast<unsigned>(rawValue),
+                static_cast<unsigned>(normalizedValue),
+                classicWindow ? 1u : 0u,
+                plusWindow ? 1u : 0u);
+#else
+    (void)window;
+    (void)rawValue;
+    (void)normalizedValue;
+    (void)classicWindow;
+    (void)plusWindow;
+#endif
+}
+
+bool msx_memory_is_scc_trace_address(uint16_t address)
+{
+    return (address >= 0x5000u && address < 0x5800u) ||
+           (address >= 0x7000u && address < 0x7800u) ||
+           (address >= 0x9000u && address < 0xA000u) ||
+           (address >= 0xB000u && address < 0xC000u);
+}
+
+void msx_memory_log_scc_write_route(const MsxMemoryState* state,
+                                    uint16_t address,
+                                    uint8_t value,
+                                    uint8_t page,
+                                    uint8_t slot,
+                                    bool writeMapHit)
+{
+#if MSX_SCC_LOG_ENABLED
+    static uint16_t s_sccCartRouteLogCount = 0u;
+    static uint16_t s_sccIgnoredRouteLogCount = 0u;
+    const bool cartRoute = (slot == kMsxPrimarySlotCartridge) && !writeMapHit;
+    if (cartRoute) {
+        if (s_sccCartRouteLogCount >= 192u) {
+            return;
+        }
+    } else {
+        if (s_sccIgnoredRouteLogCount >= 12u) {
+            return;
+        }
+    }
+
+    const uint16_t logIndex = cartRoute ? s_sccCartRouteLogCount : s_sccIgnoredRouteLogCount;
+    const MsxSccState* const scc = s_attachedScc;
+    std::printf("[MSX][SCC] %s WR %04X <- %02X page=%u slot=%u A8=%02X writeMap=%u classic=%u plus=%u banks=%02X/%02X/%02X/%02X #%u\n",
+                cartRoute ? "cart-route" : "ignored-route",
+                static_cast<unsigned>(address),
+                static_cast<unsigned>(value),
+                static_cast<unsigned>(page),
+                static_cast<unsigned>(slot),
+                static_cast<unsigned>(state ? state->slotRegister : 0xFFu),
+                writeMapHit ? 1u : 0u,
+                (scc && scc->classicWindow) ? 1u : 0u,
+                (scc && scc->plusWindow) ? 1u : 0u,
+                state ? static_cast<unsigned>(state->cart.windowBanks[0]) : 0xFFu,
+                state ? static_cast<unsigned>(state->cart.windowBanks[1]) : 0xFFu,
+                state ? static_cast<unsigned>(state->cart.windowBanks[2]) : 0xFFu,
+                state ? static_cast<unsigned>(state->cart.windowBanks[3]) : 0xFFu,
+                static_cast<unsigned>(logIndex));
+    if (cartRoute) {
+        ++s_sccCartRouteLogCount;
+    } else {
+        ++s_sccIgnoredRouteLogCount;
+    }
+#else
+    (void)state;
+    (void)address;
+    (void)value;
+    (void)page;
+    (void)slot;
+    (void)writeMapHit;
+#endif
+}
+
+void msx_memory_attach_scc(MsxMemoryState* state, MsxSccState* scc)
+{
+    (void)state;
+    s_attachedScc = scc;
+}
+
+MsxSccState* msx_memory_get_scc(MsxMemoryState* state)
+{
+    (void)state;
+    return s_attachedScc;
+}
+
 void msx_memory_set_keyboard_matrix(MsxMemoryState* state, const MsxKeyboardMatrix* matrix)
 {
     if (!state || !state->ready || !matrix) {
@@ -766,6 +867,7 @@ void msx_memory_shutdown(MsxMemoryState* state)
     }
 
     msx_memory_release_ram_banks(state);
+    s_attachedScc = nullptr;
     std::memset(state, 0, sizeof(*state));
 }
 
@@ -781,6 +883,9 @@ void msx_memory_reset(MsxMemoryState* state)
     msx_cpu_clear_pending_psg();
     if (state->psg) {
         msx_psg_reset(state->psg);
+    }
+    if (s_attachedScc) {
+        msx_scc_reset(s_attachedScc);
     }
 
     state->slotRegister = kMsxDefaultSlotRegister;
@@ -885,6 +990,24 @@ uint8_t IRAM_ATTR msx_memory_read8(const MsxMemoryState* state, uint16_t address
         return msx_memory_raw_page3_read8(state, address);
     }
 
+    if (s_attachedScc &&
+        s_attachedScc->ready &&
+        state->cart.type == MsxCartridgeType::KonamiScc) {
+        const uint8_t readSlot = msx_slot_for_page(state->slotRegister, static_cast<uint8_t>(address >> 14));
+        if (readSlot == kMsxPrimarySlotCartridge) {
+            if (address >= 0x9800u &&
+                address < 0x9880u &&
+                s_attachedScc->classicWindow) {
+                return msx_scc_read(s_attachedScc, static_cast<uint8_t>(address & 0xFFu));
+            }
+            if (address >= 0xB800u &&
+                address < 0xB8A0u &&
+                s_attachedScc->plusWindow) {
+                return msx_scc_read_plus(s_attachedScc, static_cast<uint8_t>(address & 0xFFu));
+            }
+        }
+    }
+
     return state->readMap[bank][offset];
 }
 
@@ -931,13 +1054,73 @@ void msx_memory_write8(MsxMemoryState* state, uint16_t address, uint8_t value)
     const uint8_t page = static_cast<uint8_t>(address >> 14);
     const uint8_t slot = msx_slot_for_page(state->slotRegister, page);
     const uint16_t offset = static_cast<uint16_t>(address & 0x1FFFu);
+    const bool writeMapHit = state->writeMap[bank] != nullptr;
 
-    if (state->writeMap[bank]) {
+#if MSX_SCC_LOG_ENABLED
+    if (state->cart.type == MsxCartridgeType::KonamiScc &&
+        msx_memory_is_scc_trace_address(address)) {
+        msx_memory_log_scc_write_route(state, address, value, page, slot, writeMapHit);
+    }
+#else
+    (void)msx_memory_is_scc_trace_address;
+    (void)msx_memory_log_scc_write_route;
+#endif
+
+    if (writeMapHit) {
         state->writeMap[bank][offset] = value;
         return;
     }
 
     if (slot == kMsxPrimarySlotCartridge) {
+        if (s_attachedScc &&
+            s_attachedScc->ready &&
+            state->cart.type == MsxCartridgeType::KonamiScc) {
+            if (address == 0xBFFEu) {
+                msx_cpu_flush_pending_psg(state);
+                msx_scc_set_windows(s_attachedScc,
+                                    s_attachedScc->classicWindow,
+                                    (value & 0x20u) != 0u);
+                return;
+            }
+
+            if (address >= 0x9800u &&
+                address < 0xA000u &&
+                s_attachedScc->classicWindow) {
+                msx_cpu_flush_pending_psg(state);
+                msx_scc_write(s_attachedScc, static_cast<uint8_t>(address & 0xFFu), value);
+                return;
+            }
+
+            if (address >= 0xB800u &&
+                address < 0xC000u &&
+                s_attachedScc->plusWindow) {
+                msx_cpu_flush_pending_psg(state);
+                msx_scc_write_plus(s_attachedScc, static_cast<uint8_t>(address & 0xFFu), value);
+                return;
+            }
+
+            const bool bank2Write = address >= 0x9000u && address < 0x9800u;
+            const bool bank3Write = address >= 0xB000u && address < 0xB800u;
+            if (bank2Write || bank3Write) {
+                msx_cpu_flush_pending_psg(state);
+                msx_cart_write(&state->cart, address, value);
+                const bool classicWindow = bank2Write ? (value == 0x3Fu) : s_attachedScc->classicWindow;
+                const bool plusWindow = bank3Write ? ((value & 0x80u) != 0u) : s_attachedScc->plusWindow;
+                msx_scc_set_windows(s_attachedScc, classicWindow, plusWindow);
+#if MSX_SCC_LOG_ENABLED
+                msx_memory_log_scc_bank_write(bank2Write ? 2u : 3u,
+                                              value,
+                                              bank2Write ? state->cart.windowBanks[2] : state->cart.windowBanks[3],
+                                              classicWindow,
+                                              plusWindow);
+#else
+                (void)msx_memory_log_scc_bank_write;
+#endif
+                msx_memory_refresh_maps(state);
+                return;
+            }
+        }
+
         msx_cart_write(&state->cart, address, value);
         msx_memory_refresh_maps(state);
     }
@@ -1139,6 +1322,30 @@ void msx_memory_out(MsxMemoryState* state, uint8_t port, uint8_t value)
                             static_cast<unsigned>(state->secondarySlotRegs[3]),
                             static_cast<unsigned>(s_a8LogCount));
                 ++s_a8LogCount;
+            }
+#endif
+#if MSX_SCC_LOG_ENABLED
+            if (state->cart.type == MsxCartridgeType::KonamiScc) {
+                static uint16_t s_sccA8LogCount = 0u;
+                const uint8_t oldPage1 = msx_slot_for_page(state->slotRegister, 1u);
+                const uint8_t oldPage2 = msx_slot_for_page(state->slotRegister, 2u);
+                const uint8_t newPage1 = msx_slot_for_page(value, 1u);
+                const uint8_t newPage2 = msx_slot_for_page(value, 2u);
+                const bool oldCartVisible = oldPage1 == kMsxPrimarySlotCartridge ||
+                                            oldPage2 == kMsxPrimarySlotCartridge;
+                const bool newCartVisible = newPage1 == kMsxPrimarySlotCartridge ||
+                                            newPage2 == kMsxPrimarySlotCartridge;
+                if (s_sccA8LogCount < 64u &&
+                    (oldCartVisible || newCartVisible || state->slotRegister != value)) {
+                    std::printf("[MSX][SCC] slot A8 %02X -> %02X p1=%u p2=%u cartVisible=%u #%u\n",
+                                static_cast<unsigned>(state->slotRegister),
+                                static_cast<unsigned>(value),
+                                static_cast<unsigned>(newPage1),
+                                static_cast<unsigned>(newPage2),
+                                newCartVisible ? 1u : 0u,
+                                static_cast<unsigned>(s_sccA8LogCount));
+                    ++s_sccA8LogCount;
+                }
             }
 #endif
             state->slotRegister = value;

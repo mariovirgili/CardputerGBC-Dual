@@ -9,6 +9,7 @@
 #include "msx_disk.h"
 #include "msx_memory.h"
 #include "msx_psg.h"
+#include "msx_scc.h"
 #include "msx_vdp.h"
 #include "../msx_display.h"
 #include "../msx_input.h"
@@ -52,6 +53,7 @@ struct MsxCoreState {
     MsxMemoryState memory;
     MsxVdpState vdp;
     MsxPsgState psg;
+    MsxSccState scc;
     MsxCpuState cpu;
 };
 

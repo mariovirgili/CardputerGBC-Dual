@@ -5,6 +5,7 @@
 #include <cstring>
 #include "../msx_media.h"
 #include "msx_psg.h"
+#include "msx_scc.h"
 #include "msx_vdp.h"
 
 #ifndef MSX_CPU_TRACE_ENABLED
@@ -123,6 +124,12 @@ inline void IRAM_ATTR msx_cpu_flush_pending_psg_impl(MsxMemoryState* memory)
     s_pendingPsgCycles = 0u;
     if (memory && memory->psg) {
         msx_psg_run_cycles(memory->psg, cycles);
+    }
+    if (memory) {
+        MsxSccState* const scc = msx_memory_get_scc(memory);
+        if (scc) {
+            msx_scc_run_cycles(scc, cycles);
+        }
     }
 }
 
@@ -801,8 +808,7 @@ inline void msx_cpu_mem_write8(MsxMemoryState* memory, uint16_t address, uint8_t
     const uint8_t page = static_cast<uint8_t>(address >> 14);
     const uint8_t slot = static_cast<uint8_t>((memory->slotRegister >> (page * 2u)) & 0x03u);
     if (slot == kMsxPrimarySlotCartridge) {
-        msx_cart_write(&memory->cart, address, value);
-        msx_memory_refresh_maps(memory);
+        msx_memory_write8(memory, address, value);
     }
     msx_cpu_log_ram_access("WR", memory, address, value);
 }

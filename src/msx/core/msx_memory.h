@@ -10,6 +10,7 @@
 
 struct MsxCpuState;
 struct MsxPsgState;
+struct MsxSccState;
 struct MsxVdpState;
 
 // Callback invoked when the CPU executes the ED FE opcode (BIOS software trap).
@@ -87,6 +88,8 @@ bool msx_memory_init(MsxMemoryState* state,
                      size_t requestedRamSize);
 void msx_memory_attach_vdp(MsxMemoryState* state, MsxVdpState* vdp);
 void msx_memory_attach_psg(MsxMemoryState* state, MsxPsgState* psg);
+void msx_memory_attach_scc(MsxMemoryState* state, MsxSccState* scc);
+MsxSccState* msx_memory_get_scc(MsxMemoryState* state);
 void msx_memory_set_keyboard_matrix(MsxMemoryState* state, const MsxKeyboardMatrix* matrix);
 void msx_memory_shutdown(MsxMemoryState* state);
 void msx_memory_reset(MsxMemoryState* state);

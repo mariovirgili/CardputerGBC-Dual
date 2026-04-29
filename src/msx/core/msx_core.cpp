@@ -338,6 +338,12 @@ void msx_core_attach_runtime_devices(MsxCoreState* state)
     } else {
         msx_memory_attach_psg(&state->memory, nullptr);
     }
+    if (state->audioHookReady && state->scc.ready) {
+        msx_memory_attach_scc(&state->memory, &state->scc);
+        msx_scc_reset(&state->scc);
+    } else {
+        msx_memory_attach_scc(&state->memory, nullptr);
+    }
 }
 
 uint8_t msx_core_ram_segment_for_page(const MsxMemoryState* memory, uint8_t pageIndex)
@@ -590,6 +596,9 @@ void msx_core_init_audio(MsxCoreState* state, uint32_t audioSampleRate)
     }
 
     if (msx_psg_init(&state->psg, audioSampleRate)) {
+        if (state->cart.type == MsxCartridgeType::KonamiScc) {
+            (void)msx_scc_init(&state->scc, audioSampleRate);
+        }
         state->audioHookReady = true;
         return;
     }
@@ -1046,11 +1055,27 @@ size_t msx_core_drain_audio(MsxCoreState* state, int16_t* dst, size_t capacity)
     if (!dst || capacity == 0u) {
         const size_t available = msx_psg_available_samples(&state->psg);
         msx_psg_discard_samples(&state->psg, available);
+        const size_t sccAvailable = msx_scc_available_samples(&state->scc);
+        msx_scc_discard_samples(&state->scc, sccAvailable);
         state->lastAudioSamples = 0u;
         return 0u;
     }
 
     const size_t sampleCount = msx_psg_read_samples(&state->psg, dst, capacity);
+    if (sampleCount != 0u && state->scc.ready) {
+        int16_t sccBuffer[512];
+        const size_t sccCapacity = sampleCount < 512u ? sampleCount : 512u;
+        const size_t sccCount = msx_scc_read_samples(&state->scc, sccBuffer, sccCapacity);
+        for (size_t i = 0; i < sccCount; ++i) {
+            int32_t mixed = static_cast<int32_t>(dst[i]) + static_cast<int32_t>(sccBuffer[i]);
+            if (mixed > 32767) {
+                mixed = 32767;
+            } else if (mixed < -32768) {
+                mixed = -32768;
+            }
+            dst[i] = static_cast<int16_t>(mixed);
+        }
+    }
     state->lastAudioSamples = static_cast<uint16_t>(sampleCount);
     return sampleCount;
 }
@@ -1062,6 +1087,7 @@ void msx_core_shutdown(MsxCoreState* state)
     }
 
     msx_psg_shutdown(&state->psg);
+    msx_scc_shutdown(&state->scc);
     msx_memory_shutdown(&state->memory);
     msx_vdp_shutdown(&state->vdp);
     msx_bios_shutdown(&state->bios);
