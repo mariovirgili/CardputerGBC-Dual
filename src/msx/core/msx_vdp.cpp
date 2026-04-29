@@ -4342,7 +4342,7 @@ static void msx_vdp_render_graphics3_range(MsxVdpState* state, unsigned yStart, 
     }
 }
 
-static void IRAM_ATTR msx_vdp_render_bitmap4_range(MsxVdpState* state, unsigned yStart, unsigned yEnd, bool finalizeFrame)
+static void msx_vdp_render_bitmap4_range(MsxVdpState* state, unsigned yStart, unsigned yEnd, bool finalizeFrame)
 {
     if (!state) {
         return;

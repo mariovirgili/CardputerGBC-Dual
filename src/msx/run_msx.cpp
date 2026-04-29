@@ -158,6 +158,31 @@ void msx_runtime_update_fps_overlay(MsxFpsOverlayWindow* window,
     window->windowStartMs = nowMs;
 }
 
+bool msx_runtime_init_audio_hook(uint32_t sampleRate, uint8_t channels)
+{
+#if MSX_AUDIO_ENABLED
+    printf("[MSX] audio init begin\n");
+    if (msx_sound_init(sampleRate, channels)) {
+        printf("[MSX] audio init ok\n");
+        return true;
+    }
+
+    printf("[MSX] audio init retry begin\n");
+    msx_sound_shutdown();
+    delay(30);
+    if (msx_sound_init(sampleRate, channels)) {
+        printf("[MSX] audio init retry ok\n");
+        return true;
+    }
+
+    printf("[MSX] audio init failed\n");
+    return false;
+#else
+    printf("[MSX] audio init skipped (build disabled)\n");
+    return false;
+#endif
+}
+
 void msx_runtime_timing_add(MsxRuntimeTimingWindow* window, const MsxCoreState* core)
 {
     if (!window || !core) {
@@ -1352,6 +1377,9 @@ void run_msx(const uint8_t* romData, size_t romLen, const char* romName, SdServi
 #else
     const uint32_t coreAudioSampleRate = 0u;
 #endif
+    if (useExternal) {
+        (void)msx_sound_prestart_speaker(kMsxSkeletonSampleRate, kMsxSkeletonChannels);
+    }
 
     printf("[MSX] core init begin\n");
 
@@ -1368,13 +1396,7 @@ void run_msx(const uint8_t* romData, size_t romLen, const char* romName, SdServi
     msx_input_set_runtime_machine_mode(core.machineMode);
 
     bool audioInitOk = false;
-#if MSX_AUDIO_ENABLED
-    printf("[MSX] audio init begin\n");
-    audioInitOk = msx_sound_init(kMsxSkeletonSampleRate, kMsxSkeletonChannels);
-    printf("[MSX] audio init %s\n", audioInitOk ? "ok" : "failed");
-#else
-    printf("[MSX] audio init skipped (build disabled)\n");
-#endif
+    audioInitOk = msx_runtime_init_audio_hook(kMsxSkeletonSampleRate, kMsxSkeletonChannels);
 
     printf("[MSX] core init ok\n");
     printf("[MSX] entering main loop\n");
@@ -1574,6 +1596,9 @@ void run_msx_disk(const uint8_t* dskData, size_t dskLen, const char* dskName, Sd
 #else
     const uint32_t coreAudioSampleRate = 0u;
 #endif
+    if (useExternal) {
+        (void)msx_sound_prestart_speaker(kMsxSkeletonSampleRate, kMsxSkeletonChannels);
+    }
 
     size_t diskRomSize = 0;
     uint8_t* diskRomData = msx_load_bios_file("DISK.ROM", 16384u, &diskRomSize);
@@ -1612,13 +1637,7 @@ void run_msx_disk(const uint8_t* dskData, size_t dskLen, const char* dskName, Sd
     msx_input_set_runtime_machine_mode(core.machineMode);
 
     bool audioInitOk = false;
-#if MSX_AUDIO_ENABLED
-    printf("[MSX] audio init begin\n");
-    audioInitOk = msx_sound_init(kMsxSkeletonSampleRate, kMsxSkeletonChannels);
-    printf("[MSX] audio init %s\n", audioInitOk ? "ok" : "failed");
-#else
-    printf("[MSX] audio init skipped (build disabled)\n");
-#endif
+    audioInitOk = msx_runtime_init_audio_hook(kMsxSkeletonSampleRate, kMsxSkeletonChannels);
 
     printf("[MSX] entering disk main loop\n");
 
@@ -1798,6 +1817,15 @@ void run_msx_basic(const char* name, SdService& sd)
 
     printf("[MSX] BIOS bundle ready: %s\n", msx_media_bios_target_label(bios.target));
 
+#if MSX_AUDIO_ENABLED
+    const uint32_t coreAudioSampleRate = kMsxSkeletonSampleRate;
+#else
+    const uint32_t coreAudioSampleRate = 0u;
+#endif
+    if (useExternal) {
+        (void)msx_sound_prestart_speaker(kMsxSkeletonSampleRate, kMsxSkeletonChannels);
+    }
+
     msx_display_init();
     msx_show_external_static_title(useExternal,
                                    name,
@@ -1805,12 +1833,6 @@ void run_msx_basic(const char* name, SdService& sd)
                                    bios.target == MsxBiosTarget::MSX2);
     msx_input_init();
     msx_input_set_basic_keyboard_enabled(true);
-
-#if MSX_AUDIO_ENABLED
-    const uint32_t coreAudioSampleRate = kMsxSkeletonSampleRate;
-#else
-    const uint32_t coreAudioSampleRate = 0u;
-#endif
 
     printf("[MSX] core init_basic begin\n");
     MsxCoreState core = {};
@@ -1826,13 +1848,7 @@ void run_msx_basic(const char* name, SdService& sd)
     msx_input_set_runtime_machine_mode(core.machineMode);
 
     bool audioInitOk = false;
-#if MSX_AUDIO_ENABLED
-    printf("[MSX] audio init begin\n");
-    audioInitOk = msx_sound_init(kMsxSkeletonSampleRate, kMsxSkeletonChannels);
-    printf("[MSX] audio init %s\n", audioInitOk ? "ok" : "failed");
-#else
-    printf("[MSX] audio init skipped (build disabled)\n");
-#endif
+    audioInitOk = msx_runtime_init_audio_hook(kMsxSkeletonSampleRate, kMsxSkeletonChannels);
 
     printf("[MSX] entering BASIC main loop\n");
 
@@ -2012,6 +2028,15 @@ void run_msx_cas(const uint8_t* casData, size_t casLen, const char* casName, SdS
 
     printf("[MSX] BIOS bundle ready: %s\n", msx_media_bios_target_label(bios.target));
 
+#if MSX_AUDIO_ENABLED
+    const uint32_t coreAudioSampleRate = kMsxSkeletonSampleRate;
+#else
+    const uint32_t coreAudioSampleRate = 0u;
+#endif
+    if (useExternal) {
+        (void)msx_sound_prestart_speaker(kMsxSkeletonSampleRate, kMsxSkeletonChannels);
+    }
+
     msx_display_init();
     msx_show_external_static_title(useExternal,
                                    casName,
@@ -2020,12 +2045,6 @@ void run_msx_cas(const uint8_t* casData, size_t casLen, const char* casName, SdS
     msx_input_init();
     msx_input_set_basic_keyboard_enabled(true);
     msx_input_set_cas_change_available(true);
-
-#if MSX_AUDIO_ENABLED
-    const uint32_t coreAudioSampleRate = kMsxSkeletonSampleRate;
-#else
-    const uint32_t coreAudioSampleRate = 0u;
-#endif
 
     printf("[MSX] core init_cas begin\n");
     MsxCoreState core = {};
@@ -2041,13 +2060,7 @@ void run_msx_cas(const uint8_t* casData, size_t casLen, const char* casName, SdS
     msx_input_set_runtime_machine_mode(core.machineMode);
 
     bool audioInitOk = false;
-#if MSX_AUDIO_ENABLED
-    printf("[MSX] audio init begin\n");
-    audioInitOk = msx_sound_init(kMsxSkeletonSampleRate, kMsxSkeletonChannels);
-    printf("[MSX] audio init %s\n", audioInitOk ? "ok" : "failed");
-#else
-    printf("[MSX] audio init skipped (build disabled)\n");
-#endif
+    audioInitOk = msx_runtime_init_audio_hook(kMsxSkeletonSampleRate, kMsxSkeletonChannels);
 
     printf("[MSX] entering CAS main loop\n");
 

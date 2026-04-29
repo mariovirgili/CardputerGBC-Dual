@@ -22,6 +22,7 @@ struct MsxAudioHookState {
 };
 
 bool msx_sound_init(uint32_t sampleRate, uint8_t channels);
+bool msx_sound_prestart_speaker(uint32_t sampleRate, uint8_t channels);
 void msx_sound_shutdown(void);
 int16_t* msx_sound_begin_mix(size_t* capacity);
 void msx_sound_end_mix(size_t sampleCount);

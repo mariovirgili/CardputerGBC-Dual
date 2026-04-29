@@ -23,9 +23,11 @@ constexpr int kChannel = 0;
 constexpr size_t kMaxFrameSamples = 512;
 constexpr int kOutputGain = 1;
 constexpr size_t kNumPlayBuffers = 4;
+constexpr size_t kPrimeSamples = 128;
 constexpr TickType_t kAudioWorkerPollTicks = pdMS_TO_TICKS(20);
 static MsxAudioHookState s_audioState = {};
 static int16_t s_mixBuffer[kMaxFrameSamples] = {};
+static int16_t s_primeSilence[kPrimeSamples] = {};
 static int16_t* s_playBuffers[kNumPlayBuffers] = {nullptr, nullptr, nullptr, nullptr};
 static QueueHandle_t s_freeBufferQueue = nullptr;
 static QueueHandle_t s_readyBlockQueue = nullptr;
@@ -178,6 +180,41 @@ static void msx_sound_queue_to_speaker(const MsxAudioBlock& block)
     s_audioState.streamSeen = true;
 }
 
+static void msx_sound_prime_output(const char* reason)
+{
+    if (!s_audioState.enabled ||
+        s_audioState.paused ||
+        s_audioState.sampleRate == 0u ||
+        !M5Cardputer.Speaker.isRunning()) {
+        return;
+    }
+
+    const size_t queuedBefore = M5Cardputer.Speaker.isPlaying(kChannel);
+    (void)M5Cardputer.Speaker.playRaw(
+        s_primeSilence,
+        kPrimeSamples,
+        s_audioState.sampleRate,
+        false,
+        1,
+        kChannel,
+        false
+    );
+    (void)M5Cardputer.Speaker.playRaw(
+        s_primeSilence,
+        kPrimeSamples,
+        s_audioState.sampleRate,
+        false,
+        1,
+        kChannel,
+        false
+    );
+
+    s_audioState.streamSeen = false;
+    msx_sound_update_queue_depth();
+    (void)queuedBefore;
+    (void)reason;
+}
+
 static void msx_sound_audio_task(void* arg)
 {
     (void)arg;
@@ -242,17 +279,20 @@ static bool msx_sound_start_worker(void)
     }
 
     s_audioTaskRunning = true;
-    const BaseType_t ok = xTaskCreatePinnedToCore(
-        msx_sound_audio_task,
-        "msx_audio",
-        4096,
-        nullptr,
-        6,
-        &s_audioTask,
-        0
-    );
-    if (ok == pdPASS) {
-        return true;
+    constexpr uint32_t kWorkerStackCandidates[] = {4096u, 3072u, 2560u};
+    for (uint32_t stackSize : kWorkerStackCandidates) {
+        const BaseType_t ok = xTaskCreatePinnedToCore(
+            msx_sound_audio_task,
+            "msx_audio",
+            stackSize,
+            nullptr,
+            6,
+            &s_audioTask,
+            0
+        );
+        if (ok == pdPASS) {
+            return true;
+        }
     }
 
     s_audioTaskRunning = false;
@@ -336,6 +376,35 @@ static uint16_t msx_sound_copy_with_gain(int16_t* dst, const int16_t* src, size_
 
 } // namespace
 
+bool msx_sound_prestart_speaker(uint32_t sampleRate, uint8_t channels)
+{
+#if !MSX_AUDIO_ENABLED
+    (void)sampleRate;
+    (void)channels;
+    return false;
+#else
+    if (sampleRate == 0u || channels == 0u) {
+        return false;
+    }
+
+    auto cfg = M5Cardputer.Speaker.config();
+    cfg.sample_rate = sampleRate;
+    cfg.stereo = false;
+    cfg.dma_buf_len = 128;
+    cfg.dma_buf_count = 4;
+    cfg.task_priority = 4;
+    cfg.task_pinned_core = 0;
+    M5Cardputer.Speaker.config(cfg);
+
+    if (!M5Cardputer.Speaker.isRunning()) {
+        M5Cardputer.Speaker.begin();
+    }
+    M5Cardputer.Speaker.setVolume(80);
+    M5Cardputer.Speaker.stop(kChannel);
+    return M5Cardputer.Speaker.isRunning();
+#endif
+}
+
 bool msx_sound_init(uint32_t sampleRate, uint8_t channels)
 {
 #if !MSX_AUDIO_ENABLED
@@ -394,6 +463,8 @@ bool msx_sound_init(uint32_t sampleRate, uint8_t channels)
     s_audioState.running = true;
     s_audioState.paused = false;
     s_audioState.queuedBlocks = 0u;
+    s_audioState.streamSeen = false;
+    msx_sound_prime_output("init");
     return true;
 #endif
 }
