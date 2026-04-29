@@ -988,9 +988,6 @@ static void msx_apply_runtime_view_toggle(MsxCoreState* core, bool useExternal)
     msx_video_request_full_redraw();
     if (core) {
         core->vdp.dirty = true;
-        if (core->displayFrame.indexed8) {
-            msx_video_present_frame(&core->displayFrame);
-        }
     }
 }
 

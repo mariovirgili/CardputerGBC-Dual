@@ -628,19 +628,22 @@ void msx_video_compute_plan(unsigned srcW, unsigned srcH, MsxVideoPlan* plan)
 bool msx_video_layout_changed(const MsxVideoPlan& plan, unsigned srcW, unsigned srcH)
 {
     const int mode = static_cast<int>(msx_config_get_active_view_mode());
-    const bool changed =
-        s_lastMode != mode ||
-        s_lastSrcW != static_cast<int>(srcW) ||
-        s_lastSrcH != static_cast<int>(srcH) ||
-        s_lastDstW != plan.dstW ||
-        s_lastDstH != plan.dstH ||
-        s_lastSrcX0 != plan.srcX0 ||
-        s_lastSrcY0 != plan.srcY0 ||
-        s_lastRoiW != plan.roiW ||
-        s_lastRoiH != plan.roiH ||
-        s_lastXOff != plan.xOff ||
-        s_lastYOff != plan.yOff;
+    return s_lastMode != mode ||
+           s_lastSrcW != static_cast<int>(srcW) ||
+           s_lastSrcH != static_cast<int>(srcH) ||
+           s_lastDstW != plan.dstW ||
+           s_lastDstH != plan.dstH ||
+           s_lastSrcX0 != plan.srcX0 ||
+           s_lastSrcY0 != plan.srcY0 ||
+           s_lastRoiW != plan.roiW ||
+           s_lastRoiH != plan.roiH ||
+           s_lastXOff != plan.xOff ||
+           s_lastYOff != plan.yOff;
+}
 
+void msx_video_commit_layout_cache(const MsxVideoPlan& plan, unsigned srcW, unsigned srcH)
+{
+    const int mode = static_cast<int>(msx_config_get_active_view_mode());
     s_lastMode = mode;
     s_lastSrcW = static_cast<int>(srcW);
     s_lastSrcH = static_cast<int>(srcH);
@@ -652,26 +655,36 @@ bool msx_video_layout_changed(const MsxVideoPlan& plan, unsigned srcW, unsigned 
     s_lastRoiH = plan.roiH;
     s_lastXOff = plan.xOff;
     s_lastYOff = plan.yOff;
-    return changed;
 }
 
 bool msx_video_prepare_buffers(const MsxVideoPlan& plan, bool layoutChanged)
 {
-    const int neededLineWidth = plan.dstW;
+    const int neededLineWidth = msx_video_game_on_external()
+                                    ? plan.dstW
+                                    : std::max(plan.dstW, kInternalTargetW);
     if (neededLineWidth <= 0 || plan.dstH <= 0) {
         return false;
     }
 
     if (neededLineWidth > s_lineCap) {
-        free(s_lineBuf);
-        s_lineBuf = static_cast<uint16_t*>(heap_caps_malloc(
+        uint16_t* newLineBuf = static_cast<uint16_t*>(heap_caps_malloc(
             static_cast<size_t>(neededLineWidth) * kBatchLines * sizeof(uint16_t),
             MALLOC_CAP_DMA | MALLOC_CAP_8BIT
         ));
-        s_lineBufDma = s_lineBuf != nullptr;
-        if (!s_lineBuf) s_lineBuf = static_cast<uint16_t*>(malloc(static_cast<size_t>(neededLineWidth) * kBatchLines * sizeof(uint16_t)));
-        s_lineCap = s_lineBuf ? neededLineWidth : 0;
-        if (!s_lineBufDma && s_lineBuf) {
+        const bool newLineBufDma = newLineBuf != nullptr;
+        if (!newLineBuf) {
+            newLineBuf = static_cast<uint16_t*>(
+                malloc(static_cast<size_t>(neededLineWidth) * kBatchLines * sizeof(uint16_t))
+            );
+        }
+        if (!newLineBuf) {
+            return false;
+        }
+        free(s_lineBuf);
+        s_lineBuf = newLineBuf;
+        s_lineBufDma = newLineBufDma;
+        s_lineCap = neededLineWidth;
+        if (!s_lineBufDma) {
             std::printf("[MSX][VIDEO] WARNING: lineBuf fallback malloc, no DMA\n");
         }
     }
@@ -876,6 +889,8 @@ bool msx_video_begin_line_stream_impl(const MsxDisplayFrame* frame)
     if (!msx_video_prepare_buffers(plan, layoutChanged)) {
         return false;
     }
+
+    msx_video_commit_layout_cache(plan, frame->width, frame->height);
 
     if (layoutChanged) {
         msx_video_clear_target();
@@ -1101,6 +1116,8 @@ bool msx_video_render_frame_now(const MsxDisplayFrame* frame)
 #endif
         return false;
     }
+
+    msx_video_commit_layout_cache(plan, frame->width, frame->height);
 
     if (layoutChanged) {
         msx_video_clear_target();
