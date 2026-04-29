@@ -9,7 +9,7 @@ struct MsxPsgState {
     uint32_t sampleRate;
     uint32_t cpuClockHz;
     uint32_t psgClockHz;
-    uint64_t sampleAccumulator;
+    uint32_t sampleAccumulator;
     uint32_t tonePhase[3];
     uint32_t toneStep[3];
     uint32_t noisePhase;

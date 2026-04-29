@@ -259,8 +259,14 @@ int16_t msx_scc_render_sample(MsxSccState* state)
 
         state->phase[ch] += state->step[ch];
         const uint8_t waveIndex = static_cast<uint8_t>((state->phase[ch] >> 16) & 0x1Fu);
-        const int8_t waveSample = static_cast<int8_t>(state->regs[waveBaseByChannel[ch] + waveIndex]);
-        mix += static_cast<int32_t>(waveSample) * static_cast<int32_t>(volume);
+        const uint8_t nextWaveIndex = static_cast<uint8_t>((waveIndex + 1u) & 0x1Fu);
+        const uint16_t waveFrac = static_cast<uint16_t>(state->phase[ch] & 0xFFFFu);
+        const uint16_t waveBase = waveBaseByChannel[ch];
+        const int32_t waveSample0 = static_cast<int8_t>(state->regs[waveBase + waveIndex]);
+        const int32_t waveSample1 = static_cast<int8_t>(state->regs[waveBase + nextWaveIndex]);
+        const int32_t waveSample =
+            waveSample0 + (((waveSample1 - waveSample0) * static_cast<int32_t>(waveFrac)) >> 16);
+        mix += waveSample * static_cast<int32_t>(volume);
     }
 
     mix = (mix * static_cast<int32_t>(s_sccOutputGainPercent)) / 100;
@@ -514,7 +520,7 @@ void msx_scc_run_cycles(MsxSccState* state, uint32_t cpuCycles)
         return;
     }
 
-    state->sampleAccumulator += static_cast<uint64_t>(cpuCycles) * state->sampleRate;
+    state->sampleAccumulator += cpuCycles * state->sampleRate;
     while (state->sampleAccumulator >= state->cpuClockHz) {
         state->sampleAccumulator -= state->cpuClockHz;
         msx_scc_push_sample(state, msx_scc_render_sample(state));

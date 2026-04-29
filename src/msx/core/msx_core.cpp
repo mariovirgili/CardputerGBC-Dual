@@ -1436,7 +1436,7 @@ static void msx_core_fill_scc_save_payload(const MsxCoreState* state, MsxSccSave
     std::memcpy(payload->step, state->scc.step, sizeof(payload->step));
     payload->sampleRate = state->scc.sampleRate;
     payload->cpuClockHz = state->scc.cpuClockHz;
-    payload->sampleAccumulator = state->scc.sampleAccumulator;
+    payload->sampleAccumulator = static_cast<uint64_t>(state->scc.sampleAccumulator);
     payload->generatedSamples = state->scc.generatedSamples;
     payload->droppedSamples = state->scc.droppedSamples;
     payload->audibleSamples = state->scc.audibleSamples;
@@ -1538,7 +1538,10 @@ static void msx_core_apply_scc_save_payload(MsxCoreState* state, const MsxSccSav
     std::memcpy(state->scc.step, payload.step, sizeof(state->scc.step));
     state->scc.sampleRate = state->audioSampleRate != 0u ? state->audioSampleRate : payload.sampleRate;
     state->scc.cpuClockHz = payload.cpuClockHz != 0u ? payload.cpuClockHz : state->scc.cpuClockHz;
-    state->scc.sampleAccumulator = payload.sampleAccumulator;
+    state->scc.sampleAccumulator =
+        payload.sampleAccumulator > 0xFFFFFFFFull
+            ? 0u
+            : static_cast<uint32_t>(payload.sampleAccumulator);
     state->scc.ringReadIndex = 0u;
     state->scc.ringWriteIndex = 0u;
     state->scc.ringCount = 0u;

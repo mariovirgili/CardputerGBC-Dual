@@ -577,7 +577,7 @@ void IRAM_ATTR msx_psg_run_cycles(MsxPsgState* state, uint32_t cpuCycles)
         return;
     }
 
-    state->sampleAccumulator += static_cast<uint64_t>(cpuCycles) * static_cast<uint64_t>(state->sampleRate);
+    state->sampleAccumulator += cpuCycles * state->sampleRate;
     while (state->sampleAccumulator >= state->cpuClockHz) {
         state->sampleAccumulator -= state->cpuClockHz;
         msx_psg_push_sample(state, msx_psg_render_sample(state));
