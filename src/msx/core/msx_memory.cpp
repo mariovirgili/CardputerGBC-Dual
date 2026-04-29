@@ -839,6 +839,14 @@ void msx_memory_log_scc_write_route(const MsxMemoryState* state,
 #endif
 }
 
+uint8_t msx_memory_normalize_cart_bank(const MsxMemoryState* state, uint8_t bank)
+{
+    if (!state || state->cart.bankCount8K == 0u) {
+        return 0u;
+    }
+    return static_cast<uint8_t>(bank % state->cart.bankCount8K);
+}
+
 void msx_memory_attach_scc(MsxMemoryState* state, MsxSccState* scc)
 {
     (void)state;
@@ -1077,9 +1085,12 @@ void msx_memory_write8(MsxMemoryState* state, uint16_t address, uint8_t value)
             state->cart.type == MsxCartridgeType::KonamiScc) {
             if (address == 0xBFFEu) {
                 msx_cpu_flush_pending_psg(state);
+                state->cart.windowBanks[3] =
+                    msx_memory_normalize_cart_bank(state, static_cast<uint8_t>(value & 0x1Fu));
                 msx_scc_set_windows(s_attachedScc,
                                     s_attachedScc->classicWindow,
-                                    (value & 0x20u) != 0u);
+                                    (value & 0xA0u) != 0u);
+                msx_memory_refresh_maps(state);
                 return;
             }
 

@@ -316,6 +316,11 @@ void msx_scc_write_plus(MsxSccState* state, uint8_t reg, uint8_t value)
         return;
     }
 
+    if (reg >= 0xB0u && reg < 0xC0u) {
+        msx_scc_write_plus(state, static_cast<uint8_t>(reg - 0x10u), value);
+        return;
+    }
+
     if (reg < 0xA0u) {
 #if MSX_SCC_LOG_ENABLED
         static uint8_t s_plusWaveLogCount = 0u;
