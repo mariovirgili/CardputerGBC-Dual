@@ -49,6 +49,9 @@ char CardputerInput::handler() {
             if (status.del) { 
                 return KEY_DEL;
             }
+            if (status.tab) {
+                return KEY_TAB_CUSTOM;
+            }
             
             if(M5Cardputer.Keyboard.isKeyPressed(KEY_ARROW_LEFT)) { // go back to previous menu
                 return KEY_ARROW_LEFT;
@@ -113,6 +116,7 @@ char CardputerInput::readChar() {
 
     if (status.enter) return KEY_OK;
     if (status.del) return KEY_DEL;
+    if (status.tab) return KEY_TAB_CUSTOM;
 
     return KEY_NONE;
 }

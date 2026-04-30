@@ -11,6 +11,7 @@
 #define KEY_GO_CUSTOM '\x1D'
 #define KEY_NONE '\0'
 #define KEY_RETURN_CUSTOM '\r'
+#define KEY_TAB_CUSTOM '\t'
 #define KEY_ARROW_UP ';'
 #define KEY_ARROW_DOWN '.'
 #define KEY_ARROW_LEFT ','

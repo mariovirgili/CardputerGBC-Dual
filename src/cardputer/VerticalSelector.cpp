@@ -27,6 +27,8 @@ int VerticalSelector::select(
     std::string searchQuery;
     std::vector<std::string> filteredOptions;
     const std::vector<std::string>* activeOptions = &options;
+    bool searchActive = false;
+    bool lastSearchActive = false;
 
     auto optionCount = [&]() -> int {
         return static_cast<int>(activeOptions->size());
@@ -99,11 +101,14 @@ int VerticalSelector::select(
     };
 
     while (true) {
-        const bool selectionChanged = (lastIndex != currentIndex) || (lastQuerySize != (int)searchQuery.size());
+        const bool selectionChanged =
+            (lastIndex != currentIndex) ||
+            (lastQuerySize != (int)searchQuery.size()) ||
+            (lastSearchActive != searchActive);
 
         // Full redraw
         if (selectionChanged) {
-            display.topBar(searchQuery.empty() ? title : searchQuery, subMenu, searchBar);
+            display.topBar(searchActive ? searchQuery : title, subMenu, searchActive);
             display.verticalSelection(*activeOptions, currentIndex, VISIBLE_ROWS, options2, shortcuts, visibleMention);
             if (!activeOptions->empty()) mBase = (*activeOptions)[currentIndex];
             if (changedCallback && !activeOptions->empty()) {
@@ -113,6 +118,7 @@ int VerticalSelector::select(
             lastMs = millis();
             lastIndex = currentIndex;
             lastQuerySize = (int)searchQuery.size();
+            lastSearchActive = searchActive;
         } else if (!activeOptions->empty()) {
             // Redraw partial
             const std::string& base = (*activeOptions)[currentIndex];
@@ -138,7 +144,7 @@ int VerticalSelector::select(
         // INPUT
         key = input.handler();
 
-        if (romBrowserControls) {
+        if (romBrowserControls && !searchActive) {
             const uint32_t now = millis();
             const char currentHeldPageKey = getHeldPageKey();
 
@@ -153,12 +159,20 @@ int VerticalSelector::select(
             }
         }
 
-        if (!shortcuts.empty()) {
+        if (!shortcuts.empty() && !searchActive) {
             int si = checkShortcut(shortcuts, key);
             if (si != -1) return si;
         }
 
-        if (romBrowserControls) {
+        if (searchBar && !searchActive && key == KEY_TAB_CUSTOM) {
+            searchActive = true;
+            searchQuery.clear();
+            heldPageKey = KEY_NONE;
+            nextPageRepeatMs = 0;
+            continue;
+        }
+
+        if (romBrowserControls && !searchActive) {
             if (key == KEY_ARROW_LEFT) {
                 key = '\x11';
             } else if (key == KEY_ARROW_RIGHT) {
@@ -192,7 +206,7 @@ int VerticalSelector::select(
             }
         }
 
-        else if (!searchBar) {
+        else if (!searchActive && !searchBar) {
             if (key == KEY_GO_CUSTOM) {
                 key = KEY_ESC_CUSTOM;
             }
@@ -216,6 +230,44 @@ int VerticalSelector::select(
                 default:
                     break;
             }
+        }
+
+        if (searchActive) {
+            switch (key) {
+                case KEY_OK:
+                    if (searchQuery.empty()) {
+                        filteredOptions.clear();
+                        activeOptions = &options;
+                    } else {
+                        filteredOptions = filterOptions(options, searchQuery);
+                        activeOptions = &filteredOptions;
+                    }
+                    currentIndex = 0;
+                    searchActive = false;
+                    break;
+                case KEY_DEL:
+                    if (!searchQuery.empty()) {
+                        searchQuery.pop_back();
+                    }
+                    break;
+                case KEY_ESC_CUSTOM:
+                case KEY_ESC_LONG_CUSTOM:
+                    searchQuery.clear();
+                    searchActive = false;
+                    break;
+                default: {
+                    const bool valid = std::isalnum((unsigned char)key) ||
+                                       key == ' ' ||
+                                       key == '-' ||
+                                       key == '_' ||
+                                       key == '.';
+                    if (valid) {
+                        searchQuery += key;
+                    }
+                    break;
+                }
+            }
+            continue;
         }
 
         switch (key) {
@@ -253,44 +305,8 @@ int VerticalSelector::select(
                 }
                 break;
             case KEY_DEL:
-                if (searchBar && !searchQuery.empty()) {
-                    searchQuery.pop_back();
-                    if (searchQuery.empty()) {
-                        filteredOptions.clear();
-                        activeOptions = &options;
-                    } else {
-                        filteredOptions = filterOptions(options, searchQuery);
-                        activeOptions = &filteredOptions;
-                    }
-                    currentIndex = 0;
-                } else if (searchBar) {
-                    filteredOptions.clear();
-                    activeOptions = &options;
-                    currentIndex = 0;
-                }
                 break;
             default:
-                auto valid = std::isalnum((unsigned char)key) || key == ' ' || key == '-' || key == '_';
-                if (romBrowserControls) {
-                    switch (std::tolower((unsigned char)key)) {
-                        case 'a':
-                        case 'd':
-                        case 'e':
-                        case 'k':
-                        case 'p':
-                        case 'z':
-                            valid = false;
-                            break;
-                        default:
-                            break;
-                    }
-                }
-                if (searchBar && valid) {
-                    searchQuery += key;
-                    filteredOptions = filterOptions(options, searchQuery);
-                    activeOptions = searchQuery.empty() ? &options : &filteredOptions;
-                    currentIndex = 0;
-                }
                 break;
         }
     }
