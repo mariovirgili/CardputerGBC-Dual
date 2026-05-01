@@ -321,6 +321,71 @@ const char* msx_file_label(const char* path)
     return base ? base + 1 : path;
 }
 
+static bool msx_region_token_is_japan(const std::string& token)
+{
+    return token == "JP" || token == "JAPAN" || token == "JAP" || token == "JA";
+}
+
+static bool msx_filename_has_japan_token(const char* name)
+{
+    const char* base = msx_file_label(name);
+    std::string token;
+    for (const char* p = base; p && *p; ++p) {
+        const unsigned char ch = static_cast<unsigned char>(*p);
+        if (std::isalnum(ch)) {
+            token.push_back(static_cast<char>(std::toupper(ch)));
+            continue;
+        }
+
+        if (!token.empty() && msx_region_token_is_japan(token)) {
+            return true;
+        }
+        token.clear();
+    }
+
+    return !token.empty() && msx_region_token_is_japan(token);
+}
+
+static MsxRegionProfile msx_effective_region_profile(MsxRegionMode mode,
+                                                      const char* name,
+                                                      const char** source)
+{
+    if (source) {
+        *source = "config";
+    }
+
+    switch (mode) {
+        case MsxRegionMode::Japan:
+            return MsxRegionProfile::Japan;
+        case MsxRegionMode::World:
+            return MsxRegionProfile::World;
+        case MsxRegionMode::Auto:
+        default:
+            if (msx_filename_has_japan_token(name)) {
+                if (source) {
+                    *source = "filename";
+                }
+                return MsxRegionProfile::Japan;
+            }
+            if (source) {
+                *source = "auto";
+            }
+            return MsxRegionProfile::World;
+    }
+}
+
+static void msx_apply_region_profile(MsxCoreState* core, MsxRegionMode mode, const char* name)
+{
+    const char* source = "config";
+    const MsxRegionProfile profile = msx_effective_region_profile(mode, name, &source);
+    msx_core_set_region_profile(core, profile);
+    std::printf("[MSX][REGION] mode=%s effective=%s source=%s kanji=%s\n",
+                msx_config_region_mode_label(mode),
+                msx_config_region_profile_label(profile),
+                source,
+                profile == MsxRegionProfile::Japan ? "L1-detect" : "off");
+}
+
 void msx_format_bios_status_line(const MsxBiosBundle& bios, char* out, size_t outSize)
 {
     if (!out || outSize == 0) {
@@ -1599,6 +1664,7 @@ void run_msx(const uint8_t* romData, size_t romLen, const char* romName, SdServi
     msx_load_sound_config();
     viewModeGuard.configureForTarget(useExternal);
     const MsxMachineMode configuredMode = msx_config_load_machine_mode();
+    const MsxRegionMode regionMode = msx_config_load_region_mode();
     msx_config_load_bios_path();
     msx_config_load_msx1_bios_path();
     msx_config_load_msx2_bios_path();
@@ -1661,6 +1727,7 @@ void run_msx(const uint8_t* romData, size_t romLen, const char* romName, SdServi
         msx_request_quit_to_launcher();
         return;
     }
+    msx_apply_region_profile(&core, regionMode, romName);
     msx_input_set_runtime_machine_mode(core.machineMode);
 
     bool audioInitOk = false;
@@ -1847,6 +1914,7 @@ void run_msx_disk(const uint8_t* dskData, size_t dskLen, const char* dskName, Sd
     msx_load_sound_config();
     viewModeGuard.configureForTarget(useExternal);
     const MsxMachineMode configuredMode = msx_config_load_machine_mode();
+    const MsxRegionMode regionMode = msx_config_load_region_mode();
     msx_config_load_bios_path();
     msx_config_load_msx1_bios_path();
     msx_config_load_msx2_bios_path();
@@ -1915,6 +1983,7 @@ void run_msx_disk(const uint8_t* dskData, size_t dskLen, const char* dskName, Sd
         msx_request_quit_to_launcher();
         return;
     }
+    msx_apply_region_profile(&core, regionMode, dskName);
     msx_input_set_runtime_machine_mode(core.machineMode);
 
     bool audioInitOk = false;
@@ -2114,6 +2183,7 @@ void run_msx_basic(const char* name, SdService& sd)
     msx_load_sound_config();
     viewModeGuard.configureForTarget(useExternal);
     const MsxMachineMode configuredMode = msx_config_load_machine_mode();
+    const MsxRegionMode regionMode = msx_config_load_region_mode();
     msx_config_load_bios_path();
     msx_config_load_msx1_bios_path();
     msx_config_load_msx2_bios_path();
@@ -2166,6 +2236,7 @@ void run_msx_basic(const char* name, SdService& sd)
         msx_request_quit_to_launcher();
         return;
     }
+    msx_apply_region_profile(&core, regionMode, name);
     msx_input_set_runtime_machine_mode(core.machineMode);
 
     bool audioInitOk = false;
@@ -2337,6 +2408,7 @@ void run_msx_cas(const uint8_t* casData, size_t casLen, const char* casName, SdS
     msx_load_sound_config();
     viewModeGuard.configureForTarget(useExternal);
     const MsxMachineMode configuredMode = msx_config_load_machine_mode();
+    const MsxRegionMode regionMode = msx_config_load_region_mode();
     msx_config_load_bios_path();
     msx_config_load_msx1_bios_path();
     msx_config_load_msx2_bios_path();
@@ -2390,6 +2462,7 @@ void run_msx_cas(const uint8_t* casData, size_t casLen, const char* casName, SdS
         msx_request_quit_to_launcher();
         return;
     }
+    msx_apply_region_profile(&core, regionMode, casName);
     msx_input_set_runtime_machine_mode(core.machineMode);
 
     bool audioInitOk = false;

@@ -65,6 +65,8 @@ constexpr uint8_t kMsxRtcModeClock = 0u;
 constexpr uint8_t kMsxRtcModeAlarm = 1u;
 constexpr uint8_t kMsxRtcModeNvramLo = 2u;
 constexpr uint8_t kMsxRtcModeNvramHi = 3u;
+constexpr uint8_t kMsxInternalIoKanjiL1Enable = 0x01u;
+constexpr uint8_t kMsxInternalIoKanjiL2Enable = 0x02u;
 
 uint8_t msx_slot_for_page(uint8_t slotRegister, uint8_t pageIndex)
 {
@@ -120,6 +122,55 @@ bool msx_memory_disk_controller_visible(const MsxMemoryState* state, uint16_t ad
 bool msx_memory_has_mapper(const MsxMemoryState* state)
 {
     return state && state->mapperEnabled && state->ramSegmentCount > 4u;
+}
+
+bool msx_memory_japan_bios_metadata_read(const MsxMemoryState* state,
+                                         uint16_t address,
+                                         uint8_t* value)
+{
+    if (!state || !value || state->regionProfile != MsxRegionProfile::Japan) {
+        return false;
+    }
+    if (address != 0x002Bu && address != 0x002Cu) {
+        return false;
+    }
+    if (msx_slot_for_page(state->slotRegister, 0u) != 0u) {
+        return false;
+    }
+
+    *value = 0x00u;
+    return true;
+}
+
+uint8_t msx_memory_kanji_l1_read(MsxMemoryState* state)
+{
+    if (!state || state->regionProfile != MsxRegionProfile::Japan || !state->kanjiL1Enabled) {
+        return 0xFFu;
+    }
+
+    const uint8_t line = static_cast<uint8_t>(state->kanjiL1ReadIndex & 0x1Fu);
+    const uint8_t fold = static_cast<uint8_t>((state->kanjiL1Char >> ((line & 0x03u) + 1u)) & 0x3Fu);
+    uint8_t value = static_cast<uint8_t>(0x18u ^ (line * 0x05u) ^ fold);
+    if (value == 0xFFu) {
+        value = 0x7Eu;
+    }
+    state->kanjiL1ReadIndex = static_cast<uint8_t>((state->kanjiL1ReadIndex + 1u) & 0x1Fu);
+    return value;
+}
+
+void msx_memory_kanji_l1_write(MsxMemoryState* state, uint8_t port, uint8_t value)
+{
+    if (!state) {
+        return;
+    }
+
+    if (port == 0xD8u) {
+        state->kanjiL1Char = static_cast<uint16_t>((state->kanjiL1Char & 0x0FC0u) | (value & 0x3Fu));
+    } else if (port == 0xD9u) {
+        state->kanjiL1Char =
+            static_cast<uint16_t>((state->kanjiL1Char & 0x003Fu) | ((value & 0x3Fu) << 6));
+        state->kanjiL1ReadIndex = 0u;
+    }
 }
 
 void msx_memory_update_ram_segment_wrap(MsxMemoryState* state)
@@ -856,6 +907,7 @@ bool msx_memory_init(MsxMemoryState* state,
 
     std::memset(state, 0, sizeof(*state));
     state->machineMode = machineMode;
+    state->regionProfile = MsxRegionProfile::World;
     state->bios = *bios;
     state->cart = *cart;
 
@@ -917,6 +969,11 @@ bool msx_memory_init(MsxMemoryState* state,
     state->rtcRegisterSelect = 0u;
     state->rtcModeReg = 0u;
     std::memset(state->rtcNvram, 0, sizeof(state->rtcNvram));
+    state->internalIoControl = static_cast<uint8_t>(kMsxInternalIoKanjiL1Enable |
+                                                    kMsxInternalIoKanjiL2Enable);
+    state->kanjiL1Char = 0u;
+    state->kanjiL1ReadIndex = 0u;
+    state->kanjiL1Enabled = false;
     state->ppiPortC = 0u;
     state->lastPortA8 = state->slotRegister;
     state->lastPortAA = state->ppiPortC;
@@ -1346,6 +1403,20 @@ void msx_memory_set_keyboard_matrix(MsxMemoryState* state, const MsxKeyboardMatr
     msx_keyboard_set_matrix(&state->keyboard, matrix);
 }
 
+void msx_memory_set_region_profile(MsxMemoryState* state, MsxRegionProfile profile)
+{
+    if (!state || !state->ready) {
+        return;
+    }
+
+    state->regionProfile = profile;
+    state->internalIoControl = static_cast<uint8_t>(kMsxInternalIoKanjiL1Enable |
+                                                    kMsxInternalIoKanjiL2Enable);
+    state->kanjiL1Char = 0u;
+    state->kanjiL1ReadIndex = 0u;
+    state->kanjiL1Enabled = (profile == MsxRegionProfile::Japan);
+}
+
 void msx_memory_shutdown(MsxMemoryState* state)
 {
     if (!state) {
@@ -1404,6 +1475,11 @@ void msx_memory_reset(MsxMemoryState* state)
     state->lastPortA1 = 0u;
     state->lastPortA8 = state->slotRegister;
     state->lastPortAA = state->ppiPortC;
+    state->internalIoControl = static_cast<uint8_t>(kMsxInternalIoKanjiL1Enable |
+                                                    kMsxInternalIoKanjiL2Enable);
+    state->kanjiL1Char = 0u;
+    state->kanjiL1ReadIndex = 0u;
+    state->kanjiL1Enabled = (state->regionProfile == MsxRegionProfile::Japan);
     state->ioWriteCount = 0u;
     state->mapEpoch = 0u;
     state->cartBootWorkareaFallbackArmed = false;
@@ -1501,6 +1577,11 @@ uint8_t IRAM_ATTR msx_memory_read8(const MsxMemoryState* state, uint16_t address
     }
     if (msx_memory_scc_plus_read_visible(state, address)) {
         return msx_scc_read_plus(s_attachedScc, static_cast<uint8_t>(address & 0xFFu));
+    }
+
+    uint8_t regionValue = 0xFFu;
+    if (msx_memory_japan_bios_metadata_read(state, address, &regionValue)) {
+        return regionValue;
     }
 
     return state->readMap[bank][offset];
@@ -1729,6 +1810,10 @@ uint8_t msx_memory_in(MsxMemoryState* state, uint8_t port)
         case 0xD3:
         case 0xD4:
             return (state && state->disk) ? msx_disk_in(state->disk, port) : 0xFFu;
+        case 0xD9:
+            return msx_memory_kanji_l1_read(state);
+        case 0xDB:
+            return 0xFFu;
         case 0xFC:
         case 0xFD:
         case 0xFE:
@@ -1878,6 +1963,19 @@ void msx_memory_out(MsxMemoryState* state, uint8_t port, uint8_t value)
             if (state->disk) {
                 msx_disk_out(state->disk, port, value);
             }
+            break;
+        case 0xD8:
+        case 0xD9:
+            msx_memory_kanji_l1_write(state, port, value);
+            break;
+        case 0xDA:
+        case 0xDB:
+            break;
+        case 0xF5:
+            state->internalIoControl = value;
+            state->kanjiL1Enabled =
+                (state->regionProfile == MsxRegionProfile::Japan) &&
+                ((value & kMsxInternalIoKanjiL1Enable) != 0u);
             break;
         case 0xFC:
         case 0xFD:

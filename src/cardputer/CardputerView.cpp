@@ -1096,6 +1096,7 @@ void CardputerView::showValidExt(const std::vector<std::string>& exts) {
         if (hasExt(".cas")) msxExts.push_back(".CAS");
         if (!msxExts.empty()) {
             systemRows.push_back({"MSX:", msxExts});
+            systemRows.push_back({"MSX2:", msxExts});
         }
 
         for (const auto& row : systemRows) {

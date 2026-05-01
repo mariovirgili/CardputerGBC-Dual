@@ -1138,6 +1138,16 @@ void msx_core_set_scc_hardware_detect(MsxCoreState* state, bool enabled)
     msx_memory_refresh_scc_hardware_detect(&state->memory);
 }
 
+void msx_core_set_region_profile(MsxCoreState* state, MsxRegionProfile profile)
+{
+    if (!state || !state->initialized) {
+        return;
+    }
+
+    state->regionProfile = profile;
+    msx_memory_set_region_profile(&state->memory, profile);
+}
+
 size_t msx_core_drain_audio(MsxCoreState* state, int16_t* dst, size_t capacity)
 {
     if (!state || !state->initialized || !state->audioHookReady) {

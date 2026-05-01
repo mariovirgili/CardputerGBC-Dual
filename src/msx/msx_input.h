@@ -48,6 +48,7 @@ struct MsxInputOverlayState {
     MsxFrameskipMode perfFrameskipMode;
     MsxVirtualSccMode virtualSccMode;
     bool sccHardwareDetectEnabled;
+    MsxRegionMode regionMode;
     uint8_t soundVolume;
     uint16_t sccGainPercent;
     bool casChangeAvailable;

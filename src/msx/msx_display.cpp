@@ -235,13 +235,14 @@ static const char* msx_display_runtime_menu_label(const MsxInputOverlayState& ov
         case 4u: return "BASIC KBD";
         case 5u: return "VAUS";
         case 6u: return "VIEW";
-        case 7u: return msx_display_game_on_external() ? "SELECT SLOT" : "STATE SLOT";
-        case 8u: return msx_display_game_on_external() ? "SAVE SLOT" : "SAVE STATE";
-        case 9u: return msx_display_game_on_external() ? "LOAD SLOT" : "LOAD STATE";
+        case 7u: return "MSX REGION";
+        case 8u: return msx_display_game_on_external() ? "SELECT SLOT" : "STATE SLOT";
+        case 9u: return msx_display_game_on_external() ? "SAVE SLOT" : "SAVE STATE";
+        case 10u: return msx_display_game_on_external() ? "LOAD SLOT" : "LOAD STATE";
         default: break;
     }
 
-    uint8_t dynamicIndex = 10u;
+    uint8_t dynamicIndex = 11u;
     if (overlay.dskChangeAvailable) {
         if (index == dynamicIndex) {
             return "CHANGE DSK";
@@ -327,6 +328,8 @@ static const char* msx_display_runtime_menu_value(const MsxInputOverlayState& ov
         case 6u:
             return msx_display_active_view_label();
         case 7u:
+            return msx_config_region_mode_label(overlay.regionMode);
+        case 8u:
             std::snprintf(slotStr, sizeof(slotStr), "< %u >", static_cast<unsigned>(stateSlot));
             return slotStr;
         default:
@@ -569,6 +572,7 @@ static bool msx_display_runtime_menu_overlay_equals(const MsxInputOverlayState& 
            a.perfShowFpsOverlay == b.perfShowFpsOverlay &&
            a.virtualSccMode == b.virtualSccMode &&
            a.sccHardwareDetectEnabled == b.sccHardwareDetectEnabled &&
+           a.regionMode == b.regionMode &&
            a.soundVolume == b.soundVolume &&
            a.sccGainPercent == b.sccGainPercent &&
            a.casChangeAvailable == b.casChangeAvailable &&

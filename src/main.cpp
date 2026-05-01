@@ -68,6 +68,14 @@ static bool containsToken(const std::string& text, const char* token)
 
 static void appendInfoToken(std::string& line, const char* token)
 {
+  if (!token || token[0] == '\0') {
+    return;
+  }
+  const std::string paddedLine = " " + line + " ";
+  const std::string paddedToken = " " + std::string(token) + " ";
+  if (paddedLine.find(paddedToken) != std::string::npos) {
+    return;
+  }
   if (!line.empty()) {
     line += " ";
   }
@@ -81,24 +89,19 @@ static void appendInfoToken(std::string& line, const std::string& token)
   }
 }
 
-static std::string detectYearToken(const std::string& name)
+static std::string trimInfoTag(const std::string& tag)
 {
-  for (size_t i = 0; i + 5 < name.size(); ++i) {
-    if ((name[i] != '(' && name[i] != '[') || !std::isdigit(static_cast<unsigned char>(name[i + 1]))) {
-      continue;
-    }
-    bool fourDigits = true;
-    for (size_t d = 1; d <= 4; ++d) {
-      if (!std::isdigit(static_cast<unsigned char>(name[i + d]))) {
-        fourDigits = false;
-        break;
-      }
-    }
-    if (fourDigits && (name[i + 5] == ')' || name[i + 5] == ']')) {
-      return name.substr(i + 1, 4);
-    }
+  size_t start = 0;
+  while (start < tag.size() && std::isspace(static_cast<unsigned char>(tag[start]))) {
+    ++start;
   }
-  return "";
+
+  size_t end = tag.size();
+  while (end > start && std::isspace(static_cast<unsigned char>(tag[end - 1]))) {
+    --end;
+  }
+
+  return tag.substr(start, end - start);
 }
 
 static bool parseUnsignedAt(const std::string& text, size_t& pos, int& value)
@@ -117,7 +120,7 @@ static bool parseUnsignedAt(const std::string& text, size_t& pos, int& value)
   return true;
 }
 
-static std::string normalizeDiskTag(const std::string& tag)
+static std::string normalizeInfoTag(const std::string& tag)
 {
   std::string normalized;
   normalized.reserve(tag.size());
@@ -129,7 +132,97 @@ static std::string normalizeDiskTag(const std::string& tag)
   return normalized;
 }
 
-static std::string detectDiskToken(const std::string& name)
+static std::string formatDiskTag(const std::string& tag)
+{
+  const std::string normalized = normalizeInfoTag(tag);
+  const size_t diskPos = normalized.find("disk");
+  if (diskPos == std::string::npos) {
+    return "";
+  }
+
+  size_t pos = diskPos + 4;
+  int diskNumber = 0;
+  int diskTotal = 0;
+  if (!parseUnsignedAt(normalized, pos, diskNumber)) {
+    return "";
+  }
+  if (normalized.compare(pos, 2, "of") != 0) {
+    return "";
+  }
+  pos += 2;
+  if (!parseUnsignedAt(normalized, pos, diskTotal)) {
+    return "";
+  }
+
+  char buffer[24];
+  snprintf(buffer, sizeof(buffer), "Disk %d of %d", diskNumber, diskTotal);
+  return std::string(buffer);
+}
+
+static std::string formatRomInfoTag(const std::string& rawTag)
+{
+  const std::string tag = trimInfoTag(rawTag);
+  if (tag.empty()) {
+    return "";
+  }
+
+  const std::string diskTag = formatDiskTag(tag);
+  if (!diskTag.empty()) {
+    return diskTag;
+  }
+
+  const std::string normalized = normalizeInfoTag(tag);
+  if (normalized == "scc+") {
+    return "SCC+";
+  }
+  if (normalized == "scc") {
+    return "SCC";
+  }
+  if (normalized == "t") {
+    return "Trained";
+  }
+  if (normalized == "a") {
+    return "Altern";
+  }
+  if (normalized == "a2") {
+    return "Altern2";
+  }
+  if (normalized == "a3") {
+    return "Altern3";
+  }
+  if (normalized == "b") {
+    return "Bad";
+  }
+  if (normalized == "o") {
+    return "Overdump";
+  }
+  if (normalized.rfind("cr", 0) == 0) {
+    return "Cracked";
+  }
+  if (normalized == "beta") {
+    return "Beta";
+  }
+  if (normalized == "jp" ||
+      normalized == "ja" ||
+      normalized == "j" ||
+      normalized == "jap" ||
+      normalized == "japan") {
+    return "Jap";
+  }
+  if (normalized == "es") {
+    return "Espanol";
+  }
+  if (normalized == "it") {
+    return "Italiano";
+  }
+  if (normalized == "kr") {
+    return "Korean";
+  }
+
+  return tag;
+}
+
+static void appendRomInfoTags(std::string& line, const std::string& name)
 {
   for (size_t start = 0; start < name.size(); ++start) {
     if (name[start] != '(' && name[start] != '[') {
@@ -142,32 +235,9 @@ static std::string detectDiskToken(const std::string& name)
       continue;
     }
 
-    const std::string tag = normalizeDiskTag(name.substr(start + 1, end - start - 1));
-    const size_t diskPos = tag.find("disk");
-    if (diskPos == std::string::npos) {
-      continue;
-    }
-
-    size_t pos = diskPos + 4;
-    int diskNumber = 0;
-    int diskTotal = 0;
-    if (!parseUnsignedAt(tag, pos, diskNumber)) {
-      continue;
-    }
-    if (tag.compare(pos, 2, "of") != 0) {
-      continue;
-    }
-    pos += 2;
-    if (!parseUnsignedAt(tag, pos, diskTotal)) {
-      continue;
-    }
-
-    char buffer[24];
-    snprintf(buffer, sizeof(buffer), "Disk %d of %d", diskNumber, diskTotal);
-    return std::string(buffer);
+    appendInfoToken(line, formatRomInfoTag(name.substr(start + 1, end - start - 1)));
+    start = end;
   }
-
-  return "";
 }
 
 static std::string buildRomBrowserInfoLine(const std::string& folder, const std::string& entry)
@@ -180,55 +250,13 @@ static std::string buildRomBrowserInfoLine(const std::string& folder, const std:
   const std::string lower = lowerCopy(combined);
   std::string line;
 
-  appendInfoToken(line, detectDiskToken(entry));
-
   if (containsToken(lower, "scc+")) {
     appendInfoToken(line, "SCC+");
   } else if (containsToken(lower, "scc")) {
     appendInfoToken(line, "SCC");
   }
 
-  if (containsToken(lower, "[t]")) {
-    appendInfoToken(line, "Trained");
-  }
-  if (containsToken(lower, "[a]")) {
-    appendInfoToken(line, "Altern");
-  }
-  if (containsToken(lower, "[a2]")) {
-    appendInfoToken(line, "Altern2");
-  }
-  if (containsToken(lower, "[a3]")) {
-    appendInfoToken(line, "Altern3");
-  }
-  if (containsToken(lower, "[b]")) {
-    appendInfoToken(line, "Bad");
-  }
-  if (containsToken(lower, "[o]")) {
-    appendInfoToken(line, "Overdump");
-  }
-  if (containsToken(lower, "[cr")) {
-    appendInfoToken(line, "Cracked");
-  }
-  if (containsToken(lower, "(beta)") || containsToken(lower, "[beta]")) {
-    appendInfoToken(line, "Beta");
-  }
-  if (containsToken(lower, "(jp)") || containsToken(lower, "[jp]")) {
-    appendInfoToken(line, "Jap");
-  }
-  if (containsToken(lower, "(es)") || containsToken(lower, "[es]")) {
-    appendInfoToken(line, "Espanol");
-  }
-  if (containsToken(lower, "(it)") || containsToken(lower, "[it]")) {
-    appendInfoToken(line, "Italiano");
-  }
-  if (containsToken(lower, "(kr)") || containsToken(lower, "[kr]")) {
-    appendInfoToken(line, "Korean");
-  }
-
-  const std::string year = detectYearToken(entry);
-  if (!year.empty()) {
-    appendInfoToken(line, year);
-  }
+  appendRomInfoTags(line, entry);
 
   return line.empty() ? "No tags" : line;
 }
@@ -263,10 +291,12 @@ static void drawExternalRomBrowserInfo(const std::string& folder,
   tft.drawFastHLine(0, kInfoY, kInfoW, TFT_DARKGREY);
   tft.setTextDatum(TL_DATUM);
   tft.setTextColor(TFT_WHITE, TFT_BLACK);
-  const std::string infoLine = fitExternalInfoText(tft, buildRomBrowserInfoLine(folder, entry), 2, kInfoW - 8);
-  const int textW = tft.textWidth(infoLine.c_str(), 2);
+  const std::string rawInfoLine = buildRomBrowserInfoLine(folder, entry);
+  const int infoFont = tft.textWidth(rawInfoLine.c_str(), 2) <= kInfoW - 8 ? 2 : 1;
+  const std::string infoLine = fitExternalInfoText(tft, rawInfoLine, infoFont, kInfoW - 8);
+  const int textW = tft.textWidth(infoLine.c_str(), infoFont);
   const int textX = std::max(4, (kInfoW - textW) / 2);
-  tft.drawString(infoLine.c_str(), textX, kInfoY + 8, 2);
+  tft.drawString(infoLine.c_str(), textX, kInfoY + (infoFont == 2 ? 8 : 10), infoFont);
 }
 
 namespace {
@@ -918,6 +948,7 @@ static void showStartupMsxConfigMenu(CardputerView& display, CardputerInput& inp
     msx_config_load_internal_view_mode();
     msx_config_load_performance_flags();
     msx_config_load_virtual_scc_mode();
+    msx_config_load_region_mode();
     MsxRuntimeOptionConfig config = msx_input_load_runtime_option_config();
     char stateSlotValue[8];
     snprintf(stateSlotValue, sizeof(stateSlotValue), "< %u >", static_cast<unsigned>(config.stateSlot));
@@ -930,6 +961,7 @@ static void showStartupMsxConfigMenu(CardputerView& display, CardputerInput& inp
         "BasicKeyboard",
         "Vaus",
         "View",
+        "MSX REGION",
         "StateSlot",
         "Back",
     };
@@ -941,6 +973,7 @@ static void showStartupMsxConfigMenu(CardputerView& display, CardputerInput& inp
         startupBoolLabel(config.basicKeyboardEnabled),
         startupBoolLabel(config.vausEnabled),
         msx_config_get_active_view_mode_label_for_target(g_emu_display_target == EMU_DISPLAY_EXTERNAL),
+        msx_config_region_mode_label(msx_config_get_region_mode()),
         stateSlotValue,
         "",
     };
@@ -957,7 +990,7 @@ static void showStartupMsxConfigMenu(CardputerView& display, CardputerInput& inp
                                          selectedIndex,
                                          -1,
                                          kSelectorResultBackToRomBrowser);
-    if (selected == kSelectorResultBackToRomBrowser || selected < 0 || selected == 8) {
+    if (selected == kSelectorResultBackToRomBrowser || selected < 0 || selected == 9) {
       input.flushInput(120);
       return;
     }
@@ -1001,6 +1034,9 @@ static void showStartupMsxConfigMenu(CardputerView& display, CardputerInput& inp
         msx_config_toggle_active_view_mode_for_target(g_emu_display_target == EMU_DISPLAY_EXTERNAL);
         break;
       case 7:
+        msx_config_cycle_region_mode(1, true);
+        break;
+      case 8:
         config.stateSlot = static_cast<uint8_t>((config.stateSlot + 1u) % 10u);
         msx_input_set_runtime_option_config(config, true);
         break;
@@ -1156,13 +1192,39 @@ static std::string reopenRomBrowser(
     CardputerView& display,
     CardputerInput& input,
     std::string browserFolder,
-    bool skipWelcome = true
+    bool skipWelcome = true,
+    bool* backToStartupMenu = nullptr
 ) {
   browserFolder = browserFolder.empty() ? "/" : browserFolder;
+  if (backToStartupMenu) {
+    *backToStartupMenu = false;
+  }
 
   while (true) {
     showExternalRomSelectorTft();
-    std::string romPath = getRomPath(sd, display, input, browserFolder, skipWelcome, drawExternalRomBrowserInfo, nullptr);
+    bool browserBackToStartupMenu = false;
+    std::string romPath = getRomPath(sd,
+                                     display,
+                                     input,
+                                     browserFolder,
+                                     skipWelcome,
+                                     drawExternalRomBrowserInfo,
+                                     nullptr,
+                                     &browserBackToStartupMenu);
+    if (browserBackToStartupMenu) {
+      if (backToStartupMenu) {
+        *backToStartupMenu = true;
+        return "";
+      }
+      browserFolder = getRomFolderFromSd(sd);
+      if (browserFolder.empty()) {
+        browserFolder = "/";
+      }
+      display.topBar("SELECT A ROM", false, false);
+      display.subMessage("Browsing SD card", 400);
+      skipWelcome = true;
+      continue;
+    }
     if (!romPath.empty()) {
       return romPath;
     }
@@ -1245,8 +1307,33 @@ void setup() {
     delay(1000);
   } else if (forceRomSelector || quittingGame) {
     // Returning from a game or forcing recovery - show "Select Rom!" on external, go to browser.
-    romPath = reopenRomBrowser(sd, display, input, romFolder, true);
+    bool backToStartupMenu = false;
+    romPath = reopenRomBrowser(sd, display, input, romFolder, true, &backToStartupMenu);
     selectedFromBrowser = !romPath.empty();
+    if (backToStartupMenu) {
+      bool skipRomSelectorWelcome = true;
+      while (romPath.empty()) {
+        switch (selectStartupMainMenu(display, input)) {
+          case StartupMainMenuAction::RomSelector:
+            backToStartupMenu = false;
+            romPath = reopenRomBrowser(sd, display, input, romFolder, skipRomSelectorWelcome, &backToStartupMenu);
+            selectedFromBrowser = !romPath.empty();
+            skipRomSelectorWelcome = true;
+            break;
+          case StartupMainMenuAction::ConfigMenu:
+            showStartupMsxConfigMenu(display, input);
+            break;
+          case StartupMainMenuAction::ConfigKeys:
+            share::emuControlsLoad(sd, share::EmuProfile::MSX);
+            share::emuControlsEdit(sd, share::EmuProfile::MSX, display, input);
+            input.flushInput(150);
+            break;
+          case StartupMainMenuAction::About:
+            showStartupAboutPage(sd, display, input);
+            break;
+        }
+      }
+    }
   } else {
     // Welcome on both screens
     display.welcome();
@@ -1262,7 +1349,11 @@ void setup() {
       while (romPath.empty()) {
         switch (selectStartupMainMenu(display, input)) {
           case StartupMainMenuAction::RomSelector:
-            romPath = reopenRomBrowser(sd, display, input, romFolder, skipRomSelectorWelcome);
+            {
+              bool backToStartupMenu = false;
+              romPath = reopenRomBrowser(sd, display, input, romFolder, skipRomSelectorWelcome, &backToStartupMenu);
+              (void)backToStartupMenu;
+            }
             selectedFromBrowser = !romPath.empty();
             skipRomSelectorWelcome = true;
             break;

@@ -17,6 +17,7 @@ constexpr const char* kMsxFrameskipKey = "frameskip";
 constexpr const char* kMsxFpsOverlayKey = "fps_hud";
 constexpr const char* kMsxVirtualSccKey = "virt_scc";
 constexpr const char* kMsxSccHardwareDetectKey = "scc_hdw";
+constexpr const char* kMsxRegionModeKey = "region";
 constexpr const char* kMsxSoundVolumeKey = "snd_vol";
 constexpr const char* kMsxSccGainKey = "scc_gain";
 constexpr const char* kMsxBiosPathKey = "bios_path";
@@ -45,6 +46,7 @@ constexpr MsxFrameskipMode kMsxDefaultFrameskipMode = MsxFrameskipMode::Adaptive
 constexpr bool kMsxDefaultFpsOverlayEnabled = true;
 constexpr MsxVirtualSccMode kMsxDefaultVirtualSccMode = MsxVirtualSccMode::Off;
 constexpr bool kMsxDefaultSccHardwareDetectEnabled = false;
+constexpr MsxRegionMode kMsxDefaultRegionMode = MsxRegionMode::Auto;
 constexpr uint8_t kMsxDefaultSoundVolume = 112;
 constexpr uint16_t kMsxDefaultSccGainPercent = 150;
 constexpr uint16_t kMsxMinSccGainPercent = 0;
@@ -61,6 +63,7 @@ MsxFrameskipMode s_frameskipMode = kMsxDefaultFrameskipMode;
 bool s_fpsOverlayEnabled = kMsxDefaultFpsOverlayEnabled;
 MsxVirtualSccMode s_virtualSccMode = kMsxDefaultVirtualSccMode;
 bool s_sccHardwareDetectEnabled = kMsxDefaultSccHardwareDetectEnabled;
+MsxRegionMode s_regionMode = kMsxDefaultRegionMode;
 uint8_t s_soundVolume = kMsxDefaultSoundVolume;
 uint16_t s_sccGainPercent = kMsxDefaultSccGainPercent;
 char s_genericBiosPath[96] = {0};
@@ -166,6 +169,14 @@ MsxFrameskipMode msx_sanitize_frameskip_mode(uint8_t value)
         return static_cast<MsxFrameskipMode>(value);
     }
     return kMsxDefaultFrameskipMode;
+}
+
+MsxRegionMode msx_sanitize_region_mode(uint8_t value)
+{
+    if (value < static_cast<uint8_t>(MsxRegionMode::Count)) {
+        return static_cast<MsxRegionMode>(value);
+    }
+    return kMsxDefaultRegionMode;
 }
 
 void msx_copy_path(char* dst, size_t dstSize, const char* src)
@@ -906,6 +917,75 @@ void msx_config_set_scc_hardware_detect_enabled(bool enabled, bool persist)
     prefs.begin(kMsxConfigNs, false);
     prefs.putBool(kMsxSccHardwareDetectKey, s_sccHardwareDetectEnabled);
     prefs.end();
+}
+
+MsxRegionMode msx_config_load_region_mode(void)
+{
+    Preferences prefs;
+    prefs.begin(kMsxConfigNs, true);
+    const bool hasSavedValue = prefs.isKey(kMsxRegionModeKey);
+    const uint8_t savedValue = prefs.getUChar(
+        kMsxRegionModeKey,
+        static_cast<uint8_t>(kMsxDefaultRegionMode)
+    );
+    prefs.end();
+
+    s_regionMode = hasSavedValue
+                       ? msx_sanitize_region_mode(savedValue)
+                       : kMsxDefaultRegionMode;
+
+    if (!hasSavedValue || savedValue != static_cast<uint8_t>(s_regionMode)) {
+        Preferences writePrefs;
+        writePrefs.begin(kMsxConfigNs, false);
+        writePrefs.putUChar(kMsxRegionModeKey, static_cast<uint8_t>(s_regionMode));
+        writePrefs.end();
+    }
+
+    return s_regionMode;
+}
+
+MsxRegionMode msx_config_get_region_mode(void)
+{
+    return s_regionMode;
+}
+
+const char* msx_config_region_mode_label(MsxRegionMode mode)
+{
+    switch (mode) {
+        case MsxRegionMode::World:
+            return "WORLD";
+        case MsxRegionMode::Japan:
+            return "JAPAN";
+        case MsxRegionMode::Auto:
+        default:
+            return "AUTO";
+    }
+}
+
+const char* msx_config_region_profile_label(MsxRegionProfile profile)
+{
+    return profile == MsxRegionProfile::Japan ? "JAPAN" : "WORLD";
+}
+
+void msx_config_set_region_mode(MsxRegionMode mode, bool persist)
+{
+    s_regionMode = msx_sanitize_region_mode(static_cast<uint8_t>(mode));
+    if (!persist) {
+        return;
+    }
+
+    Preferences prefs;
+    prefs.begin(kMsxConfigNs, false);
+    prefs.putUChar(kMsxRegionModeKey, static_cast<uint8_t>(s_regionMode));
+    prefs.end();
+}
+
+void msx_config_cycle_region_mode(int delta, bool persist)
+{
+    int mode = static_cast<int>(s_regionMode);
+    mode = (mode + (delta >= 0 ? 1 : -1) + static_cast<int>(MsxRegionMode::Count)) %
+           static_cast<int>(MsxRegionMode::Count);
+    msx_config_set_region_mode(static_cast<MsxRegionMode>(mode), persist);
 }
 
 uint8_t msx_config_load_sound_volume(void)

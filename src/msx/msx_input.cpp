@@ -74,6 +74,7 @@ enum class MsxRuntimeMenuItem : uint8_t {
     BasicKeyboard,
     Vaus,
     View,
+    Region,
     StateSlot,
     SaveState,
     LoadState,
@@ -262,7 +263,7 @@ static bool msx_runtime_menu_in_cas_page(void)
 
 static uint8_t msx_get_main_menu_item_count(void)
 {
-    uint8_t count = 11u;
+    uint8_t count = 12u;
     if (s_runtimeOptions.changeDskAvailable) {
         ++count;
     }
@@ -311,13 +312,14 @@ static MsxRuntimeMenuItem msx_get_menu_item(uint8_t index)
         case 4: return MsxRuntimeMenuItem::BasicKeyboard;
         case 5: return MsxRuntimeMenuItem::Vaus;
         case 6: return MsxRuntimeMenuItem::View;
-        case 7: return MsxRuntimeMenuItem::StateSlot;
-        case 8: return MsxRuntimeMenuItem::SaveState;
-        case 9: return MsxRuntimeMenuItem::LoadState;
+        case 7: return MsxRuntimeMenuItem::Region;
+        case 8: return MsxRuntimeMenuItem::StateSlot;
+        case 9: return MsxRuntimeMenuItem::SaveState;
+        case 10: return MsxRuntimeMenuItem::LoadState;
         default: break;
     }
 
-    uint8_t dynamicIndex = 10u;
+    uint8_t dynamicIndex = 11u;
     if (s_runtimeOptions.changeDskAvailable) {
         if (index == dynamicIndex) {
             return MsxRuntimeMenuItem::ChangeDsk;
@@ -845,6 +847,11 @@ static void msx_runtime_menu_adjust(int delta)
         return;
     }
 
+    if (msx_get_menu_item(s_runtimeMenu.selectedIndex) == MsxRuntimeMenuItem::Region) {
+        msx_config_cycle_region_mode(delta >= 0 ? 1 : -1, true);
+        return;
+    }
+
     if (msx_get_menu_item(s_runtimeMenu.selectedIndex) == MsxRuntimeMenuItem::StateSlot) {
         int slot = s_runtimeOptions.stateSlot;
         slot = (slot + delta + 10) % 10;
@@ -1016,6 +1023,9 @@ static void msx_runtime_menu_accept(void)
                     g_emu_display_target == EMU_DISPLAY_EXTERNAL
                 );
             }
+            break;
+        case MsxRuntimeMenuItem::Region:
+            msx_config_cycle_region_mode(1, true);
             break;
         case MsxRuntimeMenuItem::Performance:
             if (msx_config_get_performance_preset() == MsxPerformancePreset::Custom) {
@@ -2354,6 +2364,7 @@ void msx_input_get_overlay_state(MsxInputOverlayState* state)
     state->perfFrameskipMode = msx_config_get_frameskip_mode();
     state->virtualSccMode = msx_config_get_virtual_scc_mode();
     state->sccHardwareDetectEnabled = msx_config_get_scc_hardware_detect_enabled();
+    state->regionMode = msx_config_get_region_mode();
     state->soundVolume = msx_config_get_sound_volume();
     state->sccGainPercent = msx_config_get_scc_gain_percent();
     state->casChangeAvailable = s_runtimeOptions.changeCasAvailable;

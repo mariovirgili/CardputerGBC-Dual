@@ -123,11 +123,16 @@ static inline std::string getRomPath(SdService& sdService,
                                      const std::string& initialFolder = "/",
                                      bool skipWelcome = false,
                                      RomBrowserSelectionInfoCallback infoCallback = nullptr,
-                                     void* infoCallbackContext = nullptr) {
+                                     void* infoCallbackContext = nullptr,
+                                     bool* backToStartupMenu = nullptr) {
     VerticalSelector verticalSelector(display, input);
     std::vector<std::string> supportedExts = {".rom", ".dsk", ".cas"};
     static constexpr size_t kRomBrowserMaxElements = 1024;
     static constexpr int kRomBrowserMenuResult = -3;
+    static constexpr int kRomBrowserStartupMenuResult = -4;
+    if (backToStartupMenu) {
+        *backToStartupMenu = false;
+    }
     auto releaseElementNames = [](std::vector<std::string>& names) {
         std::vector<std::string>().swap(names);
     };
@@ -232,10 +237,18 @@ static inline std::string getRomPath(SdService& sdService,
             true,
             preferredIndex,
             kRomBrowserMenuResult,
-            -1,
+            kRomBrowserStartupMenuResult,
             infoCallback ? romBrowserSelectionChanged : nullptr,
             infoCallback ? &infoContext : nullptr
         );
+
+        if (selectedIndex == kRomBrowserStartupMenuResult) {
+            if (backToStartupMenu) {
+                *backToStartupMenu = true;
+            }
+            sdService.close();
+            return "";
+        }
 
         if (selectedIndex == kRomBrowserMenuResult) {
             if (openRomBrowserMenu(currentPath)) {
@@ -245,7 +258,7 @@ static inline std::string getRomPath(SdService& sdService,
             continue;
         }
 
-        if (selectedIndex >= elementNames.size()) {
+        if (selectedIndex < 0 || selectedIndex >= static_cast<int>(elementNames.size())) {
             if (currentPath == "/") {
                 display.topBar("LOAD ROM CARTRIDGE", false, false);
                 display.showValidExt(supportedExts);

@@ -296,6 +296,9 @@ int VerticalSelector::select(
                 }
                 break;
             case KEY_ESC_CUSTOM:
+                if (romBrowserControls) {
+                    return -1;
+                }
                 return shortEscResult;
             case KEY_ESC_LONG_CUSTOM:
                 return longEscResult;
@@ -305,6 +308,9 @@ int VerticalSelector::select(
                 }
                 break;
             case KEY_DEL:
+                if (romBrowserControls) {
+                    return shortEscResult;
+                }
                 break;
             default:
                 break;

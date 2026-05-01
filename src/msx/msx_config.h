@@ -62,6 +62,18 @@ enum class MsxVirtualSccMode : uint8_t {
     Count,
 };
 
+enum class MsxRegionMode : uint8_t {
+    Auto = 0,
+    World,
+    Japan,
+    Count,
+};
+
+enum class MsxRegionProfile : uint8_t {
+    World = 0,
+    Japan,
+};
+
 MsxInternalViewMode msx_config_load_internal_view_mode(void);
 MsxInternalViewMode msx_config_get_internal_view_mode(void);
 MsxInternalViewMode msx_config_get_active_view_mode(void);
@@ -120,6 +132,13 @@ void msx_config_cycle_virtual_scc_mode(int delta, bool persist);
 bool msx_config_load_scc_hardware_detect_enabled(void);
 bool msx_config_get_scc_hardware_detect_enabled(void);
 void msx_config_set_scc_hardware_detect_enabled(bool enabled, bool persist);
+
+MsxRegionMode msx_config_load_region_mode(void);
+MsxRegionMode msx_config_get_region_mode(void);
+const char* msx_config_region_mode_label(MsxRegionMode mode);
+const char* msx_config_region_profile_label(MsxRegionProfile profile);
+void msx_config_set_region_mode(MsxRegionMode mode, bool persist);
+void msx_config_cycle_region_mode(int delta, bool persist);
 
 uint8_t msx_config_load_sound_volume(void);
 uint8_t msx_config_get_sound_volume(void);

@@ -33,6 +33,7 @@ struct MsxMemoryState {
     MsxDiskState* disk;
     MsxCasState* cas;
     MsxDiskPatchFn diskPatch;
+    MsxRegionProfile regionProfile;
     const uint8_t* diskRom;
     size_t diskRomSize;
     uint8_t* ramBanks[16];
@@ -60,12 +61,16 @@ struct MsxMemoryState {
     uint8_t lastPortA1;
     uint8_t lastPortA8;
     uint8_t lastPortAA;
+    uint16_t kanjiL1Char;
+    uint8_t kanjiL1ReadIndex;
+    uint8_t internalIoControl;
     uint32_t ioWriteCount;
     bool mapperEnabled;
     bool ramSegmentCountPowerOfTwo;
     bool slot3Expanded;
     bool cartBootWorkareaFallbackArmed;
     bool cartBootMappingRestoreArmed;
+    bool kanjiL1Enabled;
     bool ready;
 };
 
@@ -101,6 +106,7 @@ void msx_memory_restore_scc_window_state(MsxMemoryState* state,
                                          bool realPlusWindow,
                                          MsxVirtualSccMode virtualMode);
 void msx_memory_set_keyboard_matrix(MsxMemoryState* state, const MsxKeyboardMatrix* matrix);
+void msx_memory_set_region_profile(MsxMemoryState* state, MsxRegionProfile profile);
 void msx_memory_shutdown(MsxMemoryState* state);
 void msx_memory_reset(MsxMemoryState* state);
 void msx_memory_refresh_maps(MsxMemoryState* state);
