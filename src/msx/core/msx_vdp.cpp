@@ -3315,13 +3315,8 @@ void msx_vdp_render_mono_sprites_line(MsxVdpState* state, unsigned y, uint8_t* d
         const uint8_t spriteColor = msx_vdp_resolve_color(state, color);
         const bool largeSprite = inputHeight > 8u;
         const uint8_t basePattern = largeSprite ? static_cast<uint8_t>(patternId & 0xFCu) : patternId;
-        const uint32_t patternRow = !msx_vdp_is_msx2(state)
-            ? (patternBase + static_cast<uint32_t>(basePattern) * 8u + static_cast<uint32_t>(line))
-            : (patternBase
-               + static_cast<uint32_t>(largeSprite
-                                            ? static_cast<uint8_t>(basePattern + ((line & 0x08u) ? 2u : 0u))
-                                            : basePattern) * 8u
-               + static_cast<uint32_t>(line & 0x07u));
+        const uint32_t patternRow =
+            patternBase + static_cast<uint32_t>(basePattern) * 8u + static_cast<uint32_t>(line);
         const uint8_t leftBits = msx_vdp_read_vram_fast(vram, mask, patternRow);
         msx_vdp_plot_sprite_bits(state,
                                  dst,
@@ -3333,7 +3328,7 @@ void msx_vdp_render_mono_sprites_line(MsxVdpState* state, unsigned y, uint8_t* d
                                  detectSpriteCollision);
 
         if (largeSprite) {
-            const uint8_t rightBits = msx_vdp_read_vram_fast(vram, mask, patternRow + (msx_vdp_is_msx2(state) ? 8u : 16u));
+            const uint8_t rightBits = msx_vdp_read_vram_fast(vram, mask, patternRow + 16u);
             msx_vdp_plot_sprite_bits(state,
                                      dst,
                                      s_msxSpriteOccupancy,
