@@ -25,10 +25,14 @@ int VerticalSelector::select(
     int currentIndex = 0, lastIndex = -1, lastQuerySize = 0;
     char key = KEY_NONE;
     std::string searchQuery;
+    std::string filterQuery;
     std::vector<std::string> filteredOptions;
     const std::vector<std::string>* activeOptions = &options;
     bool searchActive = false;
+    bool filterActive = false;
     bool lastSearchActive = false;
+    bool lastFilterActive = false;
+    int lastFilterSize = -1;
 
     auto optionCount = [&]() -> int {
         return static_cast<int>(activeOptions->size());
@@ -104,11 +108,16 @@ int VerticalSelector::select(
         const bool selectionChanged =
             (lastIndex != currentIndex) ||
             (lastQuerySize != (int)searchQuery.size()) ||
-            (lastSearchActive != searchActive);
+            (lastSearchActive != searchActive) ||
+            (lastFilterActive != filterActive) ||
+            (lastFilterSize != (int)filterQuery.size());
 
         // Full redraw
         if (selectionChanged) {
-            display.topBar(searchActive ? searchQuery : title, subMenu, searchActive);
+            const std::string headerTitle = searchActive
+                ? searchQuery
+                : (filterActive ? ("Filter: " + filterQuery) : title);
+            display.topBar(headerTitle, subMenu, searchActive);
             display.verticalSelection(*activeOptions, currentIndex, VISIBLE_ROWS, options2, shortcuts, visibleMention);
             if (!activeOptions->empty()) mBase = (*activeOptions)[currentIndex];
             if (changedCallback && !activeOptions->empty()) {
@@ -119,6 +128,8 @@ int VerticalSelector::select(
             lastIndex = currentIndex;
             lastQuerySize = (int)searchQuery.size();
             lastSearchActive = searchActive;
+            lastFilterActive = filterActive;
+            lastFilterSize = (int)filterQuery.size();
         } else if (!activeOptions->empty()) {
             // Redraw partial
             const std::string& base = (*activeOptions)[currentIndex];
@@ -238,9 +249,13 @@ int VerticalSelector::select(
                     if (searchQuery.empty()) {
                         filteredOptions.clear();
                         activeOptions = &options;
+                        filterQuery.clear();
+                        filterActive = false;
                     } else {
                         filteredOptions = filterOptions(options, searchQuery);
                         activeOptions = &filteredOptions;
+                        filterQuery = searchQuery;
+                        filterActive = true;
                     }
                     currentIndex = 0;
                     searchActive = false;
@@ -296,6 +311,14 @@ int VerticalSelector::select(
                 }
                 break;
             case KEY_ESC_CUSTOM:
+                if (filterActive) {
+                    filteredOptions.clear();
+                    activeOptions = &options;
+                    filterQuery.clear();
+                    filterActive = false;
+                    currentIndex = 0;
+                    break;
+                }
                 if (romBrowserControls) {
                     return -1;
                 }
