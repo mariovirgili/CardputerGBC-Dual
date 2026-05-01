@@ -1462,20 +1462,6 @@ void msx_video_prepare_sd_access(void)
         s_externalUiActive = false;
     }
 
-    msx_video_release_scratch_buffers();
-    s_firstPresentLogged = false;
-    s_spiPushUs = 0;
-    s_spiPushFrames = 0;
-    s_videoPerfOverBudgetFrames = 0;
-    s_videoPerfOverHalfRateFrames = 0;
-    s_videoPerfWorstUs = 0;
-    s_videoPerfPresentFails = 0;
-    s_videoPerfWindowFrames = 0;
-    s_videoPerfSkippedFrames = 0;
-    msx_video_reset_frameskip_state();
-    s_lastPresentUs = 0;
-    msx_video_reset_external_pacing();
-
     msx_video_unlock();
 }
 

@@ -778,14 +778,6 @@ static unsigned msx_vdp_stream_frame_width(const MsxVdpState* state)
         return kMsxFrameWidth;
     }
 
-    // SCREEN 6/7 are 512-dot modes. When we are on the MSX2 line-stream path
-    // we keep the full horizontal source and let msx_video scale it, instead
-    // of discarding every other dot up front.
-    if (!state->frameBuffer &&
-        (state->mode == MsxVdpMode::Bitmap6 || state->mode == MsxVdpMode::Bitmap7)) {
-        return kMsxWideFrameWidth;
-    }
-
     return state->activeWidth;
 }
 
@@ -4863,8 +4855,10 @@ static void msx_vdp_render_bitmap6_range(MsxVdpState* state, unsigned yStart, un
         return;
     }
 
-    // SCREEN 6 fetch wraps within the selected 0x8000-byte page, like fMSX.
-    const bool wideStream = state && !state->frameBuffer;
+    // Keep the live-stream path visually aligned with the old framebuffer path:
+    // SCREEN 6/7 are reduced to the 256-dot logical width here instead of
+    // preserving all 512 horizontal dots.
+    const bool wideStream = false;
     const unsigned renderWidth = wideStream ? kMsxWideFrameWidth : kMsxFrameWidth;
     const uint32_t lineMask = 0x7FFFu;
     const uint8_t* const vram = state->vram;
@@ -4975,7 +4969,7 @@ static void msx_vdp_render_bitmap7_range(MsxVdpState* state, unsigned yStart, un
         return;
     }
 
-    const bool wideStream = state && !state->frameBuffer;
+    const bool wideStream = false;
     const unsigned renderWidth = wideStream ? kMsxWideFrameWidth : kMsxFrameWidth;
     const uint32_t lineMask = msx_vdp_name_mask(state) & 0xFFFFu;
     const uint8_t* const vram = state->vram;
