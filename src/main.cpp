@@ -291,7 +291,7 @@ static void drawExternalRomBrowserInfo(const std::string& folder,
   tft.drawFastHLine(0, kInfoY, kInfoW, TFT_DARKGREY);
   tft.setTextDatum(TL_DATUM);
   tft.setTextColor(TFT_WHITE, TFT_BLACK);
-  const std::string rawInfoLine = buildRomBrowserInfoLine(folder, entry);
+  const std::string rawInfoLine = "Info: " + buildRomBrowserInfoLine(folder, entry);
   const int infoFont = tft.textWidth(rawInfoLine.c_str(), 2) <= kInfoW - 8 ? 2 : 1;
   const std::string infoLine = fitExternalInfoText(tft, rawInfoLine, infoFont, kInfoW - 8);
   const int textW = tft.textWidth(infoLine.c_str(), infoFont);
@@ -352,7 +352,7 @@ static MsxMachineSelectionResult selectMsxLaunchSystem(CardputerView& display, C
                                        {},
                                        false,
                                        true,
-                                       true,
+                                       false,
                                        initialIndex,
                                        -1,
                                        kSelectorResultBackToRomBrowser);
@@ -392,7 +392,7 @@ static MsxDisplayTargetSelectionResult selectMsxDisplayTarget(CardputerView& dis
                                          {},
                                          false,
                                          true,
-                                         true,
+                                         false,
                                          initialIndex,
                                          hasProfile ? kSelectorResultEditControls : -1,
                                          kSelectorResultBackToRomBrowser);
@@ -435,7 +435,7 @@ static MsxBoolSelectionResult selectMsxExternalFpsLock(CardputerView& display,
                                        {},
                                        false,
                                        true,
-                                       true,
+                                       false,
                                        initialIndex,
                                        -1,
                                        kSelectorResultBackToRomBrowser);
@@ -475,7 +475,7 @@ static MsxVirtualSccSelectionResult selectMsxVirtualSccMode(CardputerView& displ
                                        {},
                                        false,
                                        true,
-                                       true,
+                                       false,
                                        initialIndex,
                                        -1,
                                        kSelectorResultBackToRomBrowser);
