@@ -1507,7 +1507,10 @@ bool msx_media_analyze_rom(MsxRomImage* image, const uint8_t* romData, size_t ro
     bool fmsxMapperMatched = false;
     uint8_t fmsxMapperType = 0xFFu;
 
-    if (romLen <= 0x4000) {
+    if (romLen == 0x10000u && image->headerOffset == 0x4000u) {
+        image->cartridgeType = MsxCartridgeType::Plain64K;
+    }
+    else if (romLen <= 0x4000) {
         image->cartridgeType = MsxCartridgeType::Plain16K;
     }
     else if (romLen <= 0x8000) {
@@ -1586,6 +1589,8 @@ const char* msx_media_cartridge_type_label(MsxCartridgeType type)
             return "PLAIN16";
         case MsxCartridgeType::Plain32K:
             return "PLAIN32";
+        case MsxCartridgeType::Plain64K:
+            return "PLAIN64";
         case MsxCartridgeType::Ascii8:
             return "ASCII8";
         case MsxCartridgeType::Ascii16:

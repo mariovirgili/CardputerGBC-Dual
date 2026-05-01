@@ -1,13 +1,22 @@
 #include "msx_cart.h"
 
+#include <esp_heap_caps.h>
+
 #include <cstdio>
 #include <cstring>
 
 #ifndef MSX_CART_LOG_ENABLED
-#define MSX_CART_LOG_ENABLED 0
+#define MSX_CART_LOG_ENABLED 1
+#endif
+
+#ifndef MSX_BOOTSTRAP_LOG_ENABLED
+#define MSX_BOOTSTRAP_LOG_ENABLED 0
 #endif
 
 namespace {
+
+constexpr size_t kMsxCartSramSize = 0x4000u;
+constexpr uint8_t kMsxCartSramBank = 0xFFu;
 
 uint8_t msx_normalize_bank(const MsxCartState* state, uint8_t bank)
 {
@@ -17,13 +26,13 @@ uint8_t msx_normalize_bank(const MsxCartState* state, uint8_t bank)
     return static_cast<uint8_t>(bank % state->bankCount8K);
 }
 
-void msx_set_ascii16_pair(MsxCartState* state, uint8_t pairIndex, uint8_t baseBank)
+void msx_set_ascii16_pair(MsxCartState* state, uint8_t pairIndex, uint8_t page16K)
 {
     if (!state) {
         return;
     }
 
-    const uint8_t evenBank = static_cast<uint8_t>((baseBank & 0xFEu) % state->bankCount8K);
+    const uint8_t evenBank = static_cast<uint8_t>((static_cast<uint16_t>(page16K) << 1u) % state->bankCount8K);
     const uint8_t oddBank = static_cast<uint8_t>((evenBank + 1u) % state->bankCount8K);
 
     if (pairIndex == 0) {
@@ -33,6 +42,37 @@ void msx_set_ascii16_pair(MsxCartState* state, uint8_t pairIndex, uint8_t baseBa
         state->windowBanks[2] = evenBank;
         state->windowBanks[3] = oddBank;
     }
+}
+
+bool msx_cart_uses_sram(MsxCartridgeType type)
+{
+    return type == MsxCartridgeType::Ascii8 ||
+           type == MsxCartridgeType::Ascii16;
+}
+
+bool msx_cart_ensure_sram(MsxCartState* state)
+{
+    if (!state || !msx_cart_uses_sram(state->type)) {
+        return true;
+    }
+    if (state->sram) {
+        return true;
+    }
+
+    uint8_t* sram = static_cast<uint8_t*>(heap_caps_malloc(kMsxCartSramSize, MALLOC_CAP_8BIT));
+    if (!sram) {
+        sram = static_cast<uint8_t*>(heap_caps_malloc(kMsxCartSramSize, MALLOC_CAP_DEFAULT));
+    }
+    if (!sram) {
+        std::printf("[MSX][CART] SRAM alloc failed size=%u\n", static_cast<unsigned>(kMsxCartSramSize));
+        return false;
+    }
+
+    std::memset(sram, 0xFF, kMsxCartSramSize);
+    state->sram = sram;
+    state->sramSize = kMsxCartSramSize;
+    std::printf("[MSX][CART] SRAM ready size=%u\n", static_cast<unsigned>(kMsxCartSramSize));
+    return true;
 }
 
 } // namespace
@@ -60,7 +100,27 @@ bool msx_cart_init(MsxCartState* state, const MsxRomImage* image)
     state->ready = true;
 
     msx_cart_reset(state);
+#if MSX_BOOTSTRAP_LOG_ENABLED
+    std::printf("[MSX][BOOTDBG] cart reset banks=%u/%u/%u/%u bankSwitch=%u sram=%u\n",
+                static_cast<unsigned>(state->windowBanks[0]),
+                static_cast<unsigned>(state->windowBanks[1]),
+                static_cast<unsigned>(state->windowBanks[2]),
+                static_cast<unsigned>(state->windowBanks[3]),
+                state->bankSwitching ? 1u : 0u,
+                state->sram ? 1u : 0u);
+#endif
     return true;
+}
+
+void msx_cart_shutdown(MsxCartState* state)
+{
+    if (!state) {
+        return;
+    }
+    if (state->sram) {
+        heap_caps_free(state->sram);
+    }
+    std::memset(state, 0, sizeof(*state));
 }
 
 void msx_cart_reset(MsxCartState* state)
@@ -81,6 +141,12 @@ void msx_cart_reset(MsxCartState* state)
             state->windowBanks[1] = msx_normalize_bank(state, 1);
             state->windowBanks[2] = msx_normalize_bank(state, 2);
             state->windowBanks[3] = msx_normalize_bank(state, 3);
+            break;
+        case MsxCartridgeType::Plain64K:
+            state->windowBanks[0] = msx_normalize_bank(state, 2);
+            state->windowBanks[1] = msx_normalize_bank(state, 3);
+            state->windowBanks[2] = msx_normalize_bank(state, 4);
+            state->windowBanks[3] = msx_normalize_bank(state, 5);
             break;
         case MsxCartridgeType::Konami:
             // fMSX uses SetMegaROM(Slot, 0, 1, ROMMask, 1) — page 2 (8000-9FFF)
@@ -113,8 +179,30 @@ const uint8_t* msx_cart_window_ptr(const MsxCartState* state, uint8_t windowInde
     }
 
     const uint8_t window = static_cast<uint8_t>(windowIndex & 0x03u);
+    if (state->windowBanks[window] == kMsxCartSramBank) {
+        if (!state->sram || state->sramSize < kMsxCartSramSize) {
+            return nullptr;
+        }
+        if (state->type == MsxCartridgeType::Ascii8) {
+            return state->sram;
+        }
+        return state->sram + (static_cast<size_t>(window & 0x01u) * 0x2000u);
+    }
+
     const uint8_t bank = msx_normalize_bank(state, state->windowBanks[window]);
     return state->rom + static_cast<size_t>(bank) * 0x2000u;
+}
+
+void msx_cart_ascii16_sram_write(MsxCartState* state, uint16_t address, uint8_t value)
+{
+    if (!state || !state->sram || state->sramSize < kMsxCartSramSize) {
+        return;
+    }
+
+    const size_t offset = static_cast<size_t>(address & 0x07FFu);
+    for (size_t mirror = 0; mirror < kMsxCartSramSize; mirror += 0x0800u) {
+        state->sram[mirror + offset] = value;
+    }
 }
 
 void msx_cart_write(MsxCartState* state, uint16_t address, uint8_t value)
@@ -132,20 +220,48 @@ void msx_cart_write(MsxCartState* state, uint16_t address, uint8_t value)
 
     switch (state->type) {
         case MsxCartridgeType::Ascii8:
+            if (address >= 0x8000 && address < 0xC000) {
+                const uint8_t window = static_cast<uint8_t>((address - 0x4000u) >> 13);
+                if (state->windowBanks[window] == kMsxCartSramBank &&
+                    state->sram &&
+                    state->sramSize >= 0x2000u) {
+                    state->sram[address & 0x1FFFu] = value;
+                    return;
+                }
+            }
             if (address >= 0x6000 && address < 0x8000) {
                 const uint8_t reg = static_cast<uint8_t>((address - 0x6000u) >> 11);
                 if (reg < 4) {
-                    state->windowBanks[reg] = msx_normalize_bank(state, value);
+                    if (value & state->bankCount8K) {
+                        if (msx_cart_ensure_sram(state)) {
+                            state->windowBanks[reg] = kMsxCartSramBank;
+                        }
+                    } else {
+                        state->windowBanks[reg] = msx_normalize_bank(state, value);
+                    }
                 }
             }
             break;
 
         case MsxCartridgeType::Ascii16:
-            if (address >= 0x6000 && address < 0x6800) {
-                msx_set_ascii16_pair(state, 0, value);
+            if (address >= 0x8000 && address < 0xC000 && state->windowBanks[2] == kMsxCartSramBank) {
+                msx_cart_ascii16_sram_write(state, address, value);
+                return;
             }
-            else if (address >= 0x7000 && address < 0x7800) {
-                msx_set_ascii16_pair(state, 1, value);
+            if (address >= 0x6000 && address < 0x8000) {
+                const uint8_t sramSelectBit = state->bankCount8K;
+                const bool registerWrite = (address & 0x0FFFu) == 0u;
+                if (registerWrite || value <= sramSelectBit) {
+                    const uint8_t pairIndex = (address & 0x1000u) ? 1u : 0u;
+                    if ((value & sramSelectBit) != 0u) {
+                        if (msx_cart_ensure_sram(state)) {
+                            state->windowBanks[pairIndex * 2u] = kMsxCartSramBank;
+                            state->windowBanks[pairIndex * 2u + 1u] = kMsxCartSramBank;
+                        }
+                    } else {
+                        msx_set_ascii16_pair(state, pairIndex, value);
+                    }
+                }
             }
             break;
 
@@ -184,6 +300,25 @@ void msx_cart_write(MsxCartState* state, uint16_t address, uint8_t value)
         (oldBanks[1] != state->windowBanks[1]) ||
         (oldBanks[2] != state->windowBanks[2]) ||
         (oldBanks[3] != state->windowBanks[3])) {
+#if MSX_BOOTSTRAP_LOG_ENABLED
+        static uint16_t s_bootCartBankLogCount = 0u;
+        if (s_bootCartBankLogCount < 96u) {
+            std::printf("[MSX][BOOTDBG][CART] type=%u WR %04X <- %02X banks %u/%u/%u/%u -> %u/%u/%u/%u #%u\n",
+                        static_cast<unsigned>(state->type),
+                        static_cast<unsigned>(address),
+                        static_cast<unsigned>(value),
+                        static_cast<unsigned>(oldBanks[0]),
+                        static_cast<unsigned>(oldBanks[1]),
+                        static_cast<unsigned>(oldBanks[2]),
+                        static_cast<unsigned>(oldBanks[3]),
+                        static_cast<unsigned>(state->windowBanks[0]),
+                        static_cast<unsigned>(state->windowBanks[1]),
+                        static_cast<unsigned>(state->windowBanks[2]),
+                        static_cast<unsigned>(state->windowBanks[3]),
+                        static_cast<unsigned>(s_bootCartBankLogCount));
+            ++s_bootCartBankLogCount;
+        }
+#endif
 #if MSX_CART_LOG_ENABLED
         static uint16_t s_cartBankLogCount = 0u;
         if (s_cartBankLogCount < 128u) {

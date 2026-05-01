@@ -21,6 +21,10 @@
 #define MSX_CORE_TRACE_ENABLED 0
 #endif
 
+#ifndef MSX_BOOTSTRAP_LOG_ENABLED
+#define MSX_BOOTSTRAP_LOG_ENABLED 0
+#endif
+
 #ifndef MSX_CORE_TIMING_ENABLED
 #define MSX_CORE_TIMING_ENABLED 1
 #endif
@@ -229,29 +233,36 @@ constexpr uint16_t kMsxAddrRamAd0 = 0xF341u;
 constexpr uint16_t kMsxAddrMaster = 0xF348u;
 constexpr size_t kMsxRamSizeMsx2 = 0x20000u;
 constexpr size_t kMsxRamSizeMsx1 = 0x10000u;
+constexpr size_t kMsxPageSize8K = 0x2000u;
 constexpr size_t kMsxPageSize16K = 0x4000u;
 constexpr size_t kMsx2VramSize = 0x20000u;
 constexpr size_t kMsxCoreInitReserve = 0x4000u;
 
-size_t msx_core_select_msx2_ram_size()
+size_t msx_core_select_msx2_ram_size(const uint8_t* mainRom, size_t reserveBytes)
 {
-    size_t freeInternal = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
-    const size_t minRam = kMsxRamSizeMsx1;
-    if (freeInternal <= (kMsx2VramSize + kMsxCoreInitReserve)) {
-        return minRam;
+    const size_t freeInternal = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
+    const size_t free8 = heap_caps_get_free_size(MALLOC_CAP_8BIT);
+    const size_t dynamicBudget = (free8 > freeInternal) ? free8 : freeInternal;
+    const uint8_t staticBanks = msx_media_static_ram_bank_count_for_main_bios(mainRom);
+    size_t staticBytes = static_cast<size_t>(staticBanks) * kMsxPageSize8K;
+    if (staticBytes > kMsxRamSizeMsx2) {
+        staticBytes = kMsxRamSizeMsx2;
     }
 
-    size_t budget = freeInternal - (kMsx2VramSize + kMsxCoreInitReserve);
-    if (budget < minRam) {
-        return minRam;
-    }
+    const size_t dynamicAfterReserve =
+        (dynamicBudget > reserveBytes) ? (dynamicBudget - reserveBytes) : 0u;
+    const size_t totalBudget = staticBytes + dynamicAfterReserve;
+    const size_t selectedRam =
+        (totalBudget >= kMsxRamSizeMsx2) ? kMsxRamSizeMsx2 : kMsxRamSizeMsx1;
 
-    budget &= ~(kMsxPageSize16K - 1u);
-    if (budget < minRam) {
-        return minRam;
-    }
-
-    return (budget > kMsxRamSizeMsx2) ? kMsxRamSizeMsx2 : budget;
+    std::printf("[MSX] core init: msx2 ram select freeInt=%u free8=%u static=%u reserve=%u budget=%u selected=%u\n",
+                static_cast<unsigned>(freeInternal),
+                static_cast<unsigned>(free8),
+                static_cast<unsigned>(staticBytes),
+                static_cast<unsigned>(reserveBytes),
+                static_cast<unsigned>(totalBudget),
+                static_cast<unsigned>(selectedRam));
+    return selectedRam;
 }
 
 size_t msx_core_select_system_ram_size(MsxMachineMode machineMode)
@@ -312,6 +323,90 @@ bool msx_core_status_needs_refresh(const MsxCoreState* state)
 
     return (state->frameCounter - state->lastStatusFrame) >= kMsxStatusRefreshPeriod;
 }
+
+#if MSX_BOOTSTRAP_LOG_ENABLED
+uint8_t msx_core_slot_for_page(uint8_t slotRegister, uint8_t pageIndex)
+{
+    return static_cast<uint8_t>((slotRegister >> (pageIndex * 2u)) & 0x03u);
+}
+
+bool msx_core_bootstrap_frame_should_log(const MsxCoreState* state)
+{
+    if (!state) {
+        return false;
+    }
+    if (state->frameCounter < 20u) {
+        return true;
+    }
+    if (state->frameCounter < 180u && (state->frameCounter % 10u) == 0u) {
+        return true;
+    }
+    if (state->frameCounter <= 360u && (state->frameCounter % 60u) == 0u) {
+        return true;
+    }
+    return false;
+}
+
+void msx_core_log_bootstrap_frame(const MsxCoreState* state,
+                                  bool vdpSliceMode,
+                                  uint32_t executedCycles,
+                                  bool irqEnabled)
+{
+    if (!msx_core_bootstrap_frame_should_log(state)) {
+        return;
+    }
+
+    const MsxVdpState& vdp = state->vdp;
+    const MsxCartState& cart = state->memory.cart;
+    std::printf("[MSX][BOOTDBG] frame=%lu pc=%04X last=%04X op=%02X sp=%04X af=%04X bc=%04X de=%04X hl=%04X "
+                "run=%s irq=%u pend=%u iff=%u cyc=%lu slice=%u slot=%02X p=%u/%u/%u/%u ssl3=%02X "
+                "banks=%u/%u/%u/%u mode=%s h=%u disp=%u R0=%02X R1=%02X R2=%02X R7=%02X R9=%02X "
+                "R18=%02X R23=%02X R25=%02X R26=%02X R27=%02X S0=%02X S1=%02X S2=%02X\n",
+                static_cast<unsigned long>(state->frameCounter),
+                static_cast<unsigned>(state->cpu.pc),
+                static_cast<unsigned>(state->cpu.lastPc),
+                static_cast<unsigned>(state->cpu.lastOpcode),
+                static_cast<unsigned>(state->cpu.sp),
+                static_cast<unsigned>(state->cpu.af),
+                static_cast<unsigned>(state->cpu.bc),
+                static_cast<unsigned>(state->cpu.de),
+                static_cast<unsigned>(state->cpu.hl),
+                msx_cpu_run_state_label(state->cpu.runState),
+                irqEnabled ? 1u : 0u,
+                state->cpu.irqPending ? 1u : 0u,
+                state->cpu.iff1 ? 1u : 0u,
+                static_cast<unsigned long>(executedCycles),
+                vdpSliceMode ? 1u : 0u,
+                static_cast<unsigned>(state->memory.slotRegister),
+                static_cast<unsigned>(msx_core_slot_for_page(state->memory.slotRegister, 0u)),
+                static_cast<unsigned>(msx_core_slot_for_page(state->memory.slotRegister, 1u)),
+                static_cast<unsigned>(msx_core_slot_for_page(state->memory.slotRegister, 2u)),
+                static_cast<unsigned>(msx_core_slot_for_page(state->memory.slotRegister, 3u)),
+                static_cast<unsigned>(state->memory.secondarySlotRegs[3]),
+                static_cast<unsigned>(cart.windowBanks[0]),
+                static_cast<unsigned>(cart.windowBanks[1]),
+                static_cast<unsigned>(cart.windowBanks[2]),
+                static_cast<unsigned>(cart.windowBanks[3]),
+                msx_vdp_mode_label(vdp.mode),
+                static_cast<unsigned>(vdp.activeHeight),
+                (vdp.regs[1] & 0x40u) != 0u ? 1u : 0u,
+                static_cast<unsigned>(vdp.regs[0]),
+                static_cast<unsigned>(vdp.regs[1]),
+                static_cast<unsigned>(vdp.regs[2]),
+                static_cast<unsigned>(vdp.regs[7]),
+                static_cast<unsigned>(vdp.regs[9]),
+                static_cast<unsigned>(vdp.regs[18]),
+                static_cast<unsigned>(vdp.regs[23]),
+                static_cast<unsigned>(vdp.regs[25]),
+                static_cast<unsigned>(vdp.regs[26]),
+                static_cast<unsigned>(vdp.regs[27]),
+                static_cast<unsigned>(vdp.status[0]),
+                static_cast<unsigned>(vdp.status[1]),
+                static_cast<unsigned>(vdp.status[2]));
+}
+#else
+void msx_core_log_bootstrap_frame(const MsxCoreState*, bool, uint32_t, bool) {}
+#endif
 
 void msx_core_refresh_status(MsxCoreState* state)
 {
@@ -687,46 +782,130 @@ bool msx_core_init(MsxCoreState* state,
     }
 
     std::printf("[MSX] core init: cart ok\n");
-    if (state->machineMode == MsxMachineMode::MSX2) {
-        std::printf("[MSX] core init: vdp begin\n");
-        if (!msx_vdp_init(&state->vdp, state->machineMode)) {
-            std::printf("[MSX] core init failed at vdp init\n");
-            msx_bios_shutdown(&state->bios);
-            std::memset(&state->cart, 0, sizeof(state->cart));
-            return false;
-        }
-        std::printf("[MSX] core init: vdp ok\n");
-    }
-
+#if MSX_BOOTSTRAP_LOG_ENABLED
+    std::printf("[MSX][BOOTDBG] cart header off=%u init=%04X entry=%04X type=%s size=%u banks=%u direct=%u "
+                "head=%02X %02X %02X %02X %02X %02X %02X %02X\n",
+                static_cast<unsigned>(state->cart.headerOffset),
+                static_cast<unsigned>(state->cart.initAddress),
+                static_cast<unsigned>(state->cart.entryPoint),
+                msx_media_cartridge_type_label(state->cart.type),
+                static_cast<unsigned>(state->cart.size),
+                static_cast<unsigned>(state->cart.bankCount8K),
+                state->cart.directBootCandidate ? 1u : 0u,
+                state->cart.rom && state->cart.size > 0u ? state->cart.rom[0] : 0xFFu,
+                state->cart.rom && state->cart.size > 1u ? state->cart.rom[1] : 0xFFu,
+                state->cart.rom && state->cart.size > 2u ? state->cart.rom[2] : 0xFFu,
+                state->cart.rom && state->cart.size > 3u ? state->cart.rom[3] : 0xFFu,
+                state->cart.rom && state->cart.size > 4u ? state->cart.rom[4] : 0xFFu,
+                state->cart.rom && state->cart.size > 5u ? state->cart.rom[5] : 0xFFu,
+                state->cart.rom && state->cart.size > 6u ? state->cart.rom[6] : 0xFFu,
+                state->cart.rom && state->cart.size > 7u ? state->cart.rom[7] : 0xFFu);
+#endif
     const size_t requestedRamSize =
         (state->machineMode == MsxMachineMode::MSX1) ? kMsxCartRamSizeMsx1
-                                                     : msx_core_select_msx2_ram_size();
+                                                     : msx_core_select_msx2_ram_size(state->bios.mainRom, kMsxCoreInitReserve);
     std::printf("[MSX] core init: memory begin\n");
     std::printf("[MSX] core init: ram budget free=%u requested=%u\n",
                 static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL)),
                 static_cast<unsigned>(requestedRamSize));
     if (!msx_memory_init(&state->memory, state->machineMode, &state->bios, &state->cart, requestedRamSize)) {
         std::printf("[MSX] core init failed at memory init\n");
-        if (state->machineMode == MsxMachineMode::MSX2) {
-            msx_vdp_shutdown(&state->vdp);
-        }
+        msx_cart_shutdown(&state->cart);
         msx_bios_shutdown(&state->bios);
-        std::memset(&state->cart, 0, sizeof(state->cart));
         return false;
     }
 
     std::printf("[MSX] core init: memory ok\n");
-    if (state->machineMode != MsxMachineMode::MSX2) {
-        std::printf("[MSX] core init: vdp begin\n");
-        if (!msx_vdp_init(&state->vdp, state->machineMode)) {
+    std::printf("[MSX] core init: vdp begin\n");
+    bool usedVdpFirstFallback = false;
+    if (!msx_vdp_init(&state->vdp, state->machineMode)) {
+        if (state->machineMode == MsxMachineMode::MSX2 && requestedRamSize > kMsxRamSizeMsx1) {
+            std::printf("[MSX] core init: vdp after 128K RAM failed, retrying VDP-first path\n");
+            msx_memory_shutdown(&state->memory);
+            usedVdpFirstFallback = true;
+            if (!msx_vdp_init(&state->vdp, state->machineMode)) {
+                std::printf("[MSX] core init failed at vdp fallback init\n");
+                msx_cart_shutdown(&state->cart);
+                msx_bios_shutdown(&state->bios);
+                return false;
+            }
+
+            const size_t fallbackRamSize = msx_core_select_msx2_ram_size(state->bios.mainRom, 0u);
+            std::printf("[MSX] core init: fallback memory begin\n");
+            std::printf("[MSX] core init: fallback ram budget free=%u requested=%u\n",
+                        static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL)),
+                        static_cast<unsigned>(fallbackRamSize));
+            if (!msx_memory_init(&state->memory, state->machineMode, &state->bios, &state->cart, fallbackRamSize)) {
+                if (fallbackRamSize > kMsxRamSizeMsx1) {
+                    std::printf("[MSX] core init: fallback 128K RAM failed, retrying 64K\n");
+                    if (!msx_memory_init(&state->memory, state->machineMode, &state->bios, &state->cart, kMsxRamSizeMsx1)) {
+                        std::printf("[MSX] core init failed at fallback memory init\n");
+                        msx_vdp_shutdown(&state->vdp);
+                        msx_cart_shutdown(&state->cart);
+                        msx_bios_shutdown(&state->bios);
+                        return false;
+                    }
+                } else {
+                    std::printf("[MSX] core init failed at fallback memory init\n");
+                    msx_vdp_shutdown(&state->vdp);
+                    msx_cart_shutdown(&state->cart);
+                    msx_bios_shutdown(&state->bios);
+                    return false;
+                }
+            }
+            std::printf("[MSX] core init: fallback memory ok\n");
+        } else {
             std::printf("[MSX] core init failed at vdp init\n");
             msx_memory_shutdown(&state->memory);
+            msx_cart_shutdown(&state->cart);
             msx_bios_shutdown(&state->bios);
-            std::memset(&state->cart, 0, sizeof(state->cart));
             return false;
         }
-        std::printf("[MSX] core init: vdp ok\n");
     }
+    if (!usedVdpFirstFallback &&
+        state->machineMode == MsxMachineMode::MSX2 &&
+        requestedRamSize > kMsxRamSizeMsx1 &&
+        state->vdp.vramSize < kMsx2VramSize) {
+        std::printf("[MSX] core init: vdp after 128K RAM downgraded to %u, retrying VDP-first path\n",
+                    static_cast<unsigned>(state->vdp.vramSize));
+        msx_vdp_shutdown(&state->vdp);
+        msx_memory_shutdown(&state->memory);
+        usedVdpFirstFallback = true;
+        if (!msx_vdp_init(&state->vdp, state->machineMode)) {
+            std::printf("[MSX] core init failed at vdp fallback init\n");
+            msx_cart_shutdown(&state->cart);
+            msx_bios_shutdown(&state->bios);
+            return false;
+        }
+
+        const size_t fallbackRamSize = msx_core_select_msx2_ram_size(state->bios.mainRom, 0u);
+        std::printf("[MSX] core init: fallback memory begin\n");
+        std::printf("[MSX] core init: fallback ram budget free=%u requested=%u\n",
+                    static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL)),
+                    static_cast<unsigned>(fallbackRamSize));
+        if (!msx_memory_init(&state->memory, state->machineMode, &state->bios, &state->cart, fallbackRamSize)) {
+            if (fallbackRamSize > kMsxRamSizeMsx1) {
+                std::printf("[MSX] core init: fallback 128K RAM failed, retrying 64K\n");
+                if (!msx_memory_init(&state->memory, state->machineMode, &state->bios, &state->cart, kMsxRamSizeMsx1)) {
+                    std::printf("[MSX] core init failed at fallback memory init\n");
+                    msx_vdp_shutdown(&state->vdp);
+                    msx_cart_shutdown(&state->cart);
+                    msx_bios_shutdown(&state->bios);
+                    return false;
+                }
+            } else {
+                std::printf("[MSX] core init failed at fallback memory init\n");
+                msx_vdp_shutdown(&state->vdp);
+                msx_cart_shutdown(&state->cart);
+                msx_bios_shutdown(&state->bios);
+                return false;
+            }
+        }
+        std::printf("[MSX] core init: fallback memory ok\n");
+    }
+    std::printf("[MSX] core init: vdp ok vram=%u\n",
+                static_cast<unsigned>(state->vdp.vramSize));
+
     msx_core_init_audio(state, audioSampleRate);
     msx_core_attach_runtime_devices(state);
 
@@ -953,16 +1132,6 @@ void msx_core_step_frame(MsxCoreState* state)
         state->vdp.status[2] &= static_cast<uint8_t>(~0x60u);
         for (unsigned line = 0; line < totalLines; ++line) {
             state->vdp.currentFrameCpuCycles = executedCycles;
-            msx_vdp_advance_command_engine(&state->vdp, executedCycles);
-            if (line < visibleLines) {
-#if MSX_CORE_TIMING_ENABLED || MSX_PROFILE_LOG_ENABLED
-                vdpStartUs = esp_timer_get_time();
-#endif
-                msx_vdp_render_slice(&state->vdp, line, line + 1u, line + 1u == visibleLines);
-#if MSX_CORE_TIMING_ENABLED || MSX_PROFILE_LOG_ENABLED
-                vdpRenderUs += static_cast<uint32_t>(esp_timer_get_time() - vdpStartUs);
-#endif
-            }
             const uint32_t targetCycles = kMsxScanlineTargetCycles60Hz[line];
             const int sliceBudget = targetCycles > executedCycles
                                         ? static_cast<int>(targetCycles - executedCycles)
@@ -975,12 +1144,22 @@ void msx_core_step_frame(MsxCoreState* state)
             cpuRunUs += static_cast<uint32_t>(esp_timer_get_time() - cpuStartUs);
 #endif
             state->vdp.currentFrameCpuCycles = executedCycles;
+            msx_vdp_advance_command_engine(&state->vdp, executedCycles);
             const uint8_t status1Before = state->vdp.status[1];
             msx_vdp_refresh_timing(&state->vdp);
             if (((status1Before & 0x01u) == 0u) &&
                 ((state->vdp.status[1] & 0x01u) != 0u) &&
                 ((state->vdp.regs[0] & 0x10u) != 0u)) {
                 msx_cpu_request_irq(&state->cpu);
+            }
+            if (line < visibleLines) {
+#if MSX_CORE_TIMING_ENABLED || MSX_PROFILE_LOG_ENABLED
+                vdpStartUs = esp_timer_get_time();
+#endif
+                msx_vdp_render_slice(&state->vdp, line, line + 1u, line + 1u == visibleLines);
+#if MSX_CORE_TIMING_ENABLED || MSX_PROFILE_LOG_ENABLED
+                vdpRenderUs += static_cast<uint32_t>(esp_timer_get_time() - vdpStartUs);
+#endif
             }
             if (line + 1u == vblankLine) {
                 state->vdp.status[0] |= 0x80u;
@@ -1085,6 +1264,7 @@ void msx_core_step_frame(MsxCoreState* state)
     msx_core_log_profile(state, frameUs, cpuRunUs, vdpRenderUs, presentUs, vdpSliceMode);
 #endif
     V9938_BENCH_FRAME_END();
+    msx_core_log_bootstrap_frame(state, vdpSliceMode, state->lastFrameCycles, irqEnabled);
     state->frameCounter++;
 
     if (msx_core_status_needs_refresh(state)) {
@@ -1194,6 +1374,7 @@ void msx_core_shutdown(MsxCoreState* state)
     msx_scc_shutdown(&state->scc);
     msx_memory_shutdown(&state->memory);
     msx_vdp_shutdown(&state->vdp);
+    msx_cart_shutdown(&state->cart);
     msx_bios_shutdown(&state->bios);
     std::memset(state, 0, sizeof(*state));
 }

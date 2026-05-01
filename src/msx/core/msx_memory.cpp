@@ -18,6 +18,10 @@
 #define MSX_MEMORY_TRACE_ENABLED 0
 #endif
 
+#ifndef MSX_BOOTSTRAP_LOG_ENABLED
+#define MSX_BOOTSTRAP_LOG_ENABLED 0
+#endif
+
 #ifndef MSX_SCC_LOG_ENABLED
 #define MSX_SCC_LOG_ENABLED 0
 #endif
@@ -406,6 +410,17 @@ void msx_memory_bind_sub_rom(MsxMemoryState* state, uint8_t bank)
 
 void msx_memory_bind_cart(MsxMemoryState* state, uint8_t pageIndex, uint8_t bank)
 {
+    if (state && state->cart.type == MsxCartridgeType::Plain64K) {
+        const size_t offset = static_cast<size_t>(bank) * kMsxPageSize8K;
+        if (state->cart.rom && offset + kMsxPageSize8K <= state->cart.size) {
+            state->readMap[bank] = state->cart.rom + offset;
+            state->writeMap[bank] = nullptr;
+        } else {
+            msx_memory_bind_open_bus(state, bank);
+        }
+        return;
+    }
+
     // Standard MSX cartridge topology only exposes cart ROM at 4000-BFFF.
     // Page0 and page3 stay open bus even when the cartridge is selected in
     // primary slot 1, which is required for CALLF/CALLSL behavior.
@@ -1614,6 +1629,20 @@ void msx_memory_write8(MsxMemoryState* state, uint16_t address, uint8_t value)
                                         static_cast<uint16_t>(kMsxAddrSlttbl + page3Slot),
                                         coercedValue);
 
+#if MSX_BOOTSTRAP_LOG_ENABLED
+            static uint16_t s_bootSslLogCount = 0u;
+            if (s_bootSslLogCount < 32u) {
+                std::printf("[MSX][BOOTDBG][SLOT] WR FFFF <- %02X coerced=%02X page3Slot=%u ssl3=%02X A8=%02X #%u\n",
+                            static_cast<unsigned>(value),
+                            static_cast<unsigned>(coercedValue),
+                            static_cast<unsigned>(page3Slot),
+                            static_cast<unsigned>(state->secondarySlotRegs[3]),
+                            static_cast<unsigned>(state->slotRegister),
+                            static_cast<unsigned>(s_bootSslLogCount));
+                ++s_bootSslLogCount;
+            }
+#endif
+
             if (page3Slot == 3u) {
                 msx_memory_refresh_maps(state);
             }
@@ -1900,6 +1929,27 @@ void msx_memory_out(MsxMemoryState* state, uint8_t port, uint8_t value)
             }
             break;
         case 0xA8:
+#if MSX_BOOTSTRAP_LOG_ENABLED
+            {
+                static uint16_t s_bootA8LogCount = 0u;
+                if (s_bootA8LogCount < 96u && state->slotRegister != value) {
+                    std::printf("[MSX][BOOTDBG][SLOT] OUT A8 %02X -> %02X p=%u/%u/%u/%u ssl3=%02X banks=%u/%u/%u/%u #%u\n",
+                                static_cast<unsigned>(state->slotRegister),
+                                static_cast<unsigned>(value),
+                                static_cast<unsigned>(value & 0x03u),
+                                static_cast<unsigned>((value >> 2) & 0x03u),
+                                static_cast<unsigned>((value >> 4) & 0x03u),
+                                static_cast<unsigned>((value >> 6) & 0x03u),
+                                static_cast<unsigned>(state->secondarySlotRegs[3]),
+                                static_cast<unsigned>(state->cart.windowBanks[0]),
+                                static_cast<unsigned>(state->cart.windowBanks[1]),
+                                static_cast<unsigned>(state->cart.windowBanks[2]),
+                                static_cast<unsigned>(state->cart.windowBanks[3]),
+                                static_cast<unsigned>(s_bootA8LogCount));
+                    ++s_bootA8LogCount;
+                }
+            }
+#endif
 #if MSX_MEMORY_TRACE_ENABLED
             static uint16_t s_a8LogCount = 0u;
             if (s_a8LogCount < 64u) {

@@ -21,12 +21,16 @@
 #define MSX_VDP_TRACE_ENABLED 0
 #endif
 
+#ifndef MSX_BOOTSTRAP_LOG_ENABLED
+#define MSX_BOOTSTRAP_LOG_ENABLED 0
+#endif
+
 #ifndef MSX_VDP_G4_DISP_LOG_ENABLED
 #define MSX_VDP_G4_DISP_LOG_ENABLED 0
 #endif
 
 #ifndef MSX_VDP_SPRITE_LOG_ENABLED
-#define MSX_VDP_SPRITE_LOG_ENABLED 0
+#define MSX_VDP_SPRITE_LOG_ENABLED 1
 #endif
 
 #ifndef MSX_VDP_MODE_LOG_ENABLED
@@ -58,7 +62,7 @@
 #endif
 
 #ifndef MSX_VDP_G4_ADDR_LOG_ENABLED
-#define MSX_VDP_G4_ADDR_LOG_ENABLED 0
+#define MSX_VDP_G4_ADDR_LOG_ENABLED 1
 #endif
 
 #ifndef MSX_VDP_INIT_LOG_ENABLED
@@ -1305,6 +1309,15 @@ inline uint16_t msx_vdp_hscroll(const MsxVdpState* state)
     return msx_vdp_hscroll_for_regs(state->regs[26], state->regs[27]);
 }
 
+inline int8_t msx_vdp_vertical_adjust(const MsxVdpState* state)
+{
+    if (!state || !msx_vdp_is_msx2(state)) {
+        return 0;
+    }
+
+    return static_cast<int8_t>(-(static_cast<int8_t>(state->regs[18]) >> 4));
+}
+
 struct MsxBitmapFetchAddress {
     uint32_t lineBase;
     uint16_t pixelX;
@@ -2211,15 +2224,13 @@ static bool msx_vdp_command_advance_step(MsxVdpState* state, uint8_t liveScreenM
             state->vram[dstAddr] = value;
             state->status[7] = value;
             state->dirty = true;
-            if (--command.anx == 0u ||
-                ((command.adx = static_cast<uint16_t>(command.adx + command.tx)) & command.mx) != 0u) {
+            if (((command.adx = static_cast<uint16_t>(command.adx + command.tx)) & command.mx) != 0u) {
                 if (--command.ny == 0u ||
                     (command.sy = static_cast<uint16_t>(command.sy + command.ty)) == 0xFFFFu ||
                     (command.dy = static_cast<uint16_t>(command.dy + command.ty)) == 0xFFFFu) {
                     msx_vdp_command_finish_lmmm(state, command);
                 } else {
                     command.adx = command.dx;
-                    command.anx = command.nx;
                 }
             }
             return true;
@@ -2468,7 +2479,6 @@ void msx_vdp_command_execute(MsxVdpState* state, uint8_t opcode)
 
     if (screenMode == 0u && state->regs[2] != s_g4LastR2) {
         s_g4LastR2 = state->regs[2];
-        s_g4CmdLogCount = 0u;
         s_g4AddrLogCount = 0u;
     }
 
@@ -2702,6 +2712,31 @@ void msx_vdp_write_register(MsxVdpState* state, uint8_t reg, uint8_t value)
     if (reg == 14u && msx_vdp_is_msx2(state)) {
         value &= msx_vdp_vram_page_mask(state);
     }
+
+#if MSX_BOOTSTRAP_LOG_ENABLED
+    const bool bootInterestingReg =
+        msx_vdp_is_msx2(state) &&
+        (reg == 0u || reg == 1u || reg == 2u || reg == 7u || reg == 9u ||
+         reg == 14u || reg == 18u || reg == 23u || reg == 25u ||
+         reg == 26u || reg == 27u || reg == 44u || reg == 46u);
+    if (bootInterestingReg && state->regs[reg] != value && state->frameCounter < 240u) {
+        static uint16_t s_bootVdpRegLogCount = 0u;
+        if (s_bootVdpRegLogCount < 192u) {
+            std::printf("[MSX][BOOTDBG][VDP] frame=%lu cyc=%lu R%02u %02X->%02X mode=%s S0=%02X S1=%02X S2=%02X #%u\n",
+                        static_cast<unsigned long>(state->frameCounter),
+                        static_cast<unsigned long>(state->currentFrameCpuCycles),
+                        static_cast<unsigned>(reg),
+                        static_cast<unsigned>(state->regs[reg]),
+                        static_cast<unsigned>(value),
+                        msx_vdp_mode_label(state->mode),
+                        static_cast<unsigned>(state->status[0]),
+                        static_cast<unsigned>(state->status[1]),
+                        static_cast<unsigned>(state->status[2]),
+                        static_cast<unsigned>(s_bootVdpRegLogCount));
+            ++s_bootVdpRegLogCount;
+        }
+    }
+#endif
 
     if (reg == 44u && msx_vdp_is_msx2(state)) {
         msx_vdp_command_write(state, value);
@@ -4973,6 +5008,42 @@ static void msx_vdp_render_bitmap8_range(MsxVdpState* state, unsigned yStart, un
     }
 }
 
+static void msx_vdp_apply_display_adjust(MsxVdpState* state)
+{
+    if (!state || !state->frameBuffer || state->activeHeight == 0u) {
+        return;
+    }
+
+    const int adjustY = static_cast<int>(msx_vdp_vertical_adjust(state));
+    if (adjustY == 0) {
+        return;
+    }
+
+    const unsigned height = state->activeHeight;
+    const size_t lineBytes = kMsxFrameWidth;
+    const uint8_t fill = msx_vdp_resolve_color(state, 0u);
+    const int absAdjust = adjustY < 0 ? -adjustY : adjustY;
+    const unsigned shift = static_cast<unsigned>(absAdjust);
+    if (shift >= height) {
+        std::memset(state->frameBuffer, fill, static_cast<size_t>(height) * lineBytes);
+        return;
+    }
+
+    if (adjustY > 0) {
+        std::memmove(state->frameBuffer + static_cast<size_t>(shift) * lineBytes,
+                     state->frameBuffer,
+                     static_cast<size_t>(height - shift) * lineBytes);
+        std::memset(state->frameBuffer, fill, static_cast<size_t>(shift) * lineBytes);
+    } else {
+        std::memmove(state->frameBuffer,
+                     state->frameBuffer + static_cast<size_t>(shift) * lineBytes,
+                     static_cast<size_t>(height - shift) * lineBytes);
+        std::memset(state->frameBuffer + static_cast<size_t>(height - shift) * lineBytes,
+                    fill,
+                    static_cast<size_t>(shift) * lineBytes);
+    }
+}
+
 static void msx_vdp_render_yjk_range(MsxVdpState* state, unsigned yStart, unsigned yEnd, bool yae)
 {
     unsigned startLine = 0u;
@@ -5069,6 +5140,7 @@ bool msx_vdp_register_affects_output(uint8_t reg)
         case 9:
         case 10:
         case 16:
+        case 18:
         case 23:
         case 25:
         case 26:
@@ -5167,6 +5239,8 @@ void msx_vdp_render_slice(MsxVdpState* state, unsigned yStart, unsigned yEnd, bo
         return;
     }
 
+    msx_vdp_update_mode_geometry(state);
+
     switch (state->mode) {
         case MsxVdpMode::Graphics1:
             msx_vdp_render_graphics1_range(state, yStart, yEnd);
@@ -5209,6 +5283,10 @@ void msx_vdp_render_slice(MsxVdpState* state, unsigned yStart, unsigned yEnd, bo
         case MsxVdpMode::Unsupported:
         default:
             break;
+    }
+
+    if (finalizeFrame) {
+        msx_vdp_apply_display_adjust(state);
     }
 }
 
@@ -5509,6 +5587,8 @@ bool msx_vdp_render_internal(MsxVdpState* state)
             msx_vdp_clear_active_frame(state, msx_vdp_resolve_color(state, 0));
             break;
     }
+
+    msx_vdp_apply_display_adjust(state);
 
     if (msx2LineStream) {
         msx_vdp_end_msx2_stream_frame();

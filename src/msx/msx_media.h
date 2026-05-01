@@ -9,6 +9,7 @@ enum class MsxCartridgeType : uint8_t {
     Unknown = 0,
     Plain16K,
     Plain32K,
+    Plain64K,
     Ascii8,
     Ascii16,
     Konami,

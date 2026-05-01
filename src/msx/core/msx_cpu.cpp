@@ -16,6 +16,10 @@
 #define MSX_CPU_BIOS_CALL_LOG_ENABLED 0
 #endif
 
+#ifndef MSX_BOOTSTRAP_LOG_ENABLED
+#define MSX_BOOTSTRAP_LOG_ENABLED 0
+#endif
+
 namespace {
 
 constexpr uint8_t kMsxPrimarySlotCartridge = 1u;
@@ -721,14 +725,33 @@ void msx_cpu_restore_cart_boot_mapping(MsxMemoryState* memory, uint16_t target, 
         return;
     }
 
+    const uint8_t oldSlotRegister = memory->slotRegister;
+    const uint8_t oldSecondary3 = memory->secondarySlotRegs[3];
+#if MSX_BOOTSTRAP_LOG_ENABLED
+    static uint16_t s_bootCartJumpLogCount = 0u;
+    if (s_bootCartJumpLogCount < 16u) {
+        std::printf("[MSX][BOOTDBG][CPU] cart-init target=%04X from=%04X pc=%04X A8=%02X SSL3=%02X banks=%u/%u/%u/%u armed=%u #%u\n",
+                    static_cast<unsigned>(target),
+                    static_cast<unsigned>(fromPc),
+                    static_cast<unsigned>(memory->cpu ? memory->cpu->pc : 0xFFFFu),
+                    static_cast<unsigned>(oldSlotRegister),
+                    static_cast<unsigned>(oldSecondary3),
+                    static_cast<unsigned>(memory->cart.windowBanks[0]),
+                    static_cast<unsigned>(memory->cart.windowBanks[1]),
+                    static_cast<unsigned>(memory->cart.windowBanks[2]),
+                    static_cast<unsigned>(memory->cart.windowBanks[3]),
+                    memory->cartBootMappingRestoreArmed ? 1u : 0u,
+                    static_cast<unsigned>(s_bootCartJumpLogCount));
+        ++s_bootCartJumpLogCount;
+    }
+#endif
+
     // The BIOS-to-cart init handoff is a one-shot bootstrap assist. After the
     // first jump into the cartridge, the same work-area bytes can be reused by
     // the game and must no longer trigger a synthetic 402A restart.
     memory->cartBootMappingRestoreArmed = false;
     memory->cartBootWorkareaFallbackArmed = false;
 
-    const uint8_t oldSlotRegister = memory->slotRegister;
-    const uint8_t oldSecondary3 = memory->secondarySlotRegs[3];
     if ((oldSlotRegister == kMsxBootSlotCart) && (oldSecondary3 == kMsxBootSecondaryCart)) {
         return;
     }
