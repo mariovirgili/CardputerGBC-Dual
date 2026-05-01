@@ -190,7 +190,7 @@ struct __attribute__((packed)) MsxVdpRegTimelineEvent {
     uint8_t value;
 };
 // Ridotto da 16 a 8. Difficilmente un gioco modifica lo STESSO registro più di 8 volte a frame.
-static constexpr uint8_t kMsxVdpRegTimelineMax = 8u;
+static constexpr uint8_t kMsxVdpRegTimelineMax = 32u;
 struct MsxVdpRenderAuxState {
     MsxVdpRegTimelineEvent r5Timeline[kMsxVdpRegTimelineMax];
     MsxVdpRegTimelineEvent r6Timeline[kMsxVdpRegTimelineMax];
@@ -236,6 +236,28 @@ static uint32_t s_msxSpriteSelectedCount = 0;
 static uint32_t s_msxSpriteColoredEntries = 0;
 static uint32_t s_msxSpriteTransparentEntries = 0;
 static uint32_t s_msxSpritePixelsDrawn = 0;
+static uint32_t s_msxSpriteLastAttrBase = 0;
+static uint32_t s_msxSpriteLastColorBase = 0;
+static uint32_t s_msxSpriteLastPatternBase = 0;
+static uint8_t s_msxSpriteLastReg5 = 0;
+static uint8_t s_msxSpriteLastReg6 = 0;
+static uint8_t s_msxSpriteLastReg11 = 0;
+static uint16_t s_msxSpriteFirstActiveLine = 0;
+static uint16_t s_msxSpriteLastActiveLine = 0;
+static uint32_t s_msxSpriteFirstActiveAttrBase = 0;
+static uint32_t s_msxSpriteFirstActiveColorBase = 0;
+static uint32_t s_msxSpriteFirstActivePatternBase = 0;
+static uint32_t s_msxSpriteLastActiveAttrBase = 0;
+static uint32_t s_msxSpriteLastActiveColorBase = 0;
+static uint32_t s_msxSpriteLastActivePatternBase = 0;
+static uint8_t s_msxSpriteFirstActiveReg5 = 0;
+static uint8_t s_msxSpriteFirstActiveReg6 = 0;
+static uint8_t s_msxSpriteFirstActiveReg11 = 0;
+static uint8_t s_msxSpriteFirstActiveReg23 = 0;
+static uint8_t s_msxSpriteLastActiveReg5 = 0;
+static uint8_t s_msxSpriteLastActiveReg6 = 0;
+static uint8_t s_msxSpriteLastActiveReg11 = 0;
+static uint8_t s_msxSpriteLastActiveReg23 = 0;
 static MsxDisplayFrame s_msx2StreamVideoFrame = {};
 static bool s_msx2StreamActive = false;
 static uint8_t s_msxVdpPerformanceFlags =
@@ -1553,6 +1575,36 @@ uint32_t msx_vdp_command_addr(uint8_t screenMode, int x, int y)
     }
 }
 
+static inline uint8_t msx_vdp_bitmap4_display_page_for_reg2(uint8_t reg2)
+{
+    return static_cast<uint8_t>((reg2 >> 5) & 0x03u);
+}
+
+static bool msx_vdp_bitmap4_y_visible_for_regs(uint16_t commandY,
+                                               uint8_t reg2,
+                                               uint8_t reg23,
+                                               unsigned height)
+{
+    if (height == 0u) {
+        return false;
+    }
+
+    const uint8_t displayPage = msx_vdp_bitmap4_display_page_for_reg2(reg2);
+    const uint8_t commandPage = static_cast<uint8_t>((commandY >> 8) & 0x03u);
+    if (commandPage != displayPage) {
+        return false;
+    }
+
+    const uint8_t commandLine = static_cast<uint8_t>(commandY & 0xFFu);
+    for (unsigned y = 0u; y < height; ++y) {
+        if (static_cast<uint8_t>(static_cast<uint8_t>(y) + reg23) == commandLine) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
 uint8_t msx_vdp_command_point(const MsxVdpState* state, uint8_t screenMode, int x, int y)
 {
     const uint32_t addr = msx_vdp_command_addr(screenMode, x, y) & state->vramMask;
@@ -2469,22 +2521,23 @@ void msx_vdp_command_execute(MsxVdpState* state, uint8_t opcode)
 #if MSX_VDP_G4_ADDR_LOG_ENABLED
     static uint32_t s_g4AddrLogCount = 0u;
     static uint8_t s_g4LastR2 = 0xFFu;
-    const auto g4_visible_band = [&](uint16_t coord) {
-        const uint16_t height = static_cast<uint16_t>(state->activeHeight);
-        return (coord < height) ||
-               (coord >= 256u && coord < static_cast<uint16_t>(256u + height)) ||
-               (coord >= 512u && coord < static_cast<uint16_t>(512u + height)) ||
-               (coord >= 768u && coord < static_cast<uint16_t>(768u + height));
+    static uint8_t s_g4LastR23 = 0xFFu;
+    const auto g4_visible_now = [&](uint16_t coord) {
+        return msx_vdp_bitmap4_y_visible_for_regs(coord,
+                                                  state->regs[2],
+                                                  state->regs[23],
+                                                  state->activeHeight);
     };
 
-    if (screenMode == 0u && state->regs[2] != s_g4LastR2) {
+    if (screenMode == 0u && (state->regs[2] != s_g4LastR2 || state->regs[23] != s_g4LastR23)) {
         s_g4LastR2 = state->regs[2];
+        s_g4LastR23 = state->regs[23];
         s_g4AddrLogCount = 0u;
     }
 
     const bool g4TouchesVisible = screenMode == 0u &&
-                                  (g4_visible_band(sy) ||
-                                   g4_visible_band(dy));
+                                  (g4_visible_now(sy) ||
+                                   g4_visible_now(dy));
     const bool g4InterestingCmd = screenMode == 0u &&
                                   g4TouchesVisible &&
                                   command != 0x0Bu;
@@ -2515,13 +2568,17 @@ void msx_vdp_command_execute(MsxVdpState* state, uint8_t opcode)
         const uint8_t d3 = hasDest ? state->vram[(dstAddr + 3u) & state->vramMask] : 0u;
         const unsigned srcPage = static_cast<unsigned>((srcAddr >> 15) & 0x03u);
         const unsigned dstPage = static_cast<unsigned>((dstAddr >> 15) & 0x03u);
-        std::printf("[MSX][G4-ADDR] #%lu %s sx=%u sy=%u src=%05lX sp=%u s=%02X%02X%02X%02X dx=%u dy=%u dst=%05lX dp=%u d=%02X%02X%02X%02X nx=%u ny=%u r2=%02X frame=%lu\n",
+        const unsigned displayPage = static_cast<unsigned>(msx_vdp_bitmap4_display_page_for_reg2(state->regs[2]));
+        const bool srcVisible = hasSource && g4_visible_now(srcY);
+        const bool dstVisible = hasDest && g4_visible_now(dstY);
+        std::printf("[MSX][G4-ADDR] #%lu %s sx=%u sy=%u src=%05lX sp=%u sv=%u s=%02X%02X%02X%02X dx=%u dy=%u dst=%05lX dp=%u dv=%u d=%02X%02X%02X%02X nx=%u ny=%u r2=%02X r23=%02X disp=%u frame=%lu\n",
                     static_cast<unsigned long>(s_g4AddrLogCount),
                     tag,
                     static_cast<unsigned>(srcX),
                     static_cast<unsigned>(srcY),
                     static_cast<unsigned long>(srcAddr),
                     srcPage,
+                    static_cast<unsigned>(srcVisible ? 1u : 0u),
                     static_cast<unsigned>(s0),
                     static_cast<unsigned>(s1),
                     static_cast<unsigned>(s2),
@@ -2530,6 +2587,7 @@ void msx_vdp_command_execute(MsxVdpState* state, uint8_t opcode)
                     static_cast<unsigned>(dstY),
                     static_cast<unsigned long>(dstAddr),
                     dstPage,
+                    static_cast<unsigned>(dstVisible ? 1u : 0u),
                     static_cast<unsigned>(d0),
                     static_cast<unsigned>(d1),
                     static_cast<unsigned>(d2),
@@ -2537,6 +2595,8 @@ void msx_vdp_command_execute(MsxVdpState* state, uint8_t opcode)
                     static_cast<unsigned>(width),
                     static_cast<unsigned>(height),
                     static_cast<unsigned>(state->regs[2]),
+                    static_cast<unsigned>(state->regs[23]),
+                    displayPage,
                     static_cast<unsigned long>(state->frameCounter));
     };
 #else
@@ -3591,6 +3651,14 @@ bool msx_vdp_render_color_sprites_line(MsxVdpState* state, unsigned y, uint8_t* 
     const uint32_t attrBase = msx_vdp_color_sprite_attr_base_for_regs(spriteReg5, spriteReg11, state->vramMask);
     const uint32_t colorBase = (attrBase - 0x200u) & state->vramMask;
     const uint32_t patternBase = msx_vdp_color_sprite_pattern_base_for_reg6(spriteReg6, state->vramMask);
+#if MSX_VDP_SPRITE_LOG_ENABLED
+    s_msxSpriteLastAttrBase = attrBase;
+    s_msxSpriteLastColorBase = colorBase;
+    s_msxSpriteLastPatternBase = patternBase;
+    s_msxSpriteLastReg5 = spriteReg5;
+    s_msxSpriteLastReg6 = spriteReg6;
+    s_msxSpriteLastReg11 = spriteReg11;
+#endif
     const uint8_t outputHeight = kSpriteHeights[spriteReg1 & 0x03u];
     const uint8_t inputHeight = kSpriteHeights[spriteReg1 & 0x02u];
     const int outputHeightInt = static_cast<int>(outputHeight);
@@ -3633,6 +3701,24 @@ bool msx_vdp_render_color_sprites_line(MsxVdpState* state, unsigned y, uint8_t* 
     
     std::memset(line, 0, kMsxSpriteColorLineWidth);
 #if MSX_VDP_SPRITE_LOG_ENABLED
+    if (s_msxSpriteActiveLines == 0u) {
+        s_msxSpriteFirstActiveLine = static_cast<uint16_t>(y);
+        s_msxSpriteFirstActiveAttrBase = attrBase;
+        s_msxSpriteFirstActiveColorBase = colorBase;
+        s_msxSpriteFirstActivePatternBase = patternBase;
+        s_msxSpriteFirstActiveReg5 = spriteReg5;
+        s_msxSpriteFirstActiveReg6 = spriteReg6;
+        s_msxSpriteFirstActiveReg11 = spriteReg11;
+        s_msxSpriteFirstActiveReg23 = lineVScroll;
+    }
+    s_msxSpriteLastActiveLine = static_cast<uint16_t>(y);
+    s_msxSpriteLastActiveAttrBase = attrBase;
+    s_msxSpriteLastActiveColorBase = colorBase;
+    s_msxSpriteLastActivePatternBase = patternBase;
+    s_msxSpriteLastActiveReg5 = spriteReg5;
+    s_msxSpriteLastActiveReg6 = spriteReg6;
+    s_msxSpriteLastActiveReg11 = spriteReg11;
+    s_msxSpriteLastActiveReg23 = lineVScroll;
     s_msxSpriteActiveLines++;
     s_msxSpriteSelectedCount += count;
 #endif
@@ -4483,7 +4569,9 @@ static void msx_vdp_render_bitmap4_range(MsxVdpState* state, unsigned yStart, un
                                                                                 256u,
                                                                                 dualPage,
                                                                                 0x8000u);
-            std::printf("[MSX][G4-DISP] #%lu frame=%lu line=%u now=%lu r2=%02X r23=%02X r25=%02X r26=%02X r27=%02X r9=%02X legacy=%02X/%02X cyc=%lu/%lu live=%02X/%02X/%02X/%02X/%02X hs=%u hs512=%u sy=%u page=%u base=%05lX cur=%05lX %02X%02X%02X%02X altp=%u alt=%05lX %02X%02X%02X%02X fx0=%05lX/%u fx128=%05lX/%u\n",
+            const uint16_t commandY = static_cast<uint16_t>((static_cast<uint16_t>(pageIndex) << 8) |
+                                                            static_cast<uint16_t>(scrolledY & 0xFFu));
+            std::printf("[MSX][G4-DISP] #%lu frame=%lu line=%u now=%lu r2=%02X r23=%02X r25=%02X r26=%02X r27=%02X r9=%02X legacy=%02X/%02X cyc=%lu/%lu live=%02X/%02X/%02X/%02X/%02X hs=%u hs512=%u sy=%u cy=%u page=%u base=%05lX cur=%05lX %02X%02X%02X%02X altp=%u alt=%05lX %02X%02X%02X%02X fx0=%05lX/%u fx128=%05lX/%u\n",
                         static_cast<unsigned long>(s_g4DispLogCount),
                         static_cast<unsigned long>(state->frameCounter),
                         static_cast<unsigned>(y),
@@ -4506,6 +4594,7 @@ static void msx_vdp_render_bitmap4_range(MsxVdpState* state, unsigned yStart, un
                         static_cast<unsigned>(lineHScroll),
                         static_cast<unsigned>(dualPage ? 1u : 0u),
                         static_cast<unsigned>(scrolledY),
+                        static_cast<unsigned>(commandY),
                         static_cast<unsigned>(pageIndex),
                         static_cast<unsigned long>(pageBase & state->vramMask),
                         static_cast<unsigned long>(lineBase),
@@ -4570,10 +4659,10 @@ static void msx_vdp_render_bitmap4_range(MsxVdpState* state, unsigned yStart, un
         static uint32_t s_g4SpriteStatsFrames = 0u;
         s_g4SpriteStatsFrames++;
         if (s_g4SpriteStatsFrames >= 60u) {
-            const uint32_t attrBase = msx_vdp_sprite_attr_base(state) & state->vramMask;
-            const uint32_t colorBase = (attrBase - 0x200u) & state->vramMask;
-            const uint32_t patternBase = msx_vdp_sprite_pattern_base(state) & state->vramMask;
-            std::printf("[MSX][SPR-STATS] 60f lines=%lu sel=%lu colored=%lu transparent=%lu px=%lu sat=%05lX col=%05lX pat=%05lX r1=%02X r5=%02X r6=%02X r8=%02X r11=%02X\n",
+            const uint32_t attrBase = s_msxSpriteLastAttrBase & state->vramMask;
+            const uint32_t colorBase = s_msxSpriteLastColorBase & state->vramMask;
+            const uint32_t patternBase = s_msxSpriteLastPatternBase & state->vramMask;
+            std::printf("[MSX][SPR-STATS] 60f lines=%lu sel=%lu colored=%lu transparent=%lu px=%lu sat=%05lX col=%05lX pat=%05lX r1=%02X r5=%02X r6=%02X r8=%02X r11=%02X liveR5=%02X liveR6=%02X liveR11=%02X firstY=%u fR5=%02X fR6=%02X fR11=%02X fR23=%02X fSAT=%05lX fCOL=%05lX fPAT=%05lX lastY=%u lR5=%02X lR6=%02X lR11=%02X lR23=%02X lSAT=%05lX lCOL=%05lX lPAT=%05lX\n",
                         static_cast<unsigned long>(s_msxSpriteActiveLines),
                         static_cast<unsigned long>(s_msxSpriteSelectedCount),
                         static_cast<unsigned long>(s_msxSpriteColoredEntries),
@@ -4583,10 +4672,29 @@ static void msx_vdp_render_bitmap4_range(MsxVdpState* state, unsigned yStart, un
                         static_cast<unsigned long>(colorBase),
                         static_cast<unsigned long>(patternBase),
                         static_cast<unsigned>(state->regs[1]),
+                        static_cast<unsigned>(s_msxSpriteLastReg5),
+                        static_cast<unsigned>(s_msxSpriteLastReg6),
+                        static_cast<unsigned>(state->regs[8]),
+                        static_cast<unsigned>(s_msxSpriteLastReg11),
                         static_cast<unsigned>(state->regs[5]),
                         static_cast<unsigned>(state->regs[6]),
-                        static_cast<unsigned>(state->regs[8]),
-                        static_cast<unsigned>(state->regs[11]));
+                        static_cast<unsigned>(state->regs[11]),
+                        static_cast<unsigned>(s_msxSpriteFirstActiveLine),
+                        static_cast<unsigned>(s_msxSpriteFirstActiveReg5),
+                        static_cast<unsigned>(s_msxSpriteFirstActiveReg6),
+                        static_cast<unsigned>(s_msxSpriteFirstActiveReg11),
+                        static_cast<unsigned>(s_msxSpriteFirstActiveReg23),
+                        static_cast<unsigned long>(s_msxSpriteFirstActiveAttrBase & state->vramMask),
+                        static_cast<unsigned long>(s_msxSpriteFirstActiveColorBase & state->vramMask),
+                        static_cast<unsigned long>(s_msxSpriteFirstActivePatternBase & state->vramMask),
+                        static_cast<unsigned>(s_msxSpriteLastActiveLine),
+                        static_cast<unsigned>(s_msxSpriteLastActiveReg5),
+                        static_cast<unsigned>(s_msxSpriteLastActiveReg6),
+                        static_cast<unsigned>(s_msxSpriteLastActiveReg11),
+                        static_cast<unsigned>(s_msxSpriteLastActiveReg23),
+                        static_cast<unsigned long>(s_msxSpriteLastActiveAttrBase & state->vramMask),
+                        static_cast<unsigned long>(s_msxSpriteLastActiveColorBase & state->vramMask),
+                        static_cast<unsigned long>(s_msxSpriteLastActivePatternBase & state->vramMask));
             if (s_msxSpriteSelectedCount == 0u) {
                 const uint32_t sat0 = attrBase;
                 const uint32_t sat1 = (attrBase + 4u) & state->vramMask;
@@ -4620,6 +4728,22 @@ static void msx_vdp_render_bitmap4_range(MsxVdpState* state, unsigned yStart, un
             s_msxSpriteColoredEntries = 0;
             s_msxSpriteTransparentEntries = 0;
             s_msxSpritePixelsDrawn = 0;
+            s_msxSpriteFirstActiveLine = 0;
+            s_msxSpriteLastActiveLine = 0;
+            s_msxSpriteFirstActiveAttrBase = 0;
+            s_msxSpriteFirstActiveColorBase = 0;
+            s_msxSpriteFirstActivePatternBase = 0;
+            s_msxSpriteLastActiveAttrBase = 0;
+            s_msxSpriteLastActiveColorBase = 0;
+            s_msxSpriteLastActivePatternBase = 0;
+            s_msxSpriteFirstActiveReg5 = 0;
+            s_msxSpriteFirstActiveReg6 = 0;
+            s_msxSpriteFirstActiveReg11 = 0;
+            s_msxSpriteFirstActiveReg23 = 0;
+            s_msxSpriteLastActiveReg5 = 0;
+            s_msxSpriteLastActiveReg6 = 0;
+            s_msxSpriteLastActiveReg11 = 0;
+            s_msxSpriteLastActiveReg23 = 0;
         }
 #endif
     }
