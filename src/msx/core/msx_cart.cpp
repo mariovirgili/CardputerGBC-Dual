@@ -6,7 +6,7 @@
 #include <cstring>
 
 #ifndef MSX_CART_LOG_ENABLED
-#define MSX_CART_LOG_ENABLED 1
+#define MSX_CART_LOG_ENABLED 0
 #endif
 
 #ifndef MSX_BOOTSTRAP_LOG_ENABLED
