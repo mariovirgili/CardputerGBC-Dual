@@ -89,6 +89,7 @@ bool msx_cart_init(MsxCartState* state, const MsxRomImage* image)
     state->headerOffset = image->headerOffset;
     state->type = image->cartridgeType;
     state->bankCount8K = image->bankCount8K;
+    state->quirks = image->quirks;
     state->entryPoint = image->entryPoint;
     state->initAddress = image->initAddress;
     state->directBootCandidate = image->hasAbHeader;
@@ -147,6 +148,12 @@ void msx_cart_reset(MsxCartState* state)
             state->windowBanks[1] = msx_normalize_bank(state, 3);
             state->windowBanks[2] = msx_normalize_bank(state, 4);
             state->windowBanks[3] = msx_normalize_bank(state, 5);
+            break;
+        case MsxCartridgeType::Ascii16:
+            msx_set_ascii16_pair(state, 0u, 0u);
+            msx_set_ascii16_pair(state,
+                                  1u,
+                                  (state->quirks & MsxRomQuirkAscii16BootMirror) ? 0u : 1u);
             break;
         case MsxCartridgeType::Konami:
             // fMSX uses SetMegaROM(Slot, 0, 1, ROMMask, 1) — page 2 (8000-9FFF)

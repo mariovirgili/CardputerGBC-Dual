@@ -78,6 +78,8 @@ constexpr size_t kMsx2FlashPartitionSize = 0xC000;
 constexpr const char* kMsx2FlashMainMd5 = "ec3a01c91f24fbddcbcab0ad301bc9ef";
 constexpr const char* kMsx2FlashSubMd5 = "2183c2aff17cf4297bdb496de78c2e8a";
 constexpr size_t kMsxMainBiosStaticOffset = EMU_STATIC_POOL_SIZE - kMsxMainBiosStaticSize;
+constexpr const char* kMsxCockpitAscii16BootMirrorSha1 =
+    "e36e16acfdfa76fa72b218da2bebc668db39d21e";
 
 static_assert(EMU_STATIC_POOL_SIZE >= (kMsxMainBiosStaticSize + kMsxPageSize8K),
               "MSX static pool too small for official BIOS fallback");
@@ -277,6 +279,17 @@ bool msx_compute_sha1_hex(const uint8_t* data, size_t size, char out[41])
 
     mbedtls_sha1_free(&ctx);
     return ok;
+}
+
+bool msx_sha1_matches(const uint8_t* data, size_t size, const char* expectedSha1)
+{
+    if (!data || !expectedSha1) {
+        return false;
+    }
+
+    char sha1Hex[41] = {0};
+    return msx_compute_sha1_hex(data, size, sha1Hex) &&
+           std::strcmp(sha1Hex, expectedSha1) == 0;
 }
 
 bool msx_md5_finish_hex(mbedtls_md5_context* ctx, char out[33])
@@ -1533,19 +1546,25 @@ bool msx_media_analyze_rom(MsxRomImage* image, const uint8_t* romData, size_t ro
         }
     }
 
+    if (image->cartridgeType == MsxCartridgeType::Ascii16 &&
+        msx_sha1_matches(romData, romLen, kMsxCockpitAscii16BootMirrorSha1)) {
+        image->quirks |= MsxRomQuirkAscii16BootMirror;
+    }
+
     if (fmsxMapperMatched) {
         MSX_BIOS_LOG("[MSX][ROM] fMSX SHA mapper=%s supported=%s\n",
                      msx_fmsx_mapper_type_label(fmsxMapperType),
                      msx_fmsx_mapper_type_to_cartridge_type(fmsxMapperType) != MsxCartridgeType::Unknown ? "yes" : "no");
     }
 
-    MSX_BIOS_LOG("[MSX][ROM] analyze size=%u header=%s offset=%u init=%04X type=%s source=%s\n",
+    MSX_BIOS_LOG("[MSX][ROM] analyze size=%u header=%s offset=%u init=%04X type=%s source=%s quirks=%02X\n",
                  static_cast<unsigned>(romLen),
                  image->hasAbHeader ? "yes" : "no",
                  image->hasAbHeader ? static_cast<unsigned>(image->headerOffset) : 0u,
                  static_cast<unsigned>(image->initAddress),
                  msx_media_cartridge_type_label(image->cartridgeType),
-                 mapperSource);
+                 mapperSource,
+                 static_cast<unsigned>(image->quirks));
 
     return image->sizeSupported;
 }

@@ -28,6 +28,10 @@ enum class MsxImageLoadStatus : uint8_t {
     Incompatible,
 };
 
+enum : uint8_t {
+    MsxRomQuirkAscii16BootMirror = 0x01u,
+};
+
 struct MsxRomImage {
     const uint8_t* data;
     size_t size;
@@ -36,6 +40,7 @@ struct MsxRomImage {
     uint16_t initAddress;
     MsxCartridgeType cartridgeType;
     uint8_t bankCount8K;
+    uint8_t quirks;
     bool hasAbHeader;
     bool sizeSupported;
 };

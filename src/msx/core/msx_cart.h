@@ -13,6 +13,7 @@ struct MsxCartState {
     size_t sramSize;
     MsxCartridgeType type;
     uint8_t bankCount8K;
+    uint8_t quirks;
     uint8_t windowBanks[4];
     bool ready;
     bool bankSwitching;
