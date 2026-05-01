@@ -5,6 +5,7 @@
 #include <esp_partition.h>
 #include <esp_spi_flash.h>
 #include <mbedtls/md5.h>
+#include <mbedtls/sha1.h>
 
 #include <cstdint>
 #include <cstdio>
@@ -84,6 +85,15 @@ static_assert(EMU_STATIC_POOL_SIZE >= (kMsxMainBiosStaticSize + kMsxPageSize8K),
 static bool s_msxMainBiosStaticUsed = false;
 static spi_flash_mmap_handle_t s_msx2BiosFlashMmap = 0;
 static const uint8_t* s_msx2BiosFlashData = nullptr;
+
+struct MsxFmsxMapperShaEntry {
+    const char sha1[41];
+    uint8_t mapperType;
+};
+
+static constexpr MsxFmsxMapperShaEntry kMsxFmsxMapperShaTable[] = {
+#include "msx_mapper_db.inc"
+};
 
 uint8_t* msx_main_bios_static_buffer_if_acquired()
 {
@@ -239,6 +249,33 @@ bool msx_compute_md5_hex(const uint8_t* data, size_t size, char out[33])
     }
 
     mbedtls_md5_free(&ctx);
+    return ok;
+}
+
+bool msx_compute_sha1_hex(const uint8_t* data, size_t size, char out[41])
+{
+    if (!data || !out) {
+        return false;
+    }
+
+    unsigned char digest[20] = {0};
+    mbedtls_sha1_context ctx;
+    mbedtls_sha1_init(&ctx);
+
+    bool ok = false;
+    if (mbedtls_sha1_starts_ret(&ctx) == 0 &&
+        mbedtls_sha1_update_ret(&ctx, data, size) == 0 &&
+        mbedtls_sha1_finish_ret(&ctx, digest) == 0) {
+        static const char kHex[] = "0123456789abcdef";
+        for (size_t i = 0; i < sizeof(digest); ++i) {
+            out[i * 2] = kHex[(digest[i] >> 4) & 0x0F];
+            out[i * 2 + 1] = kHex[digest[i] & 0x0F];
+        }
+        out[40] = '\0';
+        ok = true;
+    }
+
+    mbedtls_sha1_free(&ctx);
     return ok;
 }
 
@@ -1163,12 +1200,84 @@ size_t msx_find_header_offset(const uint8_t* data, size_t size)
     return size;
 }
 
+MsxCartridgeType msx_fmsx_mapper_type_to_cartridge_type(uint8_t mapperType)
+{
+    switch (mapperType) {
+        case 2u:
+            return MsxCartridgeType::KonamiScc;
+        case 3u:
+            return MsxCartridgeType::Konami;
+        case 4u:
+            return MsxCartridgeType::Ascii8;
+        case 5u:
+            return MsxCartridgeType::Ascii16;
+        default:
+            break;
+    }
+    return MsxCartridgeType::Unknown;
+}
+
+const char* msx_fmsx_mapper_type_label(uint8_t mapperType)
+{
+    switch (mapperType) {
+        case 0u:
+            return "GENERIC8";
+        case 1u:
+            return "GENERIC16";
+        case 2u:
+            return "KONAMI5/SCC";
+        case 3u:
+            return "KONAMI4";
+        case 4u:
+            return "ASCII8";
+        case 5u:
+            return "ASCII16";
+        case 6u:
+            return "GMASTER2";
+        case 7u:
+            return "FMPAC";
+        default:
+            break;
+    }
+    return "UNKNOWN";
+}
+
+bool msx_detect_mapper_from_fmsx_sha(const uint8_t* data,
+                                     size_t size,
+                                     MsxCartridgeType* outType,
+                                     uint8_t* outMapperType)
+{
+    if (!data || size == 0u || !outType) {
+        return false;
+    }
+
+    char sha1Hex[41] = {0};
+    if (!msx_compute_sha1_hex(data, size, sha1Hex)) {
+        return false;
+    }
+
+    for (const MsxFmsxMapperShaEntry& entry : kMsxFmsxMapperShaTable) {
+        if (std::strcmp(sha1Hex, entry.sha1) != 0) {
+            continue;
+        }
+
+        if (outMapperType) {
+            *outMapperType = entry.mapperType;
+        }
+        *outType = msx_fmsx_mapper_type_to_cartridge_type(entry.mapperType);
+        return true;
+    }
+
+    return false;
+}
+
 MsxCartridgeType msx_detect_mapper_heuristic(const uint8_t* data, size_t size)
 {
     unsigned ascii8Hits = 0;
     unsigned ascii16Hits = 0;
     unsigned konamiHits = 0;
     unsigned konamiSccHits = 0;
+    unsigned konamiSccSpecificHits = 0;
 
     for (size_t i = 0; i + 2 < size; ++i) {
         if (data[i] != 0x32) {
@@ -1178,13 +1287,16 @@ MsxCartridgeType msx_detect_mapper_heuristic(const uint8_t* data, size_t size)
         const uint16_t address = static_cast<uint16_t>(data[i + 1] | (static_cast<uint16_t>(data[i + 2]) << 8));
         switch (address) {
             case 0x5000:
-            case 0x7000:
             case 0x9000:
             case 0xB000:
                 ++konamiSccHits;
-                if (address == 0x7000) {
-                    ++ascii16Hits;
-                }
+                ++konamiSccSpecificHits;
+                break;
+            case 0x7000:
+                // 7000h is shared by Konami SCC and ASCII16. Some ASCII16
+                // games, notably Andorogynus, mostly advertise this address.
+                ++konamiSccHits;
+                ++ascii16Hits;
                 break;
             case 0x6000:
                 ++ascii8Hits;
@@ -1204,6 +1316,12 @@ MsxCartridgeType msx_detect_mapper_heuristic(const uint8_t* data, size_t size)
         }
     }
 
+    if (ascii16Hits >= 2 &&
+        konamiSccSpecificHits <= 1 &&
+        ascii16Hits >= (konamiSccSpecificHits + 1u) * 4u &&
+        ascii16Hits >= konamiHits) {
+        return MsxCartridgeType::Ascii16;
+    }
     if (konamiSccHits >= 2 && konamiSccHits > ascii8Hits && konamiSccHits >= konamiHits) {
         return MsxCartridgeType::KonamiScc;
     }
@@ -1385,6 +1503,10 @@ bool msx_media_analyze_rom(MsxRomImage* image, const uint8_t* romData, size_t ro
         image->initAddress = init;
     }
 
+    const char* mapperSource = "fixed";
+    bool fmsxMapperMatched = false;
+    uint8_t fmsxMapperType = 0xFFu;
+
     if (romLen <= 0x4000) {
         image->cartridgeType = MsxCartridgeType::Plain16K;
     }
@@ -1392,7 +1514,15 @@ bool msx_media_analyze_rom(MsxRomImage* image, const uint8_t* romData, size_t ro
         image->cartridgeType = MsxCartridgeType::Plain32K;
     }
     else {
-        image->cartridgeType = msx_detect_mapper_heuristic(romData, romLen);
+        MsxCartridgeType fmsxType = MsxCartridgeType::Unknown;
+        fmsxMapperMatched = msx_detect_mapper_from_fmsx_sha(romData, romLen, &fmsxType, &fmsxMapperType);
+        if (fmsxMapperMatched && fmsxType != MsxCartridgeType::Unknown) {
+            image->cartridgeType = fmsxType;
+            mapperSource = "fmsx-sha";
+        } else {
+            image->cartridgeType = msx_detect_mapper_heuristic(romData, romLen);
+            mapperSource = fmsxMapperMatched ? "heuristic-after-unsupported-fmsx-sha" : "heuristic";
+        }
         // If heuristic cannot determine the mapper type, fall back to Konami —
         // the most common MSX mapper for >32KB cartridges.
         if (image->cartridgeType == MsxCartridgeType::Unknown) {
@@ -1400,12 +1530,19 @@ bool msx_media_analyze_rom(MsxRomImage* image, const uint8_t* romData, size_t ro
         }
     }
 
-    MSX_BIOS_LOG("[MSX][ROM] analyze size=%u header=%s offset=%u init=%04X type=%s\n",
+    if (fmsxMapperMatched) {
+        MSX_BIOS_LOG("[MSX][ROM] fMSX SHA mapper=%s supported=%s\n",
+                     msx_fmsx_mapper_type_label(fmsxMapperType),
+                     msx_fmsx_mapper_type_to_cartridge_type(fmsxMapperType) != MsxCartridgeType::Unknown ? "yes" : "no");
+    }
+
+    MSX_BIOS_LOG("[MSX][ROM] analyze size=%u header=%s offset=%u init=%04X type=%s source=%s\n",
                  static_cast<unsigned>(romLen),
                  image->hasAbHeader ? "yes" : "no",
                  image->hasAbHeader ? static_cast<unsigned>(image->headerOffset) : 0u,
                  static_cast<unsigned>(image->initAddress),
-                 msx_media_cartridge_type_label(image->cartridgeType));
+                 msx_media_cartridge_type_label(image->cartridgeType),
+                 mapperSource);
 
     return image->sizeSupported;
 }
