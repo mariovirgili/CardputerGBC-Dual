@@ -797,7 +797,9 @@ static void msx_vdp_stream_line_if_needed(MsxVdpState* state, uint8_t* srcLine, 
     msx_video_stream_line(&s_msx2StreamVideoFrame, srcLine, srcLineIndex);
 }
 
-static void msx_vdp_end_msx2_stream_frame(void)
+} // namespace
+
+void msx_vdp_end_msx2_stream_frame(void)
 {
     if (!s_msx2StreamActive) {
         return;
@@ -807,7 +809,7 @@ static void msx_vdp_end_msx2_stream_frame(void)
     s_msx2StreamActive = false;
 }
 
-static bool msx_vdp_begin_msx2_stream_frame(MsxVdpState* state)
+bool msx_vdp_begin_msx2_stream_frame(MsxVdpState* state)
 {
     if (!state || state->frameBuffer || !msx_vdp_is_msx2(state)) {
         s_msx2StreamActive = false;
@@ -837,6 +839,8 @@ static bool msx_vdp_begin_msx2_stream_frame(MsxVdpState* state)
     s_msx2StreamActive = true;
     return true;
 }
+
+namespace {
 
 static void msx_vdp_render_fill_stream_frame(MsxVdpState* state, uint8_t color)
 {
@@ -5462,11 +5466,11 @@ bool msx_vdp_init(MsxVdpState* state, MsxMachineMode machineMode)
 #endif
         }
         state->ownsVram = true;
-        if (!msx_vdp_ensure_frame_buffer()) {
+        // Bypassing msx_vdp_ensure_frame_buffer() completely for MSX2
+        state->frameBuffer = nullptr;
 #if MSX_VDP_INIT_LOG_ENABLED
-            std::printf("[MSX] vdp init: frame buffer alloc failed, keeping MSX2 line stream path\n");
+        std::printf("[MSX] vdp init: Framebuffer bypassed for MSX2, forcing line stream path\n");
 #endif
-        }
     } else {
         if (!msx_vdp_ensure_msx1_buffers()) {
 #if MSX_VDP_INIT_LOG_ENABLED
@@ -5485,7 +5489,9 @@ bool msx_vdp_init(MsxVdpState* state, MsxMachineMode machineMode)
     }
 
 
-    state->frameBuffer = s_msxFrameBuffer;
+    if (state->machineMode != MsxMachineMode::MSX2) {
+        state->frameBuffer = s_msxFrameBuffer;
+    }
 
     msx_vdp_reset(state);
     return true;

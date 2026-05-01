@@ -1158,6 +1158,23 @@ bool msx_video_begin_line_stream(const MsxDisplayFrame* frame)
     return msx_video_begin_line_stream_impl(frame);
 }
 
+bool msx_video_prepare_msx2_stream_buffers(unsigned srcW, unsigned srcH)
+{
+    if (srcW == 0u || srcH == 0u) {
+        return false;
+    }
+
+    MsxVideoPlan plan = {};
+    msx_video_compute_plan(srcW, srcH, &plan);
+    const bool layoutChanged = msx_video_layout_changed(plan, srcW, srcH);
+    if (!msx_video_prepare_buffers(plan, layoutChanged)) {
+        return false;
+    }
+
+    msx_video_commit_layout_cache(plan, srcW, srcH);
+    return true;
+}
+
 bool msx_video_stream_line(const MsxDisplayFrame* frame, const uint8_t* srcLine, unsigned srcLineIndex)
 {
     return msx_video_stream_line_impl(frame, srcLine, srcLineIndex);

@@ -242,7 +242,10 @@ size_t msx_core_select_msx2_ram_size(const uint8_t* mainRom, size_t reserveBytes
 {
     const size_t freeInternal = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
     const size_t free8 = heap_caps_get_free_size(MALLOC_CAP_8BIT);
+    const size_t largestInternal = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL);
+    const size_t largest8 = heap_caps_get_largest_free_block(MALLOC_CAP_8BIT);
     const size_t dynamicBudget = (free8 > freeInternal) ? free8 : freeInternal;
+    const size_t largestDynamicBlock = (largest8 > largestInternal) ? largest8 : largestInternal;
     const uint8_t staticBanks = msx_media_static_ram_bank_count_for_main_bios(mainRom);
     size_t staticBytes = static_cast<size_t>(staticBanks) * kMsxPageSize8K;
     if (staticBytes > kMsxRamSizeMsx2) {
@@ -251,16 +254,47 @@ size_t msx_core_select_msx2_ram_size(const uint8_t* mainRom, size_t reserveBytes
 
     const size_t dynamicAfterReserve =
         (dynamicBudget > reserveBytes) ? (dynamicBudget - reserveBytes) : 0u;
+    const size_t largestAfterReserve =
+        (largestDynamicBlock > reserveBytes) ? (largestDynamicBlock - reserveBytes) : 0u;
     const size_t totalBudget = staticBytes + dynamicAfterReserve;
-    const size_t selectedRam =
-        (totalBudget >= kMsxRamSizeMsx2) ? kMsxRamSizeMsx2 : kMsxRamSizeMsx1;
+    const size_t candidates[] = {
+        kMsxRamSizeMsx2,
+        kMsxRamSizeMsx2 - kMsxPageSize16K,
+        kMsxRamSizeMsx2 - (2u * kMsxPageSize16K),
+        kMsxRamSizeMsx2 - (3u * kMsxPageSize16K),
+        kMsxRamSizeMsx1
+    };
+    size_t selectedRam = kMsxRamSizeMsx1;
+    size_t selectedRequired = kMsxPageSize8K;
 
-    std::printf("[MSX] core init: msx2 ram select freeInt=%u free8=%u static=%u reserve=%u budget=%u selected=%u\n",
+    for (size_t candidate : candidates) {
+        const size_t targetBanks = candidate / kMsxPageSize8K;
+        const size_t staticBankBytes = static_cast<size_t>(staticBanks) * kMsxPageSize8K;
+        const size_t dynamicBanks =
+            (targetBanks > staticBanks) ? (targetBanks - staticBanks) : 0u;
+        const size_t requiredContiguous = dynamicBanks * kMsxPageSize8K;
+        if (totalBudget < candidate) {
+            continue;
+        }
+        if (largestAfterReserve < requiredContiguous) {
+            continue;
+        }
+        selectedRam = candidate;
+        selectedRequired = requiredContiguous;
+        (void)staticBankBytes;
+        break;
+    }
+
+    std::printf("[MSX] core init: msx2 ram select freeInt=%u free8=%u largestInt=%u largest8=%u static=%u reserve=%u budget=%u largest=%u required=%u selected=%u\n",
                 static_cast<unsigned>(freeInternal),
                 static_cast<unsigned>(free8),
+                static_cast<unsigned>(largestInternal),
+                static_cast<unsigned>(largest8),
                 static_cast<unsigned>(staticBytes),
                 static_cast<unsigned>(reserveBytes),
                 static_cast<unsigned>(totalBudget),
+                static_cast<unsigned>(largestAfterReserve),
+                static_cast<unsigned>(selectedRequired),
                 static_cast<unsigned>(selectedRam));
     return selectedRam;
 }
@@ -801,110 +835,62 @@ bool msx_core_init(MsxCoreState* state,
                 state->cart.rom && state->cart.size > 6u ? state->cart.rom[6] : 0xFFu,
                 state->cart.rom && state->cart.size > 7u ? state->cart.rom[7] : 0xFFu);
 #endif
-    const size_t requestedRamSize =
-        (state->machineMode == MsxMachineMode::MSX1) ? kMsxCartRamSizeMsx1
-                                                     : msx_core_select_msx2_ram_size(state->bios.mainRom, kMsxCoreInitReserve);
-    std::printf("[MSX] core init: memory begin\n");
-    std::printf("[MSX] core init: ram budget free=%u requested=%u\n",
-                static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL)),
-                static_cast<unsigned>(requestedRamSize));
-    if (!msx_memory_init(&state->memory, state->machineMode, &state->bios, &state->cart, requestedRamSize)) {
-        std::printf("[MSX] core init failed at memory init\n");
+    std::printf("[MSX] core init: vdp begin\n");
+    if (!msx_vdp_init(&state->vdp, state->machineMode)) {
+        std::printf("[MSX] core init failed at vdp init\n");
         msx_cart_shutdown(&state->cart);
         msx_bios_shutdown(&state->bios);
         return false;
     }
-
-    std::printf("[MSX] core init: memory ok\n");
-    std::printf("[MSX] core init: vdp begin\n");
-    bool usedVdpFirstFallback = false;
-    if (!msx_vdp_init(&state->vdp, state->machineMode)) {
-        if (state->machineMode == MsxMachineMode::MSX2 && requestedRamSize > kMsxRamSizeMsx1) {
-            std::printf("[MSX] core init: vdp after 128K RAM failed, retrying VDP-first path\n");
-            msx_memory_shutdown(&state->memory);
-            usedVdpFirstFallback = true;
-            if (!msx_vdp_init(&state->vdp, state->machineMode)) {
-                std::printf("[MSX] core init failed at vdp fallback init\n");
-                msx_cart_shutdown(&state->cart);
-                msx_bios_shutdown(&state->bios);
-                return false;
-            }
-
-            const size_t fallbackRamSize = msx_core_select_msx2_ram_size(state->bios.mainRom, 0u);
-            std::printf("[MSX] core init: fallback memory begin\n");
-            std::printf("[MSX] core init: fallback ram budget free=%u requested=%u\n",
-                        static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL)),
-                        static_cast<unsigned>(fallbackRamSize));
-            if (!msx_memory_init(&state->memory, state->machineMode, &state->bios, &state->cart, fallbackRamSize)) {
-                if (fallbackRamSize > kMsxRamSizeMsx1) {
-                    std::printf("[MSX] core init: fallback 128K RAM failed, retrying 64K\n");
-                    if (!msx_memory_init(&state->memory, state->machineMode, &state->bios, &state->cart, kMsxRamSizeMsx1)) {
-                        std::printf("[MSX] core init failed at fallback memory init\n");
-                        msx_vdp_shutdown(&state->vdp);
-                        msx_cart_shutdown(&state->cart);
-                        msx_bios_shutdown(&state->bios);
-                        return false;
-                    }
-                } else {
-                    std::printf("[MSX] core init failed at fallback memory init\n");
-                    msx_vdp_shutdown(&state->vdp);
-                    msx_cart_shutdown(&state->cart);
-                    msx_bios_shutdown(&state->bios);
-                    return false;
-                }
-            }
-            std::printf("[MSX] core init: fallback memory ok\n");
-        } else {
-            std::printf("[MSX] core init failed at vdp init\n");
-            msx_memory_shutdown(&state->memory);
+    if (state->machineMode == MsxMachineMode::MSX2) {
+        if (state->vdp.vramSize < kMsx2VramSize) {
+            std::printf("[MSX] core init failed: MSX2 VDP only got %u bytes VRAM\n",
+                        static_cast<unsigned>(state->vdp.vramSize));
+            msx_vdp_shutdown(&state->vdp);
+            msx_cart_shutdown(&state->cart);
+            msx_bios_shutdown(&state->bios);
+            return false;
+        }
+        if (!msx_video_prepare_msx2_stream_buffers(512u, 212u)) {
+            std::printf("[MSX] core init failed: MSX2 worst-case line-stream prealloc failed\n");
+            msx_vdp_shutdown(&state->vdp);
             msx_cart_shutdown(&state->cart);
             msx_bios_shutdown(&state->bios);
             return false;
         }
     }
-    if (!usedVdpFirstFallback &&
-        state->machineMode == MsxMachineMode::MSX2 &&
-        requestedRamSize > kMsxRamSizeMsx1 &&
-        state->vdp.vramSize < kMsx2VramSize) {
-        std::printf("[MSX] core init: vdp after 128K RAM downgraded to %u, retrying VDP-first path\n",
-                    static_cast<unsigned>(state->vdp.vramSize));
-        msx_vdp_shutdown(&state->vdp);
-        msx_memory_shutdown(&state->memory);
-        usedVdpFirstFallback = true;
-        if (!msx_vdp_init(&state->vdp, state->machineMode)) {
-            std::printf("[MSX] core init failed at vdp fallback init\n");
-            msx_cart_shutdown(&state->cart);
-            msx_bios_shutdown(&state->bios);
-            return false;
-        }
+    std::printf("[MSX] core init: vdp ok vram=%u\n",
+                static_cast<unsigned>(state->vdp.vramSize));
 
-        const size_t fallbackRamSize = msx_core_select_msx2_ram_size(state->bios.mainRom, 0u);
-        std::printf("[MSX] core init: fallback memory begin\n");
-        std::printf("[MSX] core init: fallback ram budget free=%u requested=%u\n",
-                    static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL)),
-                    static_cast<unsigned>(fallbackRamSize));
-        if (!msx_memory_init(&state->memory, state->machineMode, &state->bios, &state->cart, fallbackRamSize)) {
-            if (fallbackRamSize > kMsxRamSizeMsx1) {
-                std::printf("[MSX] core init: fallback 128K RAM failed, retrying 64K\n");
-                if (!msx_memory_init(&state->memory, state->machineMode, &state->bios, &state->cart, kMsxRamSizeMsx1)) {
-                    std::printf("[MSX] core init failed at fallback memory init\n");
-                    msx_vdp_shutdown(&state->vdp);
-                    msx_cart_shutdown(&state->cart);
-                    msx_bios_shutdown(&state->bios);
-                    return false;
-                }
-            } else {
-                std::printf("[MSX] core init failed at fallback memory init\n");
+    const size_t requestedRamSize =
+        (state->machineMode == MsxMachineMode::MSX1) ? kMsxCartRamSizeMsx1
+                                                     : msx_core_select_msx2_ram_size(state->bios.mainRom, 0u);
+    std::printf("[MSX] core init: memory begin\n");
+    std::printf("[MSX] core init: ram budget free=%u largest=%u requested=%u\n",
+                static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL)),
+                static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_8BIT)),
+                static_cast<unsigned>(requestedRamSize));
+    if (!msx_memory_init(&state->memory, state->machineMode, &state->bios, &state->cart, requestedRamSize)) {
+        if (state->machineMode == MsxMachineMode::MSX2 && requestedRamSize > kMsxRamSizeMsx1) {
+            std::printf("[MSX] core init: memory %uK failed after VDP-first, retrying 64K\n",
+                        static_cast<unsigned>(requestedRamSize / 1024u));
+            if (!msx_memory_init(&state->memory, state->machineMode, &state->bios, &state->cart, kMsxRamSizeMsx1)) {
+                std::printf("[MSX] core init failed at memory init\n");
                 msx_vdp_shutdown(&state->vdp);
                 msx_cart_shutdown(&state->cart);
                 msx_bios_shutdown(&state->bios);
                 return false;
             }
+        } else {
+            std::printf("[MSX] core init failed at memory init\n");
+            msx_vdp_shutdown(&state->vdp);
+            msx_cart_shutdown(&state->cart);
+            msx_bios_shutdown(&state->bios);
+            return false;
         }
-        std::printf("[MSX] core init: fallback memory ok\n");
     }
-    std::printf("[MSX] core init: vdp ok vram=%u\n",
-                static_cast<unsigned>(state->vdp.vramSize));
+
+    std::printf("[MSX] core init: memory ok\n");
 
     msx_core_init_audio(state, audioSampleRate);
     msx_core_attach_runtime_devices(state);
@@ -1127,6 +1113,15 @@ void msx_core_step_frame(MsxCoreState* state)
 #if MSX_CORE_TIMING_ENABLED || MSX_PROFILE_LOG_ENABLED
         vdpRenderUs += static_cast<uint32_t>(esp_timer_get_time() - vdpStartUs);
 #endif
+
+        bool msx2LineStream = false;
+        if (state->machineMode == MsxMachineMode::MSX2 && !state->vdp.frameBuffer) {
+            msx2LineStream = msx_vdp_begin_msx2_stream_frame(&state->vdp);
+            if (!msx2LineStream) {
+                MSX_CORE_LOG("[MSX] ERROR: msx_vdp_begin_msx2_stream_frame failed, video output may be lost!\n");
+            }
+        }
+
         state->vdp.status[0] &= static_cast<uint8_t>(~0x80u);
         state->vdp.status[1] &= static_cast<uint8_t>(~0x01u);
         state->vdp.status[2] &= static_cast<uint8_t>(~0x60u);
@@ -1177,6 +1172,11 @@ void msx_core_step_frame(MsxCoreState* state)
         state->lastFrameCycles = executedCycles;
         state->vdp.dirty = false;
         state->vdp.frameReady = true;
+
+        if (msx2LineStream) {
+            msx_vdp_end_msx2_stream_frame();
+        }
+
 #if MSX_CORE_TIMING_ENABLED || MSX_PROFILE_LOG_ENABLED
         vdpStartUs = esp_timer_get_time();
 #endif
@@ -1563,7 +1563,21 @@ bool msx_core_init_cas(MsxCoreState* state,
     std::printf("[MSX] core init_cas: memory begin\n");
     std::printf("[MSX] core init_cas: ram requested=%u\n",
                 static_cast<unsigned>(requestedRamSize));
-    if (!msx_memory_init(&state->memory, state->machineMode, &state->bios, &state->cart, requestedRamSize)) {
+    size_t currentRamTry = requestedRamSize;
+    bool memoryOk = false;
+    while (!memoryOk) {
+        if (msx_memory_init(&state->memory, state->machineMode, &state->bios, &state->cart, currentRamTry)) {
+            memoryOk = true;
+            break;
+        }
+        if (state->machineMode == MsxMachineMode::MSX2 && currentRamTry > kMsxRamSizeMsx1) {
+            currentRamTry = (currentRamTry >= kMsxRamSizeMsx1 + 16384) ? (currentRamTry - 16384) : kMsxRamSizeMsx1;
+            std::printf("[MSX] core init_cas: RAM alloc failed, falling back to %u bytes\n", static_cast<unsigned>(currentRamTry));
+        } else {
+            break;
+        }
+    }
+    if (!memoryOk) {
         std::printf("[MSX] core init_cas failed at memory init\n");
         msx_bios_shutdown(&state->bios);
         return false;

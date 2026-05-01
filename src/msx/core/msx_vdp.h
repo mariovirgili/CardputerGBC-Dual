@@ -99,6 +99,11 @@ void msx_vdp_render(MsxVdpState* state);
 void msx_vdp_render_slice(MsxVdpState* state, unsigned yStart, unsigned yEnd, bool finalizeFrame);
 void msx_vdp_render_bitmap4_slice(MsxVdpState* state, unsigned yStart, unsigned yEnd, bool finalizeFrame);
 void msx_vdp_advance_command_engine(MsxVdpState* state, uint32_t targetFrameCycles);
+
+/* Used internally by the core slice loop for MSX2 line-streaming */
+bool msx_vdp_begin_msx2_stream_frame(MsxVdpState* state);
+void msx_vdp_end_msx2_stream_frame(void);
+
 void msx_vdp_refresh_timing(MsxVdpState* state);
 uint8_t msx_vdp_in_data(MsxVdpState* state);
 uint8_t msx_vdp_in_status(MsxVdpState* state);
