@@ -784,7 +784,9 @@ bool msx_core_init(MsxCoreState* state,
                    const MsxRomImage* rom,
                    const MsxBiosBundle* bios,
                    const char* romName,
-                   uint32_t audioSampleRate)
+                   uint32_t audioSampleRate,
+                   const uint8_t* cartSramData,
+                   size_t cartSramSize)
 {
     if (!state || !rom || !bios || !rom->data || rom->size == 0 || !rom->sizeSupported || !bios->compatible) {
         std::printf("[MSX] core init failed: invalid launch data\n");
@@ -813,6 +815,19 @@ bool msx_core_init(MsxCoreState* state,
         std::printf("[MSX] core init failed at cart init\n");
         msx_bios_shutdown(&state->bios);
         return false;
+    }
+
+    if (cartSramData && cartSramSize > 0u) {
+        if (msx_cart_load_sram(&state->cart, cartSramData, cartSramSize)) {
+            std::printf("[MSX] core init: cart SRAM loaded before memory map size=%u\n",
+                        static_cast<unsigned>(cartSramSize));
+        } else {
+            std::printf("[MSX] core init: cart SRAM preload rejected size=%u\n",
+                        static_cast<unsigned>(cartSramSize));
+        }
+    } else if (msx_cart_prepare_sram(&state->cart) && state->cart.sram) {
+        std::printf("[MSX] core init: cart SRAM prepared before memory map size=%u\n",
+                    static_cast<unsigned>(state->cart.sramSize));
     }
 
     std::printf("[MSX] core init: cart ok\n");
@@ -1878,9 +1893,11 @@ bool msx_core_load_state(MsxCoreState* state, const char* path)
     uint8_t* memoryCartSram = state->memory.cart.sram;
     const size_t memoryCartSramSize = state->memory.cart.sramSize;
     const bool memoryCartSramDirty = state->memory.cart.sramDirty;
+    const bool memoryCartOwnsSram = state->memory.cart.ownsSram;
     uint8_t* cartSram = state->cart.sram;
     const size_t cartSramSize = state->cart.sramSize;
     const bool cartSramDirty = state->cart.sramDirty;
+    const bool cartOwnsSram = state->cart.ownsSram;
     const uint8_t* diskDsk = state->disk.dskData;
     MsxCasState casState = state->cas;
 
@@ -1907,10 +1924,12 @@ bool msx_core_load_state(MsxCoreState* state, const char* path)
     state->memory.cart.sram = memoryCartSram;
     state->memory.cart.sramSize = memoryCartSramSize;
     state->memory.cart.sramDirty = memoryCartSramDirty;
+    state->memory.cart.ownsSram = memoryCartOwnsSram;
     state->cart.rom = cartRom;
     state->cart.sram = cartSram;
     state->cart.sramSize = cartSramSize;
     state->cart.sramDirty = cartSramDirty;
+    state->cart.ownsSram = cartOwnsSram;
     state->disk.dskData = diskDsk;
     state->cas = casState;
     state->memory.cas = &state->cas;

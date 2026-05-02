@@ -925,6 +925,7 @@ bool msx_memory_init(MsxMemoryState* state,
     state->regionProfile = MsxRegionProfile::World;
     state->bios = *bios;
     state->cart = *cart;
+    state->cart.ownsSram = false;
 
     const size_t defaultRamSize = (machineMode == MsxMachineMode::MSX2) ? kMsxRamSizeMsx2 : kMsxRamSizeMsx1;
     size_t ramSize = (requestedRamSize != 0u) ? requestedRamSize : defaultRamSize;

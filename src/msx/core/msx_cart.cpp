@@ -135,6 +135,7 @@ bool msx_cart_ensure_sram(MsxCartState* state)
     }
     state->sram = sram;
     state->sramSize = kMsxCartSramSize;
+    state->ownsSram = true;
     std::printf("[MSX][CART] SRAM ready size=%u\n", static_cast<unsigned>(kMsxCartSramSize));
     return true;
 }
@@ -183,7 +184,7 @@ void msx_cart_shutdown(MsxCartState* state)
     if (!state) {
         return;
     }
-    if (state->sram) {
+    if (state->sram && state->ownsSram) {
         heap_caps_free(state->sram);
     }
     std::memset(state, 0, sizeof(*state));
@@ -461,6 +462,11 @@ bool msx_cart_read_sram(const MsxCartState* state, uint16_t address, uint8_t* va
 
     *value = state->sram[offset];
     return true;
+}
+
+bool msx_cart_prepare_sram(MsxCartState* state)
+{
+    return msx_cart_ensure_sram(state);
 }
 
 bool msx_cart_load_sram(MsxCartState* state, const uint8_t* data, size_t size)

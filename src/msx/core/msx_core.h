@@ -62,7 +62,9 @@ bool msx_core_init(MsxCoreState* state,
                    const MsxRomImage* rom,
                    const MsxBiosBundle* bios,
                    const char* romName,
-                   uint32_t audioSampleRate);
+                   uint32_t audioSampleRate,
+                   const uint8_t* cartSramData = nullptr,
+                   size_t cartSramSize = 0u);
 
 bool msx_core_init_basic(MsxCoreState* state,
                          const MsxBiosBundle* bios,

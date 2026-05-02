@@ -1084,11 +1084,11 @@ static uint32_t msx_cart_sram_crc(const MsxCartState* cart)
     return (data && size > 0u) ? share::gameSaveCrc32Update(0u, data, size) : 0u;
 }
 
-static void msx_cart_sram_autosave_init(MsxCoreState* core,
-                                        const char* romName,
-                                        MsxCartSramAutosave* autosave)
+static void msx_cart_sram_autosave_prepare(const char* romName,
+                                           MsxCartSramAutosave* autosave,
+                                           std::vector<uint8_t>* initialData)
 {
-    if (!core || !autosave) {
+    if (!autosave) {
         return;
     }
 
@@ -1102,7 +1102,59 @@ static void msx_cart_sram_autosave_init(MsxCoreState* core,
         return;
     }
 
-    if (!SD.exists(autosave->path.c_str())) {
+    if (!initialData || !SD.exists(autosave->path.c_str())) {
+        return;
+    }
+
+    File f = SD.open(autosave->path.c_str(), FILE_READ);
+    if (!f) {
+        std::printf("[MSX][SRAM] load failed open=%s\n", autosave->path.c_str());
+        return;
+    }
+
+    const size_t fileSize = static_cast<size_t>(f.size());
+    initialData->assign(fileSize, 0xFFu);
+    const size_t readSize = fileSize > 0u ? f.read(initialData->data(), fileSize) : 0u;
+    f.close();
+
+    if (readSize != fileSize) {
+        initialData->clear();
+        std::printf("[MSX][SRAM] preload read failed path=%s size=%u read=%u\n",
+                    autosave->path.c_str(),
+                    static_cast<unsigned>(fileSize),
+                    static_cast<unsigned>(readSize));
+        return;
+    }
+
+    std::printf("[MSX][SRAM] preloaded %u bytes from %s\n",
+                static_cast<unsigned>(fileSize),
+                autosave->path.c_str());
+}
+
+static void msx_cart_sram_autosave_init(MsxCoreState* core,
+                                        const char* romName,
+                                        MsxCartSramAutosave* autosave)
+{
+    if (!core || !autosave) {
+        return;
+    }
+
+    if (autosave->path.length() == 0) {
+        msx_cart_sram_autosave_prepare(romName, autosave, nullptr);
+    }
+
+    if (msx_cart_sram_size(&core->memory.cart) > 0u) {
+        msx_memory_refresh_maps(&core->memory);
+        autosave->lastCrc = msx_cart_sram_crc(&core->memory.cart);
+        autosave->hasBaseline = true;
+        msx_cart_clear_sram_dirty(&core->memory.cart);
+        std::printf("[MSX][SRAM] runtime SRAM ready size=%u path=%s\n",
+                    static_cast<unsigned>(msx_cart_sram_size(&core->memory.cart)),
+                    autosave->path.c_str());
+        return;
+    }
+
+    if (autosave->path.length() == 0 || !SD.exists(autosave->path.c_str())) {
         return;
     }
 
@@ -1879,10 +1931,20 @@ void run_msx(const uint8_t* romData, size_t romLen, const char* romName, SdServi
         (void)msx_sound_prestart_speaker(kMsxSkeletonSampleRate, kMsxSkeletonChannels);
     }
 
+    MsxCoreState core = {};
+    MsxCartSramAutosave sramAutosave = {};
+    std::vector<uint8_t> initialSramData;
+    msx_cart_sram_autosave_prepare(romName, &sramAutosave, &initialSramData);
+
     printf("[MSX] core init begin\n");
 
-    MsxCoreState core = {};
-    if (!msx_core_init(&core, &rom, &bios, romName, coreAudioSampleRate)) {
+    if (!msx_core_init(&core,
+                       &rom,
+                       &bios,
+                       romName,
+                       coreAudioSampleRate,
+                       initialSramData.empty() ? nullptr : initialSramData.data(),
+                       initialSramData.size())) {
         printf("[MSX] core init failed\n");
         msx_show_launch_error("MSX START ERROR", "Core init failed", "Check ROM and BIOS set");
         msx_sound_shutdown();
@@ -1893,7 +1955,6 @@ void run_msx(const uint8_t* romData, size_t romLen, const char* romName, SdServi
     }
     msx_apply_region_profile(&core, regionMode, romName);
     msx_input_set_runtime_machine_mode(core.machineMode);
-    MsxCartSramAutosave sramAutosave = {};
     msx_cart_sram_autosave_init(&core, romName, &sramAutosave);
 
     bool audioInitOk = false;

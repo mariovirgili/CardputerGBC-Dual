@@ -17,6 +17,7 @@ struct MsxCartState {
     uint8_t windowBanks[4];
     uint16_t fmpacKey;
     bool sramDirty;
+    bool ownsSram;
     bool ready;
     bool bankSwitching;
     bool directBootCandidate;
@@ -30,6 +31,7 @@ void msx_cart_reset(MsxCartState* state);
 const uint8_t* msx_cart_window_ptr(const MsxCartState* state, uint8_t windowIndex);
 void msx_cart_write(MsxCartState* state, uint16_t address, uint8_t value);
 bool msx_cart_read_sram(const MsxCartState* state, uint16_t address, uint8_t* value);
+bool msx_cart_prepare_sram(MsxCartState* state);
 bool msx_cart_load_sram(MsxCartState* state, const uint8_t* data, size_t size);
 const uint8_t* msx_cart_sram_data(const MsxCartState* state);
 size_t msx_cart_sram_size(const MsxCartState* state);
