@@ -10,6 +10,7 @@
 #include "../../share/emu_static_pool.h"
 #include "msx_cpu.h"
 #include "msx_disk.h"
+#include "../msx_logging.h"
 #include "msx_psg.h"
 #include "msx_scc.h"
 #include "msx_vdp.h"
@@ -24,6 +25,10 @@
 
 #ifndef MSX_SCC_LOG_ENABLED
 #define MSX_SCC_LOG_ENABLED 0
+#endif
+
+#ifndef MSX_CORE_TRACE_ENABLED
+#define MSX_CORE_TRACE_ENABLED 0
 #endif
 
 namespace {
@@ -71,6 +76,18 @@ constexpr uint8_t kMsxRtcModeNvramLo = 2u;
 constexpr uint8_t kMsxRtcModeNvramHi = 3u;
 constexpr uint8_t kMsxInternalIoKanjiL1Enable = 0x01u;
 constexpr uint8_t kMsxInternalIoKanjiL2Enable = 0x02u;
+
+inline bool msx_memory_trace_space_manbow_vdp_pc(const MsxMemoryState* state)
+{
+    if (!state || !state->cpu) {
+        return false;
+    }
+
+    const uint16_t pc = state->cpu->pc;
+    const uint16_t lastPc = state->cpu->lastPc;
+    return ((pc >= 0x47E0u) && (pc <= 0x47FFu)) ||
+           ((lastPc >= 0x47E0u) && (lastPc <= 0x47FFu));
+}
 
 uint8_t msx_slot_for_page(uint8_t slotRegister, uint8_t pageIndex)
 {
@@ -1023,7 +1040,7 @@ void msx_memory_log_scc_bank_write(uint8_t window,
                                    bool plusWindow)
 {
 #if MSX_SCC_LOG_ENABLED
-    std::printf("[MSX][SCC] bank window=%u raw=%02X mapped=%02X classic=%u plus=%u\n",
+    MSX_RUNTIME_LOG("[MSX][SCC] bank window=%u raw=%02X mapped=%02X classic=%u plus=%u\n",
                 static_cast<unsigned>(window),
                 static_cast<unsigned>(rawValue),
                 static_cast<unsigned>(normalizedValue),
@@ -1069,7 +1086,7 @@ void msx_memory_log_scc_write_route(const MsxMemoryState* state,
 
     const uint16_t logIndex = cartRoute ? s_sccCartRouteLogCount : s_sccIgnoredRouteLogCount;
     const MsxSccState* const scc = s_attachedScc;
-    std::printf("[MSX][SCC] %s WR %04X <- %02X page=%u slot=%u A8=%02X writeMap=%u classic=%u plus=%u banks=%02X/%02X/%02X/%02X #%u\n",
+    MSX_RUNTIME_LOG("[MSX][SCC] %s WR %04X <- %02X page=%u slot=%u A8=%02X writeMap=%u classic=%u plus=%u banks=%02X/%02X/%02X/%02X #%u\n",
                 cartRoute ? "cart-route" : "ignored-route",
                 static_cast<unsigned>(address),
                 static_cast<unsigned>(value),
@@ -1180,7 +1197,7 @@ bool msx_memory_scc_classic_read_visible(const MsxMemoryState* state, uint16_t a
     if (!s_attachedScc || !s_attachedScc->ready || !s_attachedScc->classicWindow) {
         return false;
     }
-    if (address < 0x9800u || address >= 0x9880u) {
+    if (address < 0x9800u || address >= 0xA000u) {
         return false;
     }
     return msx_memory_virtual_scc_visible_at(state, address) ||
@@ -1643,7 +1660,7 @@ void IRAM_ATTR msx_memory_write8(MsxMemoryState* state, uint16_t address, uint8_
 #if MSX_BOOTSTRAP_LOG_ENABLED
             static uint16_t s_bootSslLogCount = 0u;
             if (s_bootSslLogCount < 32u) {
-                std::printf("[MSX][BOOTDBG][SLOT] WR FFFF <- %02X coerced=%02X page3Slot=%u ssl3=%02X A8=%02X #%u\n",
+                MSX_RUNTIME_LOG("[MSX][BOOTDBG][SLOT] WR FFFF <- %02X coerced=%02X page3Slot=%u ssl3=%02X A8=%02X #%u\n",
                             static_cast<unsigned>(value),
                             static_cast<unsigned>(coercedValue),
                             static_cast<unsigned>(page3Slot),
@@ -1778,6 +1795,25 @@ uint8_t IRAM_ATTR msx_memory_in(MsxMemoryState* state, uint8_t port)
         }
         case 0x99: {
             const uint8_t value = (state && state->vdp) ? msx_vdp_in_status(state->vdp) : 0xFFu;
+#if MSX_CORE_TRACE_ENABLED
+            static uint16_t s_vdpStatusReadLogCount = 0u;
+            if (state && state->vdp &&
+                s_vdpStatusReadLogCount < 192u &&
+                msx_memory_trace_space_manbow_vdp_pc(state)) {
+                MSX_RUNTIME_LOG("[MSX][VDP-STS] RD 99 -> %02X pc=%04X last=%04X r15=%02X s0=%02X s1=%02X s2=%02X a8=%02X ssl3=%02X #%u\n",
+                            static_cast<unsigned>(value),
+                            static_cast<unsigned>(state->cpu ? state->cpu->pc : 0u),
+                            static_cast<unsigned>(state->cpu ? state->cpu->lastPc : 0u),
+                            static_cast<unsigned>(state->vdp->regs[15]),
+                            static_cast<unsigned>(state->vdp->status[0]),
+                            static_cast<unsigned>(state->vdp->status[1]),
+                            static_cast<unsigned>(state->vdp->status[2]),
+                            static_cast<unsigned>(state->slotRegister),
+                            static_cast<unsigned>(state->secondarySlotRegs[3]),
+                            static_cast<unsigned>(s_vdpStatusReadLogCount));
+                ++s_vdpStatusReadLogCount;
+            }
+#endif
             return value;
         }
         case 0xA2: {
@@ -1894,6 +1930,24 @@ void IRAM_ATTR msx_memory_out(MsxMemoryState* state, uint8_t port, uint8_t value
         case 0x99:
             state->lastPort99 = value;
             if (state->vdp) {
+#if MSX_CORE_TRACE_ENABLED
+                static uint16_t s_vdpControlWriteLogCount = 0u;
+                if (s_vdpControlWriteLogCount < 192u &&
+                    msx_memory_trace_space_manbow_vdp_pc(state)) {
+                    MSX_RUNTIME_LOG("[MSX][VDP-CTL] WR 99 <- %02X pc=%04X last=%04X r15=%02X s0=%02X s1=%02X s2=%02X a8=%02X ssl3=%02X #%u\n",
+                                static_cast<unsigned>(value),
+                                static_cast<unsigned>(state->cpu ? state->cpu->pc : 0u),
+                                static_cast<unsigned>(state->cpu ? state->cpu->lastPc : 0u),
+                                static_cast<unsigned>(state->vdp->regs[15]),
+                                static_cast<unsigned>(state->vdp->status[0]),
+                                static_cast<unsigned>(state->vdp->status[1]),
+                                static_cast<unsigned>(state->vdp->status[2]),
+                                static_cast<unsigned>(state->slotRegister),
+                                static_cast<unsigned>(state->secondarySlotRegs[3]),
+                                static_cast<unsigned>(s_vdpControlWriteLogCount));
+                    ++s_vdpControlWriteLogCount;
+                }
+#endif
                 msx_vdp_out_control(state->vdp, value);
             }
             break;
@@ -1944,7 +1998,7 @@ void IRAM_ATTR msx_memory_out(MsxMemoryState* state, uint8_t port, uint8_t value
             {
                 static uint16_t s_bootA8LogCount = 0u;
                 if (s_bootA8LogCount < 96u && state->slotRegister != value) {
-                    std::printf("[MSX][BOOTDBG][SLOT] OUT A8 %02X -> %02X p=%u/%u/%u/%u ssl3=%02X banks=%u/%u/%u/%u #%u\n",
+                    MSX_RUNTIME_LOG("[MSX][BOOTDBG][SLOT] OUT A8 %02X -> %02X p=%u/%u/%u/%u ssl3=%02X banks=%u/%u/%u/%u #%u\n",
                                 static_cast<unsigned>(state->slotRegister),
                                 static_cast<unsigned>(value),
                                 static_cast<unsigned>(value & 0x03u),
@@ -1988,7 +2042,7 @@ void IRAM_ATTR msx_memory_out(MsxMemoryState* state, uint8_t port, uint8_t value
                                             newPage2 == kMsxPrimarySlotCartridge;
                 if (s_sccA8LogCount < 64u &&
                     (oldCartVisible || newCartVisible || state->slotRegister != value)) {
-                    std::printf("[MSX][SCC] slot A8 %02X -> %02X p1=%u p2=%u cartVisible=%u #%u\n",
+                    MSX_RUNTIME_LOG("[MSX][SCC] slot A8 %02X -> %02X p1=%u p2=%u cartVisible=%u #%u\n",
                                 static_cast<unsigned>(state->slotRegister),
                                 static_cast<unsigned>(value),
                                 static_cast<unsigned>(newPage1),

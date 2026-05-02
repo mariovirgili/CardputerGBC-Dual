@@ -14,6 +14,7 @@
 
 #include "../msx_config.h"
 #include "../msx_display.h"
+#include "../msx_logging.h"
 #include "../msx_video.h"
 #include "../../bench/v9938_bench_trace.hpp"
 
@@ -197,7 +198,7 @@ struct __attribute__((packed)) MsxVdpRegTimelineEvent {
     uint32_t cycle;
     uint8_t value;
 };
-// Ridotto da 16 a 8. Difficilmente un gioco modifica lo STESSO registro più di 8 volte a frame.
+// Reduced from 16 to 8. A game is unlikely to modify the same register more than 8 times per frame.
 static constexpr uint8_t kMsxVdpRegTimelineMax = 32u;
 struct MsxVdpRenderAuxState {
     MsxVdpRegTimelineEvent r5Timeline[kMsxVdpRegTimelineMax];
@@ -737,7 +738,7 @@ static void msx_vdp_render_task(void* arg) {
             s_vdpStatFrames++;
             if (s_vdpStatFrames >= 60) {
 #if MSX_VDP_DUALCORE_STATS_LOG_ENABLED
-                std::printf("[MSX][VDP-CORE0] 60fps | RenderAvg: %u us | CopyAvg: %u us | Drops: %u\n",
+                MSX_RUNTIME_LOG("[MSX][VDP-CORE0] 60fps | RenderAvg: %u us | CopyAvg: %u us | Drops: %u\n",
                             static_cast<unsigned>(s_vdpStatRenderUs / 60u),
                             static_cast<unsigned>(s_vdpStatCopyUs / 60u),
                             static_cast<unsigned>(s_vdpStatDrops));
@@ -1057,7 +1058,7 @@ void msx_vdp_diag_log_high_vram_store(const MsxVdpState* state,
 
     ++s_highVramLogCount;
     const MsxVdpCommandState& command = state->command;
-    std::printf("[MSX][HIGH-VRAM] #%lu %s addr=%05lX %02X>%02X mode=%u cmd=%u sx=%u sy=%u dx=%u dy=%u nx=%u ny=%u r14=%02X frame=%lu cyc=%lu\n",
+    MSX_RUNTIME_LOG("[MSX][HIGH-VRAM] #%lu %s addr=%05lX %02X>%02X mode=%u cmd=%u sx=%u sy=%u dx=%u dy=%u nx=%u ny=%u r14=%02X frame=%lu cyc=%lu\n",
                 static_cast<unsigned long>(s_highVramLogCount),
                 phase,
                 static_cast<unsigned long>(addr),
@@ -1091,7 +1092,7 @@ void msx_vdp_diag_log_high_vram_copy(const MsxVdpState* state,
     ++s_highVramCopyLogCount;
     const uint32_t sample = dst & state->vramMask;
     const MsxVdpCommandState& command = state->command;
-    std::printf("[MSX][HIGH-COPY] #%lu %s src=%05lX dst=%05lX len=%lu bytes=%02X%02X%02X%02X cmd=%u sx=%u sy=%u dx=%u dy=%u frame=%lu\n",
+    MSX_RUNTIME_LOG("[MSX][HIGH-COPY] #%lu %s src=%05lX dst=%05lX len=%lu bytes=%02X%02X%02X%02X cmd=%u sx=%u sy=%u dx=%u dy=%u frame=%lu\n",
                 static_cast<unsigned long>(s_highVramCopyLogCount),
                 phase,
                 static_cast<unsigned long>(src),
@@ -1219,7 +1220,7 @@ static void msx_vdp_log_boot_text_probe(const MsxVdpState* state)
     const uint8_t color0Raw = msx_vdp_read_vram_fast(vram, mask, colorBaseRaw + static_cast<uint32_t>(name0 >> 3));
     const uint8_t color0 = msx_vdp_read_vram_fast(vram, mask, colorBase + static_cast<uint32_t>(name0 >> 3));
 
-    std::printf("[MSX][BOOTTXT] #%u frame=%lu mode=%s disp=%u irq=%u R2=%02X R3=%02X R4=%02X R7=%02X R10=%02X NB=%05lX CBraw=%05lX CB=%05lX PBraw=%05lX PB=%05lX names=%02X %02X %02X %02X %02X %02X %02X %02X patt0raw=%02X patt0=%02X color0raw=%02X color0=%02X\n",
+    MSX_RUNTIME_LOG("[MSX][BOOTTXT] #%u frame=%lu mode=%s disp=%u irq=%u R2=%02X R3=%02X R4=%02X R7=%02X R10=%02X NB=%05lX CBraw=%05lX CB=%05lX PBraw=%05lX PB=%05lX names=%02X %02X %02X %02X %02X %02X %02X %02X patt0raw=%02X patt0=%02X color0raw=%02X color0=%02X\n",
                 static_cast<unsigned>(s_msxBootDiagCount),
                 static_cast<unsigned long>(state->frameCounter),
                 msx_vdp_mode_label(state->mode),
@@ -1947,7 +1948,7 @@ void msx_vdp_diag_log_command_start(const MsxVdpState* state,
         return;
     }
 
-    std::printf("[MSX][VDP-CMD] #%lu op=%02X %s mode=%s sx=%u sy=%u dx=%u dy=%u nx=%u ny=%u r44=%02X r45=%02X r46=%02X s2=%02X r15=%02X frame=%lu cyc=%lu\n",
+    MSX_RUNTIME_LOG("[MSX][VDP-CMD] #%lu op=%02X %s mode=%s sx=%u sy=%u dx=%u dy=%u nx=%u ny=%u r44=%02X r45=%02X r46=%02X s2=%02X r15=%02X frame=%lu cyc=%lu\n",
                 static_cast<unsigned long>(s_cmdStartLogCount),
                 static_cast<unsigned>(opcode),
                 msx_vdp_command_label(static_cast<uint8_t>(opcode >> 4)),
@@ -2005,7 +2006,7 @@ void msx_vdp_diag_log_transfer(const MsxVdpState* state,
     if (!msx_vdp_diag_take(&s_transferLogCount, 320u)) {
         return;
     }
-    std::printf("[MSX][VDP-XFER] #%lu %s cmd=%s mode=%s val=%02X sx=%u sy=%u dx=%u dy=%u anx=%u nx=%u ny=%u tx=%d ty=%d s2=%02X frame=%lu cyc=%lu\n",
+    MSX_RUNTIME_LOG("[MSX][VDP-XFER] #%lu %s cmd=%s mode=%s val=%02X sx=%u sy=%u dx=%u dy=%u anx=%u nx=%u ny=%u tx=%d ty=%d s2=%02X frame=%lu cyc=%lu\n",
                 static_cast<unsigned long>(s_transferLogCount),
                 phase,
                 msx_vdp_transfer_label(command.transfer),
@@ -2059,7 +2060,7 @@ void msx_vdp_diag_log_status_read(const MsxVdpState* state, uint8_t index, uint8
     s_lastStatusValue[slot] = value;
     s_lastStatusCommand[slot] = commandTag;
 
-    std::printf("[MSX][VDP-STS] #%lu s%u=%02X cmd=%s r15=%02X r44=%02X sx=%u sy=%u dx=%u dy=%u anx=%u ny=%u s2=%02X frame=%lu cyc=%lu\n",
+    MSX_RUNTIME_LOG("[MSX][VDP-STS] #%lu s%u=%02X cmd=%s r15=%02X r44=%02X sx=%u sy=%u dx=%u dy=%u anx=%u ny=%u s2=%02X frame=%lu cyc=%lu\n",
                 static_cast<unsigned long>(s_statusLogCount),
                 static_cast<unsigned>(index),
                 static_cast<unsigned>(value),
@@ -2092,7 +2093,7 @@ void msx_vdp_diag_log_command_finish(const MsxVdpState* state,
         return;
     }
 
-    std::printf("[MSX][VDP-FIN] #%lu %s cmd=%s mode=%s sx=%u sy=%u dx=%u dy=%u nx=%u ny=%u asx=%u adx=%u anx=%u s2=%02X r44=%02X frame=%lu cyc=%lu\n",
+    MSX_RUNTIME_LOG("[MSX][VDP-FIN] #%lu %s cmd=%s mode=%s sx=%u sy=%u dx=%u dy=%u nx=%u ny=%u asx=%u adx=%u anx=%u s2=%02X r44=%02X frame=%lu cyc=%lu\n",
                 static_cast<unsigned long>(s_finishLogCount),
                 phase,
                 msx_vdp_transfer_label(command.transfer),
@@ -2159,7 +2160,7 @@ void msx_vdp_diag_log_cmdseq(const MsxVdpState* state,
         return;
     }
     ++s_cmdSeqLogCount;
-    std::printf("[MSX][CMDSEQ] #%lu %s val=%02X xfer=%u s2=%02X r44=%02X r45=%02X r46=%02X adx=%u dy=%u anx=%u ny=%u e0=%u e1=%u e2=%u frame=%lu cyc=%lu\n",
+    MSX_RUNTIME_LOG("[MSX][CMDSEQ] #%lu %s val=%02X xfer=%u s2=%02X r44=%02X r45=%02X r46=%02X adx=%u dy=%u anx=%u ny=%u e0=%u e1=%u e2=%u frame=%lu cyc=%lu\n",
                 static_cast<unsigned long>(s_cmdSeqLogCount),
                 phase,
                 static_cast<unsigned>(value),
@@ -2298,7 +2299,7 @@ static bool msx_vdp_command_try_bulk_hmmm(MsxVdpState* state, uint8_t liveScreen
                 const uint8_t d1 = state->vram[(dstStart + 1u) & state->vramMask];
                 const uint8_t d2 = state->vram[(dstStart + 2u) & state->vramMask];
                 const uint8_t d3 = state->vram[(dstStart + 3u) & state->vramMask];
-                std::printf("[MSX][HMMM-BULK] #%lu src=%05lX dst=%05lX len=%u sx=%u sy=%u dx=%u dy=%u ny=%u tx=%d s=%02X%02X%02X%02X d=%02X%02X%02X%02X frame=%lu\n",
+                MSX_RUNTIME_LOG("[MSX][HMMM-BULK] #%lu src=%05lX dst=%05lX len=%u sx=%u sy=%u dx=%u dy=%u ny=%u tx=%d s=%02X%02X%02X%02X d=%02X%02X%02X%02X frame=%lu\n",
                             static_cast<unsigned long>(s_hmmmBulkLogCount),
                             static_cast<unsigned long>(srcStart),
                             static_cast<unsigned long>(dstStart),
@@ -2333,7 +2334,7 @@ static bool msx_vdp_command_try_bulk_hmmm(MsxVdpState* state, uint8_t liveScreen
             if (watchDisplayLine && s_hmmmWatchLogCount < 96u) {
                 ++s_hmmmWatchLogCount;
                 const uint32_t lineBase = 0x06000u;
-                std::printf("[MSX][HMMM-WATCH] #%lu src=%05lX dst=%05lX len=%u after b0=%02X%02X%02X%02X b8=%02X%02X%02X%02X b12=%02X%02X%02X%02X frame=%lu\n",
+                MSX_RUNTIME_LOG("[MSX][HMMM-WATCH] #%lu src=%05lX dst=%05lX len=%u after b0=%02X%02X%02X%02X b8=%02X%02X%02X%02X b12=%02X%02X%02X%02X frame=%lu\n",
                             static_cast<unsigned long>(s_hmmmWatchLogCount),
                             static_cast<unsigned long>(srcStart),
                             static_cast<unsigned long>(dstStart),
@@ -2858,7 +2859,7 @@ void msx_vdp_command_execute(MsxVdpState* state, uint8_t opcode)
         const unsigned displayPage = static_cast<unsigned>(msx_vdp_bitmap4_display_page_for_reg2(state->regs[2]));
         const bool srcVisible = hasSource && g4_visible_now(srcY);
         const bool dstVisible = hasDest && g4_visible_now(dstY);
-        std::printf("[MSX][G4-ADDR] #%lu %s sx=%u sy=%u src=%05lX sp=%u sv=%u s=%02X%02X%02X%02X dx=%u dy=%u dst=%05lX dp=%u dv=%u d=%02X%02X%02X%02X nx=%u ny=%u r2=%02X r23=%02X disp=%u frame=%lu\n",
+        MSX_RUNTIME_LOG("[MSX][G4-ADDR] #%lu %s sx=%u sy=%u src=%05lX sp=%u sv=%u s=%02X%02X%02X%02X dx=%u dy=%u dst=%05lX dp=%u dv=%u d=%02X%02X%02X%02X nx=%u ny=%u r2=%02X r23=%02X disp=%u frame=%lu\n",
                     static_cast<unsigned long>(s_g4AddrLogCount),
                     tag,
                     static_cast<unsigned>(srcX),
@@ -3077,8 +3078,14 @@ void msx_vdp_write_register(MsxVdpState* state, uint8_t reg, uint8_t value)
         return;
     }
 
-    if (reg == 14u && msx_vdp_is_msx2(state)) {
-        value &= msx_vdp_vram_page_mask(state);
+    if (msx_vdp_is_msx2(state)) {
+        if (reg == 14u) {
+            value &= msx_vdp_vram_page_mask(state);
+        } else if (reg == 15u || reg == 16u) {
+            value &= 0x0Fu;
+        } else if (reg == 17u) {
+            value &= 0xBFu;
+        }
     }
 
 #if MSX_BOOTSTRAP_LOG_ENABLED
@@ -3090,7 +3097,7 @@ void msx_vdp_write_register(MsxVdpState* state, uint8_t reg, uint8_t value)
     if (bootInterestingReg && state->regs[reg] != value && state->frameCounter < 240u) {
         static uint16_t s_bootVdpRegLogCount = 0u;
         if (s_bootVdpRegLogCount < 192u) {
-            std::printf("[MSX][BOOTDBG][VDP] frame=%lu cyc=%lu R%02u %02X->%02X mode=%s S0=%02X S1=%02X S2=%02X #%u\n",
+            MSX_RUNTIME_LOG("[MSX][BOOTDBG][VDP] frame=%lu cyc=%lu R%02u %02X->%02X mode=%s S0=%02X S1=%02X S2=%02X #%u\n",
                         static_cast<unsigned long>(state->frameCounter),
                         static_cast<unsigned long>(state->currentFrameCpuCycles),
                         static_cast<unsigned>(reg),
@@ -3124,7 +3131,7 @@ void msx_vdp_write_register(MsxVdpState* state, uint8_t reg, uint8_t value)
     static int s_regWriteCount = 0;
     if ((state->regs[reg] != value) && (s_regWriteCount < 32)) {
         ++s_regWriteCount;
-        std::printf("[MSX][VDP] REG%u <- 0x%02X (prev=0x%02X irq=%s) #%d\n",
+        MSX_RUNTIME_LOG("[MSX][VDP] REG%u <- 0x%02X (prev=0x%02X irq=%s) #%d\n",
                     static_cast<unsigned>(reg),
                     static_cast<unsigned>(value),
                     static_cast<unsigned>(state->regs[reg]),
@@ -3139,7 +3146,7 @@ void msx_vdp_write_register(MsxVdpState* state, uint8_t reg, uint8_t value)
         static uint32_t s_msx2KeyRegLogCount = 0u;
         if (msx_vdp_is_msx2(state) && msx_vdp_is_traced_register(reg) && s_msx2KeyRegLogCount < 192u) {
             ++s_msx2KeyRegLogCount;
-            std::printf("[MSX][REG] #%lu R%02u=%02X prev=%02X mode=%s frame=%lu\n",
+            MSX_RUNTIME_LOG("[MSX][REG] #%lu R%02u=%02X prev=%02X mode=%s frame=%lu\n",
                         static_cast<unsigned long>(s_msx2KeyRegLogCount),
                         static_cast<unsigned>(reg),
                         static_cast<unsigned>(value),
@@ -4211,7 +4218,7 @@ void msx_vdp_update_mode_geometry(MsxVdpState* state)
          state->regs[25] != s_lastLoggedR25 ||
          state->regs[26] != s_lastLoggedR26 ||
          state->regs[27] != s_lastLoggedR27)) {
-        std::printf("[MSX][VDP] mode=%s yjk=%d yae=%d h=%u r2=%02X r9=%02X r25=%02X r26=%02X r27=%02X hs=%u hs512=%d\n",
+        MSX_RUNTIME_LOG("[MSX][VDP] mode=%s yjk=%d yae=%d h=%u r2=%02X r9=%02X r25=%02X r26=%02X r27=%02X hs=%u hs512=%d\n",
                     msx_vdp_mode_label(state->mode),
                     static_cast<int>(msx_vdp_mode_yjk(state)),
                     static_cast<int>(msx_vdp_mode_yae(state)),
@@ -4883,7 +4890,7 @@ static void msx_vdp_render_bitmap4_range(MsxVdpState* state, unsigned yStart, un
                                                                                 0x8000u);
             const uint16_t commandY = static_cast<uint16_t>((static_cast<uint16_t>(pageIndex) << 8) |
                                                             static_cast<uint16_t>(scrolledY & 0xFFu));
-            std::printf("[MSX][G4-DISP] #%lu frame=%lu line=%u now=%lu r2=%02X r23=%02X r25=%02X r26=%02X r27=%02X r9=%02X legacy=%02X/%02X cyc=%lu/%lu live=%02X/%02X/%02X/%02X/%02X hs=%u hs512=%u sy=%u cy=%u page=%u base=%05lX cur=%05lX b0=%02X%02X%02X%02X b8=%02X%02X%02X%02X b12=%02X%02X%02X%02X altp=%u alt=%05lX %02X%02X%02X%02X fx0=%05lX/%u fx128=%05lX/%u\n",
+            MSX_RUNTIME_LOG("[MSX][G4-DISP] #%lu frame=%lu line=%u now=%lu r2=%02X r23=%02X r25=%02X r26=%02X r27=%02X r9=%02X legacy=%02X/%02X cyc=%lu/%lu live=%02X/%02X/%02X/%02X/%02X hs=%u hs512=%u sy=%u cy=%u page=%u base=%05lX cur=%05lX b0=%02X%02X%02X%02X b8=%02X%02X%02X%02X b12=%02X%02X%02X%02X altp=%u alt=%05lX %02X%02X%02X%02X fx0=%05lX/%u fx128=%05lX/%u\n",
                         static_cast<unsigned long>(s_g4DispLogCount),
                         static_cast<unsigned long>(state->frameCounter),
                         static_cast<unsigned>(y),
@@ -4982,7 +4989,7 @@ static void msx_vdp_render_bitmap4_range(MsxVdpState* state, unsigned yStart, un
             const uint32_t attrBase = s_msxSpriteLastAttrBase & state->vramMask;
             const uint32_t colorBase = s_msxSpriteLastColorBase & state->vramMask;
             const uint32_t patternBase = s_msxSpriteLastPatternBase & state->vramMask;
-            std::printf("[MSX][SPR-STATS] 60f lines=%lu sel=%lu colored=%lu transparent=%lu px=%lu sat=%05lX col=%05lX pat=%05lX r1=%02X r5=%02X r6=%02X r8=%02X r11=%02X liveR5=%02X liveR6=%02X liveR11=%02X firstY=%u fR5=%02X fR6=%02X fR11=%02X fR23=%02X fSAT=%05lX fCOL=%05lX fPAT=%05lX lastY=%u lR5=%02X lR6=%02X lR11=%02X lR23=%02X lSAT=%05lX lCOL=%05lX lPAT=%05lX\n",
+            MSX_RUNTIME_LOG("[MSX][SPR-STATS] 60f lines=%lu sel=%lu colored=%lu transparent=%lu px=%lu sat=%05lX col=%05lX pat=%05lX r1=%02X r5=%02X r6=%02X r8=%02X r11=%02X liveR5=%02X liveR6=%02X liveR11=%02X firstY=%u fR5=%02X fR6=%02X fR11=%02X fR23=%02X fSAT=%05lX fCOL=%05lX fPAT=%05lX lastY=%u lR5=%02X lR6=%02X lR11=%02X lR23=%02X lSAT=%05lX lCOL=%05lX lPAT=%05lX\n",
                         static_cast<unsigned long>(s_msxSpriteActiveLines),
                         static_cast<unsigned long>(s_msxSpriteSelectedCount),
                         static_cast<unsigned long>(s_msxSpriteColoredEntries),
@@ -5020,7 +5027,7 @@ static void msx_vdp_render_bitmap4_range(MsxVdpState* state, unsigned yStart, un
                 const uint32_t sat1 = (attrBase + 4u) & state->vramMask;
                 const uint32_t sat2 = (attrBase + 8u) & state->vramMask;
                 const uint32_t sat3 = (attrBase + 12u) & state->vramMask;
-                std::printf("[MSX][SPR-DUMP] s0=%02X,%02X,%02X,%02X s1=%02X,%02X,%02X,%02X s2=%02X,%02X,%02X,%02X s3=%02X,%02X,%02X,%02X c0=%02X c1=%02X c2=%02X c3=%02X\n",
+                MSX_RUNTIME_LOG("[MSX][SPR-DUMP] s0=%02X,%02X,%02X,%02X s1=%02X,%02X,%02X,%02X s2=%02X,%02X,%02X,%02X s3=%02X,%02X,%02X,%02X c0=%02X c1=%02X c2=%02X c3=%02X\n",
                             static_cast<unsigned>(vram[(sat0 + 0u) & mask]),
                             static_cast<unsigned>(vram[(sat0 + 1u) & mask]),
                             static_cast<unsigned>(vram[(sat0 + 2u) & mask]),
@@ -5760,7 +5767,7 @@ bool msx_vdp_init(MsxVdpState* state, MsxMachineMode machineMode)
 
             const uint32_t nextVram = selectedVram >> 1;
 #if MSX_VDP_INIT_LOG_ENABLED
-            std::printf("[MSX] vdp init: vram size fallback from %u to %u\n",
+            MSX_RUNTIME_LOG("[MSX] vdp init: vram size fallback from %u to %u\n",
                         static_cast<unsigned>(selectedVram),
                         static_cast<unsigned>(nextVram));
 #endif
@@ -5771,7 +5778,7 @@ bool msx_vdp_init(MsxVdpState* state, MsxMachineMode machineMode)
             const uint32_t freeInternal = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
             const uint32_t freeSpiRam = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
             const uint32_t free8 = heap_caps_get_free_size(MALLOC_CAP_8BIT);
-            std::printf("[MSX] vdp init: vram alloc failed size=%u free8=%u freeInternal=%u freeSPIRAM=%u largestInternal=%u largestSPIRAM=%u\n",
+            MSX_RUNTIME_LOG("[MSX] vdp init: vram alloc failed size=%u free8=%u freeInternal=%u freeSPIRAM=%u largestInternal=%u largestSPIRAM=%u\n",
                         static_cast<unsigned>(requestedVram),
                         static_cast<unsigned>(free8),
                         static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL)),
@@ -5784,7 +5791,7 @@ bool msx_vdp_init(MsxVdpState* state, MsxMachineMode machineMode)
         }
         if (selectedVram != requestedVram) {
 #if MSX_VDP_INIT_LOG_ENABLED
-            std::printf("[MSX] vdp init: vram downgraded to %u bytes for MSX2\n",
+            MSX_RUNTIME_LOG("[MSX] vdp init: vram downgraded to %u bytes for MSX2\n",
                         static_cast<unsigned>(selectedVram));
 #endif
         }
@@ -5792,12 +5799,12 @@ bool msx_vdp_init(MsxVdpState* state, MsxMachineMode machineMode)
         // Bypassing msx_vdp_ensure_frame_buffer() completely for MSX2
         state->frameBuffer = nullptr;
 #if MSX_VDP_INIT_LOG_ENABLED
-        std::printf("[MSX] vdp init: Framebuffer bypassed for MSX2, forcing line stream path\n");
+        MSX_RUNTIME_LOG("[MSX] vdp init: Framebuffer bypassed for MSX2, forcing line stream path\n");
 #endif
     } else {
         if (!msx_vdp_ensure_msx1_buffers()) {
 #if MSX_VDP_INIT_LOG_ENABLED
-            std::printf("[MSX] vdp init: MSX1 work buffer alloc failed frame=%u vram=%u snapshot=%u\n",
+            MSX_RUNTIME_LOG("[MSX] vdp init: MSX1 work buffer alloc failed frame=%u vram=%u snapshot=%u\n",
                         static_cast<unsigned>(kMsxFramePixels),
                         static_cast<unsigned>(kMsx1VramSize),
                         static_cast<unsigned>(kMsx1VramSize));
@@ -6102,7 +6109,10 @@ uint8_t msx_vdp_in_status(MsxVdpState* state)
     uint8_t value = state->status[index];
     msx_vdp_diag_log_status_read(state, index, value);
     if (index == 0u) {
-        state->status[0] &= 0x5Fu;
+        // Reading S#0 acknowledges the VBlank interrupt and clears the
+        // latched sprite overflow/collision flags, while keeping the 5th
+        // sprite index field intact.
+        state->status[0] &= 0x1Fu;
     } else if (index == 1u) {
         state->status[1] &= 0xFEu;
     } else if (index == 7u && msx_vdp_is_msx2(state)) {
@@ -6210,7 +6220,7 @@ void msx_vdp_out_indirect(MsxVdpState* state, uint8_t value)
         if (g4CommandReg) {
             if (s_msx2IndirectG4LogCount < kMsx2IndirectG4LogLimit) {
                 ++s_msx2IndirectG4LogCount;
-                std::printf("[MSX][IND-G4] #%lu R%02u=%02X ptr=%02X r2=%02X r23=%02X mode=%s frame=%lu cyc=%lu\n",
+                MSX_RUNTIME_LOG("[MSX][IND-G4] #%lu R%02u=%02X ptr=%02X r2=%02X r23=%02X mode=%s frame=%lu cyc=%lu\n",
                             static_cast<unsigned long>(s_msx2IndirectG4LogCount),
                             static_cast<unsigned>(reg),
                             static_cast<unsigned>(value),
@@ -6222,13 +6232,13 @@ void msx_vdp_out_indirect(MsxVdpState* state, uint8_t value)
                             static_cast<unsigned long>(state->currentFrameCpuCycles));
             } else if (s_msx2IndirectG4LogCount == kMsx2IndirectG4LogLimit) {
                 ++s_msx2IndirectG4LogCount;
-                std::printf("[MSX][IND-G4] frame=%lu further indirect command writes suppressed after %lu entries\n",
+                MSX_RUNTIME_LOG("[MSX][IND-G4] frame=%lu further indirect command writes suppressed after %lu entries\n",
                             static_cast<unsigned long>(state->frameCounter),
                             static_cast<unsigned long>(kMsx2IndirectG4LogLimit));
             }
         } else if (s_msx2IndirectLogCount < 192u) {
             ++s_msx2IndirectLogCount;
-            std::printf("[MSX][IND] #%lu R%02u=%02X ptr=%02X mode=%s frame=%lu\n",
+            MSX_RUNTIME_LOG("[MSX][IND] #%lu R%02u=%02X ptr=%02X mode=%s frame=%lu\n",
                         static_cast<unsigned long>(s_msx2IndirectLogCount),
                         static_cast<unsigned>(reg),
                         static_cast<unsigned>(value),

@@ -7,6 +7,7 @@
 #include <cstdio>
 
 #include "../msx_config.h"
+#include "../msx_logging.h"
 
 #ifndef MSX_SCC_LOG_ENABLED
 #define MSX_SCC_LOG_ENABLED 0
@@ -119,7 +120,7 @@ void msx_scc_log_window_change(bool classicWindow,
                                bool enabled)
 {
 #if MSX_SCC_LOG_ENABLED
-    std::printf("[MSX][SCC] windows classic=%u plus=%u mode=%s enabled=%u\n",
+    MSX_RUNTIME_LOG("[MSX][SCC] windows classic=%u plus=%u mode=%s enabled=%u\n",
                 classicWindow ? 1u : 0u,
                 plusWindow ? 1u : 0u,
                 sccPlusMode ? "SCC-I" : "SCC",
@@ -135,7 +136,7 @@ void msx_scc_log_window_change(bool classicWindow,
 void msx_scc_log_write(const char* kind, uint8_t reg, uint8_t value)
 {
 #if MSX_SCC_LOG_ENABLED
-    std::printf("[MSX][SCC] %s reg=%02X value=%02X\n",
+    MSX_RUNTIME_LOG("[MSX][SCC] %s reg=%02X value=%02X\n",
                 kind ? kind : "write",
                 static_cast<unsigned>(reg),
                 static_cast<unsigned>(value));
@@ -301,7 +302,7 @@ bool msx_scc_init(MsxSccState* state, uint32_t sampleRate)
     state->ready = true;
     msx_scc_reset(state);
 #if MSX_SCC_LOG_ENABLED
-    std::printf("[MSX][SCC] init sampleRate=%u ring=%u\n",
+    MSX_RUNTIME_LOG("[MSX][SCC] init sampleRate=%u ring=%u\n",
                 static_cast<unsigned>(sampleRate),
                 static_cast<unsigned>(msx_scc_ring_samples()));
 #endif
@@ -370,11 +371,11 @@ void msx_scc_set_windows(MsxSccState* state, bool classicWindow, bool plusWindow
     if (state->enabled) {
         if (state->sccPlusMode) {
             if (!s_plusNoticeShown) {
-                std::printf("[MSX][SCC] active mode=SCC-I\n");
+                MSX_RUNTIME_LOG("[MSX][SCC] active mode=SCC-I\n");
                 s_plusNoticeShown = true;
             }
         } else if (!s_classicNoticeShown) {
-            std::printf("[MSX][SCC] active mode=SCC\n");
+            MSX_RUNTIME_LOG("[MSX][SCC] active mode=SCC\n");
             s_classicNoticeShown = true;
         }
     }

@@ -2243,6 +2243,7 @@ void msx_input_poll(MsxInputState* state)
         }
     }
 
+    bool escShortClicked = false;
     if (msx_key_pressed('`')) {
         if (s_backtickPressedMs == 0) {
             s_backtickPressedMs = millis();
@@ -2253,10 +2254,14 @@ void msx_input_poll(MsxInputState* state)
             state->quitRequested = true;
         }
     } else {
+        if (s_backtickPressedMs != 0u && !s_backtickLongHandled) {
+            escShortClicked = true;
+        }
         s_backtickPressedMs = 0;
         s_backtickLongHandled = false;
     }
 
+    state->toggleLogsRequested = escShortClicked;
     state->toggleViewRequested = msx_poll_view_toggle_request(keys);
 
     const bool menuWasVisible = s_runtimeMenu.visible;

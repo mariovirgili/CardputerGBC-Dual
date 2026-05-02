@@ -150,6 +150,7 @@ inline bool msx_cpu_trace_pc(uint16_t pc)
 {
     return ((pc >= 0x3F18u) && (pc <= 0x3F30u)) ||
            ((pc >= 0x4100u) && (pc <= 0x423Fu)) ||
+           ((pc >= 0x47E0u) && (pc <= 0x47FFu)) ||
            ((pc >= 0x7D0Du) && (pc <= 0x7D10u)) ||
            ((pc >= 0x8170u) && (pc <= 0x8190u)) ||
            (pc == 0xFD9Au);
@@ -159,6 +160,7 @@ inline bool msx_cpu_trace_opcode_pc(uint16_t pc)
 {
     return ((pc >= 0x3F18u) && (pc <= 0x3F30u)) ||
            ((pc >= 0x4100u) && (pc <= 0x423Fu)) ||
+           ((pc >= 0x47E0u) && (pc <= 0x47FFu)) ||
            ((pc >= 0x7D0Du) && (pc <= 0x7D10u)) ||
            ((pc >= 0x8170u) && (pc <= 0x8190u)) ||
            (pc == 0xFD9Au);
@@ -191,6 +193,9 @@ inline bool msx_cpu_trace_context_pc(uint16_t pc)
            (pc == 0x4120u) ||
            (pc == 0x41D1u) ||
            (pc == 0x41D4u) ||
+           (pc == 0x47E4u) ||
+           (pc == 0x47ECu) ||
+           (pc == 0x47F7u) ||
            (pc == 0x7D0Du) ||
            (pc == 0x7D10u) ||
            (pc == 0x8132u) ||
@@ -634,6 +639,15 @@ inline uint8_t IRAM_ATTR msx_cpu_mem_read8(const MsxMemoryState* memory, uint16_
         return value;
     }
 
+    if (memory &&
+        memory->cart.type == MsxCartridgeType::KonamiScc &&
+        ((address >= 0x9800u && address < 0xA000u) ||
+         (address >= 0xB800u && address < 0xC000u))) {
+        const uint8_t value = msx_memory_read8(memory, address);
+        msx_cpu_log_ram_access("RD", memory, address, value);
+        return value;
+    }
+
     // Match fMSX RdZ80/WrZ80 fast path split for the truly special mirrored
     // addresses used by extension ROM / DiskROM glue.
     if ((address & 0x3F88u) == 0x3F88u) {
@@ -660,6 +674,12 @@ inline uint8_t IRAM_ATTR msx_cpu_mem_read8(const MsxMemoryState* memory, uint16_
 inline bool msx_cpu_fetch_can_use_direct_map(const MsxMemoryState* memory, uint16_t address)
 {
     if (address >= 0x4000u && address < 0xC000u) {
+        if (memory &&
+            memory->cart.type == MsxCartridgeType::KonamiScc &&
+            ((address >= 0x9800u && address < 0xA000u) ||
+             (address >= 0xB800u && address < 0xC000u))) {
+            return false;
+        }
         return (address & 0x3F88u) != 0x3F88u;
     }
 

@@ -27,6 +27,7 @@
 #include "msx_config.h"
 #include "msx_display.h"
 #include "msx_input.h"
+#include "msx_logging.h"
 #include "msx_media.h"
 #include "msx_video.h"
 #include <M5Cardputer.h>
@@ -48,13 +49,13 @@
 #endif
 
 #if MSX_RUN_LOG_ENABLED
-#define MSX_RUN_LOG(...) std::printf(__VA_ARGS__)
+#define MSX_RUN_LOG(...) MSX_RUNTIME_LOG(__VA_ARGS__)
 #else
 #define MSX_RUN_LOG(...) do { } while (0)
 #endif
 
 #if MSX_BOOT_LOG_ENABLED
-#define MSX_BOOT_LOG(...) std::printf(__VA_ARGS__)
+#define MSX_BOOT_LOG(...) MSX_RUNTIME_LOG(__VA_ARGS__)
 #else
 #define MSX_BOOT_LOG(...) do { } while (0)
 #endif
@@ -110,9 +111,55 @@ struct MsxFpsOverlayWindow {
     uint32_t windowStartMs;
 };
 
+struct MsxRuntimeNotice {
+    char text[64];
+    uint32_t untilMs;
+};
+
 uint32_t msx_runtime_avg_us(uint64_t totalUs, uint32_t frames)
 {
     return frames != 0u ? static_cast<uint32_t>(totalUs / frames) : 0u;
+}
+
+void msx_runtime_toggle_logs(MsxCoreState* core)
+{
+    const bool enabled = msx_logs_toggle();
+    std::printf("[MSX][LOG] runtime logs %s\n", enabled ? "enabled" : "disabled");
+    if (core) {
+        std::snprintf(core->statusText,
+                      sizeof(core->statusText),
+                      "LOGS: %s",
+                      enabled ? "ON" : "OFF");
+    }
+}
+
+void msx_runtime_set_notice(MsxRuntimeNotice* notice,
+                            const char* text,
+                            uint32_t nowMs,
+                            uint32_t durationMs = 1200u)
+{
+    if (!notice || !text || text[0] == '\0') {
+        return;
+    }
+
+    std::snprintf(notice->text, sizeof(notice->text), "%s", text);
+    notice->untilMs = nowMs + durationMs;
+}
+
+const char* msx_runtime_notice_text(MsxRuntimeNotice* notice,
+                                    uint32_t nowMs,
+                                    const char* fallback)
+{
+    if (!notice || notice->text[0] == '\0') {
+        return fallback;
+    }
+
+    if (static_cast<int32_t>(notice->untilMs - nowMs) > 0) {
+        return notice->text;
+    }
+
+    notice->text[0] = '\0';
+    return fallback;
 }
 
 void msx_runtime_reset_fps_overlay(MsxFpsOverlayWindow* window, uint32_t nowMs)
@@ -1927,9 +1974,7 @@ void run_msx(const uint8_t* romData, size_t romLen, const char* romName, SdServi
 #else
     const uint32_t coreAudioSampleRate = 0u;
 #endif
-    if (useExternal) {
-        (void)msx_sound_prestart_speaker(kMsxSkeletonSampleRate, kMsxSkeletonChannels);
-    }
+    (void)msx_sound_prestart_speaker(kMsxSkeletonSampleRate, kMsxSkeletonChannels);
 
     MsxCoreState core = {};
     MsxCartSramAutosave sramAutosave = {};
@@ -1976,6 +2021,7 @@ void run_msx(const uint8_t* romData, size_t romLen, const char* romName, SdServi
     uint32_t lastLogMs = millis();
     MsxRuntimeTimingWindow timingWindow = {};
     MsxFpsOverlayWindow fpsOverlay = {};
+    MsxRuntimeNotice statusNotice = {};
     msx_runtime_reset_fps_overlay(&fpsOverlay, lastLogMs);
     msx_video_set_fps_overlay_value(0u);
     bool quitRequested = false;
@@ -1990,6 +2036,10 @@ void run_msx(const uint8_t* romData, size_t romLen, const char* romName, SdServi
         if (input.quitRequested) {
             quitRequested = true;
             break;
+        }
+        if (input.toggleLogsRequested) {
+            msx_runtime_toggle_logs(&core);
+            msx_runtime_set_notice(&statusNotice, core.statusText, millis());
         }
 
         if (input.toggleViewRequested) {
@@ -2066,9 +2116,11 @@ void run_msx(const uint8_t* romData, size_t romLen, const char* romName, SdServi
                           static_cast<unsigned long>(audioState.sampleRate));
         }
 
+        const uint32_t nowMs = millis();
+
         MsxDisplayStatus status = {};
         status.romName = core.romName;
-        status.coreLine = core.statusText;
+        status.coreLine = msx_runtime_notice_text(&statusNotice, nowMs, core.statusText);
         status.cartLine = cartLine;
         status.machineLine = machineLine;
         status.biosLine = biosLine;
@@ -2078,7 +2130,6 @@ void run_msx(const uint8_t* romData, size_t romLen, const char* romName, SdServi
         msx_display_submit_frame(&core.displayFrame, &status);
 
         frameCount++;
-        const uint32_t nowMs = millis();
         msx_cart_sram_autosave_tick(&core, &sramAutosave, nowMs);
         msx_runtime_update_fps_overlay(&fpsOverlay, menuPaused, nowMs);
         if (MSX_RUN_LOG_ENABLED && (nowMs - lastLogMs >= 1000)) {
@@ -2173,9 +2224,7 @@ void run_msx_disk(const uint8_t* dskData, size_t dskLen, const char* dskName, Sd
 #else
     const uint32_t coreAudioSampleRate = 0u;
 #endif
-    if (useExternal) {
-        (void)msx_sound_prestart_speaker(kMsxSkeletonSampleRate, kMsxSkeletonChannels);
-    }
+    (void)msx_sound_prestart_speaker(kMsxSkeletonSampleRate, kMsxSkeletonChannels);
 
     size_t diskRomSize = 0;
     uint8_t* diskRomData = msx_load_bios_file("DISK.ROM", 16384u, &diskRomSize);
@@ -2232,6 +2281,7 @@ void run_msx_disk(const uint8_t* dskData, size_t dskLen, const char* dskName, Sd
     uint32_t lastLogMs = millis();
     MsxRuntimeTimingWindow timingWindow = {};
     MsxFpsOverlayWindow fpsOverlay = {};
+    MsxRuntimeNotice statusNotice = {};
     msx_runtime_reset_fps_overlay(&fpsOverlay, lastLogMs);
     msx_video_set_fps_overlay_value(0u);
     MsxVirtualSccMode activeVirtualSccMode = msx_config_get_virtual_scc_mode();
@@ -2245,6 +2295,10 @@ void run_msx_disk(const uint8_t* dskData, size_t dskLen, const char* dskName, Sd
         if (input.quitRequested) {
             quitRequested = true;
             break;
+        }
+        if (input.toggleLogsRequested) {
+            msx_runtime_toggle_logs(&core);
+            msx_runtime_set_notice(&statusNotice, core.statusText, millis());
         }
 
         if (input.toggleViewRequested) {
@@ -2337,9 +2391,11 @@ void run_msx_disk(const uint8_t* dskData, size_t dskLen, const char* dskName, Sd
                           static_cast<unsigned long>(audioState.sampleRate));
         }
 
+        const uint32_t nowMs = millis();
+
         MsxDisplayStatus status = {};
         status.romName     = core.romName;
-        status.coreLine    = core.statusText;
+        status.coreLine    = msx_runtime_notice_text(&statusNotice, nowMs, core.statusText);
         status.cartLine    = modeLine;
         status.machineLine = machineLine;
         status.biosLine    = biosLine;
@@ -2349,7 +2405,6 @@ void run_msx_disk(const uint8_t* dskData, size_t dskLen, const char* dskName, Sd
         msx_display_submit_frame(&core.displayFrame, &status);
 
         frameCount++;
-        const uint32_t nowMs = millis();
         msx_runtime_update_fps_overlay(&fpsOverlay, menuPaused, nowMs);
         if (MSX_RUN_LOG_ENABLED && (nowMs - lastLogMs >= 1000)) {
             msx_runtime_log_summary(&core,
@@ -2442,9 +2497,7 @@ void run_msx_basic(const char* name, SdService& sd)
 #else
     const uint32_t coreAudioSampleRate = 0u;
 #endif
-    if (useExternal) {
-        (void)msx_sound_prestart_speaker(kMsxSkeletonSampleRate, kMsxSkeletonChannels);
-    }
+    (void)msx_sound_prestart_speaker(kMsxSkeletonSampleRate, kMsxSkeletonChannels);
 
     msx_display_init();
     msx_show_external_static_title(useExternal,
@@ -2480,6 +2533,7 @@ void run_msx_basic(const char* name, SdService& sd)
     uint32_t lastLogMs = millis();
     MsxRuntimeTimingWindow timingWindow = {};
     MsxFpsOverlayWindow fpsOverlay = {};
+    MsxRuntimeNotice statusNotice = {};
     msx_runtime_reset_fps_overlay(&fpsOverlay, lastLogMs);
     msx_video_set_fps_overlay_value(0u);
     MsxVirtualSccMode activeVirtualSccMode = msx_config_get_virtual_scc_mode();
@@ -2493,6 +2547,10 @@ void run_msx_basic(const char* name, SdService& sd)
         if (input.quitRequested) {
             quitRequested = true;
             break;
+        }
+        if (input.toggleLogsRequested) {
+            msx_runtime_toggle_logs(&core);
+            msx_runtime_set_notice(&statusNotice, core.statusText, millis());
         }
 
         if (input.toggleViewRequested) {
@@ -2538,9 +2596,11 @@ void run_msx_basic(const char* name, SdService& sd)
                       msx_media_bios_target_label(core.biosTarget));
         msx_format_bios_status_line(bios, biosLine, sizeof(biosLine));
 
+        const uint32_t nowMs = millis();
+
         MsxDisplayStatus status = {};
         status.romName      = core.romName;
-        status.coreLine     = core.statusText;
+        status.coreLine     = msx_runtime_notice_text(&statusNotice, nowMs, core.statusText);
         status.cartLine     = "BASIC (no cart)";
         status.machineLine  = machineLine;
         status.biosLine     = biosLine;
@@ -2572,7 +2632,6 @@ void run_msx_basic(const char* name, SdService& sd)
         msx_display_submit_frame(&core.displayFrame, &status);
 
         frameCount++;
-        const uint32_t nowMs = millis();
         msx_runtime_update_fps_overlay(&fpsOverlay, menuPaused, nowMs);
         if (MSX_RUN_LOG_ENABLED && (nowMs - lastLogMs >= 1000)) {
             msx_runtime_log_summary(&core,
@@ -2667,9 +2726,7 @@ void run_msx_cas(const uint8_t* casData, size_t casLen, const char* casName, SdS
 #else
     const uint32_t coreAudioSampleRate = 0u;
 #endif
-    if (useExternal) {
-        (void)msx_sound_prestart_speaker(kMsxSkeletonSampleRate, kMsxSkeletonChannels);
-    }
+    (void)msx_sound_prestart_speaker(kMsxSkeletonSampleRate, kMsxSkeletonChannels);
 
     msx_display_init();
     msx_show_external_static_title(useExternal,
@@ -2712,6 +2769,7 @@ void run_msx_cas(const uint8_t* casData, size_t casLen, const char* casName, SdS
     uint32_t lastLogMs = millis();
     MsxRuntimeTimingWindow timingWindow = {};
     MsxFpsOverlayWindow fpsOverlay = {};
+    MsxRuntimeNotice statusNotice = {};
     bool casBasicBootRefreshPending = true;
     msx_runtime_reset_fps_overlay(&fpsOverlay, lastLogMs);
     msx_video_set_fps_overlay_value(0u);
@@ -2726,6 +2784,10 @@ void run_msx_cas(const uint8_t* casData, size_t casLen, const char* casName, SdS
         if (input.quitRequested) {
             quitRequested = true;
             break;
+        }
+        if (input.toggleLogsRequested) {
+            msx_runtime_toggle_logs(&core);
+            msx_runtime_set_notice(&statusNotice, core.statusText, millis());
         }
 
         if (input.toggleViewRequested) {
@@ -2830,9 +2892,11 @@ void run_msx_cas(const uint8_t* casData, size_t casLen, const char* casName, SdS
                           static_cast<unsigned long>(audioState.sampleRate));
         }
 
+        const uint32_t nowMs = millis();
+
         MsxDisplayStatus status = {};
         status.romName     = core.romName;
-        status.coreLine    = core.statusText;
+        status.coreLine    = msx_runtime_notice_text(&statusNotice, nowMs, core.statusText);
         status.cartLine    = casLine;
         status.machineLine = machineLine;
         status.biosLine    = biosLine;
@@ -2842,7 +2906,6 @@ void run_msx_cas(const uint8_t* casData, size_t casLen, const char* casName, SdS
         msx_display_submit_frame(&core.displayFrame, &status);
 
         frameCount++;
-        const uint32_t nowMs = millis();
         msx_runtime_update_fps_overlay(&fpsOverlay, menuPaused, nowMs);
         if (MSX_RUN_LOG_ENABLED && (nowMs - lastLogMs >= 1000)) {
             msx_runtime_log_summary(&core,

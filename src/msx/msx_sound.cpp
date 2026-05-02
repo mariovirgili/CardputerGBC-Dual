@@ -397,9 +397,14 @@ bool msx_sound_prestart_speaker(uint32_t sampleRate, uint8_t channels)
     cfg.task_pinned_core = 0;
     M5Cardputer.Speaker.config(cfg);
 
-    if (!M5Cardputer.Speaker.isRunning()) {
-        M5Cardputer.Speaker.begin();
+    bool speakerReady = M5Cardputer.Speaker.isRunning();
+    if (!speakerReady) {
+        speakerReady = M5Cardputer.Speaker.begin();
     }
+    if (!speakerReady || !M5Cardputer.Speaker.isRunning()) {
+        return false;
+    }
+
     M5Cardputer.Speaker.setVolume(msx_config_get_sound_volume());
     M5Cardputer.Speaker.stop(kChannel);
     return M5Cardputer.Speaker.isRunning();
@@ -454,8 +459,13 @@ bool msx_sound_init(uint32_t sampleRate, uint8_t channels)
     cfg.task_pinned_core = 0;
     M5Cardputer.Speaker.config(cfg);
 
-    if (!M5Cardputer.Speaker.isRunning()) {
-        M5Cardputer.Speaker.begin();
+    bool speakerReady = M5Cardputer.Speaker.isRunning();
+    if (!speakerReady) {
+        speakerReady = M5Cardputer.Speaker.begin();
+    }
+    if (!speakerReady || !M5Cardputer.Speaker.isRunning()) {
+        msx_sound_shutdown();
+        return false;
     }
     if (!msx_sound_start_worker()) {
         msx_sound_shutdown();
