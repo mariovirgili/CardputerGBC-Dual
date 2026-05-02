@@ -15,6 +15,7 @@ struct MsxCartState {
     uint8_t bankCount8K;
     uint8_t quirks;
     uint8_t windowBanks[4];
+    uint16_t fmpacKey;
     bool ready;
     bool bankSwitching;
     bool directBootCandidate;

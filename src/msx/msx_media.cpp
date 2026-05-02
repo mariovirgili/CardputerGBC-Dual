@@ -1224,6 +1224,8 @@ MsxCartridgeType msx_fmsx_mapper_type_to_cartridge_type(uint8_t mapperType)
             return MsxCartridgeType::Ascii8;
         case 5u:
             return MsxCartridgeType::Ascii16;
+        case 7u:
+            return MsxCartridgeType::Fmpac;
         default:
             break;
     }
@@ -1618,6 +1620,8 @@ const char* msx_media_cartridge_type_label(MsxCartridgeType type)
             return "KONAMI";
         case MsxCartridgeType::KonamiScc:
             return "KONAMI+SCC";
+        case MsxCartridgeType::Fmpac:
+            return "FMPAC";
         default:
             return "UNKNOWN";
     }

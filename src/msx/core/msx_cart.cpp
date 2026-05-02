@@ -17,6 +17,7 @@ namespace {
 
 constexpr size_t kMsxCartSramSize = 0x4000u;
 constexpr uint8_t kMsxCartSramBank = 0xFFu;
+constexpr uint16_t kMsxFmpacMagic = 0x694Du;
 
 uint8_t msx_normalize_bank(const MsxCartState* state, uint8_t bank)
 {
@@ -47,7 +48,8 @@ void msx_set_ascii16_pair(MsxCartState* state, uint8_t pairIndex, uint8_t page16
 bool msx_cart_uses_sram(MsxCartridgeType type)
 {
     return type == MsxCartridgeType::Ascii8 ||
-           type == MsxCartridgeType::Ascii16;
+           type == MsxCartridgeType::Ascii16 ||
+           type == MsxCartridgeType::Fmpac;
 }
 
 bool msx_cart_ensure_sram(MsxCartState* state)
@@ -69,6 +71,10 @@ bool msx_cart_ensure_sram(MsxCartState* state)
     }
 
     std::memset(sram, 0xFF, kMsxCartSramSize);
+    if (state->type == MsxCartridgeType::Fmpac) {
+        sram[0x1FFEu] = static_cast<uint8_t>(kMsxFmpacMagic & 0xFFu);
+        sram[0x1FFFu] = static_cast<uint8_t>(kMsxFmpacMagic >> 8);
+    }
     state->sram = sram;
     state->sramSize = kMsxCartSramSize;
     std::printf("[MSX][CART] SRAM ready size=%u\n", static_cast<unsigned>(kMsxCartSramSize));
@@ -97,7 +103,8 @@ bool msx_cart_init(MsxCartState* state, const MsxRomImage* image)
         state->type == MsxCartridgeType::Ascii8 ||
         state->type == MsxCartridgeType::Ascii16 ||
         state->type == MsxCartridgeType::Konami ||
-        state->type == MsxCartridgeType::KonamiScc;
+        state->type == MsxCartridgeType::KonamiScc ||
+        state->type == MsxCartridgeType::Fmpac;
     state->ready = true;
 
     msx_cart_reset(state);
@@ -170,6 +177,13 @@ void msx_cart_reset(MsxCartState* state)
             state->windowBanks[2] = msx_normalize_bank(state, 2u);
             state->windowBanks[3] = msx_normalize_bank(state, 3u);
             break;
+        case MsxCartridgeType::Fmpac:
+            state->windowBanks[0] = msx_normalize_bank(state, 0u);
+            state->windowBanks[1] = msx_normalize_bank(state, 1u);
+            state->windowBanks[2] = msx_normalize_bank(state, 2u);
+            state->windowBanks[3] = msx_normalize_bank(state, 3u);
+            state->fmpacKey = 0u;
+            break;
         default:
             state->windowBanks[0] = msx_normalize_bank(state, 0);
             state->windowBanks[1] = msx_normalize_bank(state, 1);
@@ -186,6 +200,15 @@ const uint8_t* msx_cart_window_ptr(const MsxCartState* state, uint8_t windowInde
     }
 
     const uint8_t window = static_cast<uint8_t>(windowIndex & 0x03u);
+    if (state->type == MsxCartridgeType::Fmpac &&
+        state->fmpacKey == kMsxFmpacMagic &&
+        window < 2u) {
+        if (!state->sram || state->sramSize < kMsxCartSramSize) {
+            return nullptr;
+        }
+        return state->sram + (static_cast<size_t>(window) * 0x2000u);
+    }
+
     if (state->windowBanks[window] == kMsxCartSramBank) {
         if (!state->sram || state->sramSize < kMsxCartSramSize) {
             return nullptr;
@@ -296,6 +319,34 @@ void msx_cart_write(MsxCartState* state, uint16_t address, uint8_t value)
             }
             else if (address >= 0xB000 && address < 0xB800) {
                 state->windowBanks[3] = msx_normalize_bank(state, value);
+            }
+            break;
+
+        case MsxCartridgeType::Fmpac:
+            if (address == 0x7FF7u) {
+                const uint8_t evenBank = msx_normalize_bank(state, static_cast<uint8_t>(value << 1u));
+                state->windowBanks[0] = evenBank;
+                state->windowBanks[1] = msx_normalize_bank(state, static_cast<uint8_t>(evenBank + 1u));
+            }
+            else if (address == 0x7FF6u) {
+                // OPL enable/disable latch on Panasonic FM-PAC cartridges.
+            }
+            else if (address == 0x5FFEu || address == 0x5FFFu) {
+                if (msx_cart_ensure_sram(state)) {
+                    if (address & 0x0001u) {
+                        state->fmpacKey = static_cast<uint16_t>((state->fmpacKey & 0x00FFu) |
+                                                                (static_cast<uint16_t>(value) << 8));
+                    } else {
+                        state->fmpacKey = static_cast<uint16_t>((state->fmpacKey & 0xFF00u) | value);
+                    }
+                }
+            }
+            else if (address >= 0x4000u &&
+                     address < 0x5FFEu &&
+                     state->fmpacKey == kMsxFmpacMagic &&
+                     msx_cart_ensure_sram(state)) {
+                state->sram[address & 0x1FFFu] = value;
+                return;
             }
             break;
 

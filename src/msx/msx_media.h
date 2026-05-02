@@ -14,6 +14,7 @@ enum class MsxCartridgeType : uint8_t {
     Ascii16,
     Konami,
     KonamiScc,
+    Fmpac,
 };
 
 enum class MsxBiosTarget : uint8_t {
