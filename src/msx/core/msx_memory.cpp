@@ -1602,14 +1602,14 @@ uint8_t IRAM_ATTR msx_memory_read8(const MsxMemoryState* state, uint16_t address
     return state->readMap[bank][offset];
 }
 
-uint16_t msx_memory_read16(const MsxMemoryState* state, uint16_t address)
+uint16_t IRAM_ATTR msx_memory_read16(const MsxMemoryState* state, uint16_t address)
 {
     const uint8_t lo = msx_memory_read8(state, address);
     const uint8_t hi = msx_memory_read8(state, static_cast<uint16_t>(address + 1u));
     return static_cast<uint16_t>(lo | (static_cast<uint16_t>(hi) << 8));
 }
 
-void msx_memory_write8(MsxMemoryState* state, uint16_t address, uint8_t value)
+void IRAM_ATTR msx_memory_write8(MsxMemoryState* state, uint16_t address, uint8_t value)
 {
     if (!state || !state->ready) {
         return;
@@ -1741,13 +1741,13 @@ void msx_memory_write8(MsxMemoryState* state, uint16_t address, uint8_t value)
     }
 }
 
-void msx_memory_write16(MsxMemoryState* state, uint16_t address, uint16_t value)
+void IRAM_ATTR msx_memory_write16(MsxMemoryState* state, uint16_t address, uint16_t value)
 {
     msx_memory_write8(state, address, static_cast<uint8_t>(value & 0x00FFu));
     msx_memory_write8(state, static_cast<uint16_t>(address + 1u), static_cast<uint8_t>(value >> 8));
 }
 
-uint8_t msx_memory_in(MsxMemoryState* state, uint8_t port)
+uint8_t IRAM_ATTR msx_memory_in(MsxMemoryState* state, uint8_t port)
 {
     if (state && state->vdp && state->vdp->machineMode == MsxMachineMode::MSX2) {
         uint32_t frameCycles = 0u;
@@ -1856,7 +1856,7 @@ uint8_t msx_memory_in(MsxMemoryState* state, uint8_t port)
     }
 }
 
-void msx_memory_out(MsxMemoryState* state, uint8_t port, uint8_t value)
+void IRAM_ATTR msx_memory_out(MsxMemoryState* state, uint8_t port, uint8_t value)
 {
     if (!state || !state->ready) {
         return;
@@ -2040,4 +2040,3 @@ void msx_memory_out(MsxMemoryState* state, uint8_t port, uint8_t value)
             break;
     }
 }
-
