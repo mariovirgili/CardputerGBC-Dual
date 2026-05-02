@@ -42,6 +42,12 @@ static PsgChannel g_psg_ch[4];
 
 bool g_emu_skip_video = false;
 
+static int16_t s_coleco_audio_ring[4096];
+static size_t s_coleco_audio_ring_head = 0;
+static size_t s_coleco_audio_ring_tail = 0;
+static size_t s_coleco_audio_ring_count = 0;
+static uint32_t s_coleco_audio_accum = 0;
+
 static constexpr uint32_t kColecoExternalDisplayWarmupMs = 500;
 static constexpr uint32_t kColecoStartupInputGuardMs = 1200;
 
@@ -292,6 +298,53 @@ static void psg_sound_callback(int C, int F, int V) {
     }
 }
 
+static int16_t coleco_generate_audio_sample() {
+    float phaseInc[4] = {0};
+    int amplitude[4] = {0};
+    for (int c = 0; c < 3; c++) {
+        if (g_psg_ch[c].vol > 0 && g_psg_ch[c].freq > 0) {
+            phaseInc[c] = (111860.78125f * g_psg_ch[c].freq / 131072.0f) / 44100.0f;
+            amplitude[c] = g_psg_ch[c].vol * 30;
+        }
+    }
+    int noise_fb = g_psg_ch[3].freq;
+    if (g_psg_ch[3].vol > 0) {
+        int divider = 0x10 << (noise_fb & 3);
+        if ((noise_fb & 3) == 3) {
+            divider = g_psg_ch[2].freq > 0 ? (131072 / g_psg_ch[2].freq) : 1024;
+        }
+        phaseInc[3] = (111860.78125f / divider) / 44100.0f;
+        amplitude[3] = g_psg_ch[3].vol * 30;
+    }
+
+    int32_t mix = 0;
+    for (int c = 0; c < 3; c++) {
+        if (amplitude[c] > 0) {
+            g_psg_ch[c].phase += phaseInc[c];
+            while (g_psg_ch[c].phase >= 1.0f) g_psg_ch[c].phase -= 1.0f;
+            if (g_psg_ch[c].phase < 0.5f) mix += amplitude[c];
+            else mix -= amplitude[c];
+        }
+    }
+    
+    if (amplitude[3] > 0) {
+        g_psg_ch[3].phase += phaseInc[3];
+        while (g_psg_ch[3].phase >= 1.0f) {
+            g_psg_ch[3].phase -= 1.0f;
+            uint16_t lfsr = g_psg_ch[3].lfsr;
+            if (lfsr == 0) lfsr = 0x8000;
+            int bit = (noise_fb & 4) ? ((lfsr & 1) ^ ((lfsr >> 3) & 1)) : (lfsr & 1);
+            g_psg_ch[3].lfsr = (lfsr >> 1) | (bit << 14);
+        }
+        if (g_psg_ch[3].lfsr & 1) mix += amplitude[3];
+        else mix -= amplitude[3];
+    }
+    
+    if (mix > 32767) mix = 32767;
+    else if (mix < -32768) mix = -32768;
+    return static_cast<int16_t>(mix);
+}
+
 void run_coleco(const uint8_t* romData, size_t romLen, const char* romName, SdService& sd)
 {
     printf("[COLECO] run_coleco start, ROM size=%zu, free heap=%lu\n",
@@ -426,6 +479,11 @@ void run_coleco(const uint8_t* romData, size_t romLen, const char* romName, SdSe
 
     coleco_cpu_init(&cpu);
     coleco_cpu_reset(&cpu, 0x0000, 0x0000);
+
+    s_coleco_audio_ring_head = 0;
+    s_coleco_audio_ring_tail = 0;
+    s_coleco_audio_ring_count = 0;
+    s_coleco_audio_accum = 0;
 
     printf("[COLECO] Init done, free heap=%lu\n",
         (unsigned long)esp_get_free_heap_size());
@@ -600,6 +658,19 @@ void run_coleco(const uint8_t* romData, size_t romLen, const char* romName, SdSe
                 int executed = coleco_cpu_run_cycles(&cpu, &memory, 100);
                 cycleBudget -= executed;
 
+                s_coleco_audio_accum += executed * 44100;
+                while (s_coleco_audio_accum >= 3579545) {
+                    s_coleco_audio_accum -= 3579545;
+                    int16_t sample = coleco_generate_audio_sample();
+                    if (s_coleco_audio_ring_count >= 4096) {
+                        s_coleco_audio_ring_tail = (s_coleco_audio_ring_tail + 1) & 4095;
+                        s_coleco_audio_ring_count--;
+                    }
+                    s_coleco_audio_ring[s_coleco_audio_ring_head] = sample;
+                    s_coleco_audio_ring_head = (s_coleco_audio_ring_head + 1) & 4095;
+                    s_coleco_audio_ring_count++;
+                }
+
                 if (cycleBudget <= 0) {
                     bool fire_int = coleco_vdp_begin_frame(&vdp);
                     if (fire_int) {
@@ -647,59 +718,16 @@ void run_coleco(const uint8_t* romData, size_t romLen, const char* romName, SdSe
         size_t capacity = 0;
         int16_t* buf = coleco_sound_begin_mix(&capacity);
         if (buf && capacity > 0) {
-            float phaseInc[4] = {0};
-            int amplitude[4] = {0};
-            for (int c = 0; c < 3; c++) {
-                if (g_psg_ch[c].vol > 0 && g_psg_ch[c].freq > 0) {
-                    // g_psg_ch[c].freq contiene L (131072 / N_raw), proporzionale alla frequenza
-                    phaseInc[c] = (111860.78125f * g_psg_ch[c].freq / 131072.0f) / 44100.0f;
-                    amplitude[c] = g_psg_ch[c].vol * 30;
-                }
+            size_t to_copy = capacity;
+            if (to_copy > s_coleco_audio_ring_count) {
+                to_copy = s_coleco_audio_ring_count;
             }
-            int noise_fb = g_psg_ch[3].freq;
-            if (g_psg_ch[3].vol > 0) {
-                int divider = 0x10 << (noise_fb & 3);
-                if ((noise_fb & 3) == 3) {
-                    // Il canale 2 ha freq = L. Dobbiamo ricavare il divisore grezzo originale (N_raw)
-                    divider = g_psg_ch[2].freq > 0 ? (131072 / g_psg_ch[2].freq) : 1024;
-                }
-                phaseInc[3] = (111860.78125f / divider) / 44100.0f;
-                amplitude[3] = g_psg_ch[3].vol * 30;
+            for (size_t i = 0; i < to_copy; ++i) {
+                buf[i] = s_coleco_audio_ring[s_coleco_audio_ring_tail];
+                s_coleco_audio_ring_tail = (s_coleco_audio_ring_tail + 1) & 4095;
             }
-
-            for(size_t i = 0; i < capacity; i++) {
-                int32_t mix = 0;
-
-                for (int c = 0; c < 3; c++) {
-                    if (amplitude[c] > 0) {
-                        g_psg_ch[c].phase += phaseInc[c];
-                        while (g_psg_ch[c].phase >= 1.0f) g_psg_ch[c].phase -= 1.0f;
-                        
-                        if (g_psg_ch[c].phase < 0.5f) mix += amplitude[c];
-                        else mix -= amplitude[c];
-                    }
-                }
-                
-                // Noise channel (c = 3)
-                if (amplitude[3] > 0) {
-                    g_psg_ch[3].phase += phaseInc[3];
-                    while (g_psg_ch[3].phase >= 1.0f) {
-                        g_psg_ch[3].phase -= 1.0f;
-                        uint16_t lfsr = g_psg_ch[3].lfsr;
-                        if (lfsr == 0) lfsr = 0x8000;
-                        int bit = (noise_fb & 4) ? ((lfsr & 1) ^ ((lfsr >> 3) & 1)) : (lfsr & 1); // White or Periodic
-                        g_psg_ch[3].lfsr = (lfsr >> 1) | (bit << 14);
-                    }
-                    
-                    if (g_psg_ch[3].lfsr & 1) mix += amplitude[3];
-                    else mix -= amplitude[3];
-                }
-                
-                if (mix > 32767) mix = 32767;
-                else if (mix < -32768) mix = -32768;
-                buf[i] = mix;
-            }
-            coleco_sound_end_mix(capacity);
+            s_coleco_audio_ring_count -= to_copy;
+            coleco_sound_end_mix(to_copy);
         }
 
         int64_t loopEndUs = esp_timer_get_time();
