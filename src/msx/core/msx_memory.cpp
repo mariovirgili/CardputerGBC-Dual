@@ -1572,6 +1572,8 @@ uint8_t IRAM_ATTR msx_memory_read8(const MsxMemoryState* state, uint16_t address
     }
 
     const uint8_t bank = static_cast<uint8_t>(address >> 13);
+    const uint8_t page = static_cast<uint8_t>(address >> 14);
+    const uint8_t slot = msx_slot_for_page(state->slotRegister, page);
     const uint16_t offset = static_cast<uint16_t>(address & 0x1FFFu);
 
     // During CALLF, page3 can be switched to an extension slot while the BIOS
@@ -1598,6 +1600,13 @@ uint8_t IRAM_ATTR msx_memory_read8(const MsxMemoryState* state, uint16_t address
     uint8_t regionValue = 0xFFu;
     if (msx_memory_japan_bios_metadata_read(state, address, &regionValue)) {
         return regionValue;
+    }
+
+    if (slot == kMsxPrimarySlotCartridge) {
+        uint8_t cartSramValue = 0xFFu;
+        if (msx_cart_read_sram(&state->cart, address, &cartSramValue)) {
+            return cartSramValue;
+        }
     }
 
     return state->readMap[bank][offset];

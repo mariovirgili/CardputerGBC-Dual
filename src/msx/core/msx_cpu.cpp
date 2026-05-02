@@ -642,6 +642,16 @@ inline uint8_t IRAM_ATTR msx_cpu_mem_read8(const MsxMemoryState* memory, uint16_
         return value;
     }
 
+    const uint8_t page = static_cast<uint8_t>(address >> 14);
+    const uint8_t slot = static_cast<uint8_t>((memory->slotRegister >> (page * 2u)) & 0x03u);
+    if (slot == kMsxPrimarySlotCartridge) {
+        uint8_t cartSramValue = 0xFFu;
+        if (msx_cart_read_sram(&memory->cart, address, &cartSramValue)) {
+            msx_cpu_log_ram_access("RD", memory, address, cartSramValue);
+            return cartSramValue;
+        }
+    }
+
     const uint8_t value = memory->readMap[bank][address & 0x1FFFu];
     msx_cpu_log_ram_access("RD", memory, address, value);
     return value;
