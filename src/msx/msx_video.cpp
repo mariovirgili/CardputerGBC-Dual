@@ -74,6 +74,7 @@ struct MsxLineStreamState {
     const uint16_t* palette;
     uint16_t paletteEntries;
     int nextDstY;
+    int batchCount;
 };
 
 void IRAM_ATTR msx_video_pack_indexed_rgb444_line(const uint8_t* src,
@@ -799,7 +800,7 @@ void msx_video_end_active_write(void)
     }
 }
 
-static void msx_video_emit_stream_line(const MsxLineStreamState& stream,
+static void msx_video_emit_stream_line(MsxLineStreamState& stream,
                                        const uint8_t* srcLine,
                                        int dstY)
 {
@@ -814,6 +815,8 @@ static void msx_video_emit_stream_line(const MsxLineStreamState& stream,
 
     if (msx_video_game_on_external()) {
         const int bytesPerLine = ((stream.dstW + 1) / 2) * 3;
+        uint8_t* dst12 = s_lineBuf12 + static_cast<size_t>(stream.batchCount) * bytesPerLine;
+
         if (overlayLine) {
             if (stream.cropOnly) {
                 msx_video_expand_indexed_line(srcLine + static_cast<size_t>(stream.srcX0),
@@ -830,10 +833,10 @@ static void msx_video_emit_stream_line(const MsxLineStreamState& stream,
                 }
             }
             msx_video_draw_fps_hud_row(s_lineBuf, stream.dstW, stream.dstH, dstY);
-            msx_video_pack_rgb444_line(s_lineBuf, stream.dstW, s_lineBuf12);
+            msx_video_pack_rgb444_line(s_lineBuf, stream.dstW, dst12);
         } else if (stream.cropOnly) {
             msx_video_pack_indexed_rgb444_line(srcLine + static_cast<size_t>(stream.srcX0),
-                                               s_lineBuf12,
+                                               dst12,
                                                stream.dstW,
                                                stream.paletteEntries);
         } else {
@@ -841,12 +844,17 @@ static void msx_video_emit_stream_line(const MsxLineStreamState& stream,
                 return;
             }
             msx_video_pack_mapped_rgb444_line(srcLine,
-                                              s_lineBuf12,
+                                              dst12,
                                               stream.dstW,
                                               s_xmap,
                                               stream.paletteEntries);
         }
-        s_extTft.pushColors(reinterpret_cast<uint16_t*>(s_lineBuf12), (bytesPerLine + 1) / 2, false);
+        
+        stream.batchCount++;
+        if (stream.batchCount >= kBatchLines || dstY == stream.dstH - 1) {
+            s_extTft.pushColors(reinterpret_cast<uint16_t*>(s_lineBuf12), (bytesPerLine * stream.batchCount + 1) / 2, false);
+            stream.batchCount = 0;
+        }
         return;
     }
 
@@ -909,6 +917,7 @@ bool msx_video_begin_line_stream_impl(const MsxDisplayFrame* frame)
     s_lineStream.palette = palette;
     s_lineStream.paletteEntries = frame->paletteEntryCount;
     s_lineStream.nextDstY = 0;
+    s_lineStream.batchCount = 0;
 
     msx_video_begin_active_write(plan);
     return true;
@@ -968,6 +977,12 @@ void msx_video_end_line_stream_impl(void)
 {
     if (!s_lineStream.active) {
         return;
+    }
+
+    if (s_lineStream.batchCount > 0 && msx_video_game_on_external()) {
+        const int bytesPerLine = ((s_lineStream.dstW + 1) / 2) * 3;
+        s_extTft.pushColors(reinterpret_cast<uint16_t*>(s_lineBuf12), (bytesPerLine * s_lineStream.batchCount + 1) / 2, false);
+        s_lineStream.batchCount = 0;
     }
 
     msx_video_end_active_write();
