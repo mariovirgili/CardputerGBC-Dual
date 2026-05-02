@@ -76,6 +76,7 @@ struct MsxVdpState {
     bool vramWriteMode;
     bool palettePending;
     bool controlPending;
+    bool r44LatchValid;
     bool dirty;
     bool frameReady;
     uint32_t frameCounter;

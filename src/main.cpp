@@ -29,6 +29,9 @@
 #include "cardputer/WelcomeExternalImage.h"
 #include "cardputer/VerticalSelector.h"
 
+static constexpr const char* kAppBuildVersion = "v0.5.108";
+static constexpr const char* kAppTitlePrefix = "Msx ADV Emulators ";
+
 static TFT_eSPI& startupExternalTft();
 
 static void showExternalRomSelectorTft()
@@ -769,11 +772,13 @@ static void showStartupInputTester(CardputerView& display, CardputerInput& input
 static void drawStartupAboutPage()
 {
   auto& tft = M5Cardputer.Display;
+  char title[48];
+  std::snprintf(title, sizeof(title), "%s%s", kAppTitlePrefix, kAppBuildVersion);
   tft.fillScreen(TFT_BLACK);
   tft.setTextDatum(middle_center);
   tft.setTextColor(TEXT_COLOR, TFT_BLACK);
   tft.setTextSize(TEXT_WIDE);
-  tft.drawCenterString("Msx ADV Emulators v0.5", tft.width() / 2, 16);
+  tft.drawCenterString(title, tft.width() / 2, 16);
   tft.setTextSize(TEXT_SMALL);
   tft.drawCenterString("MSX is a registered", tft.width() / 2, 48);
   tft.drawCenterString("trademark owned by", tft.width() / 2, 64);
@@ -787,10 +792,11 @@ static void drawStartupAboutPage()
 static void drawStartupAboutPageExternal()
 {
   auto& tft = startupExternalTft();
+  char title[48];
+  std::snprintf(title, sizeof(title), "%s%s", kAppTitlePrefix, kAppBuildVersion);
   tft.fillScreen(TFT_BLACK);
   tft.setTextDatum(TL_DATUM);
   tft.setTextColor(TEXT_COLOR, TFT_BLACK);
-  const char* title = "Msx ADV Emulators v0.5";
   tft.drawString(title, (320 - tft.textWidth(title, 2)) / 2, 20, 2);
   const char* line1 = "MSX is a registered trademark";
   const char* line2 = "owned by MSX Licensing";
@@ -1256,6 +1262,7 @@ void setup() {
   auto cfg = M5.config();
   cfg.output_power = true;
   M5Cardputer.begin(cfg);
+  printf("[BUILD] %s%s\n", kAppTitlePrefix, kAppBuildVersion);
 
   CardputerInput input;
   SdService sd;
@@ -1493,7 +1500,7 @@ void setup() {
     break;
   }
 
-  printf("Selected ROM: %s\n", romPath.c_str());
+  printf("Selected ROM [%s%s]: %s\n", kAppTitlePrefix, kAppBuildVersion, romPath.c_str());
 
   display.topBar("COPYING ROM TO FLASH", false, false);
   display.subMessage("Loading...", 0);
