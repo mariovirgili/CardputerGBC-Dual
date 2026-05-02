@@ -5,7 +5,7 @@
 
 namespace {
 
-std::atomic<bool> s_msxLogsEnabled{true};
+std::atomic<bool> s_msxLogsEnabled{false};
 
 } // namespace
 
