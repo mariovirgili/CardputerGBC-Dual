@@ -1875,6 +1875,12 @@ bool msx_core_load_state(MsxCoreState* state, const char* path)
     const uint8_t* biosMain = state->memory.bios.mainRom;
     const uint8_t* biosSub = state->memory.bios.subRom;
     const uint8_t* cartRom = state->memory.cart.rom;
+    uint8_t* memoryCartSram = state->memory.cart.sram;
+    const size_t memoryCartSramSize = state->memory.cart.sramSize;
+    const bool memoryCartSramDirty = state->memory.cart.sramDirty;
+    uint8_t* cartSram = state->cart.sram;
+    const size_t cartSramSize = state->cart.sramSize;
+    const bool cartSramDirty = state->cart.sramDirty;
     const uint8_t* diskDsk = state->disk.dskData;
     MsxCasState casState = state->cas;
 
@@ -1898,7 +1904,13 @@ bool msx_core_load_state(MsxCoreState* state, const char* path)
     state->memory.bios.mainRom = biosMain;
     state->memory.bios.subRom = biosSub;
     state->memory.cart.rom = cartRom;
+    state->memory.cart.sram = memoryCartSram;
+    state->memory.cart.sramSize = memoryCartSramSize;
+    state->memory.cart.sramDirty = memoryCartSramDirty;
     state->cart.rom = cartRom;
+    state->cart.sram = cartSram;
+    state->cart.sramSize = cartSramSize;
+    state->cart.sramDirty = cartSramDirty;
     state->disk.dskData = diskDsk;
     state->cas = casState;
     state->memory.cas = &state->cas;

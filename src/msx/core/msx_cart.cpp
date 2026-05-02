@@ -19,6 +19,8 @@ constexpr size_t kMsxCartSramSize = 0x4000u;
 constexpr uint8_t kMsxCartSramBank = 0xFFu;
 constexpr uint16_t kMsxFmpacMagic = 0x694Du;
 
+bool msx_cart_ensure_sram(MsxCartState* state);
+
 uint8_t msx_normalize_bank(const MsxCartState* state, uint8_t bank)
 {
     if (!state || state->bankCount8K == 0) {
@@ -43,6 +45,40 @@ void msx_set_ascii16_pair(MsxCartState* state, uint8_t pairIndex, uint8_t page16
         state->windowBanks[2] = evenBank;
         state->windowBanks[3] = oddBank;
     }
+}
+
+void msx_set_ascii8_bank_or_sram(MsxCartState* state, uint8_t reg, uint8_t value)
+{
+    if (!state || reg >= 4u) {
+        return;
+    }
+
+    if (value & state->bankCount8K) {
+        if (msx_cart_ensure_sram(state)) {
+            state->windowBanks[reg] = kMsxCartSramBank;
+        }
+    } else {
+        state->windowBanks[reg] = msx_normalize_bank(state, value);
+    }
+}
+
+bool msx_write_ascii8_sram_window(MsxCartState* state, uint16_t address, uint8_t value)
+{
+    if (!state || address < 0x8000u || address >= 0xC000u) {
+        return false;
+    }
+
+    const uint8_t window = static_cast<uint8_t>((address - 0x4000u) >> 13);
+    if (window >= 4u ||
+        state->windowBanks[window] != kMsxCartSramBank ||
+        !state->sram ||
+        state->sramSize < 0x2000u) {
+        return false;
+    }
+
+    state->sram[address & 0x1FFFu] = value;
+    state->sramDirty = true;
+    return true;
 }
 
 bool msx_cart_uses_sram(MsxCartridgeType type)
@@ -213,7 +249,8 @@ const uint8_t* msx_cart_window_ptr(const MsxCartState* state, uint8_t windowInde
         if (!state->sram || state->sramSize < kMsxCartSramSize) {
             return nullptr;
         }
-        if (state->type == MsxCartridgeType::Ascii8) {
+        if (state->type == MsxCartridgeType::Ascii8 ||
+            state->type == MsxCartridgeType::Fmpac) {
             return state->sram;
         }
         return state->sram + (static_cast<size_t>(window & 0x01u) * 0x2000u);
@@ -233,6 +270,7 @@ void msx_cart_ascii16_sram_write(MsxCartState* state, uint16_t address, uint8_t 
     for (size_t mirror = 0; mirror < kMsxCartSramSize; mirror += 0x0800u) {
         state->sram[mirror + offset] = value;
     }
+    state->sramDirty = true;
 }
 
 void msx_cart_write(MsxCartState* state, uint16_t address, uint8_t value)
@@ -250,26 +288,12 @@ void msx_cart_write(MsxCartState* state, uint16_t address, uint8_t value)
 
     switch (state->type) {
         case MsxCartridgeType::Ascii8:
-            if (address >= 0x8000 && address < 0xC000) {
-                const uint8_t window = static_cast<uint8_t>((address - 0x4000u) >> 13);
-                if (state->windowBanks[window] == kMsxCartSramBank &&
-                    state->sram &&
-                    state->sramSize >= 0x2000u) {
-                    state->sram[address & 0x1FFFu] = value;
-                    return;
-                }
+            if (msx_write_ascii8_sram_window(state, address, value)) {
+                return;
             }
             if (address >= 0x6000 && address < 0x8000) {
                 const uint8_t reg = static_cast<uint8_t>((address - 0x6000u) >> 11);
-                if (reg < 4) {
-                    if (value & state->bankCount8K) {
-                        if (msx_cart_ensure_sram(state)) {
-                            state->windowBanks[reg] = kMsxCartSramBank;
-                        }
-                    } else {
-                        state->windowBanks[reg] = msx_normalize_bank(state, value);
-                    }
-                }
+                msx_set_ascii8_bank_or_sram(state, reg, value);
             }
             break;
 
@@ -323,6 +347,9 @@ void msx_cart_write(MsxCartState* state, uint16_t address, uint8_t value)
             break;
 
         case MsxCartridgeType::Fmpac:
+            if (msx_write_ascii8_sram_window(state, address, value)) {
+                return;
+            }
             if (address == 0x7FF7u) {
                 const uint8_t evenBank = msx_normalize_bank(state, static_cast<uint8_t>(value << 1u));
                 state->windowBanks[0] = evenBank;
@@ -346,7 +373,12 @@ void msx_cart_write(MsxCartState* state, uint16_t address, uint8_t value)
                      state->fmpacKey == kMsxFmpacMagic &&
                      msx_cart_ensure_sram(state)) {
                 state->sram[address & 0x1FFFu] = value;
+                state->sramDirty = true;
                 return;
+            }
+            else if (address >= 0x6000u && address < 0x8000u) {
+                const uint8_t reg = static_cast<uint8_t>((address - 0x6000u) >> 11);
+                msx_set_ascii8_bank_or_sram(state, reg, value);
             }
             break;
 
@@ -396,5 +428,50 @@ void msx_cart_write(MsxCartState* state, uint16_t address, uint8_t value)
             ++s_cartBankLogCount;
         }
 #endif
+    }
+}
+
+bool msx_cart_load_sram(MsxCartState* state, const uint8_t* data, size_t size)
+{
+    if (!state || !data || size == 0u || !msx_cart_uses_sram(state->type)) {
+        return false;
+    }
+
+    if (!msx_cart_ensure_sram(state) || !state->sram || state->sramSize == 0u) {
+        return false;
+    }
+
+    const size_t copySize = size < state->sramSize ? size : state->sramSize;
+    std::memcpy(state->sram, data, copySize);
+    if (copySize < state->sramSize) {
+        std::memset(state->sram + copySize, 0xFF, state->sramSize - copySize);
+    }
+    if (state->type == MsxCartridgeType::Fmpac && state->sramSize >= 0x2000u) {
+        state->sram[0x1FFEu] = static_cast<uint8_t>(kMsxFmpacMagic & 0xFFu);
+        state->sram[0x1FFFu] = static_cast<uint8_t>(kMsxFmpacMagic >> 8);
+    }
+    state->sramDirty = false;
+    return true;
+}
+
+const uint8_t* msx_cart_sram_data(const MsxCartState* state)
+{
+    return state ? state->sram : nullptr;
+}
+
+size_t msx_cart_sram_size(const MsxCartState* state)
+{
+    return (state && state->sram) ? state->sramSize : 0u;
+}
+
+bool msx_cart_sram_dirty(const MsxCartState* state)
+{
+    return state && state->sramDirty;
+}
+
+void msx_cart_clear_sram_dirty(MsxCartState* state)
+{
+    if (state) {
+        state->sramDirty = false;
     }
 }

@@ -1046,6 +1046,170 @@ static String msx_get_legacy_savestate_path(const char* romName, uint8_t slot) {
     return "/msx/states/" + msx_legacy_savestate_title_component(romName) + "/Slot" + String(slot) + ".sav";
 }
 
+struct MsxCartSramAutosave {
+    String path;
+    uint32_t lastSaveAttemptMs;
+    uint32_t lastCrc;
+    bool hasBaseline;
+};
+
+static bool msx_ensure_sram_save_base_dirs()
+{
+    if (!SD.exists("/msx")) {
+        const bool ok = SD.mkdir("/msx");
+        std::printf("[MSX][SRAM] mkdir /msx %s\n", ok ? "OK" : "FAIL");
+        if (!ok && !SD.exists("/msx")) {
+            return false;
+        }
+    }
+    if (!SD.exists("/msx/sram")) {
+        const bool ok = SD.mkdir("/msx/sram");
+        std::printf("[MSX][SRAM] mkdir /msx/sram %s\n", ok ? "OK" : "FAIL");
+        if (!ok && !SD.exists("/msx/sram")) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static String msx_get_sram_save_path(const char* romName)
+{
+    return "/msx/sram/" + msx_savestate_title_component(romName) + ".sav";
+}
+
+static uint32_t msx_cart_sram_crc(const MsxCartState* cart)
+{
+    const uint8_t* data = msx_cart_sram_data(cart);
+    const size_t size = msx_cart_sram_size(cart);
+    return (data && size > 0u) ? share::gameSaveCrc32Update(0u, data, size) : 0u;
+}
+
+static void msx_cart_sram_autosave_init(MsxCoreState* core,
+                                        const char* romName,
+                                        MsxCartSramAutosave* autosave)
+{
+    if (!core || !autosave) {
+        return;
+    }
+
+    autosave->path = msx_get_sram_save_path(romName);
+    autosave->lastSaveAttemptMs = millis();
+    autosave->lastCrc = 0u;
+    autosave->hasBaseline = false;
+
+    if (!msx_ensure_sram_save_base_dirs()) {
+        std::printf("[MSX][SRAM] save directory unavailable\n");
+        return;
+    }
+
+    if (!SD.exists(autosave->path.c_str())) {
+        return;
+    }
+
+    File f = SD.open(autosave->path.c_str(), FILE_READ);
+    if (!f) {
+        std::printf("[MSX][SRAM] load failed open=%s\n", autosave->path.c_str());
+        return;
+    }
+
+    const size_t fileSize = static_cast<size_t>(f.size());
+    std::vector<uint8_t> data(fileSize);
+    const size_t readSize = fileSize > 0u ? f.read(data.data(), fileSize) : 0u;
+    f.close();
+
+    if (readSize != fileSize ||
+        !msx_cart_load_sram(&core->memory.cart, data.data(), data.size())) {
+        std::printf("[MSX][SRAM] load rejected path=%s size=%u read=%u\n",
+                    autosave->path.c_str(),
+                    static_cast<unsigned>(fileSize),
+                    static_cast<unsigned>(readSize));
+        return;
+    }
+
+    msx_memory_refresh_maps(&core->memory);
+    autosave->lastCrc = msx_cart_sram_crc(&core->memory.cart);
+    autosave->hasBaseline = true;
+    msx_cart_clear_sram_dirty(&core->memory.cart);
+    std::printf("[MSX][SRAM] loaded %u bytes from %s\n",
+                static_cast<unsigned>(fileSize),
+                autosave->path.c_str());
+}
+
+static bool msx_cart_sram_save_now(MsxCoreState* core,
+                                   MsxCartSramAutosave* autosave,
+                                   bool force)
+{
+    if (!core || !autosave || autosave->path.length() == 0) {
+        return false;
+    }
+
+    MsxCartState* cart = &core->memory.cart;
+    const uint8_t* data = msx_cart_sram_data(cart);
+    const size_t size = msx_cart_sram_size(cart);
+    if (!data || size == 0u) {
+        return false;
+    }
+
+    const bool dirty = msx_cart_sram_dirty(cart);
+    const uint32_t crc = msx_cart_sram_crc(cart);
+    if (!dirty && (!force || (autosave->hasBaseline && crc == autosave->lastCrc))) {
+        return true;
+    }
+    if (autosave->hasBaseline && crc == autosave->lastCrc) {
+        msx_cart_clear_sram_dirty(cart);
+        return true;
+    }
+
+    autosave->lastSaveAttemptMs = millis();
+    if (!msx_ensure_sram_save_base_dirs()) {
+        return false;
+    }
+
+    share::setGameIsSaving(true);
+    if (SD.exists(autosave->path.c_str())) {
+        SD.remove(autosave->path.c_str());
+    }
+    File f = SD.open(autosave->path.c_str(), FILE_WRITE);
+    if (!f) {
+        share::setGameIsSaving(false);
+        std::printf("[MSX][SRAM] save failed open=%s\n", autosave->path.c_str());
+        return false;
+    }
+
+    const size_t written = f.write(data, size);
+    f.close();
+    share::setGameIsSaving(false);
+
+    if (written != size) {
+        std::printf("[MSX][SRAM] save short path=%s written=%u size=%u\n",
+                    autosave->path.c_str(),
+                    static_cast<unsigned>(written),
+                    static_cast<unsigned>(size));
+        return false;
+    }
+
+    autosave->lastCrc = crc;
+    autosave->hasBaseline = true;
+    msx_cart_clear_sram_dirty(cart);
+    std::printf("[MSX][SRAM] saved %u bytes to %s\n",
+                static_cast<unsigned>(size),
+                autosave->path.c_str());
+    return true;
+}
+
+static void msx_cart_sram_autosave_tick(MsxCoreState* core,
+                                        MsxCartSramAutosave* autosave,
+                                        uint32_t nowMs)
+{
+    if (!core || !autosave || !msx_cart_sram_dirty(&core->memory.cart)) {
+        return;
+    }
+    if (nowMs - autosave->lastSaveAttemptMs < GAP_MS) {
+        return;
+    }
+    (void)msx_cart_sram_save_now(core, autosave, false);
+}
+
 static void msx_draw_osd_message(const char* msg, bool useExternal) {
     if (useExternal) {
         msx_video_lock();
@@ -1729,6 +1893,8 @@ void run_msx(const uint8_t* romData, size_t romLen, const char* romName, SdServi
     }
     msx_apply_region_profile(&core, regionMode, romName);
     msx_input_set_runtime_machine_mode(core.machineMode);
+    MsxCartSramAutosave sramAutosave = {};
+    msx_cart_sram_autosave_init(&core, romName, &sramAutosave);
 
     bool audioInitOk = false;
     audioInitOk = msx_runtime_init_audio_hook(kMsxSkeletonSampleRate, kMsxSkeletonChannels);
@@ -1852,6 +2018,7 @@ void run_msx(const uint8_t* romData, size_t romLen, const char* romName, SdServi
 
         frameCount++;
         const uint32_t nowMs = millis();
+        msx_cart_sram_autosave_tick(&core, &sramAutosave, nowMs);
         msx_runtime_update_fps_overlay(&fpsOverlay, menuPaused, nowMs);
         if (MSX_RUN_LOG_ENABLED && (nowMs - lastLogMs >= 1000)) {
             msx_runtime_log_summary(&core,
@@ -1880,6 +2047,7 @@ void run_msx(const uint8_t* romData, size_t romLen, const char* romName, SdServi
         }
     }
 
+    (void)msx_cart_sram_save_now(&core, &sramAutosave, true);
     msx_core_shutdown(&core);
     msx_sound_shutdown();
     msx_media_release_bios_bundle(&bios);

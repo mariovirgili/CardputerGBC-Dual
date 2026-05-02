@@ -1438,6 +1438,7 @@ void msx_memory_shutdown(MsxMemoryState* state)
         return;
     }
 
+    msx_cart_shutdown(&state->cart);
     msx_memory_release_ram_banks(state);
     msx_memory_release_virtual_scc_ram();
     s_attachedScc = nullptr;
