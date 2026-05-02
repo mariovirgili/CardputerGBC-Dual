@@ -1,6 +1,7 @@
 #include "msx_scc.h"
 
 #include <esp_heap_caps.h>
+#include <esp_attr.h>
 
 #include <cstring>
 #include <cstdio>
@@ -23,7 +24,7 @@ namespace {
 
 constexpr uint32_t kMsxCpuClockHz = 3579545u;
 constexpr size_t kMsxSccRingSamplesDefault = 1024u;
-constexpr uint8_t kMsxSccWaveBaseByMode[2][5] = {
+static const uint8_t DRAM_ATTR kMsxSccWaveBaseByMode[2][5] = {
     {0u, 32u, 64u, 96u, 96u},
     {0u, 32u, 64u, 96u, 128u},
 };
@@ -218,7 +219,7 @@ void msx_scc_log_audio_if_needed(MsxSccState* state, const int16_t* samples, siz
 #endif
 }
 
-void msx_scc_push_sample(MsxSccState* state, int16_t sample)
+void IRAM_ATTR msx_scc_push_sample(MsxSccState* state, int16_t sample)
 {
     if (!state || !state->ready || !state->ring) {
         return;
@@ -236,7 +237,7 @@ void msx_scc_push_sample(MsxSccState* state, int16_t sample)
     state->generatedSamples++;
 }
 
-int16_t msx_scc_render_sample(MsxSccState* state)
+int16_t IRAM_ATTR msx_scc_render_sample(MsxSccState* state)
 {
     if (!state || !state->enabled || !state->outputEnabled) {
         return 0;
@@ -530,7 +531,7 @@ uint8_t msx_scc_read_plus(const MsxSccState* state, uint8_t reg)
     return reg < 0xA0u ? state->regs[reg] : 0xFFu;
 }
 
-void msx_scc_run_cycles(MsxSccState* state, uint32_t cpuCycles)
+void IRAM_ATTR msx_scc_run_cycles(MsxSccState* state, uint32_t cpuCycles)
 {
     if (!state || !state->ready || state->sampleRate == 0u || cpuCycles == 0u) {
         return;
