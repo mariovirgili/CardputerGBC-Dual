@@ -94,6 +94,7 @@ MsxMachineMode msx_config_get_machine_mode(void);
 const char* msx_config_machine_mode_label(MsxMachineMode mode);
 const char* msx_config_get_machine_mode_label(void);
 void msx_config_set_machine_mode(MsxMachineMode mode, bool persist);
+void msx_config_set_machine_mode_session_override(MsxMachineMode mode, bool enabled);
 
 MsxPerformanceMode msx_config_load_performance_mode(void);
 MsxPerformanceMode msx_config_get_performance_mode_value(void);

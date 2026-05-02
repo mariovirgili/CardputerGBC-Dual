@@ -40,8 +40,8 @@ constexpr uint8_t kMsxAlestePerformancePresetFlags =
     kMsxLegacyFastPerformancePresetFlags |
     static_cast<uint8_t>(MsxPerformanceFlag::ExternalFixed30Fps);
 constexpr MsxPerformanceMode kMsxDefaultPerformanceMode = MsxPerformanceMode::Performance;
-constexpr MsxPerformancePreset kMsxDefaultPerformancePreset = MsxPerformancePreset::Fast;
-constexpr uint8_t kMsxDefaultPerformanceFlags = kMsxFastPerformancePresetFlags;
+constexpr MsxPerformancePreset kMsxDefaultPerformancePreset = MsxPerformancePreset::Aleste;
+constexpr uint8_t kMsxDefaultPerformanceFlags = kMsxAlestePerformancePresetFlags;
 constexpr MsxFrameskipMode kMsxDefaultFrameskipMode = MsxFrameskipMode::Adaptive;
 constexpr bool kMsxDefaultFpsOverlayEnabled = true;
 constexpr MsxVirtualSccMode kMsxDefaultVirtualSccMode = MsxVirtualSccMode::Off;
@@ -56,6 +56,8 @@ MsxInternalViewMode s_internalViewMode = kMsxDefaultInternalViewMode;
 MsxInternalViewMode s_viewModeOverride = kMsxDefaultInternalViewMode;
 bool s_viewModeOverrideEnabled = false;
 MsxMachineMode s_machineMode = kMsxDefaultMachineMode;
+MsxMachineMode s_machineModeSessionOverride = kMsxDefaultMachineMode;
+bool s_machineModeSessionOverrideEnabled = false;
 MsxPerformanceMode s_performanceMode = kMsxDefaultPerformanceMode;
 MsxPerformancePreset s_performancePreset = kMsxDefaultPerformancePreset;
 uint8_t s_performanceFlags = kMsxDefaultPerformanceFlags;
@@ -461,6 +463,10 @@ MsxMachineMode msx_config_load_machine_mode(void)
         msx_store_machine_mode(s_machineMode);
     }
 
+    if (s_machineModeSessionOverrideEnabled) {
+        s_machineMode = s_machineModeSessionOverride;
+    }
+
     return s_machineMode;
 }
 
@@ -491,6 +497,15 @@ void msx_config_set_machine_mode(MsxMachineMode mode, bool persist)
     s_machineMode = msx_sanitize_machine_mode(static_cast<uint8_t>(mode));
     if (persist) {
         msx_store_machine_mode(s_machineMode);
+    }
+}
+
+void msx_config_set_machine_mode_session_override(MsxMachineMode mode, bool enabled)
+{
+    s_machineModeSessionOverride = msx_sanitize_machine_mode(static_cast<uint8_t>(mode));
+    s_machineModeSessionOverrideEnabled = enabled;
+    if (enabled) {
+        s_machineMode = s_machineModeSessionOverride;
     }
 }
 
@@ -565,8 +580,8 @@ uint8_t msx_config_load_performance_flags(void)
                                   : msx_performance_preset_from_flags(s_performanceFlags);
     } else if (hasLegacyMode &&
                msx_sanitize_performance_mode(legacyMode) == MsxPerformanceMode::Performance) {
-        s_performanceFlags = kMsxFastPerformancePresetFlags;
-        s_performancePreset = MsxPerformancePreset::Fast;
+        s_performanceFlags = kMsxAlestePerformancePresetFlags;
+        s_performancePreset = MsxPerformancePreset::Aleste;
     } else {
         s_performanceFlags = kMsxDefaultPerformanceFlags;
         s_performancePreset = kMsxDefaultPerformancePreset;
@@ -616,7 +631,7 @@ void msx_config_set_performance_flag(MsxPerformanceFlag flag, bool enabled, bool
 
 void msx_config_set_performance_mode(bool enabled, bool persist)
 {
-    msx_config_set_performance_preset(enabled ? MsxPerformancePreset::Fast
+    msx_config_set_performance_preset(enabled ? MsxPerformancePreset::Aleste
                                               : MsxPerformancePreset::Normal,
                                       persist);
 }

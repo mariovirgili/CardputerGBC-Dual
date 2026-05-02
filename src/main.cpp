@@ -16,6 +16,7 @@
 #include "msx/msx_config.h"
 #include "msx/msx_display.h"
 #include "msx/msx_input.h"
+#include "msx/msx_media.h"
 #include "last_game.h"
 #include "esp_system.h"
 #include "esp_task_wdt.h"
@@ -335,18 +336,18 @@ enum class StartupMainMenuAction {
 
 constexpr const char* kStartupMenuPrefsNs = "cardputer_emu";
 constexpr const char* kStartupMenuIndexKey = "startup_menu";
+bool s_msxStartupMsx1Only = false;
 } // namespace
 
 static MsxMachineSelectionResult selectMsxLaunchSystem(CardputerView& display, CardputerInput& input)
 {
   VerticalSelector selector(display, input);
   const MsxMachineMode persistedMode = msx_config_load_machine_mode();
-  const std::vector<std::string> options = {
-      "MSX1",
-      "MSX2",
-  };
+  const std::vector<std::string> options = s_msxStartupMsx1Only
+      ? std::vector<std::string>{"MSX1"}
+      : std::vector<std::string>{"MSX1", "MSX2"};
 
-  const int initialIndex = (persistedMode == MsxMachineMode::MSX1) ? 0 : 1;
+  const int initialIndex = s_msxStartupMsx1Only ? 0 : ((persistedMode == MsxMachineMode::MSX1) ? 0 : 1);
   const int selected = selector.select("MSX launch system",
                                        options,
                                        false,
@@ -370,7 +371,7 @@ static MsxMachineSelectionResult selectMsxLaunchSystem(CardputerView& display, C
   const int chosen = selected >= 0 ? selected : initialIndex;
   MsxMachineSelectionResult result;
   result.backToRomBrowser = false;
-  result.mode = chosen == 0 ? MsxMachineMode::MSX1 : MsxMachineMode::MSX2;
+  result.mode = (s_msxStartupMsx1Only || chosen == 0) ? MsxMachineMode::MSX1 : MsxMachineMode::MSX2;
   return result;
 }
 
@@ -548,6 +549,224 @@ static StartupMainMenuAction selectStartupMainMenu(CardputerView& display, Cardp
   }
   saveStartupMenuIndex(static_cast<uint8_t>(selected));
   return static_cast<StartupMainMenuAction>(selected);
+}
+
+static MsxBiosSearchConfig buildStartupMsxBiosSearchConfig(MsxMachineMode requestedMode)
+{
+  msx_config_load_bios_path();
+  msx_config_load_msx1_bios_path();
+  msx_config_load_msx2_bios_path();
+  msx_config_load_msx2_subrom_path();
+
+  MsxBiosSearchConfig config = {};
+  config.requestedMode = requestedMode;
+  config.genericBiosPath = msx_config_get_bios_path();
+  config.msx1BiosPath = msx_config_get_msx1_bios_path();
+  config.msx2BiosPath = msx_config_get_msx2_bios_path();
+  config.msx2SubRomPath = msx_config_get_msx2_subrom_path();
+  return config;
+}
+
+static std::string compactStartupLine(const std::string& value, size_t maxChars)
+{
+  if (value.size() <= maxChars) {
+    return value;
+  }
+  if (maxChars <= 3) {
+    return value.substr(0, maxChars);
+  }
+  return "..." + value.substr(value.size() - (maxChars - 3));
+}
+
+static void printMsx2BiosRequiredPaths()
+{
+  printf("[MSX][BIOS] MSX2 BIOS required on SD:\n");
+  printf("[MSX][BIOS]   /sd/bios/private/MSX2.ROM md5=%s\n", msx_media_msx2_bios_expected_main_md5());
+  printf("[MSX][BIOS]   /sd/bios/private/MSX2EXT.ROM md5=%s\n", msx_media_msx2_bios_expected_sub_md5());
+  printf("[MSX][BIOS]   /sd/bios/msx/MSX2.ROM md5=%s\n", msx_media_msx2_bios_expected_main_md5());
+  printf("[MSX][BIOS]   /sd/bios/msx/MSX2EXT.ROM md5=%s\n", msx_media_msx2_bios_expected_sub_md5());
+  printf("[MSX][BIOS]   /sd/msx/MSX2.ROM md5=%s\n", msx_media_msx2_bios_expected_main_md5());
+  printf("[MSX][BIOS]   /sd/msx/MSX2EXT.ROM md5=%s\n", msx_media_msx2_bios_expected_sub_md5());
+}
+
+static void drawMsx2BiosWaitScreen(CardputerView& display, const char* title)
+{
+  display.topBar(title, false, false);
+  auto& tft = M5Cardputer.Display;
+  tft.fillRect(0, TOP_BAR_HEIGHT, tft.width(), tft.height() - TOP_BAR_HEIGHT, TFT_BLACK);
+  tft.drawRoundRect(10, 35, tft.width() - 20, 90, DEFAULT_ROUND_RECT, PRIMARY_COLOR);
+  tft.setTextColor(TEXT_COLOR, TFT_BLACK);
+  tft.setTextSize(TEXT_WIDE);
+  tft.drawCenterString("Insert SD with", tft.width() / 2, 54);
+  tft.drawCenterString("correct MSX2 BIOS", tft.width() / 2, 75);
+  tft.setTextSize(TEXT_SMALL);
+  tft.setTextColor(PRIMARY_COLOR, TFT_BLACK);
+  tft.drawCenterString("Waiting for files...", tft.width() / 2, 109);
+}
+
+static void updateMsx2BiosWaitLine(const std::string& line)
+{
+  auto& tft = M5Cardputer.Display;
+  tft.fillRect(12, 91, tft.width() - 24, 16, TFT_BLACK);
+  tft.setTextColor(TEXT_COLOR, TFT_BLACK);
+  tft.setTextSize(TEXT_SMALL);
+  tft.drawCenterString(compactStartupLine(line, 34).c_str(), tft.width() / 2, 98);
+}
+
+static bool selectMsx2BiosMsx1Only(CardputerView& display,
+                                   CardputerInput& input,
+                                   const char* title,
+                                   const char* line1,
+                                   const char* line2)
+{
+  display.topBar(title, false, false);
+  display.subMessage(line1, line2, 1400);
+  input.flushInput(150);
+
+  VerticalSelector selector(display, input);
+  const std::vector<std::string> options = {
+      "Continue MSX1 only",
+      "Wait / install MSX2 BIOS",
+  };
+  const int selected = selector.select(title,
+                                       options,
+                                       false,
+                                       false,
+                                       {},
+                                       {},
+                                       false,
+                                       true,
+                                       false,
+                                       0,
+                                       1,
+                                       0);
+  return selected == 0;
+}
+
+static bool installMsx2BiosAndRestart(CardputerView& display,
+                                      const MsxBiosSearchConfig& biosSearch,
+                                      bool sdMounted)
+{
+  display.topBar("INSTALLING MSX2 BIOS", false, false);
+  display.subMessage("Writing flash", "Please wait", 0);
+
+  Msx2BiosPreflightResult installResult = {};
+  if (!msx_media_install_msx2_bios_flash_cache(&biosSearch, sdMounted, &installResult)) {
+    display.topBar("MSX2 BIOS ERROR", false, false);
+    display.subMessage(installResult.detail[0] ? installResult.detail : "Install failed", "Retrying", 1800);
+    printf("[MSX][BIOS] startup install failed: %s\n",
+           installResult.detail[0] ? installResult.detail : "unknown");
+    return false;
+  }
+
+  display.topBar("Done! Restarting", false, false);
+  display.subMessage("MSX2 BIOS installed", "Restarting", 0);
+  printf("[MSX][BIOS] startup install ok main=%s sub=%s; restarting\n",
+         installResult.flashMainMd5[0] ? installResult.flashMainMd5 : "-",
+         installResult.flashSubMd5[0] ? installResult.flashSubMd5 : "-");
+  delay(5000);
+  esp_restart();
+  return true;
+}
+
+static void waitForMsx2BiosSourcesAndInstall(CardputerView& display,
+                                             CardputerInput& input,
+                                             SdService& sd,
+                                             bool& sdMounted,
+                                             const MsxBiosSearchConfig& biosSearch,
+                                             const char* title)
+{
+  static constexpr const char* kPathHints[] = {
+      "/sd/bios/private/MSX2.ROM",
+      "/sd/bios/private/MSX2EXT.ROM",
+      "/sd/bios/msx/MSX2.ROM",
+      "/sd/bios/msx/MSX2EXT.ROM",
+      "/sd/msx/MSX2.ROM",
+      "/sd/msx/MSX2EXT.ROM",
+  };
+
+  printMsx2BiosRequiredPaths();
+  drawMsx2BiosWaitScreen(display, title);
+  size_t pathIndex = 0;
+  uint32_t lastUiMs = 0;
+  uint32_t lastProbeMs = 0;
+
+  for (;;) {
+    const uint32_t now = millis();
+    if (now - lastUiMs >= 1800) {
+      updateMsx2BiosWaitLine(kPathHints[pathIndex]);
+      pathIndex = (pathIndex + 1) % (sizeof(kPathHints) / sizeof(kPathHints[0]));
+      lastUiMs = now;
+    }
+
+    if (!sdMounted || now - lastProbeMs >= 2500) {
+      if (!sdMounted) {
+        sdMounted = sd.begin();
+      }
+
+      Msx2BiosPreflightResult probe = {};
+      (void)msx_media_probe_msx2_bios_preflight(&biosSearch, sdMounted, &probe);
+      if (probe.flashState == Msx2BiosFlashState::Valid) {
+        return;
+      }
+      if (sdMounted && probe.sourceReady) {
+        if (installMsx2BiosAndRestart(display, biosSearch, sdMounted)) {
+          return;
+        }
+        drawMsx2BiosWaitScreen(display, title);
+      }
+      lastProbeMs = now;
+    }
+
+    (void)input.handler();
+    delay(10);
+  }
+}
+
+static bool handleStartupMsx2BiosPreflight(CardputerView& display,
+                                           CardputerInput& input,
+                                           SdService& sd,
+                                           bool& sdMounted)
+{
+  const MsxBiosSearchConfig biosSearch = buildStartupMsxBiosSearchConfig(MsxMachineMode::MSX2);
+  Msx2BiosPreflightResult probe = {};
+  (void)msx_media_probe_msx2_bios_preflight(&biosSearch, sdMounted, &probe);
+
+  if (probe.flashState == Msx2BiosFlashState::Valid) {
+    return false;
+  }
+
+  const bool flashInvalid = probe.flashState == Msx2BiosFlashState::Invalid;
+  const char* title = flashInvalid ? "MSX2 BIOS INVALID" : "MSX2 BIOS MISSING";
+
+  if (probe.flashState == Msx2BiosFlashState::Missing && sdMounted && probe.sourceReady) {
+    (void)installMsx2BiosAndRestart(display, biosSearch, sdMounted);
+    return false;
+  }
+
+  if (flashInvalid) {
+    printf("[MSX][BIOS] invalid flash cache main=%s expected=%s sub=%s expected=%s\n",
+           probe.flashMainMd5[0] ? probe.flashMainMd5 : "-",
+           msx_media_msx2_bios_expected_main_md5(),
+           probe.flashSubMd5[0] ? probe.flashSubMd5 : "-",
+           msx_media_msx2_bios_expected_sub_md5());
+  }
+
+  const bool msx1Only = selectMsx2BiosMsx1Only(display,
+                                               input,
+                                               title,
+                                               flashInvalid ? "Flash MD5 mismatch" : "MSX2 BIOS not cached",
+                                               "MSX2 disabled");
+  if (msx1Only) {
+    printf("[MSX][BIOS] startup continuing with MSX1 only for this session\n");
+    return true;
+  }
+
+  if (sdMounted && probe.sourceReady) {
+    (void)installMsx2BiosAndRestart(display, biosSearch, sdMounted);
+  }
+  waitForMsx2BiosSourcesAndInstall(display, input, sd, sdMounted, biosSearch, title);
+  return false;
 }
 
 static bool startupKeyWordPressed(char lower)
@@ -1269,11 +1488,28 @@ void setup() {
   CardputerView display;
   display.initialize();
 
+  bool sdMounted = sd.begin();
+  const bool msx1OnlyBoot = handleStartupMsx2BiosPreflight(display, input, sd, sdMounted);
+  s_msxStartupMsx1Only = msx1OnlyBoot;
+  msx_config_set_machine_mode_session_override(MsxMachineMode::MSX1, msx1OnlyBoot);
+
+  if (msx1OnlyBoot && !sdMounted) {
+    display.topBar("MSX1 BASIC", false, false);
+    display.subMessage("No SD card", "Starting C-BIOS", 1000);
+    g_emu_display_target = EMU_DISPLAY_INTERNAL;
+    g_emu_color_depth = EMU_COLOR_16BIT;
+    printf("HEAP BEFORE EMU: %u bytes\n", esp_get_free_heap_size());
+    share::detectI2cPad();
+    run_msx_basic("MSX1 BASIC", sd);
+    return;
+  }
+
   // SD
-  while (!sd.begin()) {
+  while (!sdMounted) {
     display.topBar("SD CARD FOR ROMS", false, false);
     display.subMessage("No SD card found", 1000);
     display.subMessage("Insert SD card", 0);
+    sdMounted = sd.begin();
   }
 
   const StartupBootAction startupBootAction = getStartupBootAction(display);
@@ -1303,7 +1539,11 @@ void setup() {
     if (pendingLaunch.valid() && pendingLaunch.machineMode >= 0) {
       // Keep the selected machine mode for this boot instead of reloading an old
       // persisted value in the launcher flow.
-      msx_config_set_machine_mode(static_cast<MsxMachineMode>(pendingLaunch.machineMode), true);
+      if (s_msxStartupMsx1Only) {
+        msx_config_set_machine_mode_session_override(MsxMachineMode::MSX1, true);
+      } else {
+        msx_config_set_machine_mode(static_cast<MsxMachineMode>(pendingLaunch.machineMode), true);
+      }
     }
   }
 
@@ -1438,7 +1678,9 @@ void setup() {
         chosenMachineMode = machineSelection.mode;
       }
       msx_config_set_machine_mode(chosenMachineMode, false);
-      restartForPendingLaunch(display, sd, romPath, static_cast<int>(chosenMachineMode));
+      if (!s_msxStartupMsx1Only) {
+        restartForPendingLaunch(display, sd, romPath, static_cast<int>(chosenMachineMode));
+      }
     }
 
     if (emu_has_external_display_support((int)ext)) {

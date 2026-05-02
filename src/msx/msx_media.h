@@ -74,12 +74,40 @@ struct MsxBiosSearchConfig {
     const char* msx2SubRomPath;
 };
 
+enum class Msx2BiosFlashState : uint8_t {
+    Unsupported = 0,
+    Missing,
+    Invalid,
+    Valid,
+};
+
+struct Msx2BiosPreflightResult {
+    Msx2BiosFlashState flashState;
+    bool partitionPresent;
+    bool sourceReady;
+    char flashMainMd5[33];
+    char flashSubMd5[33];
+    char sourceMainPath[96];
+    char sourceSubPath[96];
+    char sourceMainMd5[33];
+    char sourceSubMd5[33];
+    char detail[128];
+};
+
 bool msx_media_analyze_rom(MsxRomImage* image, const uint8_t* romData, size_t romLen);
 bool msx_media_load_bios_bundle(MsxBiosBundle* bundle, const MsxBiosSearchConfig* config);
 void msx_media_release_bios_bundle(MsxBiosBundle* bundle);
 bool msx_media_is_static_main_bios_pointer(const uint8_t* data);
 uint8_t msx_media_static_ram_bank_count_for_main_bios(const uint8_t* mainRom);
 uint8_t* msx_media_static_ram_bank_ptr_for_main_bios(const uint8_t* mainRom, uint8_t bankIndex);
+bool msx_media_probe_msx2_bios_preflight(const MsxBiosSearchConfig* config,
+                                          bool sdAvailable,
+                                          Msx2BiosPreflightResult* result);
+bool msx_media_install_msx2_bios_flash_cache(const MsxBiosSearchConfig* config,
+                                             bool sdAvailable,
+                                             Msx2BiosPreflightResult* result);
+const char* msx_media_msx2_bios_expected_main_md5(void);
+const char* msx_media_msx2_bios_expected_sub_md5(void);
 
 const char* msx_media_cartridge_type_label(MsxCartridgeType type);
 const char* msx_media_bios_target_label(MsxBiosTarget target);
