@@ -135,6 +135,11 @@ static uint32_t s_lastPresentUs = 0;
 static MsxVideoPerfSummary s_videoPerfSummary = {};
 static SemaphoreHandle_t s_videoMutex = nullptr;
 
+static bool s_isExternalCached = false;
+static bool s_drawFpsCached = false;
+static int s_fpsYStartCached = 0;
+static int s_fpsYEndCached = 0;
+
 bool msx_video_game_on_external(void)
 {
     return g_emu_display_target == EMU_DISPLAY_EXTERNAL;
@@ -231,7 +236,7 @@ constexpr uint32_t msx_pack_rgb444_pair(uint16_t c0, uint16_t c1)
          | (static_cast<uint32_t>(c1 & 0x00FFu) << 16);
 }
 
-uint8_t msx_video_fps_glyph_row(char ch, int row)
+uint8_t IRAM_ATTR msx_video_fps_glyph_row(char ch, int row)
 {
     if (row < 0 || row >= kFpsHudGlyphH) {
         return 0u;
@@ -330,23 +335,20 @@ bool msx_video_should_draw_fps_hud(int dstW, int dstH)
            dstH >= (msx_video_fps_hud_margin_y() + msx_video_fps_hud_box_height());
 }
 
-void msx_video_draw_fps_hud_row(uint16_t* dst, int dstW, int dstH, int dstY)
+void IRAM_ATTR msx_video_draw_fps_hud_row(uint16_t* dst, int dstW, int dstY)
 {
-    if (!dst || !msx_video_should_draw_fps_hud(dstW, dstH)) {
-        return;
+    const int marginX = s_isExternalCached ? kFpsHudExternalMarginX : kFpsHudInternalMarginX;
+    const int marginY = s_fpsYStartCached;
+    const int padX = s_isExternalCached ? kFpsHudExternalPadX : kFpsHudInternalPadX;
+    const int padY = s_isExternalCached ? kFpsHudExternalPadY : kFpsHudInternalPadY;
+    const int scale = s_isExternalCached ? kFpsHudExternalScale : kFpsHudInternalScale;
+    const int advance = (kFpsHudGlyphW + 1) * scale;
+    int textW = 0;
+    const size_t len = std::strlen(s_fpsHudText);
+    if (len > 0) {
+        textW = static_cast<int>(len) * advance - scale;
     }
-
-    const int marginX = msx_video_fps_hud_margin_x();
-    const int marginY = msx_video_fps_hud_margin_y();
-    const int padX = msx_video_fps_hud_pad_x();
-    const int padY = msx_video_fps_hud_pad_y();
-    const int scale = msx_video_fps_hud_scale();
-    const int advance = msx_video_fps_hud_advance();
-    const int boxW = msx_video_fps_hud_box_width();
-    const int boxH = msx_video_fps_hud_box_height();
-    if (dstY < marginY || dstY >= (marginY + boxH)) {
-        return;
-    }
+    const int boxW = (padX * 2) + textW;
 
     const int boxX = std::max(0, dstW - boxW - marginX);
     const int localY = dstY - marginY;
@@ -362,7 +364,6 @@ void msx_video_draw_fps_hud_row(uint16_t* dst, int dstW, int dstH, int dstY)
     const int glyphRow = (localY - padY) / scale;
     const int textX0 = boxX + padX;
     const uint16_t fg = 0xFFFFu;
-    const size_t len = std::strlen(s_fpsHudText);
     for (size_t i = 0; i < len; ++i) {
         const uint8_t rowBits = msx_video_fps_glyph_row(s_fpsHudText[i], glyphRow);
         if (rowBits == 0u) {
@@ -490,7 +491,7 @@ void msx_video_init_palette_pairs(const uint16_t* palette, uint16_t paletteEntri
     }
 }
 
-void msx_video_expand_indexed_line(const uint8_t* src,
+void IRAM_ATTR msx_video_expand_indexed_line(const uint8_t* src,
                                    uint16_t* dst,
                                    int pixelCount,
                                    const uint16_t* palette,
@@ -800,7 +801,7 @@ void msx_video_end_active_write(void)
     }
 }
 
-static void msx_video_emit_stream_line(MsxLineStreamState& stream,
+static void IRAM_ATTR msx_video_emit_stream_line(MsxLineStreamState& stream,
                                        const uint8_t* srcLine,
                                        int dstY)
 {
@@ -809,11 +810,9 @@ static void msx_video_emit_stream_line(MsxLineStreamState& stream,
     }
 
     const bool overlayLine =
-        (dstY >= msx_video_fps_hud_margin_y()) &&
-        (dstY < (msx_video_fps_hud_margin_y() + msx_video_fps_hud_box_height())) &&
-        msx_video_should_draw_fps_hud(stream.dstW, stream.dstH);
+        s_drawFpsCached && (dstY >= s_fpsYStartCached) && (dstY < s_fpsYEndCached);
 
-    if (msx_video_game_on_external()) {
+    if (s_isExternalCached) {
         const int bytesPerLine = ((stream.dstW + 1) / 2) * 3;
         uint8_t* dst12 = s_lineBuf12 + static_cast<size_t>(stream.batchCount) * bytesPerLine;
 
@@ -832,7 +831,7 @@ static void msx_video_emit_stream_line(MsxLineStreamState& stream,
                     s_lineBuf[x] = stream.palette[srcLine[s_xmap[x]]];
                 }
             }
-            msx_video_draw_fps_hud_row(s_lineBuf, stream.dstW, stream.dstH, dstY);
+            msx_video_draw_fps_hud_row(s_lineBuf, stream.dstW, dstY);
             msx_video_pack_rgb444_line(s_lineBuf, stream.dstW, dst12);
         } else if (stream.cropOnly) {
             msx_video_pack_indexed_rgb444_line(srcLine + static_cast<size_t>(stream.srcX0),
@@ -872,7 +871,7 @@ static void msx_video_emit_stream_line(MsxLineStreamState& stream,
     }
 
     if (overlayLine) {
-        msx_video_draw_fps_hud_row(s_lineBuf, stream.dstW, stream.dstH, dstY);
+        msx_video_draw_fps_hud_row(s_lineBuf, stream.dstW, dstY);
     }
 
     M5Cardputer.Display.pushPixels(s_lineBuf, stream.dstW);
@@ -893,6 +892,11 @@ bool msx_video_begin_line_stream_impl(const MsxDisplayFrame* frame)
     MsxVideoPlan plan = {};
     msx_video_compute_plan(frame->width, frame->height, &plan);
     const bool layoutChanged = msx_video_layout_changed(plan, frame->width, frame->height);
+
+    s_isExternalCached = msx_video_game_on_external();
+    s_drawFpsCached = msx_video_should_draw_fps_hud(plan.dstW, plan.dstH);
+    s_fpsYStartCached = msx_video_fps_hud_margin_y();
+    s_fpsYEndCached = s_fpsYStartCached + msx_video_fps_hud_box_height();
 
     if (!msx_video_prepare_buffers(plan, layoutChanged)) {
         return false;
@@ -989,12 +993,12 @@ void msx_video_end_line_stream_impl(void)
     s_lineStream = {};
 }
 
-void msx_video_draw_crop_frame(const MsxDisplayFrame* frame, const MsxVideoPlan& plan)
+void IRAM_ATTR msx_video_draw_crop_frame(const MsxDisplayFrame* frame, const MsxVideoPlan& plan)
 {
     const uint16_t* palette = frame->palette565 ? frame->palette565 : s_palette565;
     msx_video_init_palette_pairs(palette, frame->paletteEntryCount);
 
-    if (msx_video_game_on_external()) {
+    if (s_isExternalCached) {
         msx_video_begin_active_write(plan);
         const int bytesPerLine = ((plan.dstW + 1) / 2) * 3;
         for (int y = 0; y < plan.dstH; y += kBatchLines) {
@@ -1005,11 +1009,10 @@ void msx_video_draw_crop_frame(const MsxDisplayFrame* frame, const MsxVideoPlan&
                     + static_cast<size_t>(plan.srcX0);
                 uint8_t* dst = s_lineBuf12 + static_cast<size_t>(row) * bytesPerLine;
                 const int dstY = y + row;
-                if (msx_video_should_draw_fps_hud(plan.dstW, plan.dstH) &&
-                    dstY < (msx_video_fps_hud_margin_y() + msx_video_fps_hud_box_height())) {
+                if (s_drawFpsCached && dstY >= s_fpsYStartCached && dstY < s_fpsYEndCached) {
                     uint16_t* dst565 = s_lineBuf + static_cast<size_t>(row) * plan.dstW;
                     msx_video_expand_indexed_line(src, dst565, plan.dstW, palette, frame->paletteEntryCount);
-                    msx_video_draw_fps_hud_row(dst565, plan.dstW, plan.dstH, dstY);
+                    msx_video_draw_fps_hud_row(dst565, plan.dstW, dstY);
                     msx_video_pack_rgb444_line(dst565, plan.dstW, dst);
                 } else {
                     msx_video_pack_indexed_rgb444_line(src, dst, plan.dstW, frame->paletteEntryCount);
@@ -1030,7 +1033,9 @@ void msx_video_draw_crop_frame(const MsxDisplayFrame* frame, const MsxVideoPlan&
                 + static_cast<size_t>(plan.srcX0);
             uint16_t* dst = s_lineBuf + static_cast<size_t>(row) * plan.dstW;
             msx_video_expand_indexed_line(src, dst, plan.dstW, palette, frame->paletteEntryCount);
-            msx_video_draw_fps_hud_row(dst, plan.dstW, plan.dstH, y + row);
+            if (s_drawFpsCached && (y + row) >= s_fpsYStartCached && (y + row) < s_fpsYEndCached) {
+                msx_video_draw_fps_hud_row(dst, plan.dstW, y + row);
+            }
         }
         M5Cardputer.Display.pushPixels(s_lineBuf, plan.dstW * batch);
         taskYIELD();
@@ -1038,12 +1043,12 @@ void msx_video_draw_crop_frame(const MsxDisplayFrame* frame, const MsxVideoPlan&
     msx_video_end_active_write();
 }
 
-void msx_video_draw_scaled_frame(const MsxDisplayFrame* frame, const MsxVideoPlan& plan)
+void IRAM_ATTR msx_video_draw_scaled_frame(const MsxDisplayFrame* frame, const MsxVideoPlan& plan)
 {
     const uint16_t* palette = frame->palette565 ? frame->palette565 : s_palette565;
     msx_video_init_palette_pairs(palette, frame->paletteEntryCount);
 
-    if (msx_video_game_on_external()) {
+    if (s_isExternalCached) {
         msx_video_begin_active_write(plan);
         const int bytesPerLine = ((plan.dstW + 1) / 2) * 3;
         for (int y = 0; y < plan.dstH; y += kBatchLines) {
@@ -1052,13 +1057,12 @@ void msx_video_draw_scaled_frame(const MsxDisplayFrame* frame, const MsxVideoPla
                 const uint8_t* src = frame->indexed8 + static_cast<size_t>(s_ymap[y + row]) * frame->pitchBytes;
                 uint8_t* dst = s_lineBuf12 + static_cast<size_t>(row) * bytesPerLine;
                 const int dstY = y + row;
-                if (msx_video_should_draw_fps_hud(plan.dstW, plan.dstH) &&
-                    dstY < (msx_video_fps_hud_margin_y() + msx_video_fps_hud_box_height())) {
+                if (s_drawFpsCached && dstY >= s_fpsYStartCached && dstY < s_fpsYEndCached) {
                     uint16_t* dst565 = s_lineBuf + static_cast<size_t>(row) * plan.dstW;
                     for (int x = 0; x < plan.dstW; ++x) {
                         dst565[x] = palette[src[s_xmap[x]]];
                     }
-                    msx_video_draw_fps_hud_row(dst565, plan.dstW, plan.dstH, dstY);
+                    msx_video_draw_fps_hud_row(dst565, plan.dstW, dstY);
                     msx_video_pack_rgb444_line(dst565, plan.dstW, dst);
                 } else {
                     msx_video_pack_mapped_rgb444_line(src,
@@ -1090,7 +1094,9 @@ void msx_video_draw_scaled_frame(const MsxDisplayFrame* frame, const MsxVideoPla
             for (; x < plan.dstW; ++x) {
                 dst[x] = palette[src[s_xmap[x]]];
             }
-            msx_video_draw_fps_hud_row(dst, plan.dstW, plan.dstH, y + row);
+            if (s_drawFpsCached && (y + row) >= s_fpsYStartCached && (y + row) < s_fpsYEndCached) {
+                msx_video_draw_fps_hud_row(dst, plan.dstW, y + row);
+            }
         }
         M5Cardputer.Display.pushPixels(s_lineBuf, plan.dstW * batch);
         taskYIELD();
@@ -1115,6 +1121,11 @@ bool msx_video_render_frame_now(const MsxDisplayFrame* frame)
     MsxVideoPlan plan = {};
     msx_video_compute_plan(frame->width, frame->height, &plan);
     const bool layoutChanged = msx_video_layout_changed(plan, frame->width, frame->height);
+
+    s_isExternalCached = msx_video_game_on_external();
+    s_drawFpsCached = msx_video_should_draw_fps_hud(plan.dstW, plan.dstH);
+    s_fpsYStartCached = msx_video_fps_hud_margin_y();
+    s_fpsYEndCached = s_fpsYStartCached + msx_video_fps_hud_box_height();
 
     if (!s_firstPresentLogged) {
         s_firstPresentLogged = true;
