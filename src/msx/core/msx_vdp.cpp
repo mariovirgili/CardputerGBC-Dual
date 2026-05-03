@@ -479,15 +479,7 @@ static inline uint8_t msx_vdp_timeline_value_for_line(const MsxVdpState* state,
         return 0u;
     }
 
-    uint32_t targetCycle = msx_vdp_cycle_for_line(state, y);
-    if ((y + 1u) < state->activeHeight) {
-        const uint32_t nextLineCycle = msx_vdp_cycle_for_line(state, y + 1u);
-        if (nextLineCycle > targetCycle) {
-            targetCycle = nextLineCycle - 1u;
-        }
-    } else if (state->frameCycleBudget != 0u) {
-        targetCycle = state->frameCycleBudget - 1u;
-    }
+    const uint32_t targetCycle = msx_vdp_cycle_for_line(state, y);
 
     uint8_t value = timeline[0].value;
     for (uint8_t i = 1u; i < count; ++i) {
@@ -1433,15 +1425,12 @@ inline void msx_vdp_refresh_timing_flags(MsxVdpState* state)
     }
 
     if (scanline < lineIrqActiveEnd) {
-        // Il contatore delle linee per gli interrupt viene inizializzato con R#23 
-        // solo all'inizio del frame (linea 0). I cambi mid-frame di R#23 non lo influenzano!
-        const uint8_t vscroll = msx_vdp_reg23_frame_start(state);
-        const uint32_t activeLine = (scanline > 0u) ? (scanline - 1u) : 0u;
+        const uint8_t vscroll = msx_vdp_reg23_for_line(state, 0);
         const uint8_t lineDelta =
-            static_cast<uint8_t>(((activeLine + static_cast<uint32_t>(vscroll)) - state->regs[19]) & 0xFFu);
+            static_cast<uint8_t>(((scanline + static_cast<uint32_t>(vscroll)) - state->regs[19]) & 0xFFu);
         const uint8_t scanlineTag = static_cast<uint8_t>(scanline & 0xFFu);
 
-        const bool inIrqWindow = (lineDelta >= 2u && lineDelta <= 10u);
+        const bool inIrqWindow = (lineDelta == 0u || lineDelta == 1u);
         if (inIrqWindow &&
             ((state->lineInterruptFrameTag != state->frameCounter) ||
              (static_cast<uint8_t>(scanlineTag - state->lineInterruptLineTag) > 10u))) {
