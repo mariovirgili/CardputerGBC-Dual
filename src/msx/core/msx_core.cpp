@@ -507,7 +507,9 @@ void msx_core_attach_runtime_devices(MsxCoreState* state)
         msx_scc_reset(&state->scc);
         const MsxVirtualSccMode sccMode = msx_config_get_virtual_scc_mode();
         msx_memory_set_virtual_scc_mode(&state->memory, sccMode);
-        msx_scc_set_output_enabled(&state->scc, sccMode != MsxVirtualSccMode::Off);
+        const bool sccOutput = (sccMode != MsxVirtualSccMode::Off) ||
+                               (state->cart.type == MsxCartridgeType::KonamiScc);
+        msx_scc_set_output_enabled(&state->scc, sccOutput);
     } else {
         msx_memory_attach_scc(&state->memory, nullptr);
     }
@@ -1344,12 +1346,14 @@ void msx_core_set_virtual_scc_mode(MsxCoreState* state, MsxVirtualSccMode mode)
 
     msx_cpu_flush_pending_psg(&state->memory);
     msx_memory_set_virtual_scc_mode(&state->memory, mode);
-    msx_scc_set_output_enabled(&state->scc, mode != MsxVirtualSccMode::Off);
+    const bool sccOutput = (mode != MsxVirtualSccMode::Off) ||
+                           (state->cart.type == MsxCartridgeType::KonamiScc);
+    msx_scc_set_output_enabled(&state->scc, sccOutput);
 
     if (mode == MsxVirtualSccMode::Off) {
-        const size_t sccAvailable = msx_scc_available_samples(&state->scc);
-        msx_scc_discard_samples(&state->scc, sccAvailable);
         if (state->cart.type != MsxCartridgeType::KonamiScc) {
+            const size_t sccAvailable = msx_scc_available_samples(&state->scc);
+            msx_scc_discard_samples(&state->scc, sccAvailable);
             msx_memory_attach_scc(&state->memory, nullptr);
             msx_scc_shutdown(&state->scc);
         }

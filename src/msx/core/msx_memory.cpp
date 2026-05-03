@@ -245,6 +245,10 @@ bool msx_memory_virtual_scc_visible_at(const MsxMemoryState* state, uint16_t add
     if (s_virtualSccMode == MsxVirtualSccMode::Off) {
         return false;
     }
+    // DO NOT expose Virtual SCC if the real cartridge already provides one!
+    if (state && state->cart.type == MsxCartridgeType::KonamiScc) {
+        return false;
+    }
     return !msx_memory_scc_hardware_detect_strict() ||
            msx_memory_slot_is_virtual_scc_slot(state, address);
 }
@@ -252,6 +256,10 @@ bool msx_memory_virtual_scc_visible_at(const MsxMemoryState* state, uint16_t add
 bool msx_memory_virtual_scc_plus_regs_visible_at(const MsxMemoryState* state, uint16_t address)
 {
     if (s_virtualSccMode != MsxVirtualSccMode::SccI || !s_virtualSccPlusRegsEnabled) {
+        return false;
+    }
+    // DO NOT expose Virtual SCC if the real cartridge already provides one!
+    if (state && state->cart.type == MsxCartridgeType::KonamiScc) {
         return false;
     }
     if (msx_memory_scc_hardware_detect_strict() && !s_virtualSccPlusMapped) {
@@ -1173,43 +1181,46 @@ bool msx_memory_real_scc_visible(const MsxMemoryState* state, uint16_t address)
 
 bool msx_memory_scc_classic_read_visible(const MsxMemoryState* state, uint16_t address)
 {
-    if (!s_attachedScc || !s_attachedScc->ready || !s_attachedScc->classicWindow) {
+    if (!s_attachedScc || !s_attachedScc->ready) {
         return false;
     }
     if (address < 0x9800u || address >= 0xA000u) {
         return false;
     }
-    return msx_memory_virtual_scc_visible_at(state, address) ||
-           msx_memory_real_scc_visible(state, address);
+    const bool realVisible = s_sccRealClassicWindow && msx_memory_real_scc_visible(state, address);
+    const bool virtualVisible = msx_memory_virtual_scc_visible_at(state, address);
+    return realVisible || virtualVisible;
 }
 
 bool msx_memory_scc_plus_read_visible(const MsxMemoryState* state, uint16_t address)
 {
-    if (!s_attachedScc || !s_attachedScc->ready || !s_attachedScc->plusWindow) {
+    if (!s_attachedScc || !s_attachedScc->ready) {
         return false;
     }
     if (address < 0xB800u || address >= 0xB8A0u) {
         return false;
     }
-    return msx_memory_virtual_scc_plus_regs_visible_at(state, address) ||
-           msx_memory_real_scc_visible(state, address);
+    const bool realVisible = s_sccRealPlusWindow && msx_memory_real_scc_visible(state, address);
+    const bool virtualVisible = msx_memory_virtual_scc_plus_regs_visible_at(state, address);
+    return realVisible || virtualVisible;
 }
 
 bool msx_memory_scc_classic_write_visible(const MsxMemoryState* state, uint16_t address)
 {
-    if (!s_attachedScc || !s_attachedScc->ready || !s_attachedScc->classicWindow) {
+    if (!s_attachedScc || !s_attachedScc->ready) {
         return false;
     }
     if (address < 0x9800u || address >= 0xA000u) {
         return false;
     }
-    return msx_memory_virtual_scc_visible_at(state, address) ||
-           msx_memory_real_scc_visible(state, address);
+    const bool realVisible = s_sccRealClassicWindow && msx_memory_real_scc_visible(state, address);
+    const bool virtualVisible = msx_memory_virtual_scc_visible_at(state, address);
+    return realVisible || virtualVisible;
 }
 
 bool msx_memory_scc_plus_write_visible(const MsxMemoryState* state, uint16_t address)
 {
-    if (!s_attachedScc || !s_attachedScc->ready || !s_attachedScc->plusWindow) {
+    if (!s_attachedScc || !s_attachedScc->ready) {
         return false;
     }
     if (address < 0xB800u || address >= 0xC000u) {
@@ -1218,8 +1229,9 @@ bool msx_memory_scc_plus_write_visible(const MsxMemoryState* state, uint16_t add
     if (address == 0xBFFEu) {
         return false;
     }
-    return msx_memory_virtual_scc_plus_regs_visible_at(state, address) ||
-           msx_memory_real_scc_visible(state, address);
+    const bool realVisible = s_sccRealPlusWindow && msx_memory_real_scc_visible(state, address);
+    const bool virtualVisible = msx_memory_virtual_scc_plus_regs_visible_at(state, address);
+    return realVisible || virtualVisible;
 }
 
 bool msx_memory_virtual_scc_ram_handle_control_write(MsxMemoryState* state,

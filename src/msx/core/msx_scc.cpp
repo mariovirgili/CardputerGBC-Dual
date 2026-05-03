@@ -113,15 +113,17 @@ void msx_scc_update_step(MsxSccState* state, uint8_t channel)
 void msx_scc_log_window_change(bool classicWindow,
                                bool plusWindow,
                                bool sccPlusMode,
-                               bool enabled)
+                               bool mapped,
+                               bool audioEnabled)
 {
     if (msx_log_category_enabled(MsxLogCategory::Scc)) {
         MSX_CATEGORY_LOG(MsxLogCategory::Scc,
-                "[MSX][SCC] windows classic=%u plus=%u mode=%s enabled=%u\n",
+                "[MSX][SCC] windows classic=%u plus=%u mode=%s mapped=%u audio=%u\n",
                 classicWindow ? 1u : 0u,
                 plusWindow ? 1u : 0u,
                 sccPlusMode ? "SCC-I" : "SCC",
-                enabled ? 1u : 0u);
+                mapped ? 1u : 0u,
+                audioEnabled ? 1u : 0u);
     }
 }
 
@@ -263,7 +265,8 @@ int16_t IRAM_ATTR msx_scc_render_sample(MsxSccState* state)
         mix += waveSample * static_cast<int32_t>(volume);
     }
 
-    mix = (mix * static_cast<int32_t>(s_sccOutputGainPercent)) / 100;
+    // Raddoppiamo il mix di base per allineare l'SCC all'ampiezza a 16-bit (max 32767)
+    mix = (mix * 2 * static_cast<int32_t>(s_sccOutputGainPercent)) / 100;
     const int32_t dcFiltered = mix - state->dcFilterX + ((state->dcFilterY * 8110) >> 13);
     state->dcFilterX = mix;
     state->dcFilterY = dcFiltered;
@@ -349,7 +352,10 @@ void msx_scc_set_windows(MsxSccState* state, bool classicWindow, bool plusWindow
 
     state->classicWindow = classicWindow;
     state->plusWindow = plusWindow;
-    state->enabled = classicWindow || plusWindow;
+    const bool mapped = classicWindow || plusWindow;
+    if (mapped) {
+        state->enabled = true;
+    }
     if (plusWindow) {
         state->sccPlusMode = true;
     } else if (classicWindow) {
@@ -359,7 +365,7 @@ void msx_scc_set_windows(MsxSccState* state, bool classicWindow, bool plusWindow
 #if MSX_SCC_NOTICE_ENABLED
     static bool s_classicNoticeShown = false;
     static bool s_plusNoticeShown = false;
-    if (state->enabled && msx_log_category_enabled(MsxLogCategory::SccNotice)) {
+    if (mapped && msx_log_category_enabled(MsxLogCategory::SccNotice)) {
         if (state->sccPlusMode) {
             if (!s_plusNoticeShown) {
                 MSX_RUNTIME_LOG("[MSX][SCC] active mode=SCC-I\n");
@@ -379,7 +385,8 @@ void msx_scc_set_windows(MsxSccState* state, bool classicWindow, bool plusWindow
         msx_scc_log_window_change(state->classicWindow,
                                   state->plusWindow,
                                   state->sccPlusMode,
-                                  state->enabled);
+                                  mapped,
+                                  state->enabled && state->outputEnabled);
     }
 }
 
