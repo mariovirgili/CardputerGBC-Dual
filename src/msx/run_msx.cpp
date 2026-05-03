@@ -1771,6 +1771,9 @@ static bool msx_handle_change_cas(MsxCoreState* core,
     msx_draw_osd_message(changed ? "CAS CHANGED" : "CAS UNCHANGED", useExternal);
     delay(500);
     msx_end_state_overlay(useExternal);
+    if (core) {
+        core->vdp.dirty = true;
+    }
     return changed;
 }
 
@@ -1831,6 +1834,9 @@ static bool msx_handle_change_dsk(MsxCoreState* core,
     msx_draw_osd_message(changed ? "DSK CHANGED" : (xipTouched ? "DSK CHANGE FAILED" : "DSK UNCHANGED"), useExternal);
     delay(500);
     msx_end_state_overlay(useExternal);
+    if (core) {
+        core->vdp.dirty = true;
+    }
     return changed;
 }
 
@@ -1865,6 +1871,9 @@ static void msx_handle_save_state(MsxCoreState* core, const char* stateName, boo
 
     delay(500);
     msx_end_state_overlay(useExternal);
+    if (core) {
+        core->vdp.dirty = true;
+    }
 }
 
 static void msx_handle_load_state(MsxCoreState* core, const char* stateName, bool useExternal, SdService& sd)
@@ -1905,6 +1914,9 @@ static void msx_handle_load_state(MsxCoreState* core, const char* stateName, boo
 
     delay(500);
     msx_end_state_overlay(useExternal);
+    if (core) {
+        core->vdp.dirty = true;
+    }
 }
 
 } // namespace
@@ -2022,7 +2034,6 @@ void run_msx(const uint8_t* romData, size_t romLen, const char* romName, SdServi
     MsxRuntimeTimingWindow timingWindow = {};
     MsxFpsOverlayWindow fpsOverlay = {};
     MsxRuntimeNotice statusNotice = {};
-    uint32_t noticePauseUntilMs = 0u;
     msx_runtime_reset_fps_overlay(&fpsOverlay, lastLogMs);
     msx_video_set_fps_overlay_value(0u);
     bool quitRequested = false;
@@ -2039,10 +2050,15 @@ void run_msx(const uint8_t* romData, size_t romLen, const char* romName, SdServi
             break;
         }
         if (input.toggleLogsRequested) {
-            const uint32_t nowMs = millis();
+            msx_sound_set_paused(true);
             msx_runtime_toggle_logs(&core);
-            msx_runtime_set_notice(&statusNotice, core.statusText, nowMs);
-            noticePauseUntilMs = nowMs + 1000u;
+            msx_begin_state_overlay(useExternal);
+            msx_draw_osd_message(msx_logs_enabled() ? "LOGS: ON" : "LOGS: OFF", useExternal);
+            delay(1000);
+            msx_end_state_overlay(useExternal);
+            core.vdp.dirty = true;
+            nextFrameUs = esp_timer_get_time();
+            continue;
         }
 
         if (input.toggleViewRequested) {
@@ -2065,8 +2081,7 @@ void run_msx(const uint8_t* romData, size_t romLen, const char* romName, SdServi
         }
 
         const uint32_t pauseNowMs = millis();
-        const bool noticePaused = static_cast<int32_t>(noticePauseUntilMs - pauseNowMs) > 0;
-        const bool menuPaused = input.menuVisible || input.virtualKeyPickerVisible || noticePaused;
+        const bool menuPaused = input.menuVisible || input.virtualKeyPickerVisible;
         msx_sound_set_paused(menuPaused);
         msx_core_handle_input(&core, &input);
         msx_force_keyboard_input_refresh(&core, input);
@@ -2287,7 +2302,6 @@ void run_msx_disk(const uint8_t* dskData, size_t dskLen, const char* dskName, Sd
     MsxRuntimeTimingWindow timingWindow = {};
     MsxFpsOverlayWindow fpsOverlay = {};
     MsxRuntimeNotice statusNotice = {};
-    uint32_t noticePauseUntilMs = 0u;
     msx_runtime_reset_fps_overlay(&fpsOverlay, lastLogMs);
     msx_video_set_fps_overlay_value(0u);
     MsxVirtualSccMode activeVirtualSccMode = msx_config_get_virtual_scc_mode();
@@ -2303,10 +2317,15 @@ void run_msx_disk(const uint8_t* dskData, size_t dskLen, const char* dskName, Sd
             break;
         }
         if (input.toggleLogsRequested) {
-            const uint32_t nowMs = millis();
+            msx_sound_set_paused(true);
             msx_runtime_toggle_logs(&core);
-            msx_runtime_set_notice(&statusNotice, core.statusText, nowMs);
-            noticePauseUntilMs = nowMs + 1000u;
+            msx_begin_state_overlay(useExternal);
+            msx_draw_osd_message(msx_logs_enabled() ? "LOGS: ON" : "LOGS: OFF", useExternal);
+            delay(1000);
+            msx_end_state_overlay(useExternal);
+            core.vdp.dirty = true;
+            nextFrameUs = esp_timer_get_time();
+            continue;
         }
 
         if (input.toggleViewRequested) {
@@ -2352,8 +2371,7 @@ void run_msx_disk(const uint8_t* dskData, size_t dskLen, const char* dskName, Sd
         }
 
         const uint32_t pauseNowMs = millis();
-        const bool noticePaused = static_cast<int32_t>(noticePauseUntilMs - pauseNowMs) > 0;
-        const bool menuPaused = input.menuVisible || input.virtualKeyPickerVisible || noticePaused;
+        const bool menuPaused = input.menuVisible || input.virtualKeyPickerVisible;
         msx_sound_set_paused(menuPaused);
         msx_core_handle_input(&core, &input);
         msx_force_keyboard_input_refresh(&core, input);
@@ -2544,7 +2562,6 @@ void run_msx_basic(const char* name, SdService& sd)
     MsxRuntimeTimingWindow timingWindow = {};
     MsxFpsOverlayWindow fpsOverlay = {};
     MsxRuntimeNotice statusNotice = {};
-    uint32_t noticePauseUntilMs = 0u;
     msx_runtime_reset_fps_overlay(&fpsOverlay, lastLogMs);
     msx_video_set_fps_overlay_value(0u);
     MsxVirtualSccMode activeVirtualSccMode = msx_config_get_virtual_scc_mode();
@@ -2560,10 +2577,15 @@ void run_msx_basic(const char* name, SdService& sd)
             break;
         }
         if (input.toggleLogsRequested) {
-            const uint32_t nowMs = millis();
+            msx_sound_set_paused(true);
             msx_runtime_toggle_logs(&core);
-            msx_runtime_set_notice(&statusNotice, core.statusText, nowMs);
-            noticePauseUntilMs = nowMs + 1000u;
+            msx_begin_state_overlay(useExternal);
+            msx_draw_osd_message(msx_logs_enabled() ? "LOGS: ON" : "LOGS: OFF", useExternal);
+            delay(1000);
+            msx_end_state_overlay(useExternal);
+            core.vdp.dirty = true;
+            nextFrameUs = esp_timer_get_time();
+            continue;
         }
 
         if (input.toggleViewRequested) {
@@ -2586,8 +2608,7 @@ void run_msx_basic(const char* name, SdService& sd)
         }
 
         const uint32_t pauseNowMs = millis();
-        const bool noticePaused = static_cast<int32_t>(noticePauseUntilMs - pauseNowMs) > 0;
-        const bool menuPaused = input.menuVisible || input.virtualKeyPickerVisible || noticePaused;
+        const bool menuPaused = input.menuVisible || input.virtualKeyPickerVisible;
         msx_sound_set_paused(menuPaused);
         msx_core_handle_input(&core, &input);
         msx_force_keyboard_input_refresh(&core, input);
@@ -2785,7 +2806,6 @@ void run_msx_cas(const uint8_t* casData, size_t casLen, const char* casName, SdS
     MsxRuntimeTimingWindow timingWindow = {};
     MsxFpsOverlayWindow fpsOverlay = {};
     MsxRuntimeNotice statusNotice = {};
-    uint32_t noticePauseUntilMs = 0u;
     bool casBasicBootRefreshPending = true;
     msx_runtime_reset_fps_overlay(&fpsOverlay, lastLogMs);
     msx_video_set_fps_overlay_value(0u);
@@ -2802,10 +2822,15 @@ void run_msx_cas(const uint8_t* casData, size_t casLen, const char* casName, SdS
             break;
         }
         if (input.toggleLogsRequested) {
-            const uint32_t nowMs = millis();
+            msx_sound_set_paused(true);
             msx_runtime_toggle_logs(&core);
-            msx_runtime_set_notice(&statusNotice, core.statusText, nowMs);
-            noticePauseUntilMs = nowMs + 1000u;
+            msx_begin_state_overlay(useExternal);
+            msx_draw_osd_message(msx_logs_enabled() ? "LOGS: ON" : "LOGS: OFF", useExternal);
+            delay(1000);
+            msx_end_state_overlay(useExternal);
+            core.vdp.dirty = true;
+            nextFrameUs = esp_timer_get_time();
+            continue;
         }
 
         if (input.toggleViewRequested) {
@@ -2850,8 +2875,7 @@ void run_msx_cas(const uint8_t* casData, size_t casLen, const char* casName, SdS
         }
 
         const uint32_t pauseNowMs = millis();
-        const bool noticePaused = static_cast<int32_t>(noticePauseUntilMs - pauseNowMs) > 0;
-        const bool menuPaused = input.menuVisible || input.virtualKeyPickerVisible || noticePaused;
+        const bool menuPaused = input.menuVisible || input.virtualKeyPickerVisible;
         msx_sound_set_paused(menuPaused);
         msx_core_handle_input(&core, &input);
         msx_force_keyboard_input_refresh(&core, input);
