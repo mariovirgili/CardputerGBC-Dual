@@ -322,11 +322,6 @@ struct MsxDisplayTargetSelectionResult {
   emu_display_target_t target = EMU_DISPLAY_EXTERNAL;
 };
 
-struct MsxVirtualSccSelectionResult {
-  bool backToRomBrowser = false;
-  MsxVirtualSccMode mode = MsxVirtualSccMode::Off;
-};
-
 enum class StartupMainMenuAction {
   RomSelector = 0,
   ConfigMenu = 1,
@@ -455,47 +450,6 @@ static MsxBoolSelectionResult selectMsxExternalFpsLock(CardputerView& display,
   MsxBoolSelectionResult result;
   result.backToRomBrowser = false;
   result.value = chosen == 1;
-  return result;
-}
-
-static MsxVirtualSccSelectionResult selectMsxVirtualSccMode(CardputerView& display, CardputerInput& input)
-{
-  VerticalSelector selector(display, input);
-  const MsxVirtualSccMode persistedMode = msx_config_load_virtual_scc_mode();
-  const std::vector<std::string> options = {
-      "OFF",
-      "SCC",
-      "SCC-I",
-  };
-
-  const int initialIndex = persistedMode == MsxVirtualSccMode::Scc
-                               ? 1
-                               : (persistedMode == MsxVirtualSccMode::SccI ? 2 : 0);
-  const int selected = selector.select("MSX virtual SCC",
-                                       options,
-                                       false,
-                                       false,
-                                       {},
-                                       {},
-                                       false,
-                                       true,
-                                       false,
-                                       initialIndex,
-                                       -1,
-                                       kSelectorResultBackToRomBrowser);
-  if (selected == kSelectorResultBackToRomBrowser) {
-    MsxVirtualSccSelectionResult result;
-    result.backToRomBrowser = true;
-    result.mode = persistedMode;
-    return result;
-  }
-
-  const int chosen = selected >= 0 ? selected : initialIndex;
-  MsxVirtualSccSelectionResult result;
-  result.backToRomBrowser = false;
-  result.mode = chosen == 1
-                    ? MsxVirtualSccMode::Scc
-                    : (chosen == 2 ? MsxVirtualSccMode::SccI : MsxVirtualSccMode::Off);
   return result;
 }
 
@@ -1709,6 +1663,7 @@ void setup() {
 
       if (hasProfile) {
         msx_config_load_performance_flags();
+        msx_config_load_virtual_scc_mode();
         if (g_emu_display_target == EMU_DISPLAY_EXTERNAL) {
           const bool savedExternalFpsLock =
             msx_config_get_performance_flag(MsxPerformanceFlag::ExternalFixed30Fps);
@@ -1724,12 +1679,6 @@ void setup() {
                                             true);
           }
         }
-        const MsxVirtualSccSelectionResult sccSelection = selectMsxVirtualSccMode(display, input);
-        if (sccSelection.backToRomBrowser) {
-          reopenMsxLaunchBrowser(romPath);
-          continue;
-        }
-        msx_config_set_virtual_scc_mode(sccSelection.mode, true);
       }
 
       display.initialize();

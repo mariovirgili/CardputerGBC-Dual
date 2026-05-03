@@ -4808,7 +4808,8 @@ static void msx_vdp_render_bitmap4_range(MsxVdpState* state, unsigned yStart, un
     const uint8_t* const vram = state->vram;
     const uint32_t mask = state->vramMask;
 #if MSX_VDP_G4_DISP_LOG_ENABLED
-    const unsigned probeY = height > 160u ? 160u : (height > 0u ? (height - 1u) : 0u);
+    const unsigned probeYTop = height > 16u ? 16u : (height > 0u ? (height - 1u) : 0u);
+    const unsigned probeYMid = height > 160u ? 160u : probeYTop;
     static uint32_t s_g4DispLogCount = 0u;
     static uint32_t s_g4DispLastFrame = 0xFFFFFFFFu;
     static uint8_t s_g4LastDispR2 = 0xFFu;
@@ -4817,6 +4818,12 @@ static void msx_vdp_render_bitmap4_range(MsxVdpState* state, unsigned yStart, un
     static uint8_t s_g4LastDispR26 = 0xFFu;
     static uint8_t s_g4LastDispR27 = 0xFFu;
     static uint8_t s_g4DispBudget = 0u;
+    static uint8_t s_g4DispLoggedMask = 0u;
+
+    if (s_g4DispLastFrame != state->frameCounter) {
+        s_g4DispLastFrame = state->frameCounter;
+        s_g4DispLoggedMask = 0u;
+    }
 
     if (state->regs[2] != s_g4LastDispR2 ||
         state->regs[23] != s_g4LastDispR23 ||
@@ -4828,7 +4835,7 @@ static void msx_vdp_render_bitmap4_range(MsxVdpState* state, unsigned yStart, un
         s_g4LastDispR25 = state->regs[25];
         s_g4LastDispR26 = state->regs[26];
         s_g4LastDispR27 = state->regs[27];
-        s_g4DispBudget = 1u;
+        s_g4DispBudget = 2u;
     }
 #endif
 
@@ -4853,12 +4860,22 @@ static void msx_vdp_render_bitmap4_range(MsxVdpState* state, unsigned yStart, un
         }
 
 #if MSX_VDP_G4_DISP_LOG_ENABLED
-        if (y == probeY &&
+        uint8_t probeBit = 0u;
+        const char* probeTag = nullptr;
+        if (y == probeYTop) {
+            probeBit = 0x01u;
+            probeTag = "top";
+        } else if (y == probeYMid) {
+            probeBit = 0x02u;
+            probeTag = "mid";
+        }
+
+        if (probeBit != 0u &&
             s_g4DispBudget != 0u &&
-            s_g4DispLastFrame != state->frameCounter) {
+            (s_g4DispLoggedMask & probeBit) == 0u) {
             ++s_g4DispLogCount;
-            s_g4DispLastFrame = state->frameCounter;
-            s_g4DispBudget = 0u;
+            s_g4DispLoggedMask |= probeBit;
+            --s_g4DispBudget;
 
             const MsxVdpRegTimelineEvent* const r2Timeline = s_msxVdpR2Timeline;
             const uint8_t r2TimelineCount = s_msxVdpR2TimelineCount;
@@ -4890,9 +4907,10 @@ static void msx_vdp_render_bitmap4_range(MsxVdpState* state, unsigned yStart, un
                                                                                 0x8000u);
             const uint16_t commandY = static_cast<uint16_t>((static_cast<uint16_t>(pageIndex) << 8) |
                                                             static_cast<uint16_t>(scrolledY & 0xFFu));
-            MSX_RUNTIME_LOG("[MSX][G4-DISP] #%lu frame=%lu line=%u now=%lu r2=%02X r23=%02X r25=%02X r26=%02X r27=%02X r9=%02X legacy=%02X/%02X cyc=%lu/%lu live=%02X/%02X/%02X/%02X/%02X hs=%u hs512=%u sy=%u cy=%u page=%u base=%05lX cur=%05lX b0=%02X%02X%02X%02X b8=%02X%02X%02X%02X b12=%02X%02X%02X%02X altp=%u alt=%05lX %02X%02X%02X%02X fx0=%05lX/%u fx128=%05lX/%u\n",
+            MSX_RUNTIME_LOG("[MSX][G4-DISP] #%lu frame=%lu probe=%s line=%u now=%lu r2=%02X r23=%02X r25=%02X r26=%02X r27=%02X r9=%02X legacy=%02X/%02X cyc=%lu/%lu live=%02X/%02X/%02X/%02X/%02X hs=%u hs512=%u sy=%u cy=%u page=%u base=%05lX cur=%05lX b0=%02X%02X%02X%02X b8=%02X%02X%02X%02X b12=%02X%02X%02X%02X altp=%u alt=%05lX %02X%02X%02X%02X fx0=%05lX/%u fx128=%05lX/%u\n",
                         static_cast<unsigned long>(s_g4DispLogCount),
                         static_cast<unsigned long>(state->frameCounter),
+                        probeTag,
                         static_cast<unsigned>(y),
                         static_cast<unsigned long>(state->currentFrameCpuCycles),
                         static_cast<unsigned>(lineReg2),
