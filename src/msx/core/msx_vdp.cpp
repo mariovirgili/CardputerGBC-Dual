@@ -238,6 +238,12 @@ static uint8_t s_msxVdpR23TimelineCount = 0u;
 static uint8_t s_msxVdpR25TimelineCount = 0u;
 static uint8_t s_msxVdpR26TimelineCount = 0u;
 static uint8_t s_msxVdpR27TimelineCount = 0u;
+
+inline uint32_t msx_vdp_visible_scanline_start(unsigned visibleHeight)
+{
+    const uint32_t vblankLine = visibleHeight > kMsxFrameHeightMsx1 ? 230u : 220u;
+    return vblankLine > visibleHeight ? (vblankLine - visibleHeight) : 0u;
+}
 static MsxVdpRenderAuxState s_vdpRenderAuxSnapshot = {};
 static uint8_t s_msx2LineBuffer[kMsxWideFrameWidth];
 static uint32_t s_msxSpriteActiveLines = 0;
@@ -317,13 +323,44 @@ static inline uint32_t msx_vdp_cycle_for_line(const MsxVdpState* state, unsigned
         return 0u;
     }
 
-    // The VDP timing model advances CPU time across the full 262-line frame,
-    // even when we only render the visible subset. Mapping line events onto the
-    // visible height shifts R#2/R#23 changes and command progress too late and
-    // can make page-based scrolling jump to the wrong bitmap page.
-    static constexpr uint32_t kFrameScanlines = 262u;
     const unsigned clampedY = (y < visibleHeight) ? y : (visibleHeight - 1u);
-    return (clampedY * state->frameCycleBudget) / kFrameScanlines;
+    const uint32_t scanline = msx_vdp_visible_scanline_start(visibleHeight) + clampedY;
+    return (scanline * state->frameCycleBudget) / kMsxVdpFrameScanlines;
+}
+
+static inline uint32_t msx_vdp_cycle_for_display_sample(const MsxVdpState* state, unsigned y)
+{
+    if (!state || state->frameCycleBudget == 0u) {
+        return 0u;
+    }
+
+    const unsigned visibleHeight = state->activeHeight ? state->activeHeight : kMsxFrameHeightMsx2;
+    if (visibleHeight == 0u) {
+        return 0u;
+    }
+
+    const unsigned clampedY = (y < visibleHeight) ? y : (visibleHeight - 1u);
+    const uint32_t lineStartCycle = msx_vdp_cycle_for_line(state, clampedY);
+    const uint32_t lineCycles =
+        state->frameCycleBudget == kMsxVdpFrameCycles60Hz
+            ? kMsxVdpLineCycles60Hz
+            : ((state->frameCycleBudget + kMsxVdpFrameScanlines - 1u) / kMsxVdpFrameScanlines);
+    const uint32_t hblankSampleOffset =
+        state->frameCycleBudget == kMsxVdpFrameCycles60Hz
+            ? (kMsxVdpHblankStart60Hz != 0u ? (kMsxVdpHblankStart60Hz - 1u) : 0u)
+            : (((lineCycles * 5u) / 6u) != 0u ? (((lineCycles * 5u) / 6u) - 1u) : 0u);
+    uint32_t sampleCycle = lineStartCycle + hblankSampleOffset;
+
+    if ((clampedY + 1u) < visibleHeight) {
+        const uint32_t nextLineCycle = msx_vdp_cycle_for_line(state, clampedY + 1u);
+        if (nextLineCycle > 0u && sampleCycle >= nextLineCycle) {
+            sampleCycle = nextLineCycle - 1u;
+        }
+    } else if (sampleCycle >= state->frameCycleBudget) {
+        sampleCycle = state->frameCycleBudget - 1u;
+    }
+
+    return sampleCycle;
 }
 
 #if MSX_VDP_G4_DISP_LOG_ENABLED
@@ -459,8 +496,36 @@ static inline uint8_t msx_vdp_timeline_value_for_line(const MsxVdpState* state,
         return 0u;
     }
 
-    const uint32_t targetCycle = msx_vdp_cycle_for_line(state, y);
+    uint32_t targetCycle = msx_vdp_cycle_for_line(state, y);
+    if ((y + 1u) < state->activeHeight) {
+        const uint32_t nextLineCycle = msx_vdp_cycle_for_line(state, y + 1u);
+        if (nextLineCycle > targetCycle) {
+            targetCycle = nextLineCycle - 1u;
+        }
+    } else if (state->frameCycleBudget != 0u) {
+        targetCycle = state->frameCycleBudget - 1u;
+    }
 
+    uint8_t value = timeline[0].value;
+    for (uint8_t i = 1u; i < count; ++i) {
+        if (timeline[i].cycle > targetCycle) {
+            break;
+        }
+        value = timeline[i].value;
+    }
+    return value;
+}
+
+static inline uint8_t msx_vdp_timeline_value_for_display_line(const MsxVdpState* state,
+                                                       const MsxVdpRegTimelineEvent* timeline,
+                                                       uint8_t count,
+                                                       unsigned y)
+{
+    if (!state || !timeline || count == 0u || state->activeHeight == 0u) {
+        return 0u;
+    }
+
+    const uint32_t targetCycle = msx_vdp_cycle_for_display_sample(state, y);
     uint8_t value = timeline[0].value;
     for (uint8_t i = 1u; i < count; ++i) {
         if (timeline[i].cycle > targetCycle) {
@@ -502,10 +567,10 @@ static inline uint8_t msx_vdp_reg8_for_line(const MsxVdpState* state, unsigned y
         return state ? state->regs[8] : 0u;
     }
     const MsxVdpRenderAuxState* aux = msx_vdp_render_aux(state);
-    return msx_vdp_timeline_value_for_line(state,
-                                           aux ? aux->r8Timeline : s_msxVdpR8Timeline,
-                                           aux ? aux->r8TimelineCount : s_msxVdpR8TimelineCount,
-                                           y);
+    return msx_vdp_timeline_value_for_display_line(state,
+                                                   aux ? aux->r8Timeline : s_msxVdpR8Timeline,
+                                                   aux ? aux->r8TimelineCount : s_msxVdpR8TimelineCount,
+                                                   y);
 }
 
 static inline uint8_t msx_vdp_reg5_for_line(const MsxVdpState* state, unsigned y)
@@ -514,10 +579,10 @@ static inline uint8_t msx_vdp_reg5_for_line(const MsxVdpState* state, unsigned y
         return state ? state->regs[5] : 0u;
     }
     const MsxVdpRenderAuxState* aux = msx_vdp_render_aux(state);
-    return msx_vdp_timeline_value_for_line(state,
-                                           aux ? aux->r5Timeline : s_msxVdpR5Timeline,
-                                           aux ? aux->r5TimelineCount : s_msxVdpR5TimelineCount,
-                                           y);
+    return msx_vdp_timeline_value_for_display_line(state,
+                                                   aux ? aux->r5Timeline : s_msxVdpR5Timeline,
+                                                   aux ? aux->r5TimelineCount : s_msxVdpR5TimelineCount,
+                                                   y);
 }
 
 static inline uint8_t msx_vdp_reg6_for_line(const MsxVdpState* state, unsigned y)
@@ -526,10 +591,10 @@ static inline uint8_t msx_vdp_reg6_for_line(const MsxVdpState* state, unsigned y
         return state ? state->regs[6] : 0u;
     }
     const MsxVdpRenderAuxState* aux = msx_vdp_render_aux(state);
-    return msx_vdp_timeline_value_for_line(state,
-                                           aux ? aux->r6Timeline : s_msxVdpR6Timeline,
-                                           aux ? aux->r6TimelineCount : s_msxVdpR6TimelineCount,
-                                           y);
+    return msx_vdp_timeline_value_for_display_line(state,
+                                                   aux ? aux->r6Timeline : s_msxVdpR6Timeline,
+                                                   aux ? aux->r6TimelineCount : s_msxVdpR6TimelineCount,
+                                                   y);
 }
 
 static inline uint8_t msx_vdp_reg11_for_line(const MsxVdpState* state, unsigned y)
@@ -538,10 +603,10 @@ static inline uint8_t msx_vdp_reg11_for_line(const MsxVdpState* state, unsigned 
         return state ? state->regs[11] : 0u;
     }
     const MsxVdpRenderAuxState* aux = msx_vdp_render_aux(state);
-    return msx_vdp_timeline_value_for_line(state,
-                                           aux ? aux->r11Timeline : s_msxVdpR11Timeline,
-                                           aux ? aux->r11TimelineCount : s_msxVdpR11TimelineCount,
-                                           y);
+    return msx_vdp_timeline_value_for_display_line(state,
+                                                   aux ? aux->r11Timeline : s_msxVdpR11Timeline,
+                                                   aux ? aux->r11TimelineCount : s_msxVdpR11TimelineCount,
+                                                   y);
 }
 
 static inline uint8_t msx_vdp_reg2_for_line(const MsxVdpState* state, unsigned y)
@@ -550,10 +615,10 @@ static inline uint8_t msx_vdp_reg2_for_line(const MsxVdpState* state, unsigned y
         return state ? state->regs[2] : 0u;
     }
     const MsxVdpRenderAuxState* aux = msx_vdp_render_aux(state);
-    return msx_vdp_timeline_value_for_line(state,
-                                           aux ? aux->r2Timeline : s_msxVdpR2Timeline,
-                                           aux ? aux->r2TimelineCount : s_msxVdpR2TimelineCount,
-                                           y);
+    return msx_vdp_timeline_value_for_display_line(state,
+                                                   aux ? aux->r2Timeline : s_msxVdpR2Timeline,
+                                                   aux ? aux->r2TimelineCount : s_msxVdpR2TimelineCount,
+                                                   y);
 }
 
 static inline uint8_t msx_vdp_reg23_for_line(const MsxVdpState* state, unsigned y)
@@ -562,10 +627,10 @@ static inline uint8_t msx_vdp_reg23_for_line(const MsxVdpState* state, unsigned 
         return state ? state->regs[23] : 0u;
     }
     const MsxVdpRenderAuxState* aux = msx_vdp_render_aux(state);
-    return msx_vdp_timeline_value_for_line(state,
-                                           aux ? aux->r23Timeline : s_msxVdpR23Timeline,
-                                           aux ? aux->r23TimelineCount : s_msxVdpR23TimelineCount,
-                                           y);
+    return msx_vdp_timeline_value_for_display_line(state,
+                                                   aux ? aux->r23Timeline : s_msxVdpR23Timeline,
+                                                   aux ? aux->r23TimelineCount : s_msxVdpR23TimelineCount,
+                                                   y);
 }
 
 static inline uint8_t msx_vdp_reg25_for_line(const MsxVdpState* state, unsigned y)
@@ -574,10 +639,10 @@ static inline uint8_t msx_vdp_reg25_for_line(const MsxVdpState* state, unsigned 
         return state ? state->regs[25] : 0u;
     }
     const MsxVdpRenderAuxState* aux = msx_vdp_render_aux(state);
-    return msx_vdp_timeline_value_for_line(state,
-                                           aux ? aux->r25Timeline : s_msxVdpR25Timeline,
-                                           aux ? aux->r25TimelineCount : s_msxVdpR25TimelineCount,
-                                           y);
+    return msx_vdp_timeline_value_for_display_line(state,
+                                                   aux ? aux->r25Timeline : s_msxVdpR25Timeline,
+                                                   aux ? aux->r25TimelineCount : s_msxVdpR25TimelineCount,
+                                                   y);
 }
 
 static inline uint8_t msx_vdp_reg26_for_line(const MsxVdpState* state, unsigned y)
@@ -586,10 +651,10 @@ static inline uint8_t msx_vdp_reg26_for_line(const MsxVdpState* state, unsigned 
         return state ? state->regs[26] : 0u;
     }
     const MsxVdpRenderAuxState* aux = msx_vdp_render_aux(state);
-    return msx_vdp_timeline_value_for_line(state,
-                                           aux ? aux->r26Timeline : s_msxVdpR26Timeline,
-                                           aux ? aux->r26TimelineCount : s_msxVdpR26TimelineCount,
-                                           y);
+    return msx_vdp_timeline_value_for_display_line(state,
+                                                   aux ? aux->r26Timeline : s_msxVdpR26Timeline,
+                                                   aux ? aux->r26TimelineCount : s_msxVdpR26TimelineCount,
+                                                   y);
 }
 
 static inline uint8_t msx_vdp_reg27_for_line(const MsxVdpState* state, unsigned y)
@@ -598,10 +663,22 @@ static inline uint8_t msx_vdp_reg27_for_line(const MsxVdpState* state, unsigned 
         return state ? state->regs[27] : 0u;
     }
     const MsxVdpRenderAuxState* aux = msx_vdp_render_aux(state);
-    return msx_vdp_timeline_value_for_line(state,
-                                           aux ? aux->r27Timeline : s_msxVdpR27Timeline,
-                                           aux ? aux->r27TimelineCount : s_msxVdpR27TimelineCount,
-                                           y);
+    return msx_vdp_timeline_value_for_display_line(state,
+                                                   aux ? aux->r27Timeline : s_msxVdpR27Timeline,
+                                                   aux ? aux->r27TimelineCount : s_msxVdpR27TimelineCount,
+                                                   y);
+}
+
+static inline uint8_t msx_vdp_reg23_frame_start(const MsxVdpState* state)
+{
+    if (!state || !msx_vdp_is_msx2(state)) {
+        return state ? state->regs[23] : 0u;
+    }
+
+    const MsxVdpRenderAuxState* aux = msx_vdp_render_aux(state);
+    const MsxVdpRegTimelineEvent* const timeline = aux ? aux->r23Timeline : s_msxVdpR23Timeline;
+    const uint8_t count = aux ? aux->r23TimelineCount : s_msxVdpR23TimelineCount;
+    return count != 0u ? timeline[0].value : state->regs[23];
 }
 
 static uint32_t msx_vdp_color_sprite_attr_base_for_regs(uint8_t r5, uint8_t r11, uint32_t vramMask)
@@ -731,18 +808,26 @@ static void msx_vdp_render_task(void* arg) {
     while (s_vdpTaskRunning) {
         if (xSemaphoreTake(s_vdpRenderSem, portMAX_DELAY) == pdTRUE) {
             if (!s_vdpTaskRunning) break;
-            int64_t t0 = esp_timer_get_time();
+            const bool trackDualcoreStats = msx_logs_enabled();
+            const int64_t t0 = trackDualcoreStats ? esp_timer_get_time() : 0;
             const bool rendered = msx_vdp_render_internal(&s_vdpStateSnapshot);
-            int64_t t1 = esp_timer_get_time();
-            s_vdpStatRenderUs += static_cast<uint32_t>(t1 - t0);
-            s_vdpStatFrames++;
-            if (s_vdpStatFrames >= 60) {
+            if (trackDualcoreStats) {
+                const int64_t t1 = esp_timer_get_time();
+                s_vdpStatRenderUs += static_cast<uint32_t>(t1 - t0);
+                s_vdpStatFrames++;
+            }
+            if (trackDualcoreStats && s_vdpStatFrames >= 60) {
 #if MSX_VDP_DUALCORE_STATS_LOG_ENABLED
                 MSX_RUNTIME_LOG("[MSX][VDP-CORE0] 60fps | RenderAvg: %u us | CopyAvg: %u us | Drops: %u\n",
                             static_cast<unsigned>(s_vdpStatRenderUs / 60u),
                             static_cast<unsigned>(s_vdpStatCopyUs / 60u),
                             static_cast<unsigned>(s_vdpStatDrops));
 #endif
+                s_vdpStatFrames = 0;
+                s_vdpStatRenderUs = 0;
+                s_vdpStatCopyUs = 0;
+                s_vdpStatDrops = 0;
+            } else if (!trackDualcoreStats) {
                 s_vdpStatFrames = 0;
                 s_vdpStatRenderUs = 0;
                 s_vdpStatCopyUs = 0;
@@ -1364,11 +1449,12 @@ inline void msx_vdp_refresh_timing_flags(MsxVdpState* state)
     if (scanline < lineIrqActiveEnd) {
         // Il contatore delle linee per gli interrupt viene inizializzato con R#23 
         // solo all'inizio del frame (linea 0). I cambi mid-frame di R#23 non lo influenzano!
-        const uint8_t vscroll = msx_vdp_reg23_for_line(state, 0);
+        const uint8_t vscroll = msx_vdp_reg23_frame_start(state);
+        const uint32_t activeLine = (scanline > 0u) ? (scanline - 1u) : 0u;
         const uint8_t lineDelta =
-            static_cast<uint8_t>(((scanline + static_cast<uint32_t>(vscroll)) - state->regs[19]) & 0xFFu);
+            static_cast<uint8_t>(((activeLine + static_cast<uint32_t>(vscroll)) - state->regs[19]) & 0xFFu);
         const uint8_t scanlineTag = static_cast<uint8_t>(scanline & 0xFFu);
-        
+
         const bool inIrqWindow = (lineDelta >= 2u && lineDelta <= 10u);
         if (inIrqWindow &&
             ((state->lineInterruptFrameTag != state->frameCounter) ||
@@ -4864,7 +4950,7 @@ static void msx_vdp_render_bitmap4_range(MsxVdpState* state, unsigned yStart, un
             const uint8_t r2TimelineCount = s_msxVdpR2TimelineCount;
             const MsxVdpRegTimelineEvent* const r23Timeline = s_msxVdpR23Timeline;
             const uint8_t r23TimelineCount = s_msxVdpR23TimelineCount;
-            const uint32_t probeCycle262 = msx_vdp_cycle_for_line(state, y);
+            const uint32_t probeCycle262 = msx_vdp_cycle_for_display_sample(state, y);
             const uint32_t probeCycleVis = msx_vdp_cycle_for_line_visible_legacy(state, y);
             const uint8_t probeReg2Legacy =
                 msx_vdp_timeline_value_for_cycle(r2Timeline, r2TimelineCount, probeCycleVis);

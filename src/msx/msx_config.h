@@ -31,7 +31,7 @@ enum class MsxPerformanceMode : uint8_t {
 enum class MsxPerformancePreset : uint8_t {
     Normal = 0,
     Fast = 1,
-    Aleste = 2,
+    Manbow = 2,
     Custom = 3,
 };
 

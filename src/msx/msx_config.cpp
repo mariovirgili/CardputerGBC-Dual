@@ -36,12 +36,12 @@ constexpr uint8_t kMsxFastPerformancePresetFlags =
     static_cast<uint8_t>(MsxPerformanceFlag::SimplifySpriteOverflow) |
     static_cast<uint8_t>(MsxPerformanceFlag::InstantVdpCommands) |
     static_cast<uint8_t>(MsxPerformanceFlag::ExternalFixed30Fps);
-constexpr uint8_t kMsxAlestePerformancePresetFlags =
+constexpr uint8_t kMsxManbowPerformancePresetFlags =
     kMsxLegacyFastPerformancePresetFlags |
     static_cast<uint8_t>(MsxPerformanceFlag::ExternalFixed30Fps);
 constexpr MsxPerformanceMode kMsxDefaultPerformanceMode = MsxPerformanceMode::Performance;
-constexpr MsxPerformancePreset kMsxDefaultPerformancePreset = MsxPerformancePreset::Aleste;
-constexpr uint8_t kMsxDefaultPerformanceFlags = kMsxAlestePerformancePresetFlags;
+constexpr MsxPerformancePreset kMsxDefaultPerformancePreset = MsxPerformancePreset::Fast;
+constexpr uint8_t kMsxDefaultPerformanceFlags = kMsxFastPerformancePresetFlags;
 constexpr MsxFrameskipMode kMsxDefaultFrameskipMode = MsxFrameskipMode::Adaptive;
 constexpr bool kMsxDefaultFpsOverlayEnabled = true;
 constexpr MsxVirtualSccMode kMsxDefaultVirtualSccMode = MsxVirtualSccMode::Off;
@@ -123,8 +123,8 @@ MsxPerformancePreset msx_sanitize_performance_preset(uint8_t value)
             return MsxPerformancePreset::Normal;
         case static_cast<uint8_t>(MsxPerformancePreset::Fast):
             return MsxPerformancePreset::Fast;
-        case static_cast<uint8_t>(MsxPerformancePreset::Aleste):
-            return MsxPerformancePreset::Aleste;
+        case static_cast<uint8_t>(MsxPerformancePreset::Manbow):
+            return MsxPerformancePreset::Manbow;
         case static_cast<uint8_t>(MsxPerformancePreset::Custom):
             return MsxPerformancePreset::Custom;
         default:
@@ -139,8 +139,8 @@ uint8_t msx_performance_preset_flags(MsxPerformancePreset preset)
             return 0u;
         case MsxPerformancePreset::Fast:
             return kMsxFastPerformancePresetFlags;
-        case MsxPerformancePreset::Aleste:
-            return kMsxAlestePerformancePresetFlags;
+        case MsxPerformancePreset::Manbow:
+            return kMsxManbowPerformancePresetFlags;
         case MsxPerformancePreset::Custom:
         default:
             return s_performanceFlags;
@@ -156,11 +156,11 @@ MsxPerformancePreset msx_performance_preset_from_flags(uint8_t flags)
     if (flags == kMsxFastPerformancePresetFlags) {
         return MsxPerformancePreset::Fast;
     }
-    if (flags == kMsxAlestePerformancePresetFlags) {
-        return MsxPerformancePreset::Aleste;
+    if (flags == kMsxManbowPerformancePresetFlags) {
+        return MsxPerformancePreset::Manbow;
     }
     if (flags == kMsxLegacyFastPerformancePresetFlags) {
-        return MsxPerformancePreset::Aleste;
+        return MsxPerformancePreset::Manbow;
     }
     return MsxPerformancePreset::Custom;
 }
@@ -542,8 +542,8 @@ const char* msx_config_performance_preset_label(MsxPerformancePreset preset)
             return "NORMAL";
         case MsxPerformancePreset::Fast:
             return "FAST";
-        case MsxPerformancePreset::Aleste:
-            return "ALESTE";
+        case MsxPerformancePreset::Manbow:
+            return "MANBOW";
         case MsxPerformancePreset::Custom:
         default:
             return "CUSTOM";
@@ -580,8 +580,8 @@ uint8_t msx_config_load_performance_flags(void)
                                   : msx_performance_preset_from_flags(s_performanceFlags);
     } else if (hasLegacyMode &&
                msx_sanitize_performance_mode(legacyMode) == MsxPerformanceMode::Performance) {
-        s_performanceFlags = kMsxAlestePerformancePresetFlags;
-        s_performancePreset = MsxPerformancePreset::Aleste;
+        s_performanceFlags = kMsxFastPerformancePresetFlags;
+        s_performancePreset = MsxPerformancePreset::Fast;
     } else {
         s_performanceFlags = kMsxDefaultPerformanceFlags;
         s_performancePreset = kMsxDefaultPerformancePreset;
@@ -631,7 +631,7 @@ void msx_config_set_performance_flag(MsxPerformanceFlag flag, bool enabled, bool
 
 void msx_config_set_performance_mode(bool enabled, bool persist)
 {
-    msx_config_set_performance_preset(enabled ? MsxPerformancePreset::Aleste
+    msx_config_set_performance_preset(enabled ? MsxPerformancePreset::Fast
                                               : MsxPerformancePreset::Normal,
                                       persist);
 }
