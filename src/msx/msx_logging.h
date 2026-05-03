@@ -24,6 +24,7 @@ enum class MsxLogCategory : uint32_t {
     VdpHighVram = 1u << 17,
     VdpTrace = 1u << 18,
     VdpBootDiag = 1u << 19,
+    PsgPeak = 1u << 20,
 };
 
 bool msx_logs_enabled(void);

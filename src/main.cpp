@@ -1007,6 +1007,7 @@ static void showStartupMsxDebugMenu(CardputerView& display, CardputerInput& inpu
       MsxLogCategory::Scc,
       MsxLogCategory::SccNotice,
       MsxLogCategory::SccAudio,
+      MsxLogCategory::PsgPeak,
   };
   static constexpr MsxLogCategory kProfileCategories[] = {
       MsxLogCategory::Profile,

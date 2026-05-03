@@ -91,7 +91,8 @@ static const char* msx_display_runtime_debug_category_label(uint8_t group, uint8
                 case 0u: return "SCC";
                 case 1u: return "NOTICE";
                 case 2u: return "AUDIO";
-                case 3u: return "BACK";
+                case 3u: return "PEAK";
+                case 4u: return "BACK";
                 default: return "";
             }
         case 3u:
@@ -122,7 +123,7 @@ static int msx_display_runtime_debug_category_count(uint8_t group)
 {
     switch (group) {
         case 1u: return 13;
-        case 2u: return 3;
+        case 2u: return 4;
         case 3u: return 2;
         case 4u: return 1;
         case 5u: return 1;
@@ -153,7 +154,8 @@ static MsxLogCategory msx_display_runtime_debug_category(uint8_t group, uint8_t 
             switch (index) {
                 case 0u: return MsxLogCategory::Scc;
                 case 1u: return MsxLogCategory::SccNotice;
-                default: return MsxLogCategory::SccAudio;
+                case 2u: return MsxLogCategory::SccAudio;
+                default: return MsxLogCategory::PsgPeak;
             }
         case 3u:
             return index == 0u ? MsxLogCategory::CoreTrace : MsxLogCategory::Bootstrap;

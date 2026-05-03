@@ -245,12 +245,14 @@ static constexpr MsxLogCategory kMsxDebugSoundCategories[] = {
     MsxLogCategory::Scc,
     MsxLogCategory::SccNotice,
     MsxLogCategory::SccAudio,
+    MsxLogCategory::PsgPeak,
 };
 
 static constexpr const char* kMsxDebugSoundLabels[] = {
     "SCC",
     "NOTICE",
     "AUDIO",
+    "PEAK",
 };
 
 static constexpr MsxLogCategory kMsxDebugCoreCategories[] = {

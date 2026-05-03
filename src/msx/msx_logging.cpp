@@ -144,6 +144,7 @@ const char* msx_log_category_label(MsxLogCategory category)
         case MsxLogCategory::VdpHighVram: return "VDP HIGH VRAM";
         case MsxLogCategory::VdpTrace: return "VDP TRACE";
         case MsxLogCategory::VdpBootDiag: return "VDP BOOT";
+        case MsxLogCategory::PsgPeak: return "PEAK";
         default: return "LOG";
     }
 }

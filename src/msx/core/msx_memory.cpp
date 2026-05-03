@@ -1956,6 +1956,28 @@ void IRAM_ATTR msx_memory_out(MsxMemoryState* state, uint8_t port, uint8_t value
                 const uint8_t reg = static_cast<uint8_t>(state->psg->selectedReg & 0x0Fu);
                 const uint8_t previous = state->psg->regs[reg];
                 msx_psg_write_data(state->psg, value);
+                if (msx_log_category_enabled(MsxLogCategory::PsgPeak) &&
+                    reg >= 7u &&
+                    reg <= 10u &&
+                    previous != value) {
+                    const uint16_t pc = state->cpu ? state->cpu->pc : 0xFFFFu;
+                    const uint16_t lastPc = state->cpu ? state->cpu->lastPc : 0xFFFFu;
+                    const uint32_t cycles = state->cpu ? state->cpu->totalCycles : 0u;
+                    MSX_CATEGORY_LOG(MsxLogCategory::PsgPeak,
+                                     "[MSX][PSG-WR] r%u %02X->%02X pc=%04X last=%04X cyc=%lu gen=%lu acc=%lu R7=%02X R8=%02X R9=%02X R10=%02X\n",
+                                     static_cast<unsigned>(reg),
+                                     static_cast<unsigned>(previous),
+                                     static_cast<unsigned>(value),
+                                     static_cast<unsigned>(pc),
+                                     static_cast<unsigned>(lastPc),
+                                     static_cast<unsigned long>(cycles),
+                                     static_cast<unsigned long>(state->psg->generatedSamples),
+                                     static_cast<unsigned long>(state->psg->sampleAccumulator),
+                                     static_cast<unsigned>(state->psg->regs[7]),
+                                     static_cast<unsigned>(state->psg->regs[8]),
+                                     static_cast<unsigned>(state->psg->regs[9]),
+                                     static_cast<unsigned>(state->psg->regs[10]));
+                }
 #if MSX_MEMORY_TRACE_ENABLED
                 static uint16_t s_psgWriteLogCount = 0u;
                 if (s_psgWriteLogCount < 128u &&

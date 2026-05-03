@@ -1399,6 +1399,16 @@ size_t msx_core_drain_audio(MsxCoreState* state, int16_t* dst, size_t capacity)
     }
 
     const size_t sampleCount = msx_psg_read_samples(&state->psg, dst, capacity);
+    uint16_t psgPeak = 0u;
+    if (sampleCount != 0u && msx_log_category_enabled(MsxLogCategory::PsgPeak)) {
+        for (size_t i = 0; i < sampleCount; ++i) {
+            const int32_t sample = static_cast<int32_t>(dst[i]);
+            const uint32_t magnitude = sample < 0 ? static_cast<uint32_t>(-sample) : static_cast<uint32_t>(sample);
+            if (magnitude > psgPeak) {
+                psgPeak = static_cast<uint16_t>(magnitude > 32768u ? 32768u : magnitude);
+            }
+        }
+    }
     if (sampleCount != 0u && state->scc.ready) {
         int16_t sccBuffer[512];
         size_t samplesLeft = sampleCount;
@@ -1421,6 +1431,43 @@ size_t msx_core_drain_audio(MsxCoreState* state, int16_t* dst, size_t capacity)
             }
             offset += chunk;
             samplesLeft -= chunk;
+        }
+    }
+    if (msx_log_category_enabled(MsxLogCategory::PsgPeak)) {
+        static uint32_t s_lastPsgPeakLogFrame = 0u;
+        static uint16_t s_lastPsgPeak = 0xFFFFu;
+        static uint8_t s_lastPsgR7 = 0xFFu;
+        static uint8_t s_lastPsgR8 = 0xFFu;
+        static uint8_t s_lastPsgR9 = 0xFFu;
+        static uint8_t s_lastPsgR10 = 0xFFu;
+
+        const uint8_t r7 = state->psg.regs[7];
+        const uint8_t r8 = state->psg.regs[8];
+        const uint8_t r9 = state->psg.regs[9];
+        const uint8_t r10 = state->psg.regs[10];
+        const bool changed =
+            psgPeak != s_lastPsgPeak ||
+            r7 != s_lastPsgR7 ||
+            r8 != s_lastPsgR8 ||
+            r9 != s_lastPsgR9 ||
+            r10 != s_lastPsgR10;
+        const bool periodic = (state->frameCounter - s_lastPsgPeakLogFrame) >= 30u;
+        if (changed || periodic) {
+            MSX_CATEGORY_LOG(MsxLogCategory::PsgPeak,
+                             "[MSX][PSG-PEAK] frame=%u n=%u peak=%u R7=%02X R8=%02X R9=%02X R10=%02X\n",
+                             static_cast<unsigned>(state->frameCounter),
+                             static_cast<unsigned>(sampleCount),
+                             static_cast<unsigned>(psgPeak),
+                             static_cast<unsigned>(r7),
+                             static_cast<unsigned>(r8),
+                             static_cast<unsigned>(r9),
+                             static_cast<unsigned>(r10));
+            s_lastPsgPeakLogFrame = state->frameCounter;
+            s_lastPsgPeak = psgPeak;
+            s_lastPsgR7 = r7;
+            s_lastPsgR8 = r8;
+            s_lastPsgR9 = r9;
+            s_lastPsgR10 = r10;
         }
     }
     state->lastAudioSamples = static_cast<uint16_t>(sampleCount);
