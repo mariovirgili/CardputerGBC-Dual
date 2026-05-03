@@ -21,7 +21,7 @@ namespace {
 
 #if MSX_AUDIO_ENABLED
 constexpr int kChannel = 0;
-constexpr size_t kMaxFrameSamples = 512;
+constexpr size_t kMaxFrameSamples = 1024;
 constexpr int kOutputGain = 1;
 constexpr size_t kNumPlayBuffers = 4;
 constexpr size_t kPrimeSamples = 128;
@@ -391,8 +391,8 @@ bool msx_sound_prestart_speaker(uint32_t sampleRate, uint8_t channels)
     auto cfg = M5Cardputer.Speaker.config();
     cfg.sample_rate = sampleRate;
     cfg.stereo = false;
-    cfg.dma_buf_len = 128;
-    cfg.dma_buf_count = 4;
+    cfg.dma_buf_len = 256;
+    cfg.dma_buf_count = 6;
     cfg.task_priority = 4;
     cfg.task_pinned_core = 0;
     M5Cardputer.Speaker.config(cfg);
@@ -453,8 +453,8 @@ bool msx_sound_init(uint32_t sampleRate, uint8_t channels)
     auto cfg = M5Cardputer.Speaker.config();
     cfg.sample_rate = sampleRate;
     cfg.stereo = false;
-    cfg.dma_buf_len = 128;
-    cfg.dma_buf_count = 4;
+    cfg.dma_buf_len = 256;
+    cfg.dma_buf_count = 6;
     cfg.task_priority = 4;
     cfg.task_pinned_core = 0;
     M5Cardputer.Speaker.config(cfg);

@@ -914,7 +914,7 @@ bool msx_core_init(MsxCoreState* state,
 
     const size_t requestedRamSize =
         (state->machineMode == MsxMachineMode::MSX1) ? kMsxCartRamSizeMsx1
-                                                     : msx_core_select_msx2_ram_size(state->bios.mainRom, 0u);
+                                                     : msx_core_select_msx2_ram_size(state->bios.mainRom, kMsxCoreInitReserve);
     std::printf("[MSX] core init: memory begin\n");
     std::printf("[MSX] core init: ram budget free=%u largest=%u requested=%u\n",
                 static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL)),
@@ -1401,16 +1401,26 @@ size_t msx_core_drain_audio(MsxCoreState* state, int16_t* dst, size_t capacity)
     const size_t sampleCount = msx_psg_read_samples(&state->psg, dst, capacity);
     if (sampleCount != 0u && state->scc.ready) {
         int16_t sccBuffer[512];
-        const size_t sccCapacity = sampleCount < 512u ? sampleCount : 512u;
-        const size_t sccCount = msx_scc_read_samples(&state->scc, sccBuffer, sccCapacity);
-        for (size_t i = 0; i < sccCount; ++i) {
-            int32_t mixed = static_cast<int32_t>(dst[i]) + static_cast<int32_t>(sccBuffer[i]);
-            if (mixed > 32767) {
-                mixed = 32767;
-            } else if (mixed < -32768) {
-                mixed = -32768;
+        size_t samplesLeft = sampleCount;
+        size_t offset = 0;
+        
+        while (samplesLeft > 0) {
+            const size_t chunk = samplesLeft < 512u ? samplesLeft : 512u;
+            const size_t sccCount = msx_scc_read_samples(&state->scc, sccBuffer, chunk);
+            for (size_t i = 0; i < sccCount; ++i) {
+                int32_t mixed = static_cast<int32_t>(dst[offset + i]) + static_cast<int32_t>(sccBuffer[i]);
+                if (mixed > 32767) {
+                    mixed = 32767;
+                } else if (mixed < -32768) {
+                    mixed = -32768;
+                }
+                dst[offset + i] = static_cast<int16_t>(mixed);
             }
-            dst[i] = static_cast<int16_t>(mixed);
+            if (sccCount < chunk) {
+                break;
+            }
+            offset += chunk;
+            samplesLeft -= chunk;
         }
     }
     state->lastAudioSamples = static_cast<uint16_t>(sampleCount);

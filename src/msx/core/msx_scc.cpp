@@ -265,8 +265,7 @@ int16_t IRAM_ATTR msx_scc_render_sample(MsxSccState* state)
         mix += waveSample * static_cast<int32_t>(volume);
     }
 
-    // Raddoppiamo il mix di base per allineare l'SCC all'ampiezza a 16-bit (max 32767)
-    mix = (mix * 2 * static_cast<int32_t>(s_sccOutputGainPercent)) / 100;
+    mix = (mix * static_cast<int32_t>(s_sccOutputGainPercent)) / 100;
     const int32_t dcFiltered = mix - state->dcFilterX + ((state->dcFilterY * 8110) >> 13);
     state->dcFilterX = mix;
     state->dcFilterY = dcFiltered;

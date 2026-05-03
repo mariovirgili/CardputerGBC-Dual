@@ -9,7 +9,7 @@ namespace {
 
 constexpr uint32_t kMsxCpuClockHz = 3579545u;
 constexpr uint32_t kMsxPsgClockHz = 1789772u;
-constexpr size_t kMsxPsgRingSamplesDefault = 4096u;
+constexpr size_t kMsxPsgRingSamplesDefault = 1024u;
 static int16_t* s_psgRing = nullptr;
 static size_t s_psgRingSamples = 0u;
 static uint16_t s_psgRingMask = static_cast<uint16_t>(kMsxPsgRingSamplesDefault - 1u);
@@ -42,7 +42,7 @@ bool msx_psg_ensure_ring()
         return true;
     }
 
-    static constexpr size_t kRingCandidates[] = {4096u, 2048u, 1024u};
+    static constexpr size_t kRingCandidates[] = {1024u, 512u};
     for (size_t i = 0; i < (sizeof(kRingCandidates) / sizeof(kRingCandidates[0])); ++i) {
         const size_t samples = kRingCandidates[i];
         const size_t bytes = samples * sizeof(int16_t);
@@ -356,11 +356,12 @@ int16_t IRAM_ATTR msx_psg_render_sample(MsxPsgState* state)
     }
 
     // Applica un filtro DSP Passa-Alto (DC Blocker) per eliminare i crepitii statici
-    // Formula: y[n] = x[n] - x[n-1] + R * y[n-1] (con R =~ 0.99)
-    int32_t dcFiltered = mix - s_dcFilterX + ((s_dcFilterY * 8110) >> 13);
+    // Formula: y[n] = x[n] - x[n-1] + R * y[n-1] (con R =~ 0.999)
+    int32_t dcFiltered = mix - s_dcFilterX + ((s_dcFilterY * 8184) >> 13);
     s_dcFilterX = mix;
     s_dcFilterY = dcFiltered;
-    mix = dcFiltered;
+    // Raddoppiamo il mix per renderlo udibile e bilanciato sul piccolo speaker
+    mix = dcFiltered * 2;
 
     if (mix > 32767) {
         mix = 32767;
