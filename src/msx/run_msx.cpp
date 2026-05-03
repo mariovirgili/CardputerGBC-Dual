@@ -479,6 +479,7 @@ void msx_runtime_log_summary(const MsxCoreState* core,
 constexpr uint32_t kMsxSkeletonSampleRate = 22050;
 constexpr uint8_t kMsxSkeletonChannels = 1;
 constexpr double kMsxSkeletonFps = 60.0;
+constexpr uint32_t kMsxBootSkipWindowFrames = 180u;
 constexpr const char* kMsxBiosDirPrimary = "/sd/bios/msx/";
 constexpr const char* kMsxBiosSdDirPrimary = "bios/msx/";
 constexpr const char* kMsxBiosSdDirFallback = "msx/";
@@ -2198,6 +2199,7 @@ void run_msx(const uint8_t* romData, size_t romLen, const char* romName, SdServi
     MsxRuntimeTimingWindow timingWindow = {};
     MsxFpsOverlayWindow fpsOverlay = {};
     MsxRuntimeNotice statusNotice = {};
+    bool bootSkipAttempted = false;
     msx_runtime_reset_fps_overlay(&fpsOverlay, lastLogMs);
     msx_video_set_fps_overlay_value(0u);
     bool quitRequested = false;
@@ -2212,6 +2214,15 @@ void run_msx(const uint8_t* romData, size_t romLen, const char* romName, SdServi
         if (input.quitRequested) {
             quitRequested = true;
             break;
+        }
+        if (!bootSkipAttempted &&
+            (core.frameCounter <= kMsxBootSkipWindowFrames) &&
+            (input.start || input.fire1) &&
+            msx_core_try_skip_boot_animation(&core)) {
+            bootSkipAttempted = true;
+            msx_runtime_set_notice(&statusNotice, "BOOT SKIPPED", millis(), 1200u);
+            nextFrameUs = esp_timer_get_time();
+            continue;
         }
         if (input.toggleLogsRequested) {
             msx_sound_set_paused(true);

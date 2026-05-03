@@ -999,6 +999,11 @@ static void msx_runtime_toggle_debug_item(int delta)
     msx_log_category_set_enabled(category, !enabled, true);
 }
 
+static void msx_runtime_toggle_debug_master_log(void)
+{
+    msx_logs_set_enabled(!msx_logs_enabled());
+}
+
 static void msx_runtime_toggle_performance_item(MsxPerformanceMenuItem item)
 {
     const bool msx2OnlyItem =
@@ -1114,6 +1119,11 @@ static void msx_runtime_menu_adjust(int delta)
 
     if (msx_get_menu_item(s_runtimeMenu.selectedIndex) == MsxRuntimeMenuItem::Region) {
         msx_config_cycle_region_mode(delta >= 0 ? 1 : -1, true);
+        return;
+    }
+
+    if (msx_get_menu_item(s_runtimeMenu.selectedIndex) == MsxRuntimeMenuItem::DebugLogs) {
+        msx_runtime_toggle_debug_master_log();
         return;
     }
 

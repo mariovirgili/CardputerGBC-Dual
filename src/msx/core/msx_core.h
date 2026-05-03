@@ -99,6 +99,7 @@ void msx_core_attach_disk_rom(MsxCoreState* state,
                               size_t diskRomSize);
 
 void msx_core_handle_input(MsxCoreState* state, const MsxInputState* input);
+bool msx_core_try_skip_boot_animation(MsxCoreState* state);
 void msx_core_set_virtual_scc_mode(MsxCoreState* state, MsxVirtualSccMode mode);
 void msx_core_set_scc_hardware_detect(MsxCoreState* state, bool enabled);
 void msx_core_set_region_profile(MsxCoreState* state, MsxRegionProfile profile);

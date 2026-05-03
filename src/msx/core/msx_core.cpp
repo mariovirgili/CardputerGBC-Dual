@@ -653,6 +653,36 @@ void msx_core_apply_boot_mapping(MsxCoreState* state,
                  static_cast<unsigned>(secondarySlotReg));
 }
 
+bool msx_core_try_skip_boot_animation_internal(MsxCoreState* state)
+{
+    if (!state || !state->initialized) {
+        return false;
+    }
+    if (state->directBoot) {
+        return false;
+    }
+    if (!state->memory.cart.directBootCandidate || state->memory.cart.initAddress == 0u) {
+        return false;
+    }
+
+    state->bootPc = state->memory.cart.initAddress;
+    state->directBoot = true;
+    msx_core_apply_boot_mapping(state,
+                                kMsxBootSlotCart,
+                                msx_core_default_secondary_slot_reg(state->machineMode, true));
+    msx_cpu_init(&state->cpu);
+    msx_cpu_reset(&state->cpu, state->bootPc, kMsxDefaultStack);
+    state->vdp.dirty = true;
+    state->frameCounter = 0u;
+    state->lastStatusFrame = 0u;
+    msx_core_set_status(state, "CART direct %04X", state->bootPc);
+    msx_core_capture_status_state(state);
+
+    std::printf("[MSX] boot skip: direct cart start pc=%04X\n",
+                static_cast<unsigned>(state->bootPc));
+    return true;
+}
+
 void msx_core_finish_no_cart_init(MsxCoreState* state)
 {
     msx_core_attach_runtime_devices(state);
@@ -775,6 +805,11 @@ void msx_core_init_audio(MsxCoreState* state, uint32_t audioSampleRate)
 }
 
 } // namespace
+
+bool msx_core_try_skip_boot_animation(MsxCoreState* state)
+{
+    return msx_core_try_skip_boot_animation_internal(state);
+}
 
 bool msx_core_init(MsxCoreState* state,
                    const MsxRomImage* rom,
