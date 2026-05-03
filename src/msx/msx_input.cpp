@@ -9,6 +9,7 @@
 #include "../share/emu_controls.h"
 #include "../share/input.h"
 #include "msx_config.h"
+#include "msx_logging.h"
 #include "core/msx_keyboard.h"
 #include "../cardputer/CardputerView.h"
 #include "../cardputer/ConfirmationSelector.h"
@@ -69,6 +70,7 @@ struct MsxRuntimeOptions {
 enum class MsxRuntimeMenuItem : uint8_t {
     Performance = 0,
     Sound,
+    DebugLogs,
     Joystick,
     Keyboard,
     BasicKeyboard,
@@ -89,6 +91,12 @@ enum class MsxRuntimeMenuPage : uint8_t {
     Performance,
     Sound,
     Cas,
+    DebugRoot,
+    DebugVdp,
+    DebugSound,
+    DebugCore,
+    DebugCart,
+    DebugProfile,
 };
 
 enum class MsxPerformanceMenuItem : uint8_t {
@@ -129,6 +137,12 @@ struct MsxRuntimeMenuState {
     uint8_t performanceSelectedIndex;
     uint8_t soundSelectedIndex;
     uint8_t casSelectedIndex;
+    uint8_t debugRootSelectedIndex;
+    uint8_t debugVdpSelectedIndex;
+    uint8_t debugSoundSelectedIndex;
+    uint8_t debugCoreSelectedIndex;
+    uint8_t debugCartSelectedIndex;
+    uint8_t debugProfileSelectedIndex;
     bool prevHeld;
     bool nextHeld;
     bool acceptHeld;
@@ -142,6 +156,12 @@ static MsxRuntimeOptions s_runtimeOptions = {false, true, false, false, 0, false
 static MsxRuntimeMenuState s_runtimeMenu = {
     false,
     MsxRuntimeMenuPage::Main,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
     0,
     0,
     0,
@@ -172,6 +192,100 @@ static uint32_t s_virtualKeyPickerNextRepeatMs = 0;
 static char s_virtualKeyChar = 0;
 static uint8_t s_virtualKeyFrames = 0;
 static MsxMachineMode s_runtimeMachineMode = MsxMachineMode::MSX2;
+
+enum class MsxDebugMenuGroup : uint8_t {
+    Root = 0,
+    Vdp,
+    Sound,
+    Core,
+    Cart,
+    Profile,
+};
+
+struct MsxDebugMenuGroupDef {
+    const char* label;
+    const MsxLogCategory* categories;
+    const char* const* categoryLabels;
+    uint8_t count;
+};
+
+static constexpr MsxLogCategory kMsxDebugVdpCategories[] = {
+    MsxLogCategory::VdpCmd,
+    MsxLogCategory::VdpFin,
+    MsxLogCategory::VdpXfer,
+    MsxLogCategory::VdpMode,
+    MsxLogCategory::VdpG4Disp,
+    MsxLogCategory::VdpInit,
+    MsxLogCategory::VdpDualcore,
+    MsxLogCategory::VdpSprite,
+    MsxLogCategory::VdpCmdSeq,
+    MsxLogCategory::VdpG4Addr,
+    MsxLogCategory::VdpHighVram,
+    MsxLogCategory::VdpTrace,
+    MsxLogCategory::VdpBootDiag,
+};
+
+static constexpr const char* kMsxDebugVdpLabels[] = {
+    "CMD",
+    "FIN",
+    "XFER",
+    "MODE",
+    "G4 DISP",
+    "INIT",
+    "DUALCORE",
+    "SPRITE",
+    "CMDSEQ",
+    "G4 ADDR",
+    "HIGH VRAM",
+    "TRACE",
+    "BOOT",
+};
+
+static constexpr MsxLogCategory kMsxDebugSoundCategories[] = {
+    MsxLogCategory::Scc,
+    MsxLogCategory::SccNotice,
+    MsxLogCategory::SccAudio,
+};
+
+static constexpr const char* kMsxDebugSoundLabels[] = {
+    "SCC",
+    "NOTICE",
+    "AUDIO",
+};
+
+static constexpr MsxLogCategory kMsxDebugCoreCategories[] = {
+    MsxLogCategory::CoreTrace,
+    MsxLogCategory::Bootstrap,
+};
+
+static constexpr const char* kMsxDebugCoreLabels[] = {
+    "CORE TRACE",
+    "BOOTSTRAP",
+};
+
+static constexpr MsxLogCategory kMsxDebugCartCategories[] = {
+    MsxLogCategory::Cart,
+};
+
+static constexpr const char* kMsxDebugCartLabels[] = {
+    "CART",
+};
+
+static constexpr MsxLogCategory kMsxDebugProfileCategories[] = {
+    MsxLogCategory::Profile,
+};
+
+static constexpr const char* kMsxDebugProfileLabels[] = {
+    "PROFILE",
+};
+
+static constexpr MsxDebugMenuGroupDef kMsxDebugMenuGroups[] = {
+    {"VDP", kMsxDebugVdpCategories, kMsxDebugVdpLabels, static_cast<uint8_t>(sizeof(kMsxDebugVdpCategories) / sizeof(kMsxDebugVdpCategories[0]))},
+    {"SOUND", kMsxDebugSoundCategories, kMsxDebugSoundLabels, static_cast<uint8_t>(sizeof(kMsxDebugSoundCategories) / sizeof(kMsxDebugSoundCategories[0]))},
+    {"CORE", kMsxDebugCoreCategories, kMsxDebugCoreLabels, static_cast<uint8_t>(sizeof(kMsxDebugCoreCategories) / sizeof(kMsxDebugCoreCategories[0]))},
+    {"CART", kMsxDebugCartCategories, kMsxDebugCartLabels, static_cast<uint8_t>(sizeof(kMsxDebugCartCategories) / sizeof(kMsxDebugCartCategories[0]))},
+    {"PROFILE", kMsxDebugProfileCategories, kMsxDebugProfileLabels, static_cast<uint8_t>(sizeof(kMsxDebugProfileCategories) / sizeof(kMsxDebugProfileCategories[0]))},
+};
 
 static constexpr const char* kMsxInputConfigNs = "msx_input";
 static constexpr const char* kMsxInputJoystickKey = "joy";
@@ -261,9 +375,55 @@ static bool msx_runtime_menu_in_cas_page(void)
     return s_runtimeMenu.page == MsxRuntimeMenuPage::Cas;
 }
 
+static bool msx_runtime_menu_in_debug_root_page(void)
+{
+    return s_runtimeMenu.page == MsxRuntimeMenuPage::DebugRoot;
+}
+
+static bool msx_runtime_menu_in_debug_group_page(void)
+{
+    return s_runtimeMenu.page == MsxRuntimeMenuPage::DebugVdp ||
+           s_runtimeMenu.page == MsxRuntimeMenuPage::DebugSound ||
+           s_runtimeMenu.page == MsxRuntimeMenuPage::DebugCore ||
+           s_runtimeMenu.page == MsxRuntimeMenuPage::DebugCart ||
+           s_runtimeMenu.page == MsxRuntimeMenuPage::DebugProfile;
+}
+
+static MsxDebugMenuGroup msx_runtime_menu_current_debug_group(void)
+{
+    switch (s_runtimeMenu.page) {
+        case MsxRuntimeMenuPage::DebugVdp: return MsxDebugMenuGroup::Vdp;
+        case MsxRuntimeMenuPage::DebugSound: return MsxDebugMenuGroup::Sound;
+        case MsxRuntimeMenuPage::DebugCore: return MsxDebugMenuGroup::Core;
+        case MsxRuntimeMenuPage::DebugCart: return MsxDebugMenuGroup::Cart;
+        case MsxRuntimeMenuPage::DebugProfile: return MsxDebugMenuGroup::Profile;
+        case MsxRuntimeMenuPage::DebugRoot:
+        case MsxRuntimeMenuPage::Main:
+        case MsxRuntimeMenuPage::Performance:
+        case MsxRuntimeMenuPage::Sound:
+        case MsxRuntimeMenuPage::Cas:
+        default:
+            return MsxDebugMenuGroup::Root;
+    }
+}
+
+static const MsxDebugMenuGroupDef* msx_runtime_menu_group_def(MsxDebugMenuGroup group)
+{
+    switch (group) {
+        case MsxDebugMenuGroup::Vdp: return &kMsxDebugMenuGroups[0];
+        case MsxDebugMenuGroup::Sound: return &kMsxDebugMenuGroups[1];
+        case MsxDebugMenuGroup::Core: return &kMsxDebugMenuGroups[2];
+        case MsxDebugMenuGroup::Cart: return &kMsxDebugMenuGroups[3];
+        case MsxDebugMenuGroup::Profile: return &kMsxDebugMenuGroups[4];
+        case MsxDebugMenuGroup::Root:
+        default:
+            return nullptr;
+    }
+}
+
 static uint8_t msx_get_main_menu_item_count(void)
 {
-    uint8_t count = 12u;
+    uint8_t count = 13u;
     if (s_runtimeOptions.changeDskAvailable) {
         ++count;
     }
@@ -288,6 +448,18 @@ static uint8_t msx_get_sound_menu_item_count(void)
     return static_cast<uint8_t>(MsxSoundMenuItem::Count);
 }
 
+static uint8_t msx_get_debug_root_menu_item_count(void)
+{
+    return static_cast<uint8_t>((sizeof(kMsxDebugMenuGroups) / sizeof(kMsxDebugMenuGroups[0])) + 1u);
+}
+
+static uint8_t msx_get_debug_group_menu_item_count(void)
+{
+    const MsxDebugMenuGroup group = msx_runtime_menu_current_debug_group();
+    const MsxDebugMenuGroupDef* def = msx_runtime_menu_group_def(group);
+    return def ? static_cast<uint8_t>(def->count + 1u) : 1u;
+}
+
 static uint8_t msx_get_menu_item_count(void)
 {
     if (msx_runtime_menu_in_performance_page()) {
@@ -299,6 +471,12 @@ static uint8_t msx_get_menu_item_count(void)
     if (msx_runtime_menu_in_cas_page()) {
         return msx_get_cas_menu_item_count();
     }
+    if (msx_runtime_menu_in_debug_root_page()) {
+        return msx_get_debug_root_menu_item_count();
+    }
+    if (msx_runtime_menu_in_debug_group_page()) {
+        return msx_get_debug_group_menu_item_count();
+    }
     return msx_get_main_menu_item_count();
 }
 
@@ -307,19 +485,20 @@ static MsxRuntimeMenuItem msx_get_menu_item(uint8_t index)
     switch (index) {
         case 0: return MsxRuntimeMenuItem::Performance;
         case 1: return MsxRuntimeMenuItem::Sound;
-        case 2: return MsxRuntimeMenuItem::Joystick;
-        case 3: return MsxRuntimeMenuItem::Keyboard;
-        case 4: return MsxRuntimeMenuItem::BasicKeyboard;
-        case 5: return MsxRuntimeMenuItem::Vaus;
-        case 6: return MsxRuntimeMenuItem::View;
-        case 7: return MsxRuntimeMenuItem::Region;
-        case 8: return MsxRuntimeMenuItem::StateSlot;
-        case 9: return MsxRuntimeMenuItem::SaveState;
-        case 10: return MsxRuntimeMenuItem::LoadState;
+        case 2: return MsxRuntimeMenuItem::DebugLogs;
+        case 3: return MsxRuntimeMenuItem::Joystick;
+        case 4: return MsxRuntimeMenuItem::Keyboard;
+        case 5: return MsxRuntimeMenuItem::BasicKeyboard;
+        case 6: return MsxRuntimeMenuItem::Vaus;
+        case 7: return MsxRuntimeMenuItem::View;
+        case 8: return MsxRuntimeMenuItem::Region;
+        case 9: return MsxRuntimeMenuItem::StateSlot;
+        case 10: return MsxRuntimeMenuItem::SaveState;
+        case 11: return MsxRuntimeMenuItem::LoadState;
         default: break;
     }
 
-    uint8_t dynamicIndex = 11u;
+    uint8_t dynamicIndex = 12u;
     if (s_runtimeOptions.changeDskAvailable) {
         if (index == dynamicIndex) {
             return MsxRuntimeMenuItem::ChangeDsk;
@@ -676,6 +855,52 @@ static void msx_runtime_menu_open_cas_page(void)
             : 0u;
 }
 
+static void msx_runtime_menu_open_debug_root_page(void)
+{
+    s_runtimeMenu.page = MsxRuntimeMenuPage::DebugRoot;
+    s_runtimeMenu.selectedIndex = s_runtimeMenu.debugRootSelectedIndex;
+    s_runtimeMenu.scroll =
+        s_runtimeMenu.selectedIndex >= kRuntimeMenuVisibleRows
+            ? static_cast<uint8_t>(s_runtimeMenu.selectedIndex - (kRuntimeMenuVisibleRows - 1u))
+            : 0u;
+}
+
+static uint8_t* msx_runtime_menu_debug_selected_index_ptr(MsxDebugMenuGroup group)
+{
+    switch (group) {
+        case MsxDebugMenuGroup::Vdp: return &s_runtimeMenu.debugVdpSelectedIndex;
+        case MsxDebugMenuGroup::Sound: return &s_runtimeMenu.debugSoundSelectedIndex;
+        case MsxDebugMenuGroup::Core: return &s_runtimeMenu.debugCoreSelectedIndex;
+        case MsxDebugMenuGroup::Cart: return &s_runtimeMenu.debugCartSelectedIndex;
+        case MsxDebugMenuGroup::Profile: return &s_runtimeMenu.debugProfileSelectedIndex;
+        case MsxDebugMenuGroup::Root:
+        default:
+            return &s_runtimeMenu.debugRootSelectedIndex;
+    }
+}
+
+static void msx_runtime_menu_open_debug_group_page(MsxDebugMenuGroup group)
+{
+    switch (group) {
+        case MsxDebugMenuGroup::Vdp: s_runtimeMenu.page = MsxRuntimeMenuPage::DebugVdp; break;
+        case MsxDebugMenuGroup::Sound: s_runtimeMenu.page = MsxRuntimeMenuPage::DebugSound; break;
+        case MsxDebugMenuGroup::Core: s_runtimeMenu.page = MsxRuntimeMenuPage::DebugCore; break;
+        case MsxDebugMenuGroup::Cart: s_runtimeMenu.page = MsxRuntimeMenuPage::DebugCart; break;
+        case MsxDebugMenuGroup::Profile: s_runtimeMenu.page = MsxRuntimeMenuPage::DebugProfile; break;
+        case MsxDebugMenuGroup::Root:
+        default:
+            s_runtimeMenu.page = MsxRuntimeMenuPage::DebugRoot;
+            break;
+    }
+
+    uint8_t* selected = msx_runtime_menu_debug_selected_index_ptr(group);
+    s_runtimeMenu.selectedIndex = selected ? *selected : 0u;
+    s_runtimeMenu.scroll =
+        s_runtimeMenu.selectedIndex >= kRuntimeMenuVisibleRows
+            ? static_cast<uint8_t>(s_runtimeMenu.selectedIndex - (kRuntimeMenuVisibleRows - 1u))
+            : 0u;
+}
+
 static void msx_runtime_menu_reset_to_first_main_item(void)
 {
     s_runtimeMenu.page = MsxRuntimeMenuPage::Main;
@@ -727,6 +952,24 @@ static void msx_runtime_menu_move(int delta)
             s_runtimeMenu.scroll =
                 static_cast<uint8_t>(selected - (kRuntimeMenuVisibleRows - 1u));
         }
+    } else if (msx_runtime_menu_in_debug_root_page()) {
+        s_runtimeMenu.debugRootSelectedIndex = s_runtimeMenu.selectedIndex;
+        if (selected < s_runtimeMenu.scroll) {
+            s_runtimeMenu.scroll = static_cast<uint8_t>(selected);
+        } else if (selected >= s_runtimeMenu.scroll + kRuntimeMenuVisibleRows) {
+            s_runtimeMenu.scroll =
+                static_cast<uint8_t>(selected - (kRuntimeMenuVisibleRows - 1u));
+        }
+    } else if (msx_runtime_menu_in_debug_group_page()) {
+        if (uint8_t* selectedIndex = msx_runtime_menu_debug_selected_index_ptr(msx_runtime_menu_current_debug_group())) {
+            *selectedIndex = s_runtimeMenu.selectedIndex;
+        }
+        if (selected < s_runtimeMenu.scroll) {
+            s_runtimeMenu.scroll = static_cast<uint8_t>(selected);
+        } else if (selected >= s_runtimeMenu.scroll + kRuntimeMenuVisibleRows) {
+            s_runtimeMenu.scroll =
+                static_cast<uint8_t>(selected - (kRuntimeMenuVisibleRows - 1u));
+        }
     } else {
         s_runtimeMenu.mainSelectedIndex = s_runtimeMenu.selectedIndex;
         if (selected < s_runtimeMenu.scroll) {
@@ -736,6 +979,24 @@ static void msx_runtime_menu_move(int delta)
                 static_cast<uint8_t>(selected - (kRuntimeMenuVisibleRows - 1u));
         }
     }
+}
+
+static void msx_runtime_toggle_debug_item(int delta)
+{
+    if (!msx_runtime_menu_in_debug_group_page()) {
+        return;
+    }
+
+    const MsxDebugMenuGroup group = msx_runtime_menu_current_debug_group();
+    const MsxDebugMenuGroupDef* def = msx_runtime_menu_group_def(group);
+    if (!def || s_runtimeMenu.selectedIndex >= def->count) {
+        return;
+    }
+
+    const MsxLogCategory category = def->categories[s_runtimeMenu.selectedIndex];
+    const bool enabled = msx_log_category_selected(category);
+    (void)delta;
+    msx_log_category_set_enabled(category, !enabled, true);
 }
 
 static void msx_runtime_toggle_performance_item(MsxPerformanceMenuItem item)
@@ -841,6 +1102,10 @@ static void msx_runtime_menu_adjust(int delta)
         msx_runtime_toggle_sound_item(msx_get_sound_menu_item(s_runtimeMenu.selectedIndex), delta);
         return;
     }
+    if (msx_runtime_menu_in_debug_group_page()) {
+        msx_runtime_toggle_debug_item(delta);
+        return;
+    }
 
     if (msx_get_menu_item(s_runtimeMenu.selectedIndex) == MsxRuntimeMenuItem::Performance) {
         msx_config_cycle_performance_preset(delta, true);
@@ -903,6 +1168,32 @@ static void msx_clamp_runtime_menu_selection(void)
         return;
     }
 
+    if (msx_runtime_menu_in_debug_root_page()) {
+        s_runtimeMenu.debugRootSelectedIndex = s_runtimeMenu.selectedIndex;
+        if (s_runtimeMenu.scroll > s_runtimeMenu.selectedIndex) {
+            s_runtimeMenu.scroll = s_runtimeMenu.selectedIndex;
+        }
+        if (s_runtimeMenu.selectedIndex >= s_runtimeMenu.scroll + kRuntimeMenuVisibleRows) {
+            s_runtimeMenu.scroll =
+                static_cast<uint8_t>(s_runtimeMenu.selectedIndex - (kRuntimeMenuVisibleRows - 1u));
+        }
+        return;
+    }
+
+    if (msx_runtime_menu_in_debug_group_page()) {
+        if (uint8_t* selectedIndex = msx_runtime_menu_debug_selected_index_ptr(msx_runtime_menu_current_debug_group())) {
+            *selectedIndex = s_runtimeMenu.selectedIndex;
+        }
+        if (s_runtimeMenu.scroll > s_runtimeMenu.selectedIndex) {
+            s_runtimeMenu.scroll = s_runtimeMenu.selectedIndex;
+        }
+        if (s_runtimeMenu.selectedIndex >= s_runtimeMenu.scroll + kRuntimeMenuVisibleRows) {
+            s_runtimeMenu.scroll =
+                static_cast<uint8_t>(s_runtimeMenu.selectedIndex - (kRuntimeMenuVisibleRows - 1u));
+        }
+        return;
+    }
+
     s_runtimeMenu.mainSelectedIndex = s_runtimeMenu.selectedIndex;
     if (s_runtimeMenu.scroll > s_runtimeMenu.selectedIndex) {
         s_runtimeMenu.scroll = s_runtimeMenu.selectedIndex;
@@ -924,7 +1215,13 @@ static void msx_runtime_log_options(void)
                 msx_config_get_performance_mode_label(),
                 msx_runtime_menu_in_performance_page()
                     ? "perf"
-                    : (msx_runtime_menu_in_cas_page() ? "cas" : "main"),
+                    : (msx_runtime_menu_in_sound_page()
+                           ? "sound"
+                           : (msx_runtime_menu_in_cas_page()
+                                  ? "cas"
+                                  : (msx_runtime_menu_in_debug_root_page()
+                                         ? "debug-root"
+                                         : (msx_runtime_menu_in_debug_group_page() ? "debug-group" : "main")))),
                 s_runtimeOptions.changeCasAvailable ? "on" : "off",
                 msx_runtime_view_label(),
                 s_runtimeMenu.visible ? "open" : "closed");
@@ -988,7 +1285,36 @@ static void msx_runtime_menu_accept(void)
         return;
     }
 
+    if (msx_runtime_menu_in_debug_root_page()) {
+        const uint8_t groupCount = static_cast<uint8_t>(sizeof(kMsxDebugMenuGroups) / sizeof(kMsxDebugMenuGroups[0]));
+        if (s_runtimeMenu.selectedIndex >= groupCount) {
+            msx_runtime_menu_open_main_page();
+            msx_clamp_runtime_menu_selection();
+        } else {
+            msx_runtime_menu_open_debug_group_page(static_cast<MsxDebugMenuGroup>(s_runtimeMenu.selectedIndex + 1u));
+        }
+        msx_runtime_log_options();
+        return;
+    }
+
+    if (msx_runtime_menu_in_debug_group_page()) {
+        const MsxDebugMenuGroup group = msx_runtime_menu_current_debug_group();
+        const MsxDebugMenuGroupDef* def = msx_runtime_menu_group_def(group);
+        if (!def || s_runtimeMenu.selectedIndex >= def->count) {
+            msx_runtime_menu_open_debug_root_page();
+            msx_clamp_runtime_menu_selection();
+        } else {
+            msx_runtime_toggle_debug_item(1);
+        }
+        msx_runtime_log_options();
+        return;
+    }
+
     switch (msx_get_menu_item(s_runtimeMenu.selectedIndex)) {
+        case MsxRuntimeMenuItem::DebugLogs:
+            s_runtimeMenu.mainSelectedIndex = s_runtimeMenu.selectedIndex;
+            msx_runtime_menu_open_debug_root_page();
+            break;
         case MsxRuntimeMenuItem::Joystick:
             s_runtimeOptions.joystickEnabled = !s_runtimeOptions.joystickEnabled;
             if (s_runtimeOptions.joystickEnabled) {
@@ -1949,6 +2275,12 @@ static void msx_poll_runtime_menu(const Keyboard_Class::KeysState& keys,
             msx_runtime_menu_in_cas_page()) {
             msx_runtime_menu_open_main_page();
             msx_clamp_runtime_menu_selection();
+        } else if (msx_runtime_menu_in_debug_group_page()) {
+            msx_runtime_menu_open_debug_root_page();
+            msx_clamp_runtime_menu_selection();
+        } else if (msx_runtime_menu_in_debug_root_page()) {
+            msx_runtime_menu_open_main_page();
+            msx_clamp_runtime_menu_selection();
         } else {
             s_runtimeMenu.visible = false;
             msx_runtime_menu_open_main_page();
@@ -2348,6 +2680,10 @@ void msx_input_get_overlay_state(MsxInputOverlayState* state)
     state->performanceSubmenuVisible = msx_runtime_menu_in_performance_page();
     state->soundSubmenuVisible = msx_runtime_menu_in_sound_page();
     state->casSubmenuVisible = msx_runtime_menu_in_cas_page();
+    state->debugSubmenuVisible = msx_runtime_menu_in_debug_root_page() || msx_runtime_menu_in_debug_group_page();
+    state->debugMenuGroup = static_cast<uint8_t>(msx_runtime_menu_current_debug_group());
+    state->debugLogsEnabled = msx_logs_enabled();
+    state->debugLogMask = msx_log_category_mask();
     state->machineIsMsx2 = (s_runtimeMachineMode == MsxMachineMode::MSX2);
     state->joystickEnabled = s_runtimeOptions.joystickEnabled;
     state->keyboardEnabled = s_runtimeOptions.keyboardEnabled;

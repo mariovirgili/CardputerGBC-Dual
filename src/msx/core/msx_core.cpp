@@ -18,12 +18,8 @@
 #define MSX_CORE_LOG_ENABLED 1
 #endif
 
-#ifndef MSX_CORE_TRACE_ENABLED
-#define MSX_CORE_TRACE_ENABLED 0
-#endif
-
 #ifndef MSX_BOOTSTRAP_LOG_ENABLED
-#define MSX_BOOTSTRAP_LOG_ENABLED 0
+#define MSX_BOOTSTRAP_LOG_ENABLED 1
 #endif
 
 #ifndef MSX_CORE_TIMING_ENABLED
@@ -133,7 +129,6 @@ struct MsxSccSavePayloadV1 {
     uint8_t reserved[5];
 };
 
-#if MSX_PROFILE_LOG_ENABLED
 struct MsxProfileWindow {
     uint32_t frames;
     uint32_t worstFrameUs;
@@ -196,7 +191,8 @@ void msx_core_log_profile(MsxCoreState* state,
     const uint32_t freeInternal = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
     const uint32_t largestInternal = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL);
 
-    MSX_RUNTIME_LOG("[MSX][PROFILE] %uf frame=%u us cpu=%u(%u%%) vdp=%u(%u%%) present=%u(%u%%) other=%u(%u%%) max=%u us slice=%u mode=%s machine=%s heap8=%u largest8=%u int=%u largestInt=%u audioDrops=%lu(+%u) queued=%u samples=%u videoAvg=%u videoWorst=%u videoSkip=%u videoFail=%u fs=%u%%\n",
+    MSX_CATEGORY_LOG(MsxLogCategory::Profile,
+                "[MSX][PROFILE] %uf frame=%u us cpu=%u(%u%%) vdp=%u(%u%%) present=%u(%u%%) other=%u(%u%%) max=%u us slice=%u mode=%s machine=%s heap8=%u largest8=%u int=%u largestInt=%u audioDrops=%lu(+%u) queued=%u samples=%u videoAvg=%u videoWorst=%u videoSkip=%u videoFail=%u fs=%u%%\n",
                 static_cast<unsigned>(s_msxProfileWindow.frames),
                 static_cast<unsigned>(avgFrameUs),
                 static_cast<unsigned>(avgCpuUs),
@@ -228,7 +224,6 @@ void msx_core_log_profile(MsxCoreState* state,
     s_msxProfileLastAudioDrops = audio.droppedFrames;
     s_msxProfileWindow = {};
 }
-#endif
 constexpr uint16_t kMsxAddrDrvInv = 0xFB21u;
 constexpr uint16_t kMsxAddrRamAd0 = 0xF341u;
 constexpr uint16_t kMsxAddrMaster = 0xF348u;
@@ -367,7 +362,7 @@ uint8_t msx_core_slot_for_page(uint8_t slotRegister, uint8_t pageIndex)
 
 bool msx_core_bootstrap_frame_should_log(const MsxCoreState* state)
 {
-    if (!state) {
+    if (!state || !msx_log_category_enabled(MsxLogCategory::Bootstrap)) {
         return false;
     }
     if (state->frameCounter < 20u) {
@@ -833,23 +828,25 @@ bool msx_core_init(MsxCoreState* state,
 
     std::printf("[MSX] core init: cart ok\n");
 #if MSX_BOOTSTRAP_LOG_ENABLED
-    std::printf("[MSX][BOOTDBG] cart header off=%u init=%04X entry=%04X type=%s size=%u banks=%u direct=%u "
-                "head=%02X %02X %02X %02X %02X %02X %02X %02X\n",
-                static_cast<unsigned>(state->cart.headerOffset),
-                static_cast<unsigned>(state->cart.initAddress),
-                static_cast<unsigned>(state->cart.entryPoint),
-                msx_media_cartridge_type_label(state->cart.type),
-                static_cast<unsigned>(state->cart.size),
-                static_cast<unsigned>(state->cart.bankCount8K),
-                state->cart.directBootCandidate ? 1u : 0u,
-                state->cart.rom && state->cart.size > 0u ? state->cart.rom[0] : 0xFFu,
-                state->cart.rom && state->cart.size > 1u ? state->cart.rom[1] : 0xFFu,
-                state->cart.rom && state->cart.size > 2u ? state->cart.rom[2] : 0xFFu,
-                state->cart.rom && state->cart.size > 3u ? state->cart.rom[3] : 0xFFu,
-                state->cart.rom && state->cart.size > 4u ? state->cart.rom[4] : 0xFFu,
-                state->cart.rom && state->cart.size > 5u ? state->cart.rom[5] : 0xFFu,
-                state->cart.rom && state->cart.size > 6u ? state->cart.rom[6] : 0xFFu,
-                state->cart.rom && state->cart.size > 7u ? state->cart.rom[7] : 0xFFu);
+    if (msx_log_category_enabled(MsxLogCategory::Bootstrap)) {
+        std::printf("[MSX][BOOTDBG] cart header off=%u init=%04X entry=%04X type=%s size=%u banks=%u direct=%u "
+                    "head=%02X %02X %02X %02X %02X %02X %02X %02X\n",
+                    static_cast<unsigned>(state->cart.headerOffset),
+                    static_cast<unsigned>(state->cart.initAddress),
+                    static_cast<unsigned>(state->cart.entryPoint),
+                    msx_media_cartridge_type_label(state->cart.type),
+                    static_cast<unsigned>(state->cart.size),
+                    static_cast<unsigned>(state->cart.bankCount8K),
+                    state->cart.directBootCandidate ? 1u : 0u,
+                    state->cart.rom && state->cart.size > 0u ? state->cart.rom[0] : 0xFFu,
+                    state->cart.rom && state->cart.size > 1u ? state->cart.rom[1] : 0xFFu,
+                    state->cart.rom && state->cart.size > 2u ? state->cart.rom[2] : 0xFFu,
+                    state->cart.rom && state->cart.size > 3u ? state->cart.rom[3] : 0xFFu,
+                    state->cart.rom && state->cart.size > 4u ? state->cart.rom[4] : 0xFFu,
+                    state->cart.rom && state->cart.size > 5u ? state->cart.rom[5] : 0xFFu,
+                    state->cart.rom && state->cart.size > 6u ? state->cart.rom[6] : 0xFFu,
+                    state->cart.rom && state->cart.size > 7u ? state->cart.rom[7] : 0xFFu);
+    }
 #endif
     std::printf("[MSX] core init: vdp begin\n");
     if (!msx_vdp_init(&state->vdp, state->machineMode)) {
@@ -1049,17 +1046,17 @@ void msx_core_handle_input(MsxCoreState* state, const MsxInputState* input)
             std::snprintf(rowSummary, sizeof(rowSummary), "idle");
         }
 
-#if MSX_CORE_TRACE_ENABLED
+        if (msx_log_category_enabled(MsxLogCategory::CoreTrace)) {
             MSX_RUNTIME_LOG("[MSX][INPUT] cfg=%s joy=%02X psg=%02X/%02X keys=%s rows=%s #%u\n",
-                        config,
-                        static_cast<unsigned>(joy),
-                        static_cast<unsigned>(psgPortA),
-                    static_cast<unsigned>(psgPortB),
-                    pressed,
-                    rowSummary,
-                    static_cast<unsigned>(s_inputLogCount));
-        ++s_inputLogCount;
-#endif
+                            config,
+                            static_cast<unsigned>(joy),
+                            static_cast<unsigned>(psgPortA),
+                            static_cast<unsigned>(psgPortB),
+                            pressed,
+                            rowSummary,
+                            static_cast<unsigned>(s_inputLogCount));
+            ++s_inputLogCount;
+        }
     }
 
     state->lastInputJoy = joy;
@@ -1092,8 +1089,7 @@ void msx_core_step_frame(MsxCoreState* state)
 
     V9938_BENCH_FRAME_START(state->romName);
 
-#if MSX_CORE_TIMING_ENABLED || MSX_PROFILE_LOG_ENABLED
-    const bool collectTiming = msx_logs_enabled();
+    const bool collectTiming = msx_log_category_enabled(MsxLogCategory::Profile);
     const int64_t frameStartUs = collectTiming ? esp_timer_get_time() : 0;
     uint32_t cpuRunUs = 0u;
     uint32_t vdpRenderUs = 0u;
@@ -1101,7 +1097,6 @@ void msx_core_step_frame(MsxCoreState* state)
     if (collectTiming) {
         msx_video_clear_last_present_us();
     }
-#endif
 
     const bool vdpSliceMode =
                               state->machineMode == MsxMachineMode::MSX2 &&
@@ -1127,17 +1122,13 @@ void msx_core_step_frame(MsxCoreState* state)
         const unsigned totalLines = kMsxTotalScanlines60Hz;
         const unsigned vblankLine = visibleLines > 192u ? 230u : 220u;
         uint32_t executedCycles = 0u;
-#if MSX_CORE_TIMING_ENABLED || MSX_PROFILE_LOG_ENABLED
         int64_t vdpStartUs = collectTiming ? esp_timer_get_time() : 0;
-#endif
         if (vdpSliceRenderMode) {
             msx_vdp_prepare_frame_render(&state->vdp);
         }
-#if MSX_CORE_TIMING_ENABLED || MSX_PROFILE_LOG_ENABLED
         if (collectTiming && vdpSliceRenderMode) {
             vdpRenderUs += static_cast<uint32_t>(esp_timer_get_time() - vdpStartUs);
         }
-#endif
 
         bool msx2LineStream = false;
         if (vdpSliceRenderMode && state->machineMode == MsxMachineMode::MSX2 && !state->vdp.frameBuffer) {
@@ -1153,31 +1144,23 @@ void msx_core_step_frame(MsxCoreState* state)
         for (unsigned line = 0; line < totalLines; ++line) {
             state->vdp.currentFrameCpuCycles = executedCycles;
             if (vdpSliceRenderMode && line < visibleLines) {
-#if MSX_CORE_TIMING_ENABLED || MSX_PROFILE_LOG_ENABLED
                 if (collectTiming) {
                     vdpStartUs = esp_timer_get_time();
                 }
-#endif
                 msx_vdp_render_slice(&state->vdp, line, line + 1u, line + 1u == visibleLines);
-#if MSX_CORE_TIMING_ENABLED || MSX_PROFILE_LOG_ENABLED
                 if (collectTiming) {
                     vdpRenderUs += static_cast<uint32_t>(esp_timer_get_time() - vdpStartUs);
                 }
-#endif
             }
             const uint32_t targetCycles = kMsxScanlineTargetCycles60Hz[line];
             const int sliceBudget = targetCycles > executedCycles
                                         ? static_cast<int>(targetCycles - executedCycles)
                                         : 0;
-#if MSX_CORE_TIMING_ENABLED || MSX_PROFILE_LOG_ENABLED
             const int64_t cpuStartUs = collectTiming ? esp_timer_get_time() : 0;
-#endif
             executedCycles += static_cast<uint32_t>(msx_cpu_run_cycles(&state->cpu, &state->memory, sliceBudget));
-#if MSX_CORE_TIMING_ENABLED || MSX_PROFILE_LOG_ENABLED
             if (collectTiming) {
                 cpuRunUs += static_cast<uint32_t>(esp_timer_get_time() - cpuStartUs);
             }
-#endif
             state->vdp.currentFrameCpuCycles = executedCycles;
             msx_vdp_advance_command_engine(&state->vdp, executedCycles);
             msx_vdp_refresh_timing(&state->vdp);
@@ -1212,48 +1195,36 @@ void msx_core_step_frame(MsxCoreState* state)
         }
 
         if (vdpSliceRenderMode) {
-#if MSX_CORE_TIMING_ENABLED || MSX_PROFILE_LOG_ENABLED
             if (collectTiming) {
                 vdpStartUs = esp_timer_get_time();
             }
-#endif
             msx_vdp_get_display_frame(&state->vdp, &state->displayFrame);
-#if MSX_CORE_TIMING_ENABLED || MSX_PROFILE_LOG_ENABLED
             if (collectTiming) {
                 vdpRenderUs += static_cast<uint32_t>(esp_timer_get_time() - vdpStartUs);
             }
-#endif
             if (state->displayFrame.indexed8) {
-#if MSX_CORE_TIMING_ENABLED || MSX_PROFILE_LOG_ENABLED
                 const int64_t presentStartUs = collectTiming ? esp_timer_get_time() : 0;
-#endif
                 msx_video_present_frame(&state->displayFrame);
-#if MSX_CORE_TIMING_ENABLED || MSX_PROFILE_LOG_ENABLED
                 if (collectTiming) {
                     presentUs += static_cast<uint32_t>(esp_timer_get_time() - presentStartUs);
                 }
-#endif
             }
         }
     } else {
-#if MSX_CORE_TIMING_ENABLED || MSX_PROFILE_LOG_ENABLED
         const int64_t cpuStartUs = collectTiming ? esp_timer_get_time() : 0;
-#endif
         state->lastFrameCycles = static_cast<uint32_t>(msx_cpu_run_cycles(&state->cpu, &state->memory, kMsxFrameCycles60Hz));
-#if MSX_CORE_TIMING_ENABLED || MSX_PROFILE_LOG_ENABLED
         if (collectTiming) {
             cpuRunUs += static_cast<uint32_t>(esp_timer_get_time() - cpuStartUs);
         }
-#endif
     }
 
     msx_cpu_flush_pending_psg(&state->memory);
 
     // Log the first time the CPU enters a non-running state, and every 60 frames while stuck.
     const MsxCpuRunState curRunState = state->cpu.runState;
-#if MSX_CORE_TRACE_ENABLED
     if (curRunState != MsxCpuRunState::Running) {
-        if (prevRunState != curRunState || (state->frameCounter % 60u) == 0u) {
+        if (msx_log_category_enabled(MsxLogCategory::CoreTrace) &&
+            (prevRunState != curRunState || (state->frameCounter % 60u) == 0u)) {
             MSX_RUNTIME_LOG("[MSX][CPU] state=%s pc=%04X op=%02X frame=%lu cycles=%lu\n",
                         msx_cpu_run_state_label(curRunState),
                         static_cast<unsigned>(state->cpu.pc),
@@ -1261,7 +1232,8 @@ void msx_core_step_frame(MsxCoreState* state)
                         static_cast<unsigned long>(state->frameCounter),
                         static_cast<unsigned long>(state->lastFrameCycles));
         }
-    } else if (state->frameCounter < 5u || (state->frameCounter % 60u) == 0u) {
+    } else if (msx_log_category_enabled(MsxLogCategory::CoreTrace) &&
+               (state->frameCounter < 5u || (state->frameCounter % 60u) == 0u)) {
         MSX_RUNTIME_LOG("[MSX][CPU] RUNNING pc=%04X vdp=%s irq=%d frame=%lu\n",
                     static_cast<unsigned>(state->cpu.pc),
                     msx_vdp_mode_label(state->vdp.mode),
@@ -1269,7 +1241,8 @@ void msx_core_step_frame(MsxCoreState* state)
                     static_cast<unsigned long>(state->frameCounter));
     }
 
-    if (state->frameCounter == 5u || state->frameCounter == 60u || state->frameCounter == 120u) {
+    if (msx_log_category_enabled(MsxLogCategory::CoreTrace) &&
+        (state->frameCounter == 5u || state->frameCounter == 60u || state->frameCounter == 120u)) {
         MSX_RUNTIME_LOG("[MSX][VDP] DUMP frame=%lu slot=0x%02X  R0=%02X R1=%02X R2=%02X R3=%02X R4=%02X R5=%02X R6=%02X R7=%02X\n",
                     static_cast<unsigned long>(state->frameCounter),
                     static_cast<unsigned>(state->memory.slotRegister),
@@ -1278,15 +1251,11 @@ void msx_core_step_frame(MsxCoreState* state)
                     state->vdp.regs[4], state->vdp.regs[5],
                     state->vdp.regs[6], state->vdp.regs[7]);
     }
-#endif
 
     if (!vdpSliceRenderMode) {
-#if MSX_CORE_TIMING_ENABLED || MSX_PROFILE_LOG_ENABLED
         const int64_t vdpStartUs = collectTiming ? esp_timer_get_time() : 0;
-#endif
         msx_vdp_render(&state->vdp);
         msx_vdp_get_display_frame(&state->vdp, &state->displayFrame);
-#if MSX_CORE_TIMING_ENABLED || MSX_PROFILE_LOG_ENABLED
         if (collectTiming) {
             vdpRenderUs += static_cast<uint32_t>(esp_timer_get_time() - vdpStartUs);
             const uint32_t implicitPresentUs = msx_video_get_last_present_us();
@@ -1295,9 +1264,7 @@ void msx_core_step_frame(MsxCoreState* state)
                 presentUs += implicitPresentUs;
             }
         }
-#endif
     }
-#if MSX_CORE_TIMING_ENABLED || MSX_PROFILE_LOG_ENABLED
     const uint32_t frameUs =
         collectTiming ? static_cast<uint32_t>(esp_timer_get_time() - frameStartUs) : 0u;
     const uint32_t accountedUs = cpuRunUs + vdpRenderUs + presentUs;
@@ -1307,12 +1274,9 @@ void msx_core_step_frame(MsxCoreState* state)
     state->lastFrameOtherUs =
         collectTiming ? (frameUs > accountedUs ? (frameUs - accountedUs) : 0u) : 0u;
     state->lastFrameTotalUs = collectTiming ? frameUs : 0u;
-#endif
-#if MSX_PROFILE_LOG_ENABLED
     if (collectTiming) {
         msx_core_log_profile(state, frameUs, cpuRunUs, vdpRenderUs, presentUs, vdpSliceMode);
     }
-#endif
     V9938_BENCH_FRAME_END();
     msx_core_log_bootstrap_frame(state, vdpSliceMode, state->lastFrameCycles, irqEnabled);
     state->frameCounter++;

@@ -9,16 +9,12 @@
 #include "../msx_config.h"
 #include "../msx_logging.h"
 
-#ifndef MSX_SCC_LOG_ENABLED
-#define MSX_SCC_LOG_ENABLED 0
-#endif
-
 #ifndef MSX_SCC_NOTICE_ENABLED
 #define MSX_SCC_NOTICE_ENABLED 1
 #endif
 
 #ifndef MSX_SCC_AUDIO_NOTICE_ENABLED
-#define MSX_SCC_AUDIO_NOTICE_ENABLED 0
+#define MSX_SCC_AUDIO_NOTICE_ENABLED 1
 #endif
 
 namespace {
@@ -119,32 +115,25 @@ void msx_scc_log_window_change(bool classicWindow,
                                bool sccPlusMode,
                                bool enabled)
 {
-#if MSX_SCC_LOG_ENABLED
-    MSX_RUNTIME_LOG("[MSX][SCC] windows classic=%u plus=%u mode=%s enabled=%u\n",
+    if (msx_log_category_enabled(MsxLogCategory::Scc)) {
+        MSX_CATEGORY_LOG(MsxLogCategory::Scc,
+                "[MSX][SCC] windows classic=%u plus=%u mode=%s enabled=%u\n",
                 classicWindow ? 1u : 0u,
                 plusWindow ? 1u : 0u,
                 sccPlusMode ? "SCC-I" : "SCC",
                 enabled ? 1u : 0u);
-#else
-    (void)classicWindow;
-    (void)plusWindow;
-    (void)sccPlusMode;
-    (void)enabled;
-#endif
+    }
 }
 
 void msx_scc_log_write(const char* kind, uint8_t reg, uint8_t value)
 {
-#if MSX_SCC_LOG_ENABLED
-    MSX_RUNTIME_LOG("[MSX][SCC] %s reg=%02X value=%02X\n",
+    if (msx_log_category_enabled(MsxLogCategory::Scc)) {
+        MSX_CATEGORY_LOG(MsxLogCategory::Scc,
+                "[MSX][SCC] %s reg=%02X value=%02X\n",
                 kind ? kind : "write",
                 static_cast<unsigned>(reg),
                 static_cast<unsigned>(value));
-#else
-    (void)kind;
-    (void)reg;
-    (void)value;
-#endif
+    }
 }
 
 uint16_t msx_scc_abs16(int16_t sample)
@@ -157,7 +146,8 @@ uint16_t msx_scc_abs16(int16_t sample)
 void msx_scc_log_audio_if_needed(MsxSccState* state, const int16_t* samples, size_t count)
 {
 #if MSX_SCC_AUDIO_NOTICE_ENABLED
-    if (!state || !state->outputEnabled || !samples || count == 0u) {
+    if (!state || !state->outputEnabled || !samples || count == 0u ||
+        !msx_log_category_enabled(MsxLogCategory::SccAudio)) {
         return;
     }
 
@@ -301,11 +291,12 @@ bool msx_scc_init(MsxSccState* state, uint32_t sampleRate)
     state->ring = s_sccRing;
     state->ready = true;
     msx_scc_reset(state);
-#if MSX_SCC_LOG_ENABLED
-    MSX_RUNTIME_LOG("[MSX][SCC] init sampleRate=%u ring=%u\n",
+    if (msx_log_category_enabled(MsxLogCategory::Scc)) {
+        MSX_CATEGORY_LOG(MsxLogCategory::Scc,
+                "[MSX][SCC] init sampleRate=%u ring=%u\n",
                 static_cast<unsigned>(sampleRate),
                 static_cast<unsigned>(msx_scc_ring_samples()));
-#endif
+    }
     return true;
 }
 
@@ -368,7 +359,7 @@ void msx_scc_set_windows(MsxSccState* state, bool classicWindow, bool plusWindow
 #if MSX_SCC_NOTICE_ENABLED
     static bool s_classicNoticeShown = false;
     static bool s_plusNoticeShown = false;
-    if (state->enabled) {
+    if (state->enabled && msx_log_category_enabled(MsxLogCategory::SccNotice)) {
         if (state->sccPlusMode) {
             if (!s_plusNoticeShown) {
                 MSX_RUNTIME_LOG("[MSX][SCC] active mode=SCC-I\n");
@@ -437,13 +428,11 @@ void msx_scc_write(MsxSccState* state, uint8_t reg, uint8_t value)
     }
 
     if (reg < 0x80u) {
-#if MSX_SCC_LOG_ENABLED
         static uint8_t s_waveLogCount = 0u;
-        if (s_waveLogCount < 8u) {
+        if (msx_log_category_enabled(MsxLogCategory::Scc) && s_waveLogCount < 8u) {
             msx_scc_log_write("wave", reg, value);
             ++s_waveLogCount;
         }
-#endif
         state->regs[reg] = value;
         return;
     }
@@ -466,24 +455,20 @@ void msx_scc_write_plus(MsxSccState* state, uint8_t reg, uint8_t value)
         if (msx_config_get_scc_hardware_detect_enabled() &&
             reg >= 0x80u &&
             (state->regs[0xAFu] & 0x20u) == 0u) {
-#if MSX_SCC_LOG_ENABLED
             static uint8_t s_plusWave5GateLogCount = 0u;
-            if (s_plusWave5GateLogCount < 8u) {
+            if (msx_log_category_enabled(MsxLogCategory::Scc) && s_plusWave5GateLogCount < 8u) {
                 std::printf("[MSX][SCC] plus-wave5 blocked reg=%02X af=%02X\n",
                             static_cast<unsigned>(reg),
                             static_cast<unsigned>(state->regs[0xAFu]));
                 ++s_plusWave5GateLogCount;
             }
-#endif
             return;
         }
-#if MSX_SCC_LOG_ENABLED
         static uint8_t s_plusWaveLogCount = 0u;
-        if (s_plusWaveLogCount < 8u) {
+        if (msx_log_category_enabled(MsxLogCategory::Scc) && s_plusWaveLogCount < 8u) {
             msx_scc_log_write("plus-wave", reg, value);
             ++s_plusWaveLogCount;
         }
-#endif
         state->regs[reg] = value;
         return;
     }
@@ -494,23 +479,19 @@ void msx_scc_write_plus(MsxSccState* state, uint8_t reg, uint8_t value)
         state->regs[reg + 0x10u] = value;
         const uint8_t subReg = static_cast<uint8_t>(reg & 0x0Fu);
         if (subReg <= 9u) {
-#if MSX_SCC_LOG_ENABLED
             static uint8_t s_freqLogCount = 0u;
-            if (s_freqLogCount < 12u) {
+            if (msx_log_category_enabled(MsxLogCategory::Scc) && s_freqLogCount < 12u) {
                 msx_scc_log_write("freq", reg, value);
                 ++s_freqLogCount;
             }
-#endif
             msx_scc_update_step(state, static_cast<uint8_t>(subReg / 2u));
         } else if (subReg <= 14u) {
-#if MSX_SCC_LOG_ENABLED
             static uint8_t s_volumeLogCount = 0u;
-            if (s_volumeLogCount < 10u) {
+            if (msx_log_category_enabled(MsxLogCategory::Scc) && s_volumeLogCount < 10u) {
                 msx_scc_log_write("volume", reg, value);
                 ++s_volumeLogCount;
             }
-#endif
-        } else if (previous != value) {
+        } else if (previous != value && msx_log_category_enabled(MsxLogCategory::Scc)) {
             msx_scc_log_write("enable", reg, value);
         }
     }
@@ -593,4 +574,43 @@ size_t msx_scc_available_samples(const MsxSccState* state)
         return 0u;
     }
     return state->ringCount;
+}
+
+void msx_scc_log_current_state(const MsxSccState* state)
+{
+    if (!state || !state->ready) {
+        return;
+    }
+
+    if (msx_log_category_enabled(MsxLogCategory::SccNotice)) {
+        MSX_CATEGORY_LOG(MsxLogCategory::SccNotice,
+                         "[MSX][SCC] state enabled=%u output=%u classic=%u plus=%u mode=%s ring=%u generated=%lu dropped=%lu\n",
+                         state->enabled ? 1u : 0u,
+                         state->outputEnabled ? 1u : 0u,
+                         state->classicWindow ? 1u : 0u,
+                         state->plusWindow ? 1u : 0u,
+                         state->sccPlusMode ? "SCC-I" : "SCC",
+                         static_cast<unsigned>(state->ringCount),
+                         static_cast<unsigned long>(state->generatedSamples),
+                         static_cast<unsigned long>(state->droppedSamples));
+    }
+
+    if (msx_log_category_enabled(MsxLogCategory::SccAudio)) {
+        MSX_CATEGORY_LOG(MsxLogCategory::SccAudio,
+                         "[MSX][SCC] audio sampleRate=%lu audible=%lu peak=%u step=%u/%u/%u/%u/%u en=%02X vol=%X/%X/%X/%X/%X\n",
+                         static_cast<unsigned long>(state->sampleRate),
+                         static_cast<unsigned long>(state->audibleSamples),
+                         static_cast<unsigned>(state->audiblePeak),
+                         static_cast<unsigned>(state->step[0]),
+                         static_cast<unsigned>(state->step[1]),
+                         static_cast<unsigned>(state->step[2]),
+                         static_cast<unsigned>(state->step[3]),
+                         static_cast<unsigned>(state->step[4]),
+                         static_cast<unsigned>(state->regs[0xAFu] & 0x1Fu),
+                         static_cast<unsigned>(state->regs[0xAAu] & 0x0Fu),
+                         static_cast<unsigned>(state->regs[0xABu] & 0x0Fu),
+                         static_cast<unsigned>(state->regs[0xACu] & 0x0Fu),
+                         static_cast<unsigned>(state->regs[0xADu] & 0x0Fu),
+                         static_cast<unsigned>(state->regs[0xAEu] & 0x0Fu));
+    }
 }

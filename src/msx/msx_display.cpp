@@ -12,6 +12,7 @@
 #include "msx_config.h"
 #include "msx_external_title_images.h"
 #include "msx_input.h"
+#include "msx_logging.h"
 #include "msx_video.h"
 
 #include <cstdio>
@@ -45,6 +46,124 @@ static constexpr int kRuntimeMenuInnerPad = 8;
 static constexpr int kRuntimeMenuRowH = 13;
 static constexpr int kRuntimeMenuSelectionRadius = 3;
 static constexpr int kRuntimeMenuShadowOffset = 4;
+
+static bool msx_display_runtime_debug_selected(const MsxInputOverlayState& overlay, MsxLogCategory category)
+{
+    const uint32_t bit = static_cast<uint32_t>(category);
+    return (overlay.debugLogMask & bit) != 0u;
+}
+
+static const char* msx_display_runtime_debug_group_label(uint8_t group)
+{
+    switch (group) {
+        case 1u: return "VDP";
+        case 2u: return "SOUND";
+        case 3u: return "CORE";
+        case 4u: return "CART";
+        case 5u: return "PROFILE";
+        default: return "DEBUG";
+    }
+}
+
+static const char* msx_display_runtime_debug_category_label(uint8_t group, uint8_t index)
+{
+    switch (group) {
+        case 1u:
+            switch (index) {
+                case 0u: return "CMD";
+                case 1u: return "FIN";
+                case 2u: return "XFER";
+                case 3u: return "MODE";
+                case 4u: return "G4 DISP";
+                case 5u: return "INIT";
+                case 6u: return "DUALCORE";
+                case 7u: return "SPRITE";
+                case 8u: return "CMDSEQ";
+                case 9u: return "G4 ADDR";
+                case 10u: return "HIGH VRAM";
+                case 11u: return "TRACE";
+                case 12u: return "BOOT";
+                case 13u: return "BACK";
+                default: return "";
+            }
+        case 2u:
+            switch (index) {
+                case 0u: return "SCC";
+                case 1u: return "NOTICE";
+                case 2u: return "AUDIO";
+                case 3u: return "BACK";
+                default: return "";
+            }
+        case 3u:
+            switch (index) {
+                case 0u: return "CORE TRACE";
+                case 1u: return "BOOTSTRAP";
+                case 2u: return "BACK";
+                default: return "";
+            }
+        case 4u:
+            switch (index) {
+                case 0u: return "CART";
+                case 1u: return "BACK";
+                default: return "";
+            }
+        case 5u:
+            switch (index) {
+                case 0u: return "PROFILE";
+                case 1u: return "BACK";
+                default: return "";
+            }
+        default:
+            return "";
+    }
+}
+
+static int msx_display_runtime_debug_category_count(uint8_t group)
+{
+    switch (group) {
+        case 1u: return 13;
+        case 2u: return 3;
+        case 3u: return 2;
+        case 4u: return 1;
+        case 5u: return 1;
+        default: return 0;
+    }
+}
+
+static MsxLogCategory msx_display_runtime_debug_category(uint8_t group, uint8_t index)
+{
+    switch (group) {
+        case 1u:
+            switch (index) {
+                case 0u: return MsxLogCategory::VdpCmd;
+                case 1u: return MsxLogCategory::VdpFin;
+                case 2u: return MsxLogCategory::VdpXfer;
+                case 3u: return MsxLogCategory::VdpMode;
+                case 4u: return MsxLogCategory::VdpG4Disp;
+                case 5u: return MsxLogCategory::VdpInit;
+                case 6u: return MsxLogCategory::VdpDualcore;
+                case 7u: return MsxLogCategory::VdpSprite;
+                case 8u: return MsxLogCategory::VdpCmdSeq;
+                case 9u: return MsxLogCategory::VdpG4Addr;
+                case 10u: return MsxLogCategory::VdpHighVram;
+                case 11u: return MsxLogCategory::VdpTrace;
+                default: return MsxLogCategory::VdpBootDiag;
+            }
+        case 2u:
+            switch (index) {
+                case 0u: return MsxLogCategory::Scc;
+                case 1u: return MsxLogCategory::SccNotice;
+                default: return MsxLogCategory::SccAudio;
+            }
+        case 3u:
+            return index == 0u ? MsxLogCategory::CoreTrace : MsxLogCategory::Bootstrap;
+        case 4u:
+            return MsxLogCategory::Cart;
+        case 5u:
+        default:
+            return MsxLogCategory::Profile;
+    }
+}
 
 static bool msx_display_game_on_external(void)
 {
@@ -227,22 +346,38 @@ static const char* msx_display_runtime_menu_label(const MsxInputOverlayState& ov
         }
     }
 
+    if (overlay.debugSubmenuVisible) {
+        if (overlay.debugMenuGroup == 0u) {
+            switch (index) {
+                case 0u: return "VDP";
+                case 1u: return "SOUND";
+                case 2u: return "CORE";
+                case 3u: return "CART";
+                case 4u: return "PROFILE";
+                case 5u: return "BACK";
+                default: return "";
+            }
+        }
+        return msx_display_runtime_debug_category_label(overlay.debugMenuGroup, index);
+    }
+
     switch (index) {
         case 0u: return "PERF TUNE";
         case 1u: return "SOUND";
-        case 2u: return "JOY EXTEND";
-        case 3u: return "KEYB/JOY";
-        case 4u: return "BASIC KBD";
-        case 5u: return "VAUS";
-        case 6u: return "VIEW";
-        case 7u: return "MSX REGION";
-        case 8u: return msx_display_game_on_external() ? "SELECT SLOT" : "STATE SLOT";
-        case 9u: return msx_display_game_on_external() ? "SAVE SLOT" : "SAVE STATE";
-        case 10u: return msx_display_game_on_external() ? "LOAD SLOT" : "LOAD STATE";
+        case 2u: return "DEBUG LOGS";
+        case 3u: return "JOY EXTEND";
+        case 4u: return "KEYB/JOY";
+        case 5u: return "BASIC KBD";
+        case 6u: return "VAUS";
+        case 7u: return "VIEW";
+        case 8u: return "MSX REGION";
+        case 9u: return msx_display_game_on_external() ? "SELECT SLOT" : "STATE SLOT";
+        case 10u: return msx_display_game_on_external() ? "SAVE SLOT" : "SAVE STATE";
+        case 11u: return msx_display_game_on_external() ? "LOAD SLOT" : "LOAD STATE";
         default: break;
     }
 
-    uint8_t dynamicIndex = 11u;
+    uint8_t dynamicIndex = 12u;
     if (overlay.dskChangeAvailable) {
         if (index == dynamicIndex) {
             return "CHANGE DSK";
@@ -312,24 +447,55 @@ static const char* msx_display_runtime_menu_value(const MsxInputOverlayState& ov
         }
     }
 
+    if (overlay.debugSubmenuVisible) {
+        static char debugValue[16];
+        if (overlay.debugMenuGroup == 0u) {
+            if (index >= 5u) {
+                return nullptr;
+            }
+            const uint8_t group = static_cast<uint8_t>(index + 1u);
+            const int count = msx_display_runtime_debug_category_count(group);
+            int enabled = 0;
+            for (int i = 0; i < count; ++i) {
+                if (msx_display_runtime_debug_selected(overlay,
+                                                      msx_display_runtime_debug_category(group, static_cast<uint8_t>(i)))) {
+                    ++enabled;
+                }
+            }
+            std::snprintf(debugValue, sizeof(debugValue), "%d/%d", enabled, count);
+            return debugValue;
+        }
+
+        const int count = msx_display_runtime_debug_category_count(overlay.debugMenuGroup);
+        if (index >= static_cast<uint8_t>(count)) {
+            return nullptr;
+        }
+        return msx_display_runtime_debug_selected(overlay,
+                                                  msx_display_runtime_debug_category(overlay.debugMenuGroup, index))
+                   ? "ON"
+                   : "OFF";
+    }
+
     switch (index) {
         case 0u:
             return msx_config_performance_preset_label(overlay.performancePreset);
         case 1u:
             return nullptr;
         case 2u:
-            return overlay.joystickEnabled ? "ON" : "OFF";
+            return overlay.debugLogsEnabled ? "ON" : "OFF";
         case 3u:
-            return overlay.keyboardEnabled ? "ON" : "OFF";
+            return overlay.joystickEnabled ? "ON" : "OFF";
         case 4u:
-            return overlay.basicKeyboardEnabled ? "ON" : "OFF";
+            return overlay.keyboardEnabled ? "ON" : "OFF";
         case 5u:
-            return overlay.vausEnabled ? "ON" : "OFF";
+            return overlay.basicKeyboardEnabled ? "ON" : "OFF";
         case 6u:
-            return msx_display_active_view_label();
+            return overlay.vausEnabled ? "ON" : "OFF";
         case 7u:
-            return msx_config_region_mode_label(overlay.regionMode);
+            return msx_display_active_view_label();
         case 8u:
+            return msx_config_region_mode_label(overlay.regionMode);
+        case 9u:
             std::snprintf(slotStr, sizeof(slotStr), "< %u >", static_cast<unsigned>(stateSlot));
             return slotStr;
         default:
@@ -351,14 +517,20 @@ static void msx_display_draw_runtime_menu_shell(const MsxInputOverlayState& over
                             ? "PERF TUNING"
                             : (overlay.soundSubmenuVisible
                                    ? "SOUND MENU"
-                                   : (overlay.casSubmenuVisible ? "CAS MENU" : "CONFIG MENU"));
+                                   : (overlay.casSubmenuVisible
+                                          ? "CAS MENU"
+                                          : (overlay.debugSubmenuVisible
+                                                 ? (overlay.debugMenuGroup == 0u ? "DEBUG LOGS" : msx_display_runtime_debug_group_label(overlay.debugMenuGroup))
+                                                 : "CONFIG MENU")));
     const char* hint1 = overlay.performanceSubmenuVisible
                             ? "GO toggle  DEL back"
                             : (overlay.soundSubmenuVisible
                                    ? "GO toggle  DEL back"
                                    : (overlay.casSubmenuVisible
-                                   ? "GO select  DEL back"
-                                      : "\\ switch view  GO toggle"));
+                                          ? "GO select  DEL back"
+                                          : (overlay.debugSubmenuVisible
+                                                 ? (overlay.debugMenuGroup == 0u ? "GO select  DEL back" : "GO toggle  DEL back")
+                                                 : "\\ switch view  GO toggle")));
     const char* hint2 = "Hold GO closes menu";
 
     if (msx_display_game_on_external()) {
@@ -556,6 +728,10 @@ static bool msx_display_runtime_menu_overlay_equals(const MsxInputOverlayState& 
            a.performanceSubmenuVisible == b.performanceSubmenuVisible &&
            a.soundSubmenuVisible == b.soundSubmenuVisible &&
            a.casSubmenuVisible == b.casSubmenuVisible &&
+           a.debugSubmenuVisible == b.debugSubmenuVisible &&
+           a.debugMenuGroup == b.debugMenuGroup &&
+           a.debugLogsEnabled == b.debugLogsEnabled &&
+           a.debugLogMask == b.debugLogMask &&
            a.machineIsMsx2 == b.machineIsMsx2 &&
            a.joystickEnabled == b.joystickEnabled &&
            a.keyboardEnabled == b.keyboardEnabled &&

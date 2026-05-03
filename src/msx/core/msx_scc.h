@@ -47,3 +47,4 @@ void msx_scc_run_cycles(MsxSccState* state, uint32_t cpuCycles);
 size_t msx_scc_read_samples(MsxSccState* state, int16_t* dst, size_t maxSamples);
 void msx_scc_discard_samples(MsxSccState* state, size_t sampleCount);
 size_t msx_scc_available_samples(const MsxSccState* state);
+void msx_scc_log_current_state(const MsxSccState* state);

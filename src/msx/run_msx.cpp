@@ -121,15 +121,177 @@ uint32_t msx_runtime_avg_us(uint64_t totalUs, uint32_t frames)
     return frames != 0u ? static_cast<uint32_t>(totalUs / frames) : 0u;
 }
 
+MsxLogCategory msx_runtime_first_enabled_vdp_category(void)
+{
+    static constexpr MsxLogCategory kVdpCategories[] = {
+        MsxLogCategory::VdpCmd,
+        MsxLogCategory::VdpFin,
+        MsxLogCategory::VdpXfer,
+        MsxLogCategory::VdpMode,
+        MsxLogCategory::VdpG4Disp,
+        MsxLogCategory::VdpInit,
+        MsxLogCategory::VdpDualcore,
+        MsxLogCategory::VdpSprite,
+        MsxLogCategory::VdpCmdSeq,
+        MsxLogCategory::VdpG4Addr,
+        MsxLogCategory::VdpHighVram,
+        MsxLogCategory::VdpTrace,
+        MsxLogCategory::VdpBootDiag,
+    };
+
+    for (MsxLogCategory category : kVdpCategories) {
+        if (msx_log_category_enabled(category)) {
+            return category;
+        }
+    }
+
+    return static_cast<MsxLogCategory>(0u);
+}
+
+MsxLogCategory msx_runtime_first_enabled_core_category(void)
+{
+    static constexpr MsxLogCategory kCoreCategories[] = {
+        MsxLogCategory::CoreTrace,
+    };
+
+    for (MsxLogCategory category : kCoreCategories) {
+        if (msx_log_category_enabled(category)) {
+            return category;
+        }
+    }
+
+    return static_cast<MsxLogCategory>(0u);
+}
+
+void msx_runtime_log_vdp_snapshot(const MsxCoreState* core)
+{
+    if (!core) {
+        return;
+    }
+
+    const MsxLogCategory category = msx_runtime_first_enabled_vdp_category();
+    if (static_cast<uint32_t>(category) == 0u) {
+        return;
+    }
+
+    MSX_CATEGORY_LOG(category,
+                     "[MSX][VDP] snapshot mode=%s disp=%u frame=%lu vdpFrame=%lu dirty=%u ready=%u R1=%02X R2=%02X R9=%02X R23=%02X R25=%02X R26=%02X R27=%02X status=%02X/%02X/%02X addr=%05lX\n",
+                     msx_vdp_mode_label(core->vdp.mode),
+                     msx_vdp_display_enabled(&core->vdp) ? 1u : 0u,
+                     static_cast<unsigned long>(core->frameCounter),
+                     static_cast<unsigned long>(core->vdp.frameCounter),
+                     core->vdp.dirty ? 1u : 0u,
+                     core->vdp.frameReady ? 1u : 0u,
+                     static_cast<unsigned>(core->vdp.regs[1]),
+                     static_cast<unsigned>(core->vdp.regs[2]),
+                     static_cast<unsigned>(core->vdp.regs[9]),
+                     static_cast<unsigned>(core->vdp.regs[23]),
+                     static_cast<unsigned>(core->vdp.regs[25]),
+                     static_cast<unsigned>(core->vdp.regs[26]),
+                     static_cast<unsigned>(core->vdp.regs[27]),
+                     static_cast<unsigned>(core->vdp.status[0]),
+                     static_cast<unsigned>(core->vdp.status[1]),
+                     static_cast<unsigned>(core->vdp.status[2]),
+                     static_cast<unsigned long>(core->vdp.address & core->vdp.vramMask));
+}
+
+void msx_runtime_log_core_snapshot(const MsxCoreState* core)
+{
+    if (!core) {
+        return;
+    }
+
+    const MsxLogCategory category = msx_runtime_first_enabled_core_category();
+    if (static_cast<uint32_t>(category) == 0u) {
+        return;
+    }
+
+    MSX_CATEGORY_LOG(category,
+                     "[MSX][CORE] snapshot machine=%s boot=%s init=%u pc=%04X bootPc=%04X frame=%lu cycles=%lu mode=%s audio=%luHz samples=%u video=%u audioHook=%u\n",
+                     msx_config_machine_mode_label(core->machineMode),
+                     core->directBoot ? "CART" : "BIOS",
+                     core->initialized ? 1u : 0u,
+                     static_cast<unsigned>(core->cpu.pc),
+                     static_cast<unsigned>(core->bootPc),
+                     static_cast<unsigned long>(core->frameCounter),
+                     static_cast<unsigned long>(core->lastFrameCycles),
+                     msx_vdp_mode_label(core->vdp.mode),
+                     static_cast<unsigned long>(core->audioSampleRate),
+                     static_cast<unsigned>(core->lastAudioSamples),
+                     core->videoHookReady ? 1u : 0u,
+                     core->audioHookReady ? 1u : 0u);
+}
+
+void msx_runtime_log_cart_snapshot(const MsxCoreState* core)
+{
+    if (!core || !msx_log_category_enabled(MsxLogCategory::Cart)) {
+        return;
+    }
+
+    const MsxCartState& cart = core->cart;
+    MSX_CATEGORY_LOG(MsxLogCategory::Cart,
+                     "[MSX][CART] snapshot type=%s size=%lu banks=%u ready=%u switch=%u direct=%u sram=%u dirty=%u win=%u/%u/%u/%u entry=%04X init=%04X\n",
+                     msx_media_cartridge_type_label(cart.type),
+                     static_cast<unsigned long>(cart.size),
+                     static_cast<unsigned>(cart.bankCount8K),
+                     cart.ready ? 1u : 0u,
+                     cart.bankSwitching ? 1u : 0u,
+                     cart.directBootCandidate ? 1u : 0u,
+                     cart.sram != nullptr ? 1u : 0u,
+                     cart.sramDirty ? 1u : 0u,
+                     static_cast<unsigned>(cart.windowBanks[0]),
+                     static_cast<unsigned>(cart.windowBanks[1]),
+                     static_cast<unsigned>(cart.windowBanks[2]),
+                     static_cast<unsigned>(cart.windowBanks[3]),
+                     static_cast<unsigned>(cart.entryPoint),
+                     static_cast<unsigned>(cart.initAddress));
+}
+
+void msx_runtime_log_profile_snapshot(const MsxCoreState* core)
+{
+    if (!core || !msx_log_category_enabled(MsxLogCategory::Profile)) {
+        return;
+    }
+
+    const uint32_t totalUs = core->lastFrameTotalUs;
+    const uint32_t cpuPct = totalUs != 0u ? (core->lastFrameCpuUs * 100u) / totalUs : 0u;
+    const uint32_t vdpPct = totalUs != 0u ? (core->lastFrameVdpUs * 100u) / totalUs : 0u;
+    const uint32_t presentPct = totalUs != 0u ? (core->lastFramePresentUs * 100u) / totalUs : 0u;
+    const uint32_t otherPct = totalUs != 0u ? (core->lastFrameOtherUs * 100u) / totalUs : 0u;
+
+    MSX_CATEGORY_LOG(MsxLogCategory::Profile,
+                     "[MSX][PROFILE] snapshot frame=%lu total=%lu us cpu=%lu(%lu%%) vdp=%lu(%lu%%) present=%lu(%lu%%) other=%lu(%lu%%) audioRate=%lu samples=%u psgQueued=%u sccQueued=%u\n",
+                     static_cast<unsigned long>(core->frameCounter),
+                     static_cast<unsigned long>(totalUs),
+                     static_cast<unsigned long>(core->lastFrameCpuUs),
+                     static_cast<unsigned long>(cpuPct),
+                     static_cast<unsigned long>(core->lastFrameVdpUs),
+                     static_cast<unsigned long>(vdpPct),
+                     static_cast<unsigned long>(core->lastFramePresentUs),
+                     static_cast<unsigned long>(presentPct),
+                     static_cast<unsigned long>(core->lastFrameOtherUs),
+                     static_cast<unsigned long>(otherPct),
+                     static_cast<unsigned long>(core->audioSampleRate),
+                     static_cast<unsigned>(core->lastAudioSamples),
+                     static_cast<unsigned>(core->psg.ringCount),
+                     static_cast<unsigned>(core->scc.ringCount));
+}
+
 void msx_runtime_toggle_logs(MsxCoreState* core)
 {
     const bool enabled = msx_logs_toggle();
-    std::printf("[MSX][LOG] runtime logs %s\n", enabled ? "enabled" : "disabled");
     if (core) {
         std::snprintf(core->statusText,
                       sizeof(core->statusText),
                       "LOGS: %s",
                       enabled ? "ON" : "OFF");
+        if (enabled) {
+            msx_runtime_log_core_snapshot(core);
+            msx_runtime_log_cart_snapshot(core);
+            msx_scc_log_current_state(&core->scc);
+            msx_runtime_log_vdp_snapshot(core);
+            msx_runtime_log_profile_snapshot(core);
+        }
     }
 }
 
@@ -273,7 +435,8 @@ void msx_runtime_log_summary(const MsxCoreState* core,
         msx_config_get_active_view_mode_label_for_target(g_emu_display_target == EMU_DISPLAY_EXTERNAL);
 
     if (suffix && suffix[0] != '\0') {
-        MSX_RUN_LOG("[MSX] FPS %.1f | FT %u | CPU %u | RND %u | PRS %u | OTH %u | HEAP %u | CPU %s | PC %04X | VDP %s | MACHINE %s | VIEW %s | PERF %s | AUDIOQ %u | %s\n",
+        MSX_CATEGORY_LOG(MsxLogCategory::Profile,
+                    "[MSX] FPS %.1f | FT %u | CPU %u | RND %u | PRS %u | OTH %u | HEAP %u | CPU %s | PC %04X | VDP %s | MACHINE %s | VIEW %s | PERF %s | AUDIOQ %u | %s\n",
                     fps,
                     avgFrameUs,
                     avgCpuUs,
@@ -290,7 +453,8 @@ void msx_runtime_log_summary(const MsxCoreState* core,
                     static_cast<unsigned>(audioState->queuedBlocks),
                     suffix);
     } else {
-        MSX_RUN_LOG("[MSX] FPS %.1f | FT %u | CPU %u | RND %u | PRS %u | OTH %u | HEAP %u | CPU %s | PC %04X | VDP %s | MACHINE %s | VIEW %s | PERF %s | AUDIOQ %u\n",
+        MSX_CATEGORY_LOG(MsxLogCategory::Profile,
+                    "[MSX] FPS %.1f | FT %u | CPU %u | RND %u | PRS %u | OTH %u | HEAP %u | CPU %s | PC %04X | VDP %s | MACHINE %s | VIEW %s | PERF %s | AUDIOQ %u\n",
                     fps,
                     avgFrameUs,
                     avgCpuUs,

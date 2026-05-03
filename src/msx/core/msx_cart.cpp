@@ -7,12 +7,8 @@
 
 #include "../msx_logging.h"
 
-#ifndef MSX_CART_LOG_ENABLED
-#define MSX_CART_LOG_ENABLED 0
-#endif
-
 #ifndef MSX_BOOTSTRAP_LOG_ENABLED
-#define MSX_BOOTSTRAP_LOG_ENABLED 0
+#define MSX_BOOTSTRAP_LOG_ENABLED 1
 #endif
 
 namespace {
@@ -170,13 +166,15 @@ bool msx_cart_init(MsxCartState* state, const MsxRomImage* image)
 
     msx_cart_reset(state);
 #if MSX_BOOTSTRAP_LOG_ENABLED
-    MSX_RUNTIME_LOG("[MSX][BOOTDBG] cart reset banks=%u/%u/%u/%u bankSwitch=%u sram=%u\n",
-                static_cast<unsigned>(state->windowBanks[0]),
-                static_cast<unsigned>(state->windowBanks[1]),
-                static_cast<unsigned>(state->windowBanks[2]),
-                static_cast<unsigned>(state->windowBanks[3]),
-                state->bankSwitching ? 1u : 0u,
-                state->sram ? 1u : 0u);
+    if (msx_log_category_enabled(MsxLogCategory::Bootstrap)) {
+        MSX_RUNTIME_LOG("[MSX][BOOTDBG] cart reset banks=%u/%u/%u/%u bankSwitch=%u sram=%u\n",
+                    static_cast<unsigned>(state->windowBanks[0]),
+                    static_cast<unsigned>(state->windowBanks[1]),
+                    static_cast<unsigned>(state->windowBanks[2]),
+                    static_cast<unsigned>(state->windowBanks[3]),
+                    state->bankSwitching ? 1u : 0u,
+                    state->sram ? 1u : 0u);
+    }
 #endif
     return true;
 }
@@ -416,7 +414,8 @@ void msx_cart_write(MsxCartState* state, uint16_t address, uint8_t value)
         (oldBanks[3] != state->windowBanks[3])) {
 #if MSX_BOOTSTRAP_LOG_ENABLED
         static uint16_t s_bootCartBankLogCount = 0u;
-        if (s_bootCartBankLogCount < 96u) {
+        if (msx_log_category_enabled(MsxLogCategory::Bootstrap) &&
+            s_bootCartBankLogCount < 96u) {
             MSX_RUNTIME_LOG("[MSX][BOOTDBG][CART] type=%u WR %04X <- %02X banks %u/%u/%u/%u -> %u/%u/%u/%u #%u\n",
                         static_cast<unsigned>(state->type),
                         static_cast<unsigned>(address),
@@ -433,10 +432,10 @@ void msx_cart_write(MsxCartState* state, uint16_t address, uint8_t value)
             ++s_bootCartBankLogCount;
         }
 #endif
-#if MSX_CART_LOG_ENABLED
         static uint16_t s_cartBankLogCount = 0u;
-        if (s_cartBankLogCount < 128u) {
-            MSX_RUNTIME_LOG("[MSX][CART] %u WR %04X <- %02X banks %u/%u/%u/%u -> %u/%u/%u/%u #%u\n",
+        if (msx_log_category_enabled(MsxLogCategory::Cart) && s_cartBankLogCount < 128u) {
+            MSX_CATEGORY_LOG(MsxLogCategory::Cart,
+                        "[MSX][CART] %u WR %04X <- %02X banks %u/%u/%u/%u -> %u/%u/%u/%u #%u\n",
                         static_cast<unsigned>(state->type),
                         static_cast<unsigned>(address),
                         static_cast<unsigned>(value),
@@ -451,7 +450,6 @@ void msx_cart_write(MsxCartState* state, uint16_t address, uint8_t value)
                         static_cast<unsigned>(s_cartBankLogCount));
             ++s_cartBankLogCount;
         }
-#endif
     }
 }
 

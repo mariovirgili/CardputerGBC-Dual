@@ -33,6 +33,10 @@ struct MsxInputOverlayState {
     bool performanceSubmenuVisible;
     bool soundSubmenuVisible;
     bool casSubmenuVisible;
+    bool debugSubmenuVisible;
+    uint8_t debugMenuGroup;
+    bool debugLogsEnabled;
+    uint32_t debugLogMask;
     bool machineIsMsx2;
     bool joystickEnabled;
     bool keyboardEnabled;

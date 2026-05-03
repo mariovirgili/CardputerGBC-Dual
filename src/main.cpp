@@ -16,6 +16,7 @@
 #include "msx/msx_config.h"
 #include "msx/msx_display.h"
 #include "msx/msx_input.h"
+#include "msx/msx_logging.h"
 #include "msx/msx_media.h"
 #include "last_game.h"
 #include "esp_system.h"
@@ -30,7 +31,7 @@
 #include "cardputer/WelcomeExternalImage.h"
 #include "cardputer/VerticalSelector.h"
 
-static constexpr const char* kAppBuildVersion = "v0.5.112";
+static constexpr const char* kAppBuildVersion = "v0.5.113";
 static constexpr const char* kAppTitlePrefix = "Msx ADV Emulators ";
 
 static TFT_eSPI& startupExternalTft();
@@ -959,7 +960,8 @@ static void drawStartupAboutPage()
   tft.drawCenterString("Corporation", tft.width() / 2, 96);
   tft.setTextSize(TEXT_SMALL);
   tft.setTextColor(PRIMARY_COLOR, TFT_BLACK);
-  tft.drawCenterString("GO / LEFT / ` = back", tft.width() / 2, 124);
+  tft.drawCenterString("GO = debug logs", tft.width() / 2, 116);
+  tft.drawCenterString("LEFT / ` = back", tft.width() / 2, 132);
 }
 
 static void drawStartupAboutPageExternal()
@@ -978,9 +980,152 @@ static void drawStartupAboutPageExternal()
   tft.drawString(line2, (320 - tft.textWidth(line2, 2)) / 2, 104, 2);
   tft.drawString(line3, (320 - tft.textWidth(line3, 2)) / 2, 132, 2);
   tft.setTextColor(PRIMARY_COLOR, TFT_BLACK);
-  const char* hint = "GO / LEFT / ` = back";
-  tft.drawString(hint, (320 - tft.textWidth(hint, 2)) / 2, 196, 2);
+  const char* hint0 = "GO = debug logs";
+  const char* hint1 = "LEFT / ` = back";
+  tft.drawString(hint0, (320 - tft.textWidth(hint0, 2)) / 2, 184, 2);
+  tft.drawString(hint1, (320 - tft.textWidth(hint1, 2)) / 2, 208, 2);
   tft.setTextDatum(MC_DATUM);
+}
+
+static void showStartupMsxDebugMenu(CardputerView& display, CardputerInput& input)
+{
+  VerticalSelector selector(display, input);
+  struct DebugGroup {
+    const char* label;
+    const MsxLogCategory* categories;
+    int count;
+  };
+
+  static constexpr MsxLogCategory kCoreCategories[] = {
+      MsxLogCategory::CoreTrace,
+      MsxLogCategory::Bootstrap,
+  };
+  static constexpr MsxLogCategory kCartCategories[] = {
+      MsxLogCategory::Cart,
+  };
+  static constexpr MsxLogCategory kSoundCategories[] = {
+      MsxLogCategory::Scc,
+      MsxLogCategory::SccNotice,
+      MsxLogCategory::SccAudio,
+  };
+  static constexpr MsxLogCategory kProfileCategories[] = {
+      MsxLogCategory::Profile,
+  };
+  static constexpr MsxLogCategory kVdpCategories[] = {
+      MsxLogCategory::VdpCmd,
+      MsxLogCategory::VdpFin,
+      MsxLogCategory::VdpXfer,
+      MsxLogCategory::VdpMode,
+      MsxLogCategory::VdpG4Disp,
+      MsxLogCategory::VdpInit,
+      MsxLogCategory::VdpDualcore,
+      MsxLogCategory::VdpSprite,
+      MsxLogCategory::VdpCmdSeq,
+      MsxLogCategory::VdpG4Addr,
+      MsxLogCategory::VdpHighVram,
+      MsxLogCategory::VdpTrace,
+      MsxLogCategory::VdpBootDiag,
+  };
+  static constexpr DebugGroup kGroups[] = {
+      {"VDP", kVdpCategories, static_cast<int>(sizeof(kVdpCategories) / sizeof(kVdpCategories[0]))},
+      {"Sound", kSoundCategories, static_cast<int>(sizeof(kSoundCategories) / sizeof(kSoundCategories[0]))},
+      {"Core", kCoreCategories, static_cast<int>(sizeof(kCoreCategories) / sizeof(kCoreCategories[0]))},
+      {"Cart", kCartCategories, static_cast<int>(sizeof(kCartCategories) / sizeof(kCartCategories[0]))},
+      {"Profile", kProfileCategories, static_cast<int>(sizeof(kProfileCategories) / sizeof(kProfileCategories[0]))},
+  };
+
+  auto showCategoryMenu = [&](const DebugGroup& group) {
+    int selectedIndex = 0;
+    for (;;) {
+      std::vector<std::string> options;
+      std::vector<std::string> values;
+      options.reserve(static_cast<size_t>(group.count + 1));
+      values.reserve(static_cast<size_t>(group.count + 1));
+
+      for (int i = 0; i < group.count; ++i) {
+        const MsxLogCategory category = group.categories[i];
+        options.emplace_back(msx_log_category_label(category));
+        values.emplace_back(startupBoolLabel(msx_log_category_selected(category)));
+      }
+      options.emplace_back("Back");
+      values.emplace_back("");
+
+      const int selected = selector.select(group.label,
+                                           options,
+                                           false,
+                                           false,
+                                           values,
+                                           {},
+                                           false,
+                                           true,
+                                           true,
+                                           selectedIndex,
+                                           -1,
+                                           kSelectorResultBackToRomBrowser);
+      if (selected == kSelectorResultBackToRomBrowser || selected < 0 || selected == group.count) {
+        input.flushInput(120);
+        return;
+      }
+
+      selectedIndex = selected;
+      if (selected >= 0 && selected < group.count) {
+        const MsxLogCategory category = group.categories[selected];
+        msx_log_category_set_enabled(category,
+                                     !msx_log_category_selected(category),
+                                     true);
+      }
+    }
+  };
+
+  auto groupSummary = [](const DebugGroup& group) {
+    int enabled = 0;
+    for (int i = 0; i < group.count; ++i) {
+      if (msx_log_category_selected(group.categories[i])) {
+        ++enabled;
+      }
+    }
+    char buffer[16];
+    std::snprintf(buffer, sizeof(buffer), "%d/%d ON", enabled, group.count);
+    return std::string(buffer);
+  };
+
+  int selectedIndex = 0;
+  static constexpr int kBackIndex = static_cast<int>(sizeof(kGroups) / sizeof(kGroups[0]));
+  for (;;) {
+    std::vector<std::string> options;
+    std::vector<std::string> values;
+    options.reserve(static_cast<size_t>(kBackIndex + 1));
+    values.reserve(static_cast<size_t>(kBackIndex + 1));
+
+    for (const DebugGroup& group : kGroups) {
+      options.emplace_back(group.label);
+      values.emplace_back(groupSummary(group));
+    }
+    options.emplace_back("Back");
+    values.emplace_back("");
+
+    const int selected = selector.select("Debug Logs",
+                                         options,
+                                         false,
+                                         false,
+                                         values,
+                                         {},
+                                         false,
+                                         true,
+                                         true,
+                                         selectedIndex,
+                                         -1,
+                                         kSelectorResultBackToRomBrowser);
+    if (selected == kSelectorResultBackToRomBrowser || selected < 0 || selected == kBackIndex) {
+      input.flushInput(120);
+      return;
+    }
+
+    selectedIndex = selected;
+    if (selected >= 0 && selected < kBackIndex) {
+      showCategoryMenu(kGroups[selected]);
+    }
+  }
 }
 
 static void showStartupAboutPage(SdService& sd, CardputerView& display, CardputerInput& input)
@@ -995,6 +1140,13 @@ static void showStartupAboutPage(SdService& sd, CardputerView& display, Cardpute
 
   for (;;) {
     M5Cardputer.update();
+    if (M5Cardputer.BtnA.wasClicked()) {
+      showStartupMsxDebugMenu(display, input);
+      drawStartupAboutPage();
+      drawStartupAboutPageExternal();
+      input.flushInput(150);
+      continue;
+    }
     if (startupEscapePressed() ||
         (konamiProgress == 0 && M5Cardputer.Keyboard.isKeyPressed(KEY_ARROW_LEFT))) {
       showExternalRomSelectorTft();
@@ -1134,6 +1286,7 @@ static void showStartupMsxConfigMenu(CardputerView& display, CardputerInput& inp
 
     const std::vector<std::string> options = {
         "Performance",
+        "Debug Logs",
         "Virtual SCC",
         "JOY EXTEND",
         "KEYB/JOY",
@@ -1146,6 +1299,7 @@ static void showStartupMsxConfigMenu(CardputerView& display, CardputerInput& inp
     };
     const std::vector<std::string> values = {
         msx_config_get_performance_mode_label(),
+        msx_logs_enabled() ? "MASTER ON" : "MASTER OFF",
         msx_config_get_virtual_scc_mode_label(),
         startupBoolLabel(config.joystickEnabled),
         startupBoolLabel(config.keyboardEnabled),
@@ -1169,7 +1323,7 @@ static void showStartupMsxConfigMenu(CardputerView& display, CardputerInput& inp
                                          selectedIndex,
                                          -1,
                                          kSelectorResultBackToRomBrowser);
-    if (selected == kSelectorResultBackToRomBrowser || selected < 0 || selected == 9) {
+    if (selected == kSelectorResultBackToRomBrowser || selected < 0 || selected == 10) {
       input.flushInput(120);
       return;
     }
@@ -1184,38 +1338,41 @@ static void showStartupMsxConfigMenu(CardputerView& display, CardputerInput& inp
         }
         break;
       case 1:
-        msx_config_cycle_virtual_scc_mode(1, true);
+        showStartupMsxDebugMenu(display, input);
         break;
       case 2:
+        msx_config_cycle_virtual_scc_mode(1, true);
+        break;
+      case 3:
         config.joystickEnabled = !config.joystickEnabled;
         if (config.joystickEnabled) {
           config.basicKeyboardEnabled = false;
         }
         msx_input_set_runtime_option_config(config, true);
         break;
-      case 3:
+      case 4:
         config.keyboardEnabled = !config.keyboardEnabled;
         config.basicKeyboardEnabled = false;
         msx_input_set_runtime_option_config(config, true);
         break;
-      case 4:
+      case 5:
         config.basicKeyboardEnabled = !config.basicKeyboardEnabled;
         msx_input_set_runtime_option_config(config, true);
         break;
-      case 5:
+      case 6:
         config.vausEnabled = !config.vausEnabled;
         if (config.vausEnabled) {
           config.basicKeyboardEnabled = false;
         }
         msx_input_set_runtime_option_config(config, true);
         break;
-      case 6:
+      case 7:
         msx_config_toggle_active_view_mode_for_target(g_emu_display_target == EMU_DISPLAY_EXTERNAL);
         break;
-      case 7:
+      case 8:
         msx_config_cycle_region_mode(1, true);
         break;
-      case 8:
+      case 9:
         config.stateSlot = static_cast<uint8_t>((config.stateSlot + 1u) % 10u);
         msx_input_set_runtime_option_config(config, true);
         break;
