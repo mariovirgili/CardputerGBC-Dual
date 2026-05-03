@@ -1171,18 +1171,19 @@ void msx_core_step_frame(MsxCoreState* state)
 #endif
             state->vdp.currentFrameCpuCycles = executedCycles;
             msx_vdp_advance_command_engine(&state->vdp, executedCycles);
-            const uint8_t status1Before = state->vdp.status[1];
             msx_vdp_refresh_timing(&state->vdp);
-            if (((status1Before & 0x01u) == 0u) &&
-                ((state->vdp.status[1] & 0x01u) != 0u) &&
-                ((state->vdp.regs[0] & 0x10u) != 0u)) {
-                msx_cpu_request_irq(&state->cpu);
-            }
             if (line + 1u == vblankLine) {
                 state->vdp.status[0] |= 0x80u;
-                if ((state->vdp.regs[1] & 0x20u) != 0u) {
-                    msx_cpu_request_irq(&state->cpu);
-                }
+            }
+            bool irqActive = false;
+            if (((state->vdp.status[1] & 0x01u) != 0u) && ((state->vdp.regs[0] & 0x10u) != 0u)) {
+                irqActive = true;
+            }
+            if (((state->vdp.status[0] & 0x80u) != 0u) && ((state->vdp.regs[1] & 0x20u) != 0u)) {
+                irqActive = true;
+            }
+            if (irqActive) {
+                msx_cpu_request_irq(&state->cpu);
             }
         }
         uint64_t finalFrameCycles = state->cpu.totalCycles - state->vdp.frameStartCpuCycles;
