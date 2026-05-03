@@ -319,6 +319,7 @@ int16_t IRAM_ATTR msx_psg_render_sample(MsxPsgState* state)
     }
 
     int32_t mix = 0;
+    bool hasAudibleLevel = false;
     const uint8_t mixer = state->regs[7];
     const bool noiseHigh = (state->lfsr & 0x0001u) != 0u;
     for (uint8_t channel = 0; channel < 3u; ++channel) {
@@ -336,6 +337,7 @@ int16_t IRAM_ATTR msx_psg_render_sample(MsxPsgState* state)
         if (amplitude == 0) {
             continue;
         }
+        hasAudibleLevel = true;
         mix += gate ? amplitude : -amplitude;
     }
 
@@ -353,6 +355,12 @@ int16_t IRAM_ATTR msx_psg_render_sample(MsxPsgState* state)
     state->envelopePhase += state->envelopeStep;
     if (state->envelopePhase < oldEnvelopePhase) {
         msx_psg_step_envelope(state);
+    }
+
+    if (!hasAudibleLevel) {
+        s_dcFilterX = 0;
+        s_dcFilterY = 0;
+        return 0;
     }
 
     // Applica un filtro DSP Passa-Alto (DC Blocker) per eliminare i crepitii statici
