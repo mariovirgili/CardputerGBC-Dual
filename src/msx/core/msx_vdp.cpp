@@ -479,7 +479,20 @@ static inline uint8_t msx_vdp_timeline_value_for_line(const MsxVdpState* state,
         return 0u;
     }
 
-    const uint32_t targetCycle = msx_vdp_cycle_for_line(state, y);
+    // Il main loop renderizza la scanline PRIMA di eseguire il CPU dello slice corrente
+    // (msx_core.cpp), quindi il timeline contiene solo le scritture fatte durante gli
+    // slice precedenti. Estendere targetCycle fino al ciclo immediatamente prima della
+    // scanline successiva assorbe l'overshoot del CPU dallo slice precedente e copre
+    // i cambi mid-frame di R23/R26/R27 scritti nell'HBlank IRQ handler.
+    uint32_t targetCycle = msx_vdp_cycle_for_line(state, y);
+    if ((y + 1u) < state->activeHeight) {
+        const uint32_t nextLineCycle = msx_vdp_cycle_for_line(state, y + 1u);
+        if (nextLineCycle > targetCycle) {
+            targetCycle = nextLineCycle - 1u;
+        }
+    } else if (state->frameCycleBudget != 0u) {
+        targetCycle = state->frameCycleBudget - 1u;
+    }
 
     uint8_t value = timeline[0].value;
     for (uint8_t i = 1u; i < count; ++i) {
@@ -1425,12 +1438,20 @@ inline void msx_vdp_refresh_timing_flags(MsxVdpState* state)
     }
 
     if (scanline < lineIrqActiveEnd) {
-        const uint8_t vscroll = msx_vdp_reg23_for_line(state, 0);
+        // Il contatore delle linee per gli IRQ HBlank viene caricato con R23 SOLO
+        // all'inizio del frame e poi incrementato per scanline. Le scritture mid-frame
+        // di R23 (split-screen) non devono influenzare il timing del FH IRQ, quindi
+        // qui usiamo lo snapshot frame_start invece del timeline lookup mid-frame.
+        const uint8_t vscroll = msx_vdp_reg23_frame_start(state);
         const uint8_t lineDelta =
             static_cast<uint8_t>(((scanline + static_cast<uint32_t>(vscroll)) - state->regs[19]) & 0xFFu);
         const uint8_t scanlineTag = static_cast<uint8_t>(scanline & 0xFFu);
 
-        const bool inIrqWindow = (lineDelta == 0u || lineDelta == 1u);
+        // Finestra ON-match (lineDelta == 0xFF || == 0): il bit FH si setta sulla
+        // scanline R19 (display+vscroll), che è quello che il polling del game si
+        // aspetta. Una finestra "spostata in avanti" rompe i giochi che leggono
+        // S#1 bit 0 al momento del match (es. Space Manbow su Konami SCC).
+        const bool inIrqWindow = (lineDelta == 0xFFu || lineDelta == 0u);
         if (inIrqWindow &&
             ((state->lineInterruptFrameTag != state->frameCounter) ||
              (static_cast<uint8_t>(scanlineTag - state->lineInterruptLineTag) > 10u))) {
@@ -1675,7 +1696,8 @@ uint32_t msx_vdp_command_estimated_bytes(uint8_t command, uint16_t nxRaw, uint16
 
 bool msx_vdp_is_traced_register(uint8_t reg)
 {
-    return reg == 17u || reg == 23u || reg == 25u || reg == 26u || reg == 27u ||
+    return reg == 2u || reg == 17u || reg == 19u || reg == 23u ||
+           reg == 25u || reg == 26u || reg == 27u ||
            (reg >= 32u && reg <= 46u);
 }
 
@@ -1995,7 +2017,7 @@ void msx_vdp_diag_log_command_start(const MsxVdpState* state,
     static uint32_t s_cmdStartLogCount = 0u;
     if (!state ||
         !msx_log_category_enabled(MsxLogCategory::VdpCmd) ||
-        !msx_vdp_diag_take(&s_cmdStartLogCount, 192u)) {
+        !msx_vdp_diag_take(&s_cmdStartLogCount, 0xFFFFFFFFu)) { // Limite aumentato per il debug
         return;
     }
 
@@ -2018,6 +2040,30 @@ void msx_vdp_diag_log_command_start(const MsxVdpState* state,
                      static_cast<unsigned>(state->regs[15]),
                      static_cast<unsigned long>(state->frameCounter),
                      static_cast<unsigned long>(state->currentFrameCpuCycles));
+
+    // CMD-ADDR diagnostic: dove finisce in VRAM il primo byte di src/dest del command.
+    // Serve a discriminare se i VDP commands targettano la stessa page del rendering
+    // (R02 mask vs effective name base). Calcolo basato su mode-specific masks.
+    const MsxVdpTableMasks* cmdMasks = msx_vdp_table_masks(state->mode);
+    if (cmdMasks) {
+        const uint32_t cmdNameBase =
+            static_cast<uint32_t>(state->regs[2] & cmdMasks->r2) << cmdMasks->nameShift;
+        const uint32_t cmdDestByte =
+            cmdNameBase | (static_cast<uint32_t>(dy & 0x7Fu) << 7) |
+            static_cast<uint32_t>((dx >> 1) & 0x7Fu);
+        const uint32_t cmdSrcByte =
+            cmdNameBase | (static_cast<uint32_t>(sy & 0x7Fu) << 7) |
+            static_cast<uint32_t>((sx >> 1) & 0x7Fu);
+        MSX_CATEGORY_LOG(MsxLogCategory::VdpCmd,
+                         "[MSX][CMD-ADDR] #%lu nameBase=%05lX srcByte=%05lX destByte=%05lX r2=%02X r14=%X mode=%s\n",
+                         static_cast<unsigned long>(s_cmdStartLogCount),
+                         static_cast<unsigned long>(cmdNameBase),
+                         static_cast<unsigned long>(cmdSrcByte),
+                         static_cast<unsigned long>(cmdDestByte),
+                         static_cast<unsigned>(state->regs[2]),
+                         static_cast<unsigned>(state->regs[14] & 0x07u),
+                         msx_vdp_mode_label(state->mode));
+    }
 }
 
 void msx_vdp_diag_log_transfer(const MsxVdpState* state,
@@ -3165,7 +3211,7 @@ void msx_vdp_write_register(MsxVdpState* state, uint8_t reg, uint8_t value)
         static uint32_t s_msx2KeyRegLogCount = 0u;
         if (msx_log_category_enabled(MsxLogCategory::VdpTrace) &&
             msx_vdp_is_msx2(state) && msx_vdp_is_traced_register(reg) &&
-            s_msx2KeyRegLogCount < 192u) {
+            s_msx2KeyRegLogCount < 2048u) {
             ++s_msx2KeyRegLogCount;
             MSX_RUNTIME_LOG("[MSX][REG] #%lu R%02u=%02X prev=%02X mode=%s frame=%lu\n",
                         static_cast<unsigned long>(s_msx2KeyRegLogCount),
@@ -4856,6 +4902,20 @@ static void msx_vdp_render_bitmap4_range(MsxVdpState* state, unsigned yStart, un
         const uint8_t lineReg26 = msx_vdp_reg26_for_line(state, y);
         const uint8_t lineReg27 = msx_vdp_reg27_for_line(state, y);
         const uint8_t lineVScroll = msx_vdp_reg23_for_line(state, y);
+#if MSX_VDP_VERBOSE_DIAG_ENABLED
+        if (msx_log_category_enabled(MsxLogCategory::VdpTrace) &&
+            (state->frameCounter % 120u == 0u) &&
+            (y == 0u || y == 27u || y == 50u || y == 100u ||
+             y == 140u || y == 180u || y == 210u)) {
+            MSX_RUNTIME_LOG("[MSX][RENDER-DBG] frame=%lu y=%u r2=%02X r23=%02X r26=%02X r27=%02X\n",
+                static_cast<unsigned long>(state->frameCounter),
+                y,
+                static_cast<unsigned>(lineReg2),
+                static_cast<unsigned>(lineVScroll),
+                static_cast<unsigned>(lineReg26),
+                static_cast<unsigned>(lineReg27));
+        }
+#endif
         const uint16_t lineHScroll = msx_vdp_hscroll_for_regs(lineReg26, lineReg27);
         const bool useHScroll = lineHScroll != 0u;
         const bool dualPage = msx_vdp_hscroll512_for_regs(lineReg25);
@@ -5226,6 +5286,20 @@ static void msx_vdp_render_bitmap6_range(MsxVdpState* state, unsigned yStart, un
         const uint8_t lineReg26 = msx_vdp_reg26_for_line(state, y);
         const uint8_t lineReg27 = msx_vdp_reg27_for_line(state, y);
         const uint8_t lineVScroll = msx_vdp_reg23_for_line(state, y);
+#if MSX_VDP_VERBOSE_DIAG_ENABLED
+        if (msx_log_category_enabled(MsxLogCategory::VdpTrace) &&
+            (state->frameCounter % 120u == 0u) &&
+            (y == 0u || y == 27u || y == 50u || y == 100u ||
+             y == 140u || y == 180u || y == 210u)) {
+            MSX_RUNTIME_LOG("[MSX][RENDER-DBG] frame=%lu y=%u r2=%02X r23=%02X r26=%02X r27=%02X\n",
+                static_cast<unsigned long>(state->frameCounter),
+                y,
+                static_cast<unsigned>(lineReg2),
+                static_cast<unsigned>(lineVScroll),
+                static_cast<unsigned>(lineReg26),
+                static_cast<unsigned>(lineReg27));
+        }
+#endif
         const uint16_t lineHScroll = msx_vdp_hscroll_for_regs(lineReg26, lineReg27);
         const bool useHScroll = lineHScroll != 0u;
         const bool dualPage = msx_vdp_hscroll512_for_regs(lineReg25);
@@ -5337,6 +5411,20 @@ static void msx_vdp_render_bitmap7_range(MsxVdpState* state, unsigned yStart, un
         const uint8_t lineReg26 = msx_vdp_reg26_for_line(state, y);
         const uint8_t lineReg27 = msx_vdp_reg27_for_line(state, y);
         const uint8_t lineVScroll = msx_vdp_reg23_for_line(state, y);
+#if MSX_VDP_VERBOSE_DIAG_ENABLED
+        if (msx_log_category_enabled(MsxLogCategory::VdpTrace) &&
+            (state->frameCounter % 120u == 0u) &&
+            (y == 0u || y == 27u || y == 50u || y == 100u ||
+             y == 140u || y == 180u || y == 210u)) {
+            MSX_RUNTIME_LOG("[MSX][RENDER-DBG] frame=%lu y=%u r2=%02X r23=%02X r26=%02X r27=%02X\n",
+                static_cast<unsigned long>(state->frameCounter),
+                y,
+                static_cast<unsigned>(lineReg2),
+                static_cast<unsigned>(lineVScroll),
+                static_cast<unsigned>(lineReg26),
+                static_cast<unsigned>(lineReg27));
+        }
+#endif
         const uint16_t lineHScroll = msx_vdp_hscroll_for_regs(lineReg26, lineReg27);
         const bool useHScroll = lineHScroll != 0u;
         const bool dualPage = msx_vdp_hscroll512_for_regs(lineReg25);
@@ -5432,6 +5520,20 @@ static void msx_vdp_render_bitmap8_range(MsxVdpState* state, unsigned yStart, un
         const uint8_t lineReg26 = msx_vdp_reg26_for_line(state, y);
         const uint8_t lineReg27 = msx_vdp_reg27_for_line(state, y);
         const uint8_t lineVScroll = msx_vdp_reg23_for_line(state, y);
+#if MSX_VDP_VERBOSE_DIAG_ENABLED
+        if (msx_log_category_enabled(MsxLogCategory::VdpTrace) &&
+            (state->frameCounter % 120u == 0u) &&
+            (y == 0u || y == 27u || y == 50u || y == 100u ||
+             y == 140u || y == 180u || y == 210u)) {
+            MSX_RUNTIME_LOG("[MSX][RENDER-DBG] frame=%lu y=%u r2=%02X r23=%02X r26=%02X r27=%02X\n",
+                static_cast<unsigned long>(state->frameCounter),
+                y,
+                static_cast<unsigned>(lineReg2),
+                static_cast<unsigned>(lineVScroll),
+                static_cast<unsigned>(lineReg26),
+                static_cast<unsigned>(lineReg27));
+        }
+#endif
         const uint16_t lineHScroll = msx_vdp_hscroll_for_regs(lineReg26, lineReg27);
         const bool useHScroll = lineHScroll != 0u;
         const bool dualPage = msx_vdp_hscroll512_for_regs(lineReg25);
