@@ -1180,15 +1180,6 @@ void msx_core_step_frame(MsxCoreState* state)
         state->vdp.status[2] &= static_cast<uint8_t>(~0x60u);
         for (unsigned line = 0; line < totalLines; ++line) {
             state->vdp.currentFrameCpuCycles = executedCycles;
-            if (vdpSliceRenderMode && line < visibleLines) {
-                if (collectTiming) {
-                    vdpStartUs = esp_timer_get_time();
-                }
-                msx_vdp_render_slice(&state->vdp, line, line + 1u, line + 1u == visibleLines);
-                if (collectTiming) {
-                    vdpRenderUs += static_cast<uint32_t>(esp_timer_get_time() - vdpStartUs);
-                }
-            }
             const uint32_t targetCycles = kMsxScanlineTargetCycles60Hz[line];
             const int sliceBudget = targetCycles > executedCycles
                                         ? static_cast<int>(targetCycles - executedCycles)
@@ -1213,6 +1204,15 @@ void msx_core_step_frame(MsxCoreState* state)
             }
             if (irqActive) {
                 msx_cpu_request_irq(&state->cpu);
+            }
+            if (vdpSliceRenderMode && line < visibleLines) {
+                if (collectTiming) {
+                    vdpStartUs = esp_timer_get_time();
+                }
+                msx_vdp_render_slice(&state->vdp, line, line + 1u, line + 1u == visibleLines);
+                if (collectTiming) {
+                    vdpRenderUs += static_cast<uint32_t>(esp_timer_get_time() - vdpStartUs);
+                }
             }
         }
         uint64_t finalFrameCycles = state->cpu.totalCycles - state->vdp.frameStartCpuCycles;
