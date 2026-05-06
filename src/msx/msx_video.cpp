@@ -50,6 +50,13 @@ constexpr int kFpsHudInternalPadY = 2;
 constexpr int kFpsHudInternalScale = 2;
 constexpr int kFpsHudGlyphW = 3;
 constexpr int kFpsHudGlyphH = 5;
+constexpr int kZoomFollowBlock = 8;
+constexpr int kZoomFollowSampleStep = 2;
+constexpr int kZoomFollowMaxStep = 2;
+constexpr int kZoomFollowDeadband = 22;
+constexpr uint32_t kZoomFollowUpdateModulo = 6u;
+constexpr uint32_t kZoomFollowManualPauseMs = 1400;
+constexpr uint32_t kZoomFollowCenterPauseMs = 350;
 
 struct MsxVideoPlan {
     int srcX0;
@@ -86,6 +93,9 @@ void IRAM_ATTR msx_video_pack_mapped_rgb444_line(const uint8_t* src,
                                                  int pixelCount,
                                                  const int16_t* xmap,
                                                  uint16_t paletteEntries);
+void msx_video_begin_zoom_follow_stream(unsigned srcW, unsigned srcH);
+void msx_video_accumulate_zoom_follow_stream_line(const uint8_t* srcLine, unsigned srcLineIndex, unsigned srcW);
+void msx_video_finish_zoom_follow_stream(unsigned srcW, unsigned srcH);
 
 static uint16_t* s_lineBuf = nullptr;
 static int s_lineCap = 0;
@@ -130,6 +140,21 @@ static uint16_t s_fpsHudValue10 = 0u;
 static char s_fpsHudText[16] = "0.0";
 static int s_internalZoomPanX = 0;
 static int s_internalZoomPanY = 0;
+static bool s_zoomFollowEnabled = false;
+static int8_t s_zoomFollowInputX = 0;
+static int8_t s_zoomFollowInputY = 0;
+static uint32_t s_zoomFollowFrameCounter = 0;
+static uint32_t s_zoomFollowManualUntilMs = 0;
+static uint8_t* s_zoomFollowPrevGrid = nullptr;
+static uint8_t* s_zoomFollowCurrGrid = nullptr;
+static uint16_t* s_zoomFollowSumGrid = nullptr;
+static uint8_t* s_zoomFollowCountGrid = nullptr;
+static int s_zoomFollowGridW = 0;
+static int s_zoomFollowGridH = 0;
+static unsigned s_zoomFollowPrevW = 0;
+static unsigned s_zoomFollowPrevH = 0;
+static bool s_zoomFollowHasPrev = false;
+static bool s_zoomFollowStreamSampling = false;
 
 static uint32_t s_spiPushFrames = 0;
 static uint32_t s_spiPushUs = 0;
@@ -457,6 +482,31 @@ void msx_video_release_scratch_buffers(void)
     s_ymapCap = 0;
 }
 
+void msx_video_release_zoom_follow_buffers(void)
+{
+    free(s_zoomFollowPrevGrid);
+    free(s_zoomFollowCurrGrid);
+    free(s_zoomFollowSumGrid);
+    free(s_zoomFollowCountGrid);
+    s_zoomFollowPrevGrid = nullptr;
+    s_zoomFollowCurrGrid = nullptr;
+    s_zoomFollowSumGrid = nullptr;
+    s_zoomFollowCountGrid = nullptr;
+    s_zoomFollowGridW = 0;
+    s_zoomFollowGridH = 0;
+    s_zoomFollowPrevW = 0;
+    s_zoomFollowPrevH = 0;
+    s_zoomFollowHasPrev = false;
+    s_zoomFollowStreamSampling = false;
+}
+
+void msx_video_reset_zoom_follow_history(void)
+{
+    s_zoomFollowHasPrev = false;
+    s_zoomFollowFrameCounter = 0;
+    s_zoomFollowStreamSampling = false;
+}
+
 void msx_video_clear_target(void)
 {
     if (msx_video_game_on_external()) {
@@ -651,6 +701,18 @@ bool msx_video_layout_changed(const MsxVideoPlan& plan, unsigned srcW, unsigned 
            s_lastSrcY0 != plan.srcY0 ||
            s_lastRoiW != plan.roiW ||
            s_lastRoiH != plan.roiH ||
+           s_lastXOff != plan.xOff ||
+           s_lastYOff != plan.yOff;
+}
+
+bool msx_video_target_rect_changed(const MsxVideoPlan& plan, unsigned srcW, unsigned srcH)
+{
+    const int mode = static_cast<int>(msx_config_get_active_view_mode());
+    return s_lastMode != mode ||
+           s_lastSrcW != static_cast<int>(srcW) ||
+           s_lastSrcH != static_cast<int>(srcH) ||
+           s_lastDstW != plan.dstW ||
+           s_lastDstH != plan.dstH ||
            s_lastXOff != plan.xOff ||
            s_lastYOff != plan.yOff;
 }
@@ -901,9 +963,12 @@ bool msx_video_begin_line_stream_impl(const MsxDisplayFrame* frame)
         return false;
     }
 
+    msx_video_begin_zoom_follow_stream(frame->width, frame->height);
+
     MsxVideoPlan plan = {};
     msx_video_compute_plan(frame->width, frame->height, &plan);
     const bool layoutChanged = msx_video_layout_changed(plan, frame->width, frame->height);
+    const bool clearTarget = msx_video_target_rect_changed(plan, frame->width, frame->height);
 
     s_isExternalCached = msx_video_game_on_external();
     s_drawFpsCached = msx_video_should_draw_fps_hud(plan.dstW, plan.dstH);
@@ -916,7 +981,7 @@ bool msx_video_begin_line_stream_impl(const MsxDisplayFrame* frame)
 
     msx_video_commit_layout_cache(plan, frame->width, frame->height);
 
-    if (layoutChanged) {
+    if (clearTarget) {
         msx_video_clear_target();
     }
 
@@ -948,6 +1013,8 @@ bool msx_video_stream_line_impl(const MsxDisplayFrame* frame, const uint8_t* src
     if (frame->pitchBytes < frame->width || srcLineIndex >= frame->height) {
         return false;
     }
+
+    msx_video_accumulate_zoom_follow_stream_line(srcLine, srcLineIndex, frame->width);
 
     bool emitted = false;
     if (s_lineStream.cropOnly) {
@@ -1002,6 +1069,7 @@ void msx_video_end_line_stream_impl(void)
     }
 
     msx_video_end_active_write();
+    msx_video_finish_zoom_follow_stream(s_zoomFollowPrevW, s_zoomFollowPrevH);
     s_lineStream = {};
 }
 
@@ -1116,6 +1184,294 @@ void IRAM_ATTR msx_video_draw_scaled_frame(const MsxDisplayFrame* frame, const M
     msx_video_end_active_write();
 }
 
+int msx_video_iabs(int value)
+{
+    return value < 0 ? -value : value;
+}
+
+int msx_video_clamp_int(int value, int minValue, int maxValue)
+{
+    if (value < minValue) {
+        return minValue;
+    }
+    if (value > maxValue) {
+        return maxValue;
+    }
+    return value;
+}
+
+bool msx_video_prepare_zoom_follow_grid(unsigned srcW, unsigned srcH)
+{
+    const int gridW = static_cast<int>((srcW + kZoomFollowBlock - 1u) / kZoomFollowBlock);
+    const int gridH = static_cast<int>((srcH + kZoomFollowBlock - 1u) / kZoomFollowBlock);
+    if (gridW <= 0 || gridH <= 0) {
+        msx_video_reset_zoom_follow_history();
+        return false;
+    }
+
+    if (s_zoomFollowPrevGrid &&
+        s_zoomFollowCurrGrid &&
+        s_zoomFollowGridW == gridW &&
+        s_zoomFollowGridH == gridH &&
+        s_zoomFollowPrevW == srcW &&
+        s_zoomFollowPrevH == srcH) {
+        return true;
+    }
+
+    msx_video_release_zoom_follow_buffers();
+    const size_t count = static_cast<size_t>(gridW) * static_cast<size_t>(gridH);
+    s_zoomFollowPrevGrid = static_cast<uint8_t*>(malloc(count));
+    s_zoomFollowCurrGrid = static_cast<uint8_t*>(malloc(count));
+    s_zoomFollowSumGrid = static_cast<uint16_t*>(malloc(count * sizeof(uint16_t)));
+    s_zoomFollowCountGrid = static_cast<uint8_t*>(malloc(count));
+    if (!s_zoomFollowPrevGrid || !s_zoomFollowCurrGrid || !s_zoomFollowSumGrid || !s_zoomFollowCountGrid) {
+        msx_video_release_zoom_follow_buffers();
+        return false;
+    }
+
+    std::memset(s_zoomFollowPrevGrid, 0, count);
+    std::memset(s_zoomFollowCurrGrid, 0, count);
+    std::memset(s_zoomFollowSumGrid, 0, count * sizeof(uint16_t));
+    std::memset(s_zoomFollowCountGrid, 0, count);
+    s_zoomFollowGridW = gridW;
+    s_zoomFollowGridH = gridH;
+    s_zoomFollowPrevW = srcW;
+    s_zoomFollowPrevH = srcH;
+    s_zoomFollowHasPrev = false;
+    return true;
+}
+
+uint8_t msx_video_sample_zoom_follow_block(const MsxDisplayFrame* frame, int bx, int by)
+{
+    const int x0 = bx * kZoomFollowBlock;
+    const int y0 = by * kZoomFollowBlock;
+    const int x1 = std::min<int>(x0 + kZoomFollowBlock, frame->width);
+    const int y1 = std::min<int>(y0 + kZoomFollowBlock, frame->height);
+    uint32_t sum = 0;
+    uint32_t count = 0;
+
+    for (int y = y0; y < y1; y += kZoomFollowSampleStep) {
+        const uint8_t* row = frame->indexed8 + static_cast<size_t>(y) * frame->pitchBytes;
+        for (int x = x0; x < x1; x += kZoomFollowSampleStep) {
+            sum += row[x];
+            ++count;
+        }
+    }
+
+    return count != 0u ? static_cast<uint8_t>((sum + (count / 2u)) / count) : 0u;
+}
+
+void msx_video_apply_zoom_follow_grid(unsigned srcW, unsigned srcH)
+{
+    const bool cropVerticalOverscan = srcH > kMsxVisibleSafeHeight;
+    const unsigned effectiveSrcH = cropVerticalOverscan ? kMsxVisibleSafeHeight : srcH;
+    const unsigned effectiveSrcY0 = cropVerticalOverscan ? ((srcH - kMsxVisibleSafeHeight) / 2u) : 0u;
+    const int targetW = kInternalTargetW;
+    const int targetH = kInternalTargetH;
+    const int roiW = static_cast<int>((srcW > static_cast<unsigned>(targetW)) ? targetW : srcW);
+    const int roiH = static_cast<int>((effectiveSrcH > static_cast<unsigned>(targetH)) ? targetH : effectiveSrcH);
+    const int centeredSrcX = (srcW > static_cast<unsigned>(targetW))
+                                 ? static_cast<int>((srcW - targetW) / 2u)
+                                 : 0;
+    const int centeredSrcY = static_cast<int>(
+        effectiveSrcY0 +
+        ((effectiveSrcH > static_cast<unsigned>(targetH)) ? (effectiveSrcH - targetH) / 2u : 0u)
+    );
+    const int minSrcX = 0;
+    const int maxSrcX = std::max(0, static_cast<int>(srcW) - roiW);
+    const int minSrcY = static_cast<int>(effectiveSrcY0);
+    const int maxSrcY = std::max(minSrcY, static_cast<int>(effectiveSrcY0 + effectiveSrcH) - roiH);
+    const int srcX0 = msx_video_clamp_int(centeredSrcX + s_internalZoomPanX, minSrcX, maxSrcX);
+    const int srcY0 = msx_video_clamp_int(centeredSrcY + s_internalZoomPanY, minSrcY, maxSrcY);
+    const int viewCenterX = srcX0 + (roiW / 2);
+    const int viewCenterY = srcY0 + (roiH / 2);
+
+    int64_t weightedX = 0;
+    int64_t weightedY = 0;
+    int64_t totalWeight = 0;
+
+    for (int by = 0; by < s_zoomFollowGridH; ++by) {
+        for (int bx = 0; bx < s_zoomFollowGridW; ++bx) {
+            const int index = by * s_zoomFollowGridW + bx;
+            const uint8_t sample = s_zoomFollowCurrGrid[index];
+            if (!s_zoomFollowHasPrev) {
+                continue;
+            }
+
+            const int activity = msx_video_iabs(static_cast<int>(sample) - static_cast<int>(s_zoomFollowPrevGrid[index]));
+            if (activity < 2) {
+                continue;
+            }
+
+            const int cx = std::min<int>(static_cast<int>(srcW) - 1, bx * kZoomFollowBlock + (kZoomFollowBlock / 2));
+            const int cy = std::min<int>(static_cast<int>(srcH) - 1, by * kZoomFollowBlock + (kZoomFollowBlock / 2));
+            if (cy < minSrcY || cy > maxSrcY + roiH) {
+                continue;
+            }
+            if (cx < srcX0 - 80 || cx > srcX0 + roiW + 80 ||
+                cy < srcY0 - 64 || cy > srcY0 + roiH + 64) {
+                continue;
+            }
+
+            int weight = activity * activity;
+            if (s_zoomFollowInputX > 0) {
+                weight = (cx >= viewCenterX - 18) ? (weight * 5) / 3 : weight / 3;
+            } else if (s_zoomFollowInputX < 0) {
+                weight = (cx <= viewCenterX + 18) ? (weight * 5) / 3 : weight / 3;
+            }
+            if (s_zoomFollowInputY > 0) {
+                weight = (cy >= viewCenterY - 14) ? (weight * 5) / 3 : weight / 3;
+            } else if (s_zoomFollowInputY < 0) {
+                weight = (cy <= viewCenterY + 14) ? (weight * 5) / 3 : weight / 3;
+            }
+
+            const int distance = msx_video_iabs(cx - viewCenterX) + msx_video_iabs(cy - viewCenterY);
+            weight = (weight * std::max(32, 192 - distance)) / 192;
+            if (weight <= 0) {
+                continue;
+            }
+
+            weightedX += static_cast<int64_t>(weight) * cx;
+            weightedY += static_cast<int64_t>(weight) * cy;
+            totalWeight += weight;
+        }
+    }
+
+    std::swap(s_zoomFollowPrevGrid, s_zoomFollowCurrGrid);
+    if (!s_zoomFollowHasPrev) {
+        s_zoomFollowHasPrev = true;
+        return;
+    }
+
+    if ((s_zoomFollowInputX == 0 && s_zoomFollowInputY == 0) ||
+        static_cast<int32_t>(millis() - s_zoomFollowManualUntilMs) < 0 ||
+        totalWeight < 18) {
+        return;
+    }
+
+    const int targetCenterX = static_cast<int>((weightedX + (totalWeight / 2)) / totalWeight);
+    const int targetCenterY = static_cast<int>((weightedY + (totalWeight / 2)) / totalWeight);
+    const int leadX = static_cast<int>(s_zoomFollowInputX) * (roiW / 10);
+    const int leadY = static_cast<int>(s_zoomFollowInputY) * (roiH / 10);
+    const int desiredSrcX = msx_video_clamp_int(targetCenterX + leadX - (roiW / 2), minSrcX, maxSrcX);
+    const int desiredSrcY = msx_video_clamp_int(targetCenterY + leadY - (roiH / 2), minSrcY, maxSrcY);
+    const int targetPanX = desiredSrcX - centeredSrcX;
+    const int targetPanY = desiredSrcY - centeredSrcY;
+    const int deltaX = s_zoomFollowInputX != 0 ? (targetPanX - s_internalZoomPanX) : 0;
+    const int deltaY = s_zoomFollowInputY != 0 ? (targetPanY - s_internalZoomPanY) : 0;
+
+    bool moved = false;
+    if (msx_video_iabs(deltaX) > kZoomFollowDeadband) {
+        s_internalZoomPanX += msx_video_clamp_int(deltaX, -kZoomFollowMaxStep, kZoomFollowMaxStep);
+        moved = true;
+    }
+    if (msx_video_iabs(deltaY) > kZoomFollowDeadband) {
+        s_internalZoomPanY += msx_video_clamp_int(deltaY, -kZoomFollowMaxStep, kZoomFollowMaxStep);
+        moved = true;
+    }
+
+    if (moved) {
+        msx_video_reset_external_pacing();
+    }
+}
+
+void msx_video_update_zoom_follow(const MsxDisplayFrame* frame)
+{
+    if (!frame || !frame->indexed8 || frame->width == 0u || frame->height == 0u || frame->pitchBytes < frame->width) {
+        msx_video_reset_zoom_follow_history();
+        return;
+    }
+
+    if (!msx_video_internal_zoom_active() || !s_zoomFollowEnabled) {
+        msx_video_reset_zoom_follow_history();
+        return;
+    }
+
+    if (!msx_video_prepare_zoom_follow_grid(frame->width, frame->height)) {
+        return;
+    }
+
+    ++s_zoomFollowFrameCounter;
+    if ((s_zoomFollowFrameCounter % kZoomFollowUpdateModulo) != 0u) {
+        return;
+    }
+
+    for (int by = 0; by < s_zoomFollowGridH; ++by) {
+        for (int bx = 0; bx < s_zoomFollowGridW; ++bx) {
+            const int index = by * s_zoomFollowGridW + bx;
+            s_zoomFollowCurrGrid[index] = msx_video_sample_zoom_follow_block(frame, bx, by);
+        }
+    }
+
+    msx_video_apply_zoom_follow_grid(frame->width, frame->height);
+}
+
+void msx_video_begin_zoom_follow_stream(unsigned srcW, unsigned srcH)
+{
+    s_zoomFollowStreamSampling = false;
+    if (!msx_video_internal_zoom_active() || !s_zoomFollowEnabled) {
+        msx_video_reset_zoom_follow_history();
+        return;
+    }
+
+    if (!msx_video_prepare_zoom_follow_grid(srcW, srcH)) {
+        return;
+    }
+
+    ++s_zoomFollowFrameCounter;
+    if ((s_zoomFollowFrameCounter % kZoomFollowUpdateModulo) != 0u) {
+        return;
+    }
+
+    const size_t count = static_cast<size_t>(s_zoomFollowGridW) * static_cast<size_t>(s_zoomFollowGridH);
+    std::memset(s_zoomFollowSumGrid, 0, count * sizeof(uint16_t));
+    std::memset(s_zoomFollowCountGrid, 0, count);
+    s_zoomFollowStreamSampling = true;
+}
+
+void msx_video_accumulate_zoom_follow_stream_line(const uint8_t* srcLine, unsigned srcLineIndex, unsigned srcW)
+{
+    if (!s_zoomFollowStreamSampling || !srcLine || srcW == 0u || (srcLineIndex % kZoomFollowSampleStep) != 0u) {
+        return;
+    }
+
+    const int by = static_cast<int>(srcLineIndex / kZoomFollowBlock);
+    if (by < 0 || by >= s_zoomFollowGridH) {
+        return;
+    }
+
+    for (unsigned x = 0; x < srcW; x += kZoomFollowSampleStep) {
+        const int bx = static_cast<int>(x / kZoomFollowBlock);
+        if (bx < 0 || bx >= s_zoomFollowGridW) {
+            continue;
+        }
+        const int index = by * s_zoomFollowGridW + bx;
+        if (s_zoomFollowCountGrid[index] < 32u) {
+            s_zoomFollowSumGrid[index] = static_cast<uint16_t>(s_zoomFollowSumGrid[index] + srcLine[x]);
+            ++s_zoomFollowCountGrid[index];
+        }
+    }
+}
+
+void msx_video_finish_zoom_follow_stream(unsigned srcW, unsigned srcH)
+{
+    if (!s_zoomFollowStreamSampling || !s_zoomFollowCurrGrid || !s_zoomFollowSumGrid || !s_zoomFollowCountGrid) {
+        s_zoomFollowStreamSampling = false;
+        return;
+    }
+
+    const int count = s_zoomFollowGridW * s_zoomFollowGridH;
+    for (int i = 0; i < count; ++i) {
+        const uint8_t sampleCount = s_zoomFollowCountGrid[i];
+        s_zoomFollowCurrGrid[i] = sampleCount != 0u
+                                      ? static_cast<uint8_t>((s_zoomFollowSumGrid[i] + (sampleCount / 2u)) / sampleCount)
+                                      : 0u;
+    }
+
+    s_zoomFollowStreamSampling = false;
+    msx_video_apply_zoom_follow_grid(srcW, srcH);
+}
+
 bool msx_video_render_frame_now(const MsxDisplayFrame* frame)
 {
     if (!frame || !frame->indexed8 || frame->width == 0 || frame->height == 0 || frame->pitchBytes < frame->width) {
@@ -1130,9 +1486,12 @@ bool msx_video_render_frame_now(const MsxDisplayFrame* frame)
         return false;
     }
 
+    msx_video_update_zoom_follow(frame);
+
     MsxVideoPlan plan = {};
     msx_video_compute_plan(frame->width, frame->height, &plan);
     const bool layoutChanged = msx_video_layout_changed(plan, frame->width, frame->height);
+    const bool clearTarget = msx_video_target_rect_changed(plan, frame->width, frame->height);
 
     s_isExternalCached = msx_video_game_on_external();
     s_drawFpsCached = msx_video_should_draw_fps_hud(plan.dstW, plan.dstH);
@@ -1157,7 +1516,7 @@ bool msx_video_render_frame_now(const MsxDisplayFrame* frame)
 
     msx_video_commit_layout_cache(plan, frame->width, frame->height);
 
-    if (layoutChanged) {
+    if (clearTarget) {
         msx_video_clear_target();
     }
 
@@ -1251,6 +1610,7 @@ void msx_video_init(void)
 void msx_video_shutdown(void)
 {
     msx_video_release_scratch_buffers();
+    msx_video_release_zoom_follow_buffers();
     s_extTftColorModeKnown = false;
     s_externalUiActive = false;
     s_stateOverlayActive = false;
@@ -1717,10 +2077,48 @@ bool msx_video_scroll_internal_zoom(int dx, int dy)
     const int oldPanY = s_internalZoomPanY;
     s_internalZoomPanX += dx;
     s_internalZoomPanY += dy;
+    s_zoomFollowManualUntilMs = millis() + kZoomFollowManualPauseMs;
     msx_video_reset_layout_cache();
     msx_video_reset_external_pacing();
     msx_video_reset_frameskip_state();
     msx_video_unlock();
 
     return oldPanX != s_internalZoomPanX || oldPanY != s_internalZoomPanY || dx != 0 || dy != 0;
+}
+
+void msx_video_center_internal_zoom(void)
+{
+    msx_video_lock();
+    s_internalZoomPanX = 0;
+    s_internalZoomPanY = 0;
+    s_zoomFollowManualUntilMs = millis() + kZoomFollowCenterPauseMs;
+    msx_video_reset_zoom_follow_history();
+    msx_video_reset_layout_cache();
+    msx_video_reset_external_pacing();
+    msx_video_reset_frameskip_state();
+    msx_video_unlock();
+}
+
+void msx_video_set_zoom_follow_enabled(bool enabled)
+{
+    msx_video_lock();
+    if (s_zoomFollowEnabled != enabled) {
+        s_zoomFollowEnabled = enabled;
+        msx_video_reset_zoom_follow_history();
+        msx_video_reset_layout_cache();
+        msx_video_reset_external_pacing();
+        msx_video_reset_frameskip_state();
+    }
+    msx_video_unlock();
+}
+
+bool msx_video_get_zoom_follow_enabled(void)
+{
+    return s_zoomFollowEnabled;
+}
+
+void msx_video_set_zoom_follow_input(bool left, bool right, bool up, bool down)
+{
+    s_zoomFollowInputX = (right ? 1 : 0) - (left ? 1 : 0);
+    s_zoomFollowInputY = (down ? 1 : 0) - (up ? 1 : 0);
 }

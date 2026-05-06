@@ -44,6 +44,7 @@ struct MsxInputOverlayState {
     bool keyboardEnabled;
     bool basicKeyboardEnabled;
     bool vausEnabled;
+    bool zoomFollowEnabled;
     bool performanceMode;
     MsxPerformancePreset performancePreset;
     bool perfDisableSliceRendering;
@@ -71,6 +72,7 @@ struct MsxRuntimeOptionConfig {
     bool keyboardEnabled;
     bool basicKeyboardEnabled;
     bool vausEnabled;
+    bool zoomFollowEnabled;
     uint8_t stateSlot;
 };
 

@@ -1289,6 +1289,7 @@ static void showStartupMsxConfigMenu(CardputerView& display, CardputerInput& inp
         "Performance",
         "Debug Logs",
         "Virtual SCC",
+        "Zoom Follow",
         "JOY EXTEND",
         "KEYB/JOY",
         "BasicKeyboard",
@@ -1302,6 +1303,7 @@ static void showStartupMsxConfigMenu(CardputerView& display, CardputerInput& inp
         msx_config_get_performance_mode_label(),
         msx_logs_enabled() ? "MASTER ON" : "MASTER OFF",
         msx_config_get_virtual_scc_mode_label(),
+        startupBoolLabel(config.zoomFollowEnabled),
         startupBoolLabel(config.joystickEnabled),
         startupBoolLabel(config.keyboardEnabled),
         startupBoolLabel(config.basicKeyboardEnabled),
@@ -1324,7 +1326,7 @@ static void showStartupMsxConfigMenu(CardputerView& display, CardputerInput& inp
                                          selectedIndex,
                                          -1,
                                          kSelectorResultBackToRomBrowser);
-    if (selected == kSelectorResultBackToRomBrowser || selected < 0 || selected == 10) {
+    if (selected == kSelectorResultBackToRomBrowser || selected < 0 || selected == 11) {
       input.flushInput(120);
       return;
     }
@@ -1345,35 +1347,39 @@ static void showStartupMsxConfigMenu(CardputerView& display, CardputerInput& inp
         msx_config_cycle_virtual_scc_mode(1, true);
         break;
       case 3:
+        config.zoomFollowEnabled = !config.zoomFollowEnabled;
+        msx_input_set_runtime_option_config(config, true);
+        break;
+      case 4:
         config.joystickEnabled = !config.joystickEnabled;
         if (config.joystickEnabled) {
           config.basicKeyboardEnabled = false;
         }
         msx_input_set_runtime_option_config(config, true);
         break;
-      case 4:
+      case 5:
         config.keyboardEnabled = !config.keyboardEnabled;
         config.basicKeyboardEnabled = false;
         msx_input_set_runtime_option_config(config, true);
         break;
-      case 5:
+      case 6:
         config.basicKeyboardEnabled = !config.basicKeyboardEnabled;
         msx_input_set_runtime_option_config(config, true);
         break;
-      case 6:
+      case 7:
         config.vausEnabled = !config.vausEnabled;
         if (config.vausEnabled) {
           config.basicKeyboardEnabled = false;
         }
         msx_input_set_runtime_option_config(config, true);
         break;
-      case 7:
+      case 8:
         msx_config_toggle_active_view_mode_for_target(g_emu_display_target == EMU_DISPLAY_EXTERNAL);
         break;
-      case 8:
+      case 9:
         msx_config_cycle_region_mode(1, true);
         break;
-      case 9:
+      case 10:
         config.stateSlot = static_cast<uint8_t>((config.stateSlot + 1u) % 10u);
         msx_input_set_runtime_option_config(config, true);
         break;

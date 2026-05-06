@@ -367,20 +367,21 @@ static const char* msx_display_runtime_menu_label(const MsxInputOverlayState& ov
     switch (index) {
         case 0u: return "PERF TUNE";
         case 1u: return "SOUND";
-        case 2u: return "DEBUG LOGS";
-        case 3u: return "JOY EXTEND";
-        case 4u: return "KEYB/JOY";
-        case 5u: return "BASIC KBD";
-        case 6u: return "VAUS";
-        case 7u: return "VIEW";
-        case 8u: return "MSX REGION";
-        case 9u: return msx_display_game_on_external() ? "SELECT SLOT" : "STATE SLOT";
-        case 10u: return msx_display_game_on_external() ? "SAVE SLOT" : "SAVE STATE";
-        case 11u: return msx_display_game_on_external() ? "LOAD SLOT" : "LOAD STATE";
+        case 2u: return "ZOOM FOLLOW";
+        case 3u: return "DEBUG LOGS";
+        case 4u: return "JOY EXTEND";
+        case 5u: return "KEYB/JOY";
+        case 6u: return "BASIC KBD";
+        case 7u: return "VAUS";
+        case 8u: return "VIEW";
+        case 9u: return "MSX REGION";
+        case 10u: return msx_display_game_on_external() ? "SELECT SLOT" : "STATE SLOT";
+        case 11u: return msx_display_game_on_external() ? "SAVE SLOT" : "SAVE STATE";
+        case 12u: return msx_display_game_on_external() ? "LOAD SLOT" : "LOAD STATE";
         default: break;
     }
 
-    uint8_t dynamicIndex = 12u;
+    uint8_t dynamicIndex = 13u;
     if (overlay.dskChangeAvailable) {
         if (index == dynamicIndex) {
             return "CHANGE DSK";
@@ -489,20 +490,22 @@ static const char* msx_display_runtime_menu_value(const MsxInputOverlayState& ov
         case 1u:
             return nullptr;
         case 2u:
-            return overlay.debugLogsEnabled ? "ON" : "OFF";
+            return overlay.zoomFollowEnabled ? "ON" : "OFF";
         case 3u:
-            return overlay.joystickEnabled ? "ON" : "OFF";
+            return overlay.debugLogsEnabled ? "ON" : "OFF";
         case 4u:
-            return overlay.keyboardEnabled ? "ON" : "OFF";
+            return overlay.joystickEnabled ? "ON" : "OFF";
         case 5u:
-            return overlay.basicKeyboardEnabled ? "ON" : "OFF";
+            return overlay.keyboardEnabled ? "ON" : "OFF";
         case 6u:
-            return overlay.vausEnabled ? "ON" : "OFF";
+            return overlay.basicKeyboardEnabled ? "ON" : "OFF";
         case 7u:
-            return msx_display_active_view_label();
+            return overlay.vausEnabled ? "ON" : "OFF";
         case 8u:
-            return msx_config_region_mode_label(overlay.regionMode);
+            return msx_display_active_view_label();
         case 9u:
+            return msx_config_region_mode_label(overlay.regionMode);
+        case 10u:
             std::snprintf(slotStr, sizeof(slotStr), "< %u >", static_cast<unsigned>(stateSlot));
             return slotStr;
         default:
@@ -774,6 +777,7 @@ static bool msx_display_runtime_menu_overlay_equals(const MsxInputOverlayState& 
            a.keyboardEnabled == b.keyboardEnabled &&
            a.basicKeyboardEnabled == b.basicKeyboardEnabled &&
            a.vausEnabled == b.vausEnabled &&
+           a.zoomFollowEnabled == b.zoomFollowEnabled &&
            a.performanceMode == b.performanceMode &&
            a.performancePreset == b.performancePreset &&
            a.perfDisableSliceRendering == b.perfDisableSliceRendering &&

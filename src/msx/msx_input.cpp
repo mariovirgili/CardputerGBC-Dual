@@ -65,6 +65,7 @@ struct MsxRuntimeOptions {
     bool keyboardEnabled;
     bool basicKeyboardEnabled;
     bool vausEnabled;
+    bool zoomFollowEnabled;
     uint8_t stateSlot;
     bool saveRequested;
     bool loadRequested;
@@ -78,6 +79,7 @@ struct MsxRuntimeOptions {
 enum class MsxRuntimeMenuItem : uint8_t {
     Performance = 0,
     Sound,
+    ZoomFollow,
     DebugLogs,
     Joystick,
     Keyboard,
@@ -161,7 +163,7 @@ struct MsxRuntimeMenuState {
 };
 
 static constexpr uint8_t kRuntimeMenuVisibleRows = 5u;
-static MsxRuntimeOptions s_runtimeOptions = {false, true, false, false, 0, false, false, false, false, false, false, false};
+static MsxRuntimeOptions s_runtimeOptions = {false, true, false, false, false, 0, false, false, false, false, false, false, false};
 static MsxRuntimeMenuState s_runtimeMenu = {
     false,
     MsxRuntimeMenuPage::Main,
@@ -303,10 +305,12 @@ static constexpr const char* kMsxInputJoystickKey = "joy";
 static constexpr const char* kMsxInputKeyboardKey = "kbd";
 static constexpr const char* kMsxInputBasicKey = "basic";
 static constexpr const char* kMsxInputVausKey = "vaus";
+static constexpr const char* kMsxInputZoomFollowKey = "zfollow";
 static constexpr const char* kMsxInputStateSlotKey = "state";
 static constexpr MsxRuntimeOptionConfig kDefaultRuntimeOptionConfig = {
     false,
     true,
+    false,
     false,
     false,
     0,
@@ -331,6 +335,7 @@ static void msx_persist_runtime_option_config(const MsxRuntimeOptionConfig& conf
     prefs.putBool(kMsxInputKeyboardKey, config.keyboardEnabled);
     prefs.putBool(kMsxInputBasicKey, config.basicKeyboardEnabled);
     prefs.putBool(kMsxInputVausKey, config.vausEnabled);
+    prefs.putBool(kMsxInputZoomFollowKey, config.zoomFollowEnabled);
     prefs.putUChar(kMsxInputStateSlotKey, config.stateSlot);
     prefs.end();
 }
@@ -342,6 +347,7 @@ static MsxRuntimeOptionConfig msx_current_runtime_option_config(void)
         s_runtimeOptions.keyboardEnabled,
         s_runtimeOptions.basicKeyboardEnabled,
         s_runtimeOptions.vausEnabled,
+        s_runtimeOptions.zoomFollowEnabled,
         s_runtimeOptions.stateSlot,
     };
 }
@@ -353,7 +359,9 @@ static void msx_apply_runtime_option_config(MsxRuntimeOptionConfig config, bool 
     s_runtimeOptions.keyboardEnabled = config.keyboardEnabled;
     s_runtimeOptions.basicKeyboardEnabled = config.basicKeyboardEnabled;
     s_runtimeOptions.vausEnabled = config.vausEnabled;
+    s_runtimeOptions.zoomFollowEnabled = config.zoomFollowEnabled;
     s_runtimeOptions.stateSlot = config.stateSlot;
+    msx_video_set_zoom_follow_enabled(config.zoomFollowEnabled);
     if (persist) {
         msx_persist_runtime_option_config(config);
     }
@@ -434,7 +442,7 @@ static const MsxDebugMenuGroupDef* msx_runtime_menu_group_def(MsxDebugMenuGroup 
 
 static uint8_t msx_get_main_menu_item_count(void)
 {
-    uint8_t count = 14u;
+    uint8_t count = 15u;
     if (s_runtimeOptions.changeDskAvailable) {
         ++count;
     }
@@ -496,20 +504,21 @@ static MsxRuntimeMenuItem msx_get_menu_item(uint8_t index)
     switch (index) {
         case 0: return MsxRuntimeMenuItem::Performance;
         case 1: return MsxRuntimeMenuItem::Sound;
-        case 2: return MsxRuntimeMenuItem::DebugLogs;
-        case 3: return MsxRuntimeMenuItem::Joystick;
-        case 4: return MsxRuntimeMenuItem::Keyboard;
-        case 5: return MsxRuntimeMenuItem::BasicKeyboard;
-        case 6: return MsxRuntimeMenuItem::Vaus;
-        case 7: return MsxRuntimeMenuItem::View;
-        case 8: return MsxRuntimeMenuItem::Region;
-        case 9: return MsxRuntimeMenuItem::StateSlot;
-        case 10: return MsxRuntimeMenuItem::SaveState;
-        case 11: return MsxRuntimeMenuItem::LoadState;
+        case 2: return MsxRuntimeMenuItem::ZoomFollow;
+        case 3: return MsxRuntimeMenuItem::DebugLogs;
+        case 4: return MsxRuntimeMenuItem::Joystick;
+        case 5: return MsxRuntimeMenuItem::Keyboard;
+        case 6: return MsxRuntimeMenuItem::BasicKeyboard;
+        case 7: return MsxRuntimeMenuItem::Vaus;
+        case 8: return MsxRuntimeMenuItem::View;
+        case 9: return MsxRuntimeMenuItem::Region;
+        case 10: return MsxRuntimeMenuItem::StateSlot;
+        case 11: return MsxRuntimeMenuItem::SaveState;
+        case 12: return MsxRuntimeMenuItem::LoadState;
         default: break;
     }
 
-    uint8_t dynamicIndex = 12u;
+    uint8_t dynamicIndex = 13u;
     if (s_runtimeOptions.changeDskAvailable) {
         if (index == dynamicIndex) {
             return MsxRuntimeMenuItem::ChangeDsk;
@@ -1142,6 +1151,14 @@ static void msx_runtime_menu_adjust(int delta)
         return;
     }
 
+    if (msx_get_menu_item(s_runtimeMenu.selectedIndex) == MsxRuntimeMenuItem::ZoomFollow) {
+        s_runtimeOptions.zoomFollowEnabled = !s_runtimeOptions.zoomFollowEnabled;
+        msx_video_set_zoom_follow_enabled(s_runtimeOptions.zoomFollowEnabled);
+        msx_persist_runtime_option_config(msx_input_get_runtime_option_config());
+        msx_video_request_full_redraw();
+        return;
+    }
+
     if (msx_get_menu_item(s_runtimeMenu.selectedIndex) == MsxRuntimeMenuItem::StateSlot) {
         int slot = s_runtimeOptions.stateSlot;
         slot = (slot + delta + 10) % 10;
@@ -1336,6 +1353,12 @@ static void msx_runtime_menu_accept(void)
     }
 
     switch (msx_get_menu_item(s_runtimeMenu.selectedIndex)) {
+        case MsxRuntimeMenuItem::ZoomFollow:
+            s_runtimeOptions.zoomFollowEnabled = !s_runtimeOptions.zoomFollowEnabled;
+            msx_video_set_zoom_follow_enabled(s_runtimeOptions.zoomFollowEnabled);
+            msx_persist_runtime_option_config(msx_input_get_runtime_option_config());
+            msx_video_request_full_redraw();
+            break;
         case MsxRuntimeMenuItem::DebugLogs:
             s_runtimeMenu.mainSelectedIndex = s_runtimeMenu.selectedIndex;
             msx_runtime_menu_open_debug_root_page();
@@ -1497,6 +1520,13 @@ static bool msx_ctrl_arrow_combo_pressed(const Keyboard_Class::KeysState& keys)
 
 static bool msx_poll_internal_zoom_scroll(const Keyboard_Class::KeysState& keys)
 {
+    if (keys.fn && keys.space && !s_runtimeMenu.visible && !s_virtualKeyPickerVisible && msx_video_internal_zoom_active()) {
+        msx_video_center_internal_zoom();
+        s_zoomScrollHeld = false;
+        s_zoomScrollNextRepeatMs = 0;
+        return true;
+    }
+
     if (!keys.fn || !msx_physical_arrow_pressed() || s_runtimeMenu.visible || s_virtualKeyPickerVisible) {
         s_zoomScrollHeld = false;
         s_zoomScrollNextRepeatMs = 0;
@@ -2392,6 +2422,7 @@ MsxRuntimeOptionConfig msx_input_load_runtime_option_config(void)
         prefs.getBool(kMsxInputKeyboardKey, kDefaultRuntimeOptionConfig.keyboardEnabled),
         prefs.getBool(kMsxInputBasicKey, kDefaultRuntimeOptionConfig.basicKeyboardEnabled),
         prefs.getBool(kMsxInputVausKey, kDefaultRuntimeOptionConfig.vausEnabled),
+        prefs.getBool(kMsxInputZoomFollowKey, kDefaultRuntimeOptionConfig.zoomFollowEnabled),
         prefs.getUChar(kMsxInputStateSlotKey, kDefaultRuntimeOptionConfig.stateSlot),
     };
     prefs.end();
@@ -2530,6 +2561,7 @@ void msx_input_init(void)
         config.keyboardEnabled,
         config.basicKeyboardEnabled,
         config.vausEnabled,
+        config.zoomFollowEnabled,
         config.stateSlot,
         false,
         false,
@@ -2538,6 +2570,7 @@ void msx_input_init(void)
         false,
         false
     };
+    msx_video_set_zoom_follow_enabled(config.zoomFollowEnabled);
     s_runtimeMenu = {
         false,
         MsxRuntimeMenuPage::Main,
@@ -2612,6 +2645,7 @@ void msx_input_poll(MsxInputState* state)
     MsxInputBindingCache bindings = {};
     msx_load_binding_cache(&bindings);
     msx_apply_system_keys(keys);
+    msx_video_set_zoom_follow_input(false, false, false, false);
     const bool zoomScrollConsumed = msx_poll_internal_zoom_scroll(keys);
 
     const bool fnPausePressed = keys.fn && msx_key_pressed_any('p', 'P');
@@ -2816,6 +2850,14 @@ void msx_input_poll(MsxInputState* state)
                               s_runtimeOptions.joystickEnabled,
                               basicKeyboardEnabled,
                               virtualKeyPickerAllowed);
+
+    const bool ctrlArrow = keys.ctrl && !keys.fn;
+    msx_video_set_zoom_follow_input(
+        state->left || (ctrlArrow && M5Cardputer.Keyboard.isKeyPressed(KEY_ARROW_LEFT)),
+        state->right || (ctrlArrow && M5Cardputer.Keyboard.isKeyPressed(KEY_ARROW_RIGHT)),
+        state->up || (ctrlArrow && M5Cardputer.Keyboard.isKeyPressed(KEY_ARROW_UP)),
+        state->down || (ctrlArrow && M5Cardputer.Keyboard.isKeyPressed(KEY_ARROW_DOWN))
+    );
 }
 
 void msx_input_get_overlay_state(MsxInputOverlayState* state)
@@ -2837,6 +2879,7 @@ void msx_input_get_overlay_state(MsxInputOverlayState* state)
     state->keyboardEnabled = s_runtimeOptions.keyboardEnabled;
     state->basicKeyboardEnabled = s_runtimeOptions.basicKeyboardEnabled;
     state->vausEnabled = s_runtimeOptions.vausEnabled;
+    state->zoomFollowEnabled = s_runtimeOptions.zoomFollowEnabled;
     state->performanceMode = msx_config_get_performance_mode();
     state->performancePreset = msx_config_get_performance_preset();
     state->perfDisableSliceRendering =
