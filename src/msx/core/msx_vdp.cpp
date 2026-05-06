@@ -70,6 +70,7 @@ uint32_t msx_vdp_sprite_pattern_base(const MsxVdpState* state);
 uint8_t msx_vdp_vscroll(const MsxVdpState* state);
 MsxVdpMode msx_vdp_decode_mode(const MsxVdpState* state);
 uint8_t msx_vdp_vram_page_mask(const MsxVdpState* state);
+inline uint8_t msx_vdp_resolve_color(const MsxVdpState* state, uint8_t color);
 bool msx_vdp_cpu_port_carries_into_r14(const MsxVdpState* state);
 uint32_t msx_vdp_compose_address(const MsxVdpState* state, uint16_t low14);
 void msx_vdp_advance_address(MsxVdpState* state);
@@ -174,39 +175,51 @@ struct __attribute__((packed)) MsxVdpRegTimelineEvent {
 // Reduced from 16 to 8. A game is unlikely to modify the same register more than 8 times per frame.
 static constexpr uint8_t kMsxVdpRegTimelineMax = 32u;
 struct MsxVdpRenderAuxState {
+    MsxVdpRegTimelineEvent r0Timeline[kMsxVdpRegTimelineMax];
+    MsxVdpRegTimelineEvent r1Timeline[kMsxVdpRegTimelineMax];
     MsxVdpRegTimelineEvent r5Timeline[kMsxVdpRegTimelineMax];
     MsxVdpRegTimelineEvent r6Timeline[kMsxVdpRegTimelineMax];
     MsxVdpRegTimelineEvent r8Timeline[kMsxVdpRegTimelineMax];
     MsxVdpRegTimelineEvent r11Timeline[kMsxVdpRegTimelineMax];
     MsxVdpRegTimelineEvent r2Timeline[kMsxVdpRegTimelineMax];
+    MsxVdpRegTimelineEvent r18Timeline[kMsxVdpRegTimelineMax];
     MsxVdpRegTimelineEvent r23Timeline[kMsxVdpRegTimelineMax];
     MsxVdpRegTimelineEvent r25Timeline[kMsxVdpRegTimelineMax];
     MsxVdpRegTimelineEvent r26Timeline[kMsxVdpRegTimelineMax];
     MsxVdpRegTimelineEvent r27Timeline[kMsxVdpRegTimelineMax];
+    uint8_t r0TimelineCount;
+    uint8_t r1TimelineCount;
     uint8_t r5TimelineCount;
     uint8_t r6TimelineCount;
     uint8_t r8TimelineCount;
     uint8_t r11TimelineCount;
     uint8_t r2TimelineCount;
+    uint8_t r18TimelineCount;
     uint8_t r23TimelineCount;
     uint8_t r25TimelineCount;
     uint8_t r26TimelineCount;
     uint8_t r27TimelineCount;
 };
+static MsxVdpRegTimelineEvent s_msxVdpR0Timeline[kMsxVdpRegTimelineMax];
+static MsxVdpRegTimelineEvent s_msxVdpR1Timeline[kMsxVdpRegTimelineMax];
 static MsxVdpRegTimelineEvent s_msxVdpR5Timeline[kMsxVdpRegTimelineMax];
 static MsxVdpRegTimelineEvent s_msxVdpR6Timeline[kMsxVdpRegTimelineMax];
 static MsxVdpRegTimelineEvent s_msxVdpR8Timeline[kMsxVdpRegTimelineMax];
 static MsxVdpRegTimelineEvent s_msxVdpR11Timeline[kMsxVdpRegTimelineMax];
 static MsxVdpRegTimelineEvent s_msxVdpR2Timeline[kMsxVdpRegTimelineMax];
+static MsxVdpRegTimelineEvent s_msxVdpR18Timeline[kMsxVdpRegTimelineMax];
 static MsxVdpRegTimelineEvent s_msxVdpR23Timeline[kMsxVdpRegTimelineMax];
 static MsxVdpRegTimelineEvent s_msxVdpR25Timeline[kMsxVdpRegTimelineMax];
 static MsxVdpRegTimelineEvent s_msxVdpR26Timeline[kMsxVdpRegTimelineMax];
 static MsxVdpRegTimelineEvent s_msxVdpR27Timeline[kMsxVdpRegTimelineMax];
+static uint8_t s_msxVdpR0TimelineCount = 0u;
+static uint8_t s_msxVdpR1TimelineCount = 0u;
 static uint8_t s_msxVdpR5TimelineCount = 0u;
 static uint8_t s_msxVdpR6TimelineCount = 0u;
 static uint8_t s_msxVdpR8TimelineCount = 0u;
 static uint8_t s_msxVdpR11TimelineCount = 0u;
 static uint8_t s_msxVdpR2TimelineCount = 0u;
+static uint8_t s_msxVdpR18TimelineCount = 0u;
 static uint8_t s_msxVdpR23TimelineCount = 0u;
 static uint8_t s_msxVdpR25TimelineCount = 0u;
 static uint8_t s_msxVdpR26TimelineCount = 0u;
@@ -490,11 +503,10 @@ static inline uint8_t msx_vdp_timeline_value_for_line(const MsxVdpState* state,
         return 0u;
     }
 
-    // Il main loop renderizza la scanline PRIMA di eseguire il CPU dello slice corrente
-    // (msx_core.cpp), quindi il timeline contiene solo le scritture fatte durante gli
-    // slice precedenti. Estendere targetCycle fino al ciclo immediatamente prima della
-    // scanline successiva assorbe l'overshoot del CPU dallo slice precedente e copre
-    // i cambi mid-frame di R23/R26/R27 scritti nell'HBlank IRQ handler.
+    // Il main loop MSX2 esegue il budget CPU della scanline e poi renderizza la
+    // linea in slice mode. Campionare fino al ciclo immediatamente prima della
+    // scanline successiva fa combaciare la ricostruzione full-frame con quello
+    // stesso confine, inclusi i cambi R2/R23/R0/R1 fatti nell'HBlank IRQ handler.
     uint32_t targetCycle = msx_vdp_cycle_for_line(state, y);
     if ((y + 1u) < state->activeHeight) {
         const uint32_t nextLineCycle = msx_vdp_cycle_for_line(state, y + 1u);
@@ -614,6 +626,30 @@ static inline uint8_t msx_vdp_timeline_value_for_scanline_start(const MsxVdpStat
 static const MsxVdpRenderAuxState* msx_vdp_render_aux(const MsxVdpState* state)
 {
     return state ? static_cast<const MsxVdpRenderAuxState*>(state->renderContext) : nullptr;
+}
+
+static inline uint8_t msx_vdp_reg0_for_line(const MsxVdpState* state, unsigned y)
+{
+    if (!state || !msx_vdp_is_msx2(state)) {
+        return state ? state->regs[0] : 0u;
+    }
+    const MsxVdpRenderAuxState* aux = msx_vdp_render_aux(state);
+    return msx_vdp_timeline_value_for_line(state,
+                                           aux ? aux->r0Timeline : s_msxVdpR0Timeline,
+                                           aux ? aux->r0TimelineCount : s_msxVdpR0TimelineCount,
+                                           y);
+}
+
+static inline uint8_t msx_vdp_reg1_for_line(const MsxVdpState* state, unsigned y)
+{
+    if (!state || !msx_vdp_is_msx2(state)) {
+        return state ? state->regs[1] : 0u;
+    }
+    const MsxVdpRenderAuxState* aux = msx_vdp_render_aux(state);
+    return msx_vdp_timeline_value_for_line(state,
+                                           aux ? aux->r1Timeline : s_msxVdpR1Timeline,
+                                           aux ? aux->r1TimelineCount : s_msxVdpR1TimelineCount,
+                                           y);
 }
 
 static inline uint8_t msx_vdp_reg8_for_line(const MsxVdpState* state, unsigned y)
@@ -742,10 +778,22 @@ static inline uint8_t msx_vdp_reg2_for_bitmap_line(const MsxVdpState* state, uns
         return state ? state->regs[2] : 0u;
     }
     const MsxVdpRenderAuxState* aux = msx_vdp_render_aux(state);
-    return msx_vdp_timeline_value_for_scanline_start(state,
-                                                     aux ? aux->r2Timeline : s_msxVdpR2Timeline,
-                                                     aux ? aux->r2TimelineCount : s_msxVdpR2TimelineCount,
-                                                     y);
+    return msx_vdp_timeline_value_for_line(state,
+                                           aux ? aux->r2Timeline : s_msxVdpR2Timeline,
+                                           aux ? aux->r2TimelineCount : s_msxVdpR2TimelineCount,
+                                           y);
+}
+
+static inline uint8_t msx_vdp_reg18_for_bitmap_line(const MsxVdpState* state, unsigned y)
+{
+    if (!state || !msx_vdp_is_msx2(state)) {
+        return state ? state->regs[18] : 0u;
+    }
+    const MsxVdpRenderAuxState* aux = msx_vdp_render_aux(state);
+    return msx_vdp_timeline_value_for_line(state,
+                                           aux ? aux->r18Timeline : s_msxVdpR18Timeline,
+                                           aux ? aux->r18TimelineCount : s_msxVdpR18TimelineCount,
+                                           y);
 }
 
 static inline uint8_t msx_vdp_reg23_for_line(const MsxVdpState* state, unsigned y)
@@ -778,10 +826,10 @@ static inline uint8_t msx_vdp_reg23_for_bitmap_line(const MsxVdpState* state, un
         return state ? state->regs[23] : 0u;
     }
     const MsxVdpRenderAuxState* aux = msx_vdp_render_aux(state);
-    return msx_vdp_timeline_value_for_scanline_start(state,
-                                                     aux ? aux->r23Timeline : s_msxVdpR23Timeline,
-                                                     aux ? aux->r23TimelineCount : s_msxVdpR23TimelineCount,
-                                                     y);
+    return msx_vdp_timeline_value_for_line(state,
+                                           aux ? aux->r23Timeline : s_msxVdpR23Timeline,
+                                           aux ? aux->r23TimelineCount : s_msxVdpR23TimelineCount,
+                                           y);
 }
 
 static inline uint32_t msx_vdp_split_probe_y(const MsxVdpState* state)
@@ -1099,6 +1147,31 @@ static void msx_vdp_stream_line_if_needed(MsxVdpState* state, uint8_t* srcLine, 
         return;
     }
     msx_video_stream_line(&s_msx2StreamVideoFrame, srcLine, srcLineIndex);
+}
+
+static void msx_vdp_apply_horizontal_adjust_line(const MsxVdpState* state,
+                                                 uint8_t* line,
+                                                 unsigned width,
+                                                 int8_t adjustX)
+{
+    if (!state || !line || width == 0u || adjustX == 0) {
+        return;
+    }
+
+    const unsigned shift = static_cast<unsigned>(adjustX > 0 ? adjustX : -adjustX);
+    const uint8_t fill = msx_vdp_resolve_color(state, 0u);
+    if (shift >= width) {
+        std::memset(line, fill, width);
+        return;
+    }
+
+    if (adjustX > 0) {
+        std::memmove(line, line + shift, width - shift);
+        std::memset(line + (width - shift), fill, shift);
+    } else {
+        std::memmove(line + shift, line, width - shift);
+        std::memset(line, fill, shift);
+    }
 }
 
 } // namespace
@@ -1716,7 +1789,7 @@ inline bool msx_vdp_sprites_disabled_for_line(const MsxVdpState* state, unsigned
         return false;
     }
     if (msx_vdp_is_msx2(state)) {
-        return (msx_vdp_reg8_for_display_line(state, y) & 0x02u) != 0u;
+        return (msx_vdp_reg8_for_line(state, y) & 0x02u) != 0u;
     }
     return (state->regs[8] & 0x02u) != 0u;
 }
@@ -1755,13 +1828,31 @@ inline uint16_t msx_vdp_hscroll(const MsxVdpState* state)
     return msx_vdp_hscroll_for_regs(state->regs[26], state->regs[27]);
 }
 
+inline int8_t msx_vdp_signed_adjust_nibble(uint8_t value)
+{
+    value &= 0x0Fu;
+    return (value & 0x08u) != 0u
+        ? static_cast<int8_t>(value | 0xF0u)
+        : static_cast<int8_t>(value);
+}
+
+inline int8_t msx_vdp_horizontal_adjust_for_reg18(uint8_t reg18)
+{
+    return static_cast<int8_t>(-msx_vdp_signed_adjust_nibble(reg18));
+}
+
+inline int8_t msx_vdp_vertical_adjust_for_reg18(uint8_t reg18)
+{
+    return static_cast<int8_t>(-msx_vdp_signed_adjust_nibble(static_cast<uint8_t>(reg18 >> 4)));
+}
+
 inline int8_t msx_vdp_vertical_adjust(const MsxVdpState* state)
 {
     if (!state || !msx_vdp_is_msx2(state)) {
         return 0;
     }
 
-    return static_cast<int8_t>(-(static_cast<int8_t>(state->regs[18]) >> 4));
+    return msx_vdp_vertical_adjust_for_reg18(state->regs[18]);
 }
 
 struct MsxBitmapFetchAddress {
@@ -1942,7 +2033,7 @@ uint32_t msx_vdp_command_estimated_bytes(uint8_t command, uint16_t nxRaw, uint16
 
 bool msx_vdp_is_traced_register(uint8_t reg)
 {
-    return reg == 2u || reg == 17u || reg == 19u || reg == 23u ||
+    return reg == 2u || reg == 17u || reg == 18u || reg == 19u || reg == 23u ||
            reg == 25u || reg == 26u || reg == 27u ||
            (reg >= 32u && reg <= 46u);
 }
@@ -2544,12 +2635,14 @@ static bool msx_vdp_command_try_bulk_hmmm(MsxVdpState* state, uint8_t liveScreen
     if (!state || state->command.transfer != MsxVdpTransferCommand::Hmmm) {
         return false;
     }
-    if ((liveScreenMode & 0x03u) == 0u) {
-        // Darwin 4078 still exposes a Screen 5 bulk-HMMM mismatch; use byte-stepped copy.
+    MsxVdpCommandState& command = state->command;
+    const bool screen5 = (liveScreenMode & 0x03u) == 0u;
+    if (screen5 && command.sy != command.dy) {
+        // Keep non-horizontal SCREEN 5 moves on the byte-stepped path; Space Manbow's
+        // scroll uses same-row HMMM copies, which memmove can bulk safely.
         return false;
     }
 
-    MsxVdpCommandState& command = state->command;
     const uint16_t ppb = msx_vdp_command_ppb(liveScreenMode);
     const uint16_t ppl = msx_vdp_command_ppl(liveScreenMode);
     const uint16_t rowBytes = static_cast<uint16_t>(ppl / ppb);
@@ -2588,7 +2681,7 @@ static bool msx_vdp_command_try_bulk_hmmm(MsxVdpState* state, uint8_t liveScreen
             const uint32_t srcEnd = srcStart + len;
             const uint32_t dstEnd = dstStart + len;
             const bool overlaps = (srcStart < dstEnd) && (dstStart < srcEnd);
-            if (overlaps) {
+            if (overlaps && !screen5) {
                 return false;
             }
         }
@@ -3455,7 +3548,7 @@ void msx_vdp_write_register(MsxVdpState* state, uint8_t reg, uint8_t value)
     if (state->regs[reg] != value) {
 #if MSX_VDP_VERBOSE_DIAG_ENABLED
         if (msx_vdp_is_msx2(state) &&
-            (reg == 0u || reg == 1u || reg == 2u || reg == 19u || reg == 23u)) {
+            (reg == 0u || reg == 1u || reg == 2u || reg == 18u || reg == 19u || reg == 23u)) {
             uint32_t scanline = 0u;
             uint32_t linePhase = 0u;
             uint32_t hblankStart = 0u;
@@ -3463,6 +3556,8 @@ void msx_vdp_write_register(MsxVdpState* state, uint8_t reg, uint8_t value)
             if (msx_vdp_should_log_split_timing(state, scanline)) {
                 const uint8_t prevR2 = state->regs[2];
                 const uint8_t nextR2 = (reg == 2u) ? value : prevR2;
+                const uint8_t prevR18 = state->regs[18];
+                const uint8_t nextR18 = (reg == 18u) ? value : prevR18;
                 const uint8_t prevR19 = state->regs[19];
                 const uint8_t nextR19 = (reg == 19u) ? value : prevR19;
                 const uint8_t prevR23 = state->regs[23];
@@ -3477,7 +3572,7 @@ void msx_vdp_write_register(MsxVdpState* state, uint8_t reg, uint8_t value)
                     static_cast<uint8_t>(((scanline + static_cast<uint32_t>(nextR23)) - nextR19) & 0xFFu);
                 MSX_CATEGORY_LOG(
                     MsxLogCategory::VdpG4Disp,
-                    "[MSX][SPLIT-WR] frame=%lu scan=%lu phase=%lu hb=%u reg=%02u prev=%02X new=%02X r2=%02X->%02X r19=%02X->%02X r23=%02X->%02X lie=%u->%u disp=%u->%u fh=%u d=%02X->%02X s1=%02X\n",
+                    "[MSX][SPLIT-WR] frame=%lu scan=%lu phase=%lu hb=%u reg=%02u prev=%02X new=%02X r2=%02X->%02X r18=%02X->%02X r19=%02X->%02X r23=%02X->%02X ha=%d->%d va=%d->%d lie=%u->%u disp=%u->%u fh=%u d=%02X->%02X s1=%02X\n",
                     static_cast<unsigned long>(state->frameCounter),
                     static_cast<unsigned long>(scanline),
                     static_cast<unsigned long>(linePhase),
@@ -3487,10 +3582,16 @@ void msx_vdp_write_register(MsxVdpState* state, uint8_t reg, uint8_t value)
                     static_cast<unsigned>(value),
                     static_cast<unsigned>(prevR2),
                     static_cast<unsigned>(nextR2),
+                    static_cast<unsigned>(prevR18),
+                    static_cast<unsigned>(nextR18),
                     static_cast<unsigned>(prevR19),
                     static_cast<unsigned>(nextR19),
                     static_cast<unsigned>(prevR23),
                     static_cast<unsigned>(nextR23),
+                    static_cast<int>(msx_vdp_horizontal_adjust_for_reg18(prevR18)),
+                    static_cast<int>(msx_vdp_horizontal_adjust_for_reg18(nextR18)),
+                    static_cast<int>(msx_vdp_vertical_adjust_for_reg18(prevR18)),
+                    static_cast<int>(msx_vdp_vertical_adjust_for_reg18(nextR18)),
                     static_cast<unsigned>((prevR0 & 0x10u) != 0u ? 1u : 0u),
                     static_cast<unsigned>((nextR0 & 0x10u) != 0u ? 1u : 0u),
                     static_cast<unsigned>((prevR1 & 0x40u) != 0u ? 1u : 0u),
@@ -3522,7 +3623,17 @@ void msx_vdp_write_register(MsxVdpState* state, uint8_t reg, uint8_t value)
             msx_vdp_refresh_resolved_color_lut(state);
         }
         if (msx_vdp_is_msx2(state)) {
-            if (reg == 5u) {
+            if (reg == 0u) {
+                msx_vdp_timeline_append(s_msxVdpR0Timeline,
+                                        &s_msxVdpR0TimelineCount,
+                                        state->currentFrameCpuCycles,
+                                        value);
+            } else if (reg == 1u) {
+                msx_vdp_timeline_append(s_msxVdpR1Timeline,
+                                        &s_msxVdpR1TimelineCount,
+                                        state->currentFrameCpuCycles,
+                                        value);
+            } else if (reg == 5u) {
                 msx_vdp_timeline_append(s_msxVdpR5Timeline,
                                         &s_msxVdpR5TimelineCount,
                                         state->currentFrameCpuCycles,
@@ -3545,6 +3656,11 @@ void msx_vdp_write_register(MsxVdpState* state, uint8_t reg, uint8_t value)
             } else if (reg == 2u) {
                 msx_vdp_timeline_append(s_msxVdpR2Timeline,
                                         &s_msxVdpR2TimelineCount,
+                                        state->currentFrameCpuCycles,
+                                        value);
+            } else if (reg == 18u) {
+                msx_vdp_timeline_append(s_msxVdpR18Timeline,
+                                        &s_msxVdpR18TimelineCount,
                                         state->currentFrameCpuCycles,
                                         value);
             } else if (reg == 23u) {
@@ -4317,15 +4433,15 @@ bool msx_vdp_render_color_sprites_line(MsxVdpState* state, unsigned y, uint8_t* 
     }
 
     static constexpr uint8_t kSpriteHeights[4] = {8u, 16u, 16u, 32u};
-    const uint8_t lineVScroll = msx_vdp_reg23_for_display_line(state, y);
+    const uint8_t lineVScroll = msx_vdp_reg23_for_line(state, y);
     if (msx_vdp_sprites_disabled_for_line(state, y)) {
         return false;
     }
 
-    const uint8_t spriteReg1 = state->regs[1];
-    const uint8_t spriteReg5 = msx_vdp_reg5_for_display_line(state, y);
-    const uint8_t spriteReg6 = msx_vdp_reg6_for_display_line(state, y);
-    const uint8_t spriteReg11 = msx_vdp_reg11_for_display_line(state, y);
+    const uint8_t spriteReg1 = msx_vdp_reg1_for_line(state, y);
+    const uint8_t spriteReg5 = msx_vdp_reg5_for_line(state, y);
+    const uint8_t spriteReg6 = msx_vdp_reg6_for_line(state, y);
+    const uint8_t spriteReg11 = msx_vdp_reg11_for_line(state, y);
     const uint32_t attrBase = msx_vdp_color_sprite_attr_base_for_regs(spriteReg5, spriteReg11, state->vramMask);
     const uint32_t colorBase = (attrBase - 0x200u) & state->vramMask;
     const uint32_t patternBase = msx_vdp_color_sprite_pattern_base_for_reg6(spriteReg6, state->vramMask);
@@ -4606,17 +4722,17 @@ uint32_t msx_vdp_bitmap4_base(const MsxVdpState* state)
     return static_cast<uint32_t>((state->regs[2] >> 5) & 0x03u) << 15;
 }
 
-MsxVdpMode msx_vdp_decode_mode(const MsxVdpState* state)
+static MsxVdpMode msx_vdp_decode_mode_from_regs(const MsxVdpState* state, uint8_t r0, uint8_t r1)
 {
     if (!state) {
         return MsxVdpMode::Unsupported;
     }
 
-    const uint8_t m1 = static_cast<uint8_t>((state->regs[1] >> 4) & 0x01u);
-    const uint8_t m2 = static_cast<uint8_t>((state->regs[1] >> 3) & 0x01u);
-    const uint8_t m3 = static_cast<uint8_t>((state->regs[0] >> 1) & 0x01u);
-    const uint8_t m4 = static_cast<uint8_t>((state->regs[0] >> 2) & 0x01u);
-    const uint8_t m5 = static_cast<uint8_t>((state->regs[0] >> 3) & 0x01u);
+    const uint8_t m1 = static_cast<uint8_t>((r1 >> 4) & 0x01u);
+    const uint8_t m2 = static_cast<uint8_t>((r1 >> 3) & 0x01u);
+    const uint8_t m3 = static_cast<uint8_t>((r0 >> 1) & 0x01u);
+    const uint8_t m4 = static_cast<uint8_t>((r0 >> 2) & 0x01u);
+    const uint8_t m5 = static_cast<uint8_t>((r0 >> 3) & 0x01u);
 
     if (m5 == 0u && m4 == 0u && m3 == 0u && m2 == 0u && m1 == 0u) {
         return MsxVdpMode::Graphics1;
@@ -4649,6 +4765,12 @@ MsxVdpMode msx_vdp_decode_mode(const MsxVdpState* state)
         return MsxVdpMode::Text80;
     }
     return MsxVdpMode::Unsupported;
+}
+
+MsxVdpMode msx_vdp_decode_mode(const MsxVdpState* state)
+{
+    return state ? msx_vdp_decode_mode_from_regs(state, state->regs[0], state->regs[1])
+                 : MsxVdpMode::Unsupported;
 }
 
 void msx_vdp_update_mode_geometry(MsxVdpState* state)
@@ -5284,6 +5406,7 @@ static void msx_vdp_render_bitmap4_range(MsxVdpState* state, unsigned yStart, un
     static uint32_t s_g4DispLogCount = 0u;
     static uint32_t s_g4DispLastFrame = 0xFFFFFFFFu;
     static uint8_t s_g4LastDispR2 = 0xFFu;
+    static uint8_t s_g4LastDispR18 = 0xFFu;
     static uint8_t s_g4LastDispR23 = 0xFFu;
     static uint8_t s_g4LastDispR25 = 0xFFu;
     static uint8_t s_g4LastDispR26 = 0xFFu;
@@ -5291,11 +5414,13 @@ static void msx_vdp_render_bitmap4_range(MsxVdpState* state, unsigned yStart, un
     static uint8_t s_g4DispBudget = 0u;
 
     if (state->regs[2] != s_g4LastDispR2 ||
+        state->regs[18] != s_g4LastDispR18 ||
         state->regs[23] != s_g4LastDispR23 ||
         state->regs[25] != s_g4LastDispR25 ||
         state->regs[26] != s_g4LastDispR26 ||
         state->regs[27] != s_g4LastDispR27) {
         s_g4LastDispR2 = state->regs[2];
+        s_g4LastDispR18 = state->regs[18];
         s_g4LastDispR23 = state->regs[23];
         s_g4LastDispR25 = state->regs[25];
         s_g4LastDispR26 = state->regs[26];
@@ -5307,6 +5432,7 @@ static void msx_vdp_render_bitmap4_range(MsxVdpState* state, unsigned yStart, un
         const bool hasSprites = msx_vdp_render_color_sprites_line(state, y, s_msxColorSpriteLine);
         const uint8_t* const spriteLine = s_msxColorSpriteLine + 32u;
         const uint8_t lineReg2 = msx_vdp_reg2_for_bitmap_line(state, y);
+        const uint8_t lineReg18 = msx_vdp_reg18_for_bitmap_line(state, y);
         const uint8_t lineReg25 = msx_vdp_reg25_for_line(state, y);
         const uint8_t lineReg26 = msx_vdp_reg26_for_line(state, y);
         const uint8_t lineReg27 = msx_vdp_reg27_for_line(state, y);
@@ -5316,16 +5442,18 @@ static void msx_vdp_render_bitmap4_range(MsxVdpState* state, unsigned yStart, un
             (state->frameCounter % 120u == 0u) &&
             (y == 0u || y == 27u || y == 50u || y == 100u ||
              y == 140u || y == 180u || y == 210u)) {
-            MSX_RUNTIME_LOG("[MSX][RENDER-DBG] frame=%lu y=%u r2=%02X r23=%02X r26=%02X r27=%02X\n",
+            MSX_RUNTIME_LOG("[MSX][RENDER-DBG] frame=%lu y=%u r2=%02X r18=%02X r23=%02X r26=%02X r27=%02X\n",
                 static_cast<unsigned long>(state->frameCounter),
                 y,
                 static_cast<unsigned>(lineReg2),
+                static_cast<unsigned>(lineReg18),
                 static_cast<unsigned>(lineVScroll),
                 static_cast<unsigned>(lineReg26),
                 static_cast<unsigned>(lineReg27));
         }
 #endif
         const uint16_t lineHScroll = msx_vdp_hscroll_for_regs(lineReg26, lineReg27);
+        const int8_t lineHAdjust = msx_vdp_horizontal_adjust_for_reg18(lineReg18);
         const bool useHScroll = lineHScroll != 0u;
         const bool dualPage = msx_vdp_hscroll512_for_regs(lineReg25);
         const uint32_t scrolledY = static_cast<uint32_t>(y) + static_cast<uint32_t>(lineVScroll);
@@ -5375,12 +5503,13 @@ static void msx_vdp_render_bitmap4_range(MsxVdpState* state, unsigned yStart, un
                                                                                 0x8000u);
             const uint16_t commandY = static_cast<uint16_t>((static_cast<uint16_t>(pageIndex) << 8) |
                                                             static_cast<uint16_t>(scrolledY & 0xFFu));
-            MSX_RUNTIME_LOG("[MSX][G4-DISP] #%lu frame=%lu line=%u now=%lu r2=%02X r23=%02X r25=%02X r26=%02X r27=%02X r9=%02X legacy=%02X/%02X cyc=%lu/%lu live=%02X/%02X/%02X/%02X/%02X hs=%u hs512=%u sy=%u cy=%u page=%u base=%05lX cur=%05lX b0=%02X%02X%02X%02X b8=%02X%02X%02X%02X b12=%02X%02X%02X%02X altp=%u alt=%05lX %02X%02X%02X%02X fx0=%05lX/%u fx128=%05lX/%u\n",
+            MSX_RUNTIME_LOG("[MSX][G4-DISP] #%lu frame=%lu line=%u now=%lu r2=%02X r18=%02X r23=%02X r25=%02X r26=%02X r27=%02X r9=%02X legacy=%02X/%02X cyc=%lu/%lu live=%02X/%02X/%02X/%02X/%02X/%02X hs=%u ha=%d hs512=%u sy=%u cy=%u page=%u base=%05lX cur=%05lX b0=%02X%02X%02X%02X b8=%02X%02X%02X%02X b12=%02X%02X%02X%02X altp=%u alt=%05lX %02X%02X%02X%02X fx0=%05lX/%u fx128=%05lX/%u\n",
                         static_cast<unsigned long>(s_g4DispLogCount),
                         static_cast<unsigned long>(state->frameCounter),
                         static_cast<unsigned>(y),
                         static_cast<unsigned long>(state->currentFrameCpuCycles),
                         static_cast<unsigned>(lineReg2),
+                        static_cast<unsigned>(lineReg18),
                         static_cast<unsigned>(lineVScroll),
                         static_cast<unsigned>(lineReg25),
                         static_cast<unsigned>(lineReg26),
@@ -5391,11 +5520,13 @@ static void msx_vdp_render_bitmap4_range(MsxVdpState* state, unsigned yStart, un
                         static_cast<unsigned long>(probeCycle262),
                         static_cast<unsigned long>(probeCycleVis),
                         static_cast<unsigned>(state->regs[2]),
+                        static_cast<unsigned>(state->regs[18]),
                         static_cast<unsigned>(state->regs[23]),
                         static_cast<unsigned>(state->regs[25]),
                         static_cast<unsigned>(state->regs[26]),
                         static_cast<unsigned>(state->regs[27]),
                         static_cast<unsigned>(lineHScroll),
+                        static_cast<int>(lineHAdjust),
                         static_cast<unsigned>(dualPage ? 1u : 0u),
                         static_cast<unsigned>(scrolledY),
                         static_cast<unsigned>(commandY),
@@ -5462,6 +5593,7 @@ static void msx_vdp_render_bitmap4_range(MsxVdpState* state, unsigned yStart, un
                 dst[x] = hasSprites && spriteLine[x] != 0u ? spriteLine[x] : pixel;
             }
         }
+        msx_vdp_apply_horizontal_adjust_line(state, dst, kMsxFrameWidth, lineHAdjust);
         msx_vdp_stream_line_if_needed(state, dst, y);
 
 #if MSX_VDP_VERBOSE_DIAG_ENABLED
@@ -5480,18 +5612,20 @@ static void msx_vdp_render_bitmap4_range(MsxVdpState* state, unsigned yStart, un
             }
 
             MSX_RUNTIME_LOG(
-                "[MSX][LASTLINE-G4] frame=%lu y=%u h=%u spr=%u sprNz=%u r2=%02X r23=%02X r25=%02X r26=%02X r27=%02X hs=%u hs512=%u base=%05lX row=%05lX line=%05lX v0=%02X%02X%02X%02X v124=%02X%02X v126=%02X%02X px0=%02X%02X%02X%02X%02X%02X%02X%02X px248=%02X%02X%02X%02X%02X%02X%02X%02X\n",
+                "[MSX][LASTLINE-G4] frame=%lu y=%u h=%u spr=%u sprNz=%u r2=%02X r18=%02X r23=%02X r25=%02X r26=%02X r27=%02X hs=%u ha=%d hs512=%u base=%05lX row=%05lX line=%05lX v0=%02X%02X%02X%02X v124=%02X%02X v126=%02X%02X px0=%02X%02X%02X%02X%02X%02X%02X%02X px248=%02X%02X%02X%02X%02X%02X%02X%02X\n",
                 static_cast<unsigned long>(state->frameCounter),
                 static_cast<unsigned>(y),
                 static_cast<unsigned>(height),
                 static_cast<unsigned>(hasSprites ? 1u : 0u),
                 static_cast<unsigned>(spriteNonZeroCount),
                 static_cast<unsigned>(lineReg2),
+                static_cast<unsigned>(lineReg18),
                 static_cast<unsigned>(lineVScroll),
                 static_cast<unsigned>(lineReg25),
                 static_cast<unsigned>(lineReg26),
                 static_cast<unsigned>(lineReg27),
                 static_cast<unsigned>(lineHScroll),
+                static_cast<int>(lineHAdjust),
                 static_cast<unsigned>(dualPage ? 1u : 0u),
                 static_cast<unsigned long>(pageBase & mask),
                 static_cast<unsigned long>(rowOffset & lineMask),
@@ -5535,18 +5669,20 @@ static void msx_vdp_render_bitmap4_range(MsxVdpState* state, unsigned yStart, un
             }
 
             MSX_RUNTIME_LOG(
-                "[MSX][SPLIT-G4] frame=%lu y=%u h=%u spr=%u sprNz=%u r2=%02X r23=%02X r25=%02X r26=%02X r27=%02X hs=%u hs512=%u base=%05lX row=%05lX line=%05lX v0=%02X%02X%02X%02X v124=%02X%02X v126=%02X%02X px0=%02X%02X%02X%02X%02X%02X%02X%02X px120=%02X%02X%02X%02X%02X%02X%02X%02X\n",
+                "[MSX][SPLIT-G4] frame=%lu y=%u h=%u spr=%u sprNz=%u r2=%02X r18=%02X r23=%02X r25=%02X r26=%02X r27=%02X hs=%u ha=%d hs512=%u base=%05lX row=%05lX line=%05lX v0=%02X%02X%02X%02X v124=%02X%02X v126=%02X%02X px0=%02X%02X%02X%02X%02X%02X%02X%02X px120=%02X%02X%02X%02X%02X%02X%02X%02X\n",
                 static_cast<unsigned long>(state->frameCounter),
                 static_cast<unsigned>(y),
                 static_cast<unsigned>(height),
                 static_cast<unsigned>(hasSprites ? 1u : 0u),
                 static_cast<unsigned>(spriteNonZeroCount),
                 static_cast<unsigned>(lineReg2),
+                static_cast<unsigned>(lineReg18),
                 static_cast<unsigned>(lineVScroll),
                 static_cast<unsigned>(lineReg25),
                 static_cast<unsigned>(lineReg26),
                 static_cast<unsigned>(lineReg27),
                 static_cast<unsigned>(lineHScroll),
+                static_cast<int>(lineHAdjust),
                 static_cast<unsigned>(dualPage ? 1u : 0u),
                 static_cast<unsigned long>(pageBase & mask),
                 static_cast<unsigned long>(rowOffset & lineMask),
@@ -6224,6 +6360,142 @@ static void msx_vdp_render_yjk_range(MsxVdpState* state, unsigned yStart, unsign
     }
 }
 
+static void msx_vdp_clear_active_range(MsxVdpState* state, unsigned yStart, unsigned yEnd, uint8_t color)
+{
+    unsigned startLine = 0u;
+    unsigned endLine = 0u;
+    const unsigned height = state ? state->activeHeight : 0u;
+    if (!state || !msx_vdp_slice_bounds(height, yStart, yEnd, &startLine, &endLine)) {
+        return;
+    }
+
+    const unsigned lineWidth = msx_vdp_is_msx2(state) ? msx_vdp_stream_frame_width(state) : kMsxFrameWidth;
+    for (unsigned y = startLine; y < endLine; ++y) {
+        uint8_t* dst = msx_vdp_get_line_buffer(state, y);
+        if (!dst) {
+            return;
+        }
+        std::memset(dst, color, lineWidth);
+        msx_vdp_stream_line_if_needed(state, dst, y);
+    }
+}
+
+static void msx_vdp_render_mode_range(MsxVdpState* state,
+                                      MsxVdpMode mode,
+                                      unsigned yStart,
+                                      unsigned yEnd,
+                                      bool finalizeFrame)
+{
+    if (!state) {
+        return;
+    }
+
+    switch (mode) {
+        case MsxVdpMode::Graphics1:
+            msx_vdp_render_graphics1_range(state, yStart, yEnd);
+            break;
+        case MsxVdpMode::Text40:
+            msx_vdp_render_text40_range(state, yStart, yEnd);
+            break;
+        case MsxVdpMode::Graphics2:
+            msx_vdp_render_graphics2_like_range(state, yStart, yEnd);
+            break;
+        case MsxVdpMode::Multicolor:
+            msx_vdp_render_multicolor_range(state, yStart, yEnd);
+            break;
+        case MsxVdpMode::Graphics3:
+            msx_vdp_render_graphics3_range(state, yStart, yEnd);
+            break;
+        case MsxVdpMode::Bitmap4:
+            msx_vdp_render_bitmap4_range(state, yStart, yEnd, finalizeFrame);
+            break;
+        case MsxVdpMode::Bitmap6:
+            msx_vdp_render_bitmap6_range(state, yStart, yEnd);
+            break;
+        case MsxVdpMode::Bitmap7:
+            if (msx_vdp_mode_yjk(state)) {
+                msx_vdp_render_yjk_range(state, yStart, yEnd, msx_vdp_mode_yae(state));
+            } else {
+                msx_vdp_render_bitmap7_range(state, yStart, yEnd);
+            }
+            break;
+        case MsxVdpMode::Bitmap8:
+            if (msx_vdp_mode_yjk(state)) {
+                msx_vdp_render_yjk_range(state, yStart, yEnd, msx_vdp_mode_yae(state));
+            } else {
+                msx_vdp_render_bitmap8_range(state, yStart, yEnd);
+            }
+            break;
+        case MsxVdpMode::Text80:
+            msx_vdp_render_text80_range(state, yStart, yEnd);
+            break;
+        case MsxVdpMode::Unsupported:
+        default:
+            msx_vdp_clear_active_range(state, yStart, yEnd, msx_vdp_resolve_color(state, 0u));
+            break;
+    }
+}
+
+static bool msx_vdp_render_timeline_ranges(MsxVdpState* state)
+{
+    if (!state || !msx_vdp_is_msx2(state) || state->activeHeight == 0u) {
+        return false;
+    }
+
+    const uint8_t savedR0 = state->regs[0];
+    const uint8_t savedR1 = state->regs[1];
+    const uint8_t savedR2 = state->regs[2];
+    const uint8_t savedR23 = state->regs[23];
+    const MsxVdpMode savedMode = state->mode;
+    const unsigned height = state->activeHeight;
+    unsigned y = 0u;
+
+    while (y < height) {
+        const uint8_t lineR0 = msx_vdp_reg0_for_line(state, y);
+        const uint8_t lineR1 = msx_vdp_reg1_for_line(state, y);
+        const uint8_t lineR2 = msx_vdp_reg2_for_bitmap_line(state, y);
+        const uint8_t lineR23 = msx_vdp_reg23_for_bitmap_line(state, y);
+        const bool lineDisplay = (lineR1 & 0x40u) != 0u;
+        const MsxVdpMode lineMode = msx_vdp_decode_mode_from_regs(state, lineR0, lineR1);
+        unsigned endLine = y + 1u;
+
+        while (endLine < height) {
+            const uint8_t nextR0 = msx_vdp_reg0_for_line(state, endLine);
+            const uint8_t nextR1 = msx_vdp_reg1_for_line(state, endLine);
+            const uint8_t nextR2 = msx_vdp_reg2_for_bitmap_line(state, endLine);
+            const uint8_t nextR23 = msx_vdp_reg23_for_bitmap_line(state, endLine);
+            if (((nextR1 & 0x40u) != 0u) != lineDisplay ||
+                nextR2 != lineR2 ||
+                nextR23 != lineR23 ||
+                msx_vdp_decode_mode_from_regs(state, nextR0, nextR1) != lineMode) {
+                break;
+            }
+            ++endLine;
+        }
+
+        state->regs[0] = lineR0;
+        state->regs[1] = lineR1;
+        state->regs[2] = lineR2;
+        state->regs[23] = lineR23;
+        state->mode = lineMode;
+
+        if (lineDisplay) {
+            msx_vdp_render_mode_range(state, lineMode, y, endLine, endLine == height);
+        } else {
+            msx_vdp_clear_active_range(state, y, endLine, msx_vdp_resolve_color(state, 0u));
+        }
+
+        y = endLine;
+    }
+
+    state->regs[0] = savedR0;
+    state->regs[1] = savedR1;
+    state->regs[2] = savedR2;
+    state->regs[23] = savedR23;
+    state->mode = savedMode;
+    return true;
+}
+
 bool msx_vdp_register_affects_output(uint8_t reg)
 {
     switch (reg) {
@@ -6537,11 +6809,14 @@ void msx_vdp_reset(MsxVdpState* state)
     state->renderContext = nullptr;
     state->dirty = true;
     state->frameReady = false;
+    s_msxVdpR0TimelineCount = 0u;
+    s_msxVdpR1TimelineCount = 0u;
     s_msxVdpR5TimelineCount = 0u;
     s_msxVdpR6TimelineCount = 0u;
     s_msxVdpR8TimelineCount = 0u;
     s_msxVdpR11TimelineCount = 0u;
     s_msxVdpR2TimelineCount = 0u;
+    s_msxVdpR18TimelineCount = 0u;
     s_msxVdpR23TimelineCount = 0u;
     s_msxVdpR25TimelineCount = 0u;
     s_msxVdpR26TimelineCount = 0u;
@@ -6581,11 +6856,14 @@ bool msx_vdp_begin_frame(MsxVdpState* state)
         return (state->regs[1] & 0x20u) != 0u;
     }
 
+    msx_vdp_timeline_reset(s_msxVdpR0Timeline, &s_msxVdpR0TimelineCount, state->regs[0]);
+    msx_vdp_timeline_reset(s_msxVdpR1Timeline, &s_msxVdpR1TimelineCount, state->regs[1]);
     msx_vdp_timeline_reset(s_msxVdpR5Timeline, &s_msxVdpR5TimelineCount, state->regs[5]);
     msx_vdp_timeline_reset(s_msxVdpR6Timeline, &s_msxVdpR6TimelineCount, state->regs[6]);
     msx_vdp_timeline_reset(s_msxVdpR8Timeline, &s_msxVdpR8TimelineCount, state->regs[8]);
     msx_vdp_timeline_reset(s_msxVdpR11Timeline, &s_msxVdpR11TimelineCount, state->regs[11]);
     msx_vdp_timeline_reset(s_msxVdpR2Timeline, &s_msxVdpR2TimelineCount, state->regs[2]);
+    msx_vdp_timeline_reset(s_msxVdpR18Timeline, &s_msxVdpR18TimelineCount, state->regs[18]);
     msx_vdp_timeline_reset(s_msxVdpR23Timeline, &s_msxVdpR23TimelineCount, state->regs[23]);
     msx_vdp_timeline_reset(s_msxVdpR25Timeline, &s_msxVdpR25TimelineCount, state->regs[25]);
     msx_vdp_timeline_reset(s_msxVdpR26Timeline, &s_msxVdpR26TimelineCount, state->regs[26]);
@@ -6628,7 +6906,7 @@ bool msx_vdp_render_internal(MsxVdpState* state)
         return false;
     }
 
-    if (!msx_vdp_display_enabled(state)) {
+    if (!msx_vdp_is_msx2(state) && !msx_vdp_display_enabled(state)) {
         msx_vdp_clear_active_frame(state, msx_vdp_resolve_color(state, 0));
         if (msx2LineStream) {
             msx_vdp_end_msx2_stream_frame();
@@ -6636,49 +6914,53 @@ bool msx_vdp_render_internal(MsxVdpState* state)
         return true;
     }
 
-    switch (state->mode) {
-        case MsxVdpMode::Graphics1:
-            msx_vdp_render_graphics1(state);
-            break;
-        case MsxVdpMode::Text40:
-            msx_vdp_render_text40(state);
-            break;
-        case MsxVdpMode::Graphics2:
-            msx_vdp_render_graphics2_like(state);
-            break;
-        case MsxVdpMode::Graphics3:
-            msx_vdp_render_graphics3(state);
-            break;
-        case MsxVdpMode::Multicolor:
-            msx_vdp_render_multicolor(state);
-            break;
-        case MsxVdpMode::Bitmap4:
-            msx_vdp_render_bitmap4(state);
-            break;
-        case MsxVdpMode::Bitmap6:
-            msx_vdp_render_bitmap6(state);
-            break;
-        case MsxVdpMode::Bitmap7:
-            if (msx_vdp_mode_yjk(state)) {
-                msx_vdp_render_yjk(state, msx_vdp_mode_yae(state));
-            } else {
-                msx_vdp_render_bitmap7(state);
-            }
-            break;
-        case MsxVdpMode::Bitmap8:
-            if (msx_vdp_mode_yjk(state)) {
-                msx_vdp_render_yjk(state, msx_vdp_mode_yae(state));
-            } else {
-                msx_vdp_render_bitmap8(state);
-            }
-            break;
-        case MsxVdpMode::Text80:
-            msx_vdp_render_text80(state);
-            break;
-        case MsxVdpMode::Unsupported:
-        default:
-            msx_vdp_clear_active_frame(state, msx_vdp_resolve_color(state, 0));
-            break;
+    if (msx_vdp_is_msx2(state)) {
+        msx_vdp_render_timeline_ranges(state);
+    } else {
+        switch (state->mode) {
+            case MsxVdpMode::Graphics1:
+                msx_vdp_render_graphics1(state);
+                break;
+            case MsxVdpMode::Text40:
+                msx_vdp_render_text40(state);
+                break;
+            case MsxVdpMode::Graphics2:
+                msx_vdp_render_graphics2_like(state);
+                break;
+            case MsxVdpMode::Graphics3:
+                msx_vdp_render_graphics3(state);
+                break;
+            case MsxVdpMode::Multicolor:
+                msx_vdp_render_multicolor(state);
+                break;
+            case MsxVdpMode::Bitmap4:
+                msx_vdp_render_bitmap4(state);
+                break;
+            case MsxVdpMode::Bitmap6:
+                msx_vdp_render_bitmap6(state);
+                break;
+            case MsxVdpMode::Bitmap7:
+                if (msx_vdp_mode_yjk(state)) {
+                    msx_vdp_render_yjk(state, msx_vdp_mode_yae(state));
+                } else {
+                    msx_vdp_render_bitmap7(state);
+                }
+                break;
+            case MsxVdpMode::Bitmap8:
+                if (msx_vdp_mode_yjk(state)) {
+                    msx_vdp_render_yjk(state, msx_vdp_mode_yae(state));
+                } else {
+                    msx_vdp_render_bitmap8(state);
+                }
+                break;
+            case MsxVdpMode::Text80:
+                msx_vdp_render_text80(state);
+                break;
+            case MsxVdpMode::Unsupported:
+            default:
+                msx_vdp_clear_active_frame(state, msx_vdp_resolve_color(state, 0));
+                break;
+        }
     }
 
     msx_vdp_apply_display_adjust(state);
