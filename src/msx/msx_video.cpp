@@ -128,6 +128,8 @@ static MsxLineStreamState s_lineStream = {};
 static bool s_externalFixedSkipNextPresent = false;
 static uint16_t s_fpsHudValue10 = 0u;
 static char s_fpsHudText[16] = "0.0";
+static int s_internalZoomPanX = 0;
+static int s_internalZoomPanY = 0;
 
 static uint32_t s_spiPushFrames = 0;
 static uint32_t s_spiPushUs = 0;
@@ -553,13 +555,23 @@ void msx_video_compute_plan(unsigned srcW, unsigned srcH, MsxVideoPlan* plan)
     const unsigned effectiveSrcH = cropVerticalOverscan ? kMsxVisibleSafeHeight : srcH;
     const unsigned effectiveSrcY0 = cropVerticalOverscan ? ((srcH - kMsxVisibleSafeHeight) / 2u) : 0u;
     if (mode == MsxInternalViewMode::PixelPerfect) {
-        plan->srcX0 = static_cast<int>((srcW > static_cast<unsigned>(targetW)) ? (srcW - targetW) / 2u : 0u);
-        plan->srcY0 = static_cast<int>(
+        plan->roiW = static_cast<int>((srcW > static_cast<unsigned>(targetW)) ? targetW : srcW);
+        plan->roiH = static_cast<int>((effectiveSrcH > static_cast<unsigned>(targetH)) ? targetH : effectiveSrcH);
+        const int minSrcX = 0;
+        const int maxSrcX = std::max(0, static_cast<int>(srcW) - plan->roiW);
+        const int minSrcY = static_cast<int>(effectiveSrcY0);
+        const int maxSrcY = std::max(minSrcY, static_cast<int>(effectiveSrcY0 + effectiveSrcH) - plan->roiH);
+        const int centeredSrcX = (srcW > static_cast<unsigned>(targetW))
+                                     ? static_cast<int>((srcW - targetW) / 2u)
+                                     : 0;
+        const int centeredSrcY = static_cast<int>(
             effectiveSrcY0 +
             ((effectiveSrcH > static_cast<unsigned>(targetH)) ? (effectiveSrcH - targetH) / 2u : 0u)
         );
-        plan->roiW = static_cast<int>((srcW > static_cast<unsigned>(targetW)) ? targetW : srcW);
-        plan->roiH = static_cast<int>((effectiveSrcH > static_cast<unsigned>(targetH)) ? targetH : effectiveSrcH);
+        plan->srcX0 = std::min(std::max(centeredSrcX + s_internalZoomPanX, minSrcX), maxSrcX);
+        plan->srcY0 = std::min(std::max(centeredSrcY + s_internalZoomPanY, minSrcY), maxSrcY);
+        s_internalZoomPanX = plan->srcX0 - centeredSrcX;
+        s_internalZoomPanY = plan->srcY0 - centeredSrcY;
         plan->dstW = plan->roiW;
         plan->dstH = plan->roiH;
         plan->xOff = (targetW - plan->dstW) / 2;
@@ -1686,4 +1698,29 @@ void msx_video_request_full_redraw(void)
     msx_video_reset_external_pacing();
     msx_video_reset_frameskip_state();
     msx_video_unlock();
+}
+
+bool msx_video_internal_zoom_active(void)
+{
+    return !msx_video_game_on_external() &&
+           msx_config_get_active_view_mode() == MsxInternalViewMode::PixelPerfect;
+}
+
+bool msx_video_scroll_internal_zoom(int dx, int dy)
+{
+    if (!msx_video_internal_zoom_active()) {
+        return false;
+    }
+
+    msx_video_lock();
+    const int oldPanX = s_internalZoomPanX;
+    const int oldPanY = s_internalZoomPanY;
+    s_internalZoomPanX += dx;
+    s_internalZoomPanY += dy;
+    msx_video_reset_layout_cache();
+    msx_video_reset_external_pacing();
+    msx_video_reset_frameskip_state();
+    msx_video_unlock();
+
+    return oldPanX != s_internalZoomPanX || oldPanY != s_internalZoomPanY || dx != 0 || dy != 0;
 }

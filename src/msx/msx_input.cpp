@@ -44,7 +44,10 @@ struct MsxInputBindingCache {
 static constexpr uint32_t kBacktickLongPressMs = 700;
 static constexpr uint32_t kGoLongPressMs = 700;
 static constexpr uint32_t kViewToggleDebounceMs = 250;
+static constexpr uint32_t kZoomScrollInitialRepeatMs = 180;
+static constexpr uint32_t kZoomScrollRepeatMs = 55;
 static constexpr int kBrightnessStep = 24;
+static constexpr int kZoomScrollStep = 8;
 static uint32_t s_backtickPressedMs = 0;
 static bool s_backtickLongHandled = false;
 static bool s_goLongHandled = false;
@@ -52,6 +55,8 @@ static bool s_suppressGoClick = false;
 static uint32_t s_suppressGoUntilMs = 0;
 static bool s_viewToggleHeld = false;
 static uint32_t s_lastViewToggleMs = 0;
+static bool s_zoomScrollHeld = false;
+static uint32_t s_zoomScrollNextRepeatMs = 0;
 static bool s_runtimePaused = false;
 static bool s_fnPauseHandled = false;
 
@@ -1477,6 +1482,57 @@ static void msx_apply_system_keys(const Keyboard_Class::KeysState& status)
     }
 }
 
+static bool msx_physical_arrow_pressed(void)
+{
+    return M5Cardputer.Keyboard.isKeyPressed(KEY_ARROW_UP) ||
+           M5Cardputer.Keyboard.isKeyPressed(KEY_ARROW_DOWN) ||
+           M5Cardputer.Keyboard.isKeyPressed(KEY_ARROW_LEFT) ||
+           M5Cardputer.Keyboard.isKeyPressed(KEY_ARROW_RIGHT);
+}
+
+static bool msx_ctrl_arrow_combo_pressed(const Keyboard_Class::KeysState& keys)
+{
+    return keys.ctrl && msx_physical_arrow_pressed();
+}
+
+static bool msx_poll_internal_zoom_scroll(const Keyboard_Class::KeysState& keys)
+{
+    if (!keys.fn || !msx_physical_arrow_pressed() || s_runtimeMenu.visible || s_virtualKeyPickerVisible) {
+        s_zoomScrollHeld = false;
+        s_zoomScrollNextRepeatMs = 0;
+        return false;
+    }
+
+    if (!msx_video_internal_zoom_active()) {
+        return false;
+    }
+
+    const uint32_t nowMs = millis();
+    if (s_zoomScrollHeld && static_cast<int32_t>(nowMs - s_zoomScrollNextRepeatMs) < 0) {
+        return true;
+    }
+
+    int dx = 0;
+    int dy = 0;
+    if (M5Cardputer.Keyboard.isKeyPressed(KEY_ARROW_LEFT)) {
+        dx -= kZoomScrollStep;
+    }
+    if (M5Cardputer.Keyboard.isKeyPressed(KEY_ARROW_RIGHT)) {
+        dx += kZoomScrollStep;
+    }
+    if (M5Cardputer.Keyboard.isKeyPressed(KEY_ARROW_UP)) {
+        dy -= kZoomScrollStep;
+    }
+    if (M5Cardputer.Keyboard.isKeyPressed(KEY_ARROW_DOWN)) {
+        dy += kZoomScrollStep;
+    }
+
+    msx_video_scroll_internal_zoom(dx, dy);
+    s_zoomScrollNextRepeatMs = nowMs + (s_zoomScrollHeld ? kZoomScrollRepeatMs : kZoomScrollInitialRepeatMs);
+    s_zoomScrollHeld = true;
+    return true;
+}
+
 static bool msx_is_reserved_fn_char(char ch)
 {
     switch (ch) {
@@ -1631,6 +1687,10 @@ static void msx_apply_printable_keys(MsxKeyboardMatrix* matrix,
     }
 
     for (char ch : keys.word) {
+        if (msx_ctrl_arrow_combo_pressed(keys) && msx_is_reserved_fn_char(ch)) {
+            continue;
+        }
+
         if (basicKeyboardEnabled) {
             if (keys.fn && msx_is_basic_fn_shortcut_char(ch)) {
                 continue;
@@ -1681,7 +1741,7 @@ static void msx_apply_modifier_keys(MsxKeyboardMatrix* matrix, const Keyboard_Cl
         msx_keyboard_matrix_press_special(matrix, MsxKeyboardSpecialKey::Shift);
     }
 
-    if (keys.ctrl) {
+    if (keys.ctrl && !msx_ctrl_arrow_combo_pressed(keys)) {
         msx_keyboard_matrix_press_special(matrix, MsxKeyboardSpecialKey::Ctrl);
     }
 
@@ -1759,16 +1819,24 @@ static void msx_apply_fn_combos(MsxKeyboardMatrix* matrix, const Keyboard_Class:
         msx_keyboard_matrix_press_special(matrix, MsxKeyboardSpecialKey::Home);
     }
 
-    if (msx_key_pressed_any(',', '<')) {
+}
+
+static void msx_apply_ctrl_cursor_combos(MsxKeyboardMatrix* matrix, const Keyboard_Class::KeysState& keys)
+{
+    if (!matrix || !keys.ctrl) {
+        return;
+    }
+
+    if (M5Cardputer.Keyboard.isKeyPressed(KEY_ARROW_LEFT)) {
         msx_keyboard_matrix_press_special(matrix, MsxKeyboardSpecialKey::Left);
     }
-    if (msx_key_pressed_any('.', '>')) {
+    if (M5Cardputer.Keyboard.isKeyPressed(KEY_ARROW_DOWN)) {
         msx_keyboard_matrix_press_special(matrix, MsxKeyboardSpecialKey::Down);
     }
-    if (msx_key_pressed_any('/', '?')) {
+    if (M5Cardputer.Keyboard.isKeyPressed(KEY_ARROW_RIGHT)) {
         msx_keyboard_matrix_press_special(matrix, MsxKeyboardSpecialKey::Right);
     }
-    if (msx_key_pressed_any(';', ':')) {
+    if (M5Cardputer.Keyboard.isKeyPressed(KEY_ARROW_UP)) {
         msx_keyboard_matrix_press_special(matrix, MsxKeyboardSpecialKey::Up);
     }
 }
@@ -1851,6 +1919,7 @@ static void msx_build_keyboard_matrix(MsxKeyboardMatrix* matrix,
 
     msx_apply_modifier_keys(matrix, keys);
     msx_apply_direct_special_keys(matrix, keys);
+    msx_apply_ctrl_cursor_combos(matrix, keys);
 
     if (!basicKeyboardEnabled) {
         msx_apply_fn_combos(matrix, keys);
@@ -2451,6 +2520,8 @@ void msx_input_init(void)
     s_goLongHandled = false;
     s_suppressGoClick = false;
     s_suppressGoUntilMs = 0;
+    s_zoomScrollHeld = false;
+    s_zoomScrollNextRepeatMs = 0;
     s_runtimePaused = false;
     s_fnPauseHandled = false;
     const MsxRuntimeOptionConfig config = msx_input_load_runtime_option_config();
@@ -2541,6 +2612,7 @@ void msx_input_poll(MsxInputState* state)
     MsxInputBindingCache bindings = {};
     msx_load_binding_cache(&bindings);
     msx_apply_system_keys(keys);
+    const bool zoomScrollConsumed = msx_poll_internal_zoom_scroll(keys);
 
     const bool fnPausePressed = keys.fn && msx_key_pressed_any('p', 'P');
     bool pauseToggled = false;
@@ -2693,7 +2765,7 @@ void msx_input_poll(MsxInputState* state)
     state->virtualKeyPickerVisible = s_virtualKeyPickerVisible;
     state->runtimePaused = s_runtimePaused;
 
-    if (menuWasVisible || s_runtimeMenu.visible || goLongToggledMenu || fnConfigToggledMenu) {
+    if (menuWasVisible || s_runtimeMenu.visible || goLongToggledMenu || fnConfigToggledMenu || zoomScrollConsumed) {
         return;
     }
 

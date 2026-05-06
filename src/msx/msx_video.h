@@ -34,6 +34,8 @@ void msx_video_set_runtime_menu_active(bool active);
 void msx_video_set_state_overlay_active(bool active);
 void msx_video_prepare_sd_access(void);
 void msx_video_request_full_redraw(void);
+bool msx_video_scroll_internal_zoom(int dx, int dy);
+bool msx_video_internal_zoom_active(void);
 MsxVideoPerfSummary msx_video_get_perf_summary(void);
 uint32_t msx_video_get_last_present_us(void);
 void msx_video_clear_last_present_us(void);
