@@ -21,6 +21,7 @@ enum I2cPadType : uint8_t {
     I2C_PAD_JOYV1_1,  // M5Stack Joystick v1.1 at 0x52
 };
 static I2cPadType s_i2cPadType = I2C_PAD_NONE;
+static share::I2cPadDiagnostic s_i2cPadDiagnostic = {};
 
 static constexpr uint8_t JOYSTICK_CENTER   = 128;
 static constexpr uint8_t JOYSTICK_DEADZONE = 25;
@@ -146,6 +147,21 @@ namespace share
         return s_i2cPadType != I2C_PAD_NONE;
     }
 
+    void getI2cPadDiagnostic(I2cPadDiagnostic* diagnostic)
+    {
+        if (!diagnostic) {
+            return;
+        }
+
+        *diagnostic = s_i2cPadDiagnostic;
+        diagnostic->present = s_i2cPadType != I2C_PAD_NONE;
+        diagnostic->type = static_cast<uint8_t>(s_i2cPadType);
+        diagnostic->address =
+            s_i2cPadType == I2C_PAD_JOYV2
+                ? JOYSTICK2_ADDR
+                : (s_i2cPadType == I2C_PAD_JOYV1_1 ? JOYSTICK1_ADDR : 0u);
+    }
+
     // JoyV2: read 2 bytes X/Y from register 0x10
     static bool joystick2_read_xy(uint8_t& x, uint8_t& y)
     {
@@ -201,15 +217,40 @@ namespace share
             return 0;
         }
 
+        s_i2cPadDiagnostic.present = true;
+        s_i2cPadDiagnostic.type = static_cast<uint8_t>(s_i2cPadType);
+        s_i2cPadDiagnostic.address =
+            s_i2cPadType == I2C_PAD_JOYV2 ? JOYSTICK2_ADDR : JOYSTICK1_ADDR;
+        s_i2cPadDiagnostic.lastPollMs = millis();
+        s_i2cPadDiagnostic.pollCount++;
+        s_i2cPadDiagnostic.lastReadOk = false;
+        s_i2cPadDiagnostic.lastErrorStage = 0;
+
         uint8_t x8 = 0;
         uint8_t y8 = 0;
         uint8_t btnRaw = 1;  // default to "not pressed"
 
         if (s_i2cPadType == I2C_PAD_JOYV2) {
-            if (!joystick2_read_xy(x8, y8)) return 0;
-            joystick2_read_button(btnRaw);
+            if (!joystick2_read_xy(x8, y8)) {
+                s_i2cPadDiagnostic.lastErrorStage = 1;
+                s_i2cPadDiagnostic.failCount++;
+                s_i2cPadDiagnostic.state = 0;
+                return 0;
+            }
+            if (!joystick2_read_button(btnRaw)) {
+                s_i2cPadDiagnostic.lastErrorStage = 2;
+                s_i2cPadDiagnostic.failCount++;
+            } else {
+                s_i2cPadDiagnostic.lastReadOk = true;
+            }
         } else {  // I2C_PAD_JOYV1_1
-            if (!joystick1_read_all(x8, y8, btnRaw)) return 0;
+            if (!joystick1_read_all(x8, y8, btnRaw)) {
+                s_i2cPadDiagnostic.lastErrorStage = 3;
+                s_i2cPadDiagnostic.failCount++;
+                s_i2cPadDiagnostic.state = 0;
+                return 0;
+            }
+            s_i2cPadDiagnostic.lastReadOk = true;
             x8 = 255 - x8;  // v1.1 X axis is inverted relative to JoyV2
         }
 
@@ -233,6 +274,10 @@ namespace share
             state |= PAD_A;
         }
 
+        s_i2cPadDiagnostic.x = x8;
+        s_i2cPadDiagnostic.y = y8;
+        s_i2cPadDiagnostic.button = btnRaw;
+        s_i2cPadDiagnostic.state = state;
         return state;
     }
 }

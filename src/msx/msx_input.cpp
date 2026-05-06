@@ -108,6 +108,7 @@ enum class MsxRuntimeMenuPage : uint8_t {
     DebugCore,
     DebugCart,
     DebugProfile,
+    DebugInput,
 };
 
 enum class MsxPerformanceMenuItem : uint8_t {
@@ -154,6 +155,7 @@ struct MsxRuntimeMenuState {
     uint8_t debugCoreSelectedIndex;
     uint8_t debugCartSelectedIndex;
     uint8_t debugProfileSelectedIndex;
+    uint8_t debugInputSelectedIndex;
     bool prevHeld;
     bool nextHeld;
     bool acceptHeld;
@@ -211,6 +213,7 @@ enum class MsxDebugMenuGroup : uint8_t {
     Core,
     Cart,
     Profile,
+    Input,
 };
 
 struct MsxDebugMenuGroupDef {
@@ -292,12 +295,23 @@ static constexpr const char* kMsxDebugProfileLabels[] = {
     "PROFILE",
 };
 
+static constexpr MsxLogCategory kMsxDebugInputCategories[] = {
+    MsxLogCategory::InputKbd,
+    MsxLogCategory::InputI2c,
+};
+
+static constexpr const char* kMsxDebugInputLabels[] = {
+    "KEYBOARD",
+    "I2C PAD",
+};
+
 static constexpr MsxDebugMenuGroupDef kMsxDebugMenuGroups[] = {
     {"VDP", kMsxDebugVdpCategories, kMsxDebugVdpLabels, static_cast<uint8_t>(sizeof(kMsxDebugVdpCategories) / sizeof(kMsxDebugVdpCategories[0]))},
     {"SOUND", kMsxDebugSoundCategories, kMsxDebugSoundLabels, static_cast<uint8_t>(sizeof(kMsxDebugSoundCategories) / sizeof(kMsxDebugSoundCategories[0]))},
     {"CORE", kMsxDebugCoreCategories, kMsxDebugCoreLabels, static_cast<uint8_t>(sizeof(kMsxDebugCoreCategories) / sizeof(kMsxDebugCoreCategories[0]))},
     {"CART", kMsxDebugCartCategories, kMsxDebugCartLabels, static_cast<uint8_t>(sizeof(kMsxDebugCartCategories) / sizeof(kMsxDebugCartCategories[0]))},
     {"PROFILE", kMsxDebugProfileCategories, kMsxDebugProfileLabels, static_cast<uint8_t>(sizeof(kMsxDebugProfileCategories) / sizeof(kMsxDebugProfileCategories[0]))},
+    {"INPUT", kMsxDebugInputCategories, kMsxDebugInputLabels, static_cast<uint8_t>(sizeof(kMsxDebugInputCategories) / sizeof(kMsxDebugInputCategories[0]))},
 };
 
 static constexpr const char* kMsxInputConfigNs = "msx_input";
@@ -405,7 +419,8 @@ static bool msx_runtime_menu_in_debug_group_page(void)
            s_runtimeMenu.page == MsxRuntimeMenuPage::DebugSound ||
            s_runtimeMenu.page == MsxRuntimeMenuPage::DebugCore ||
            s_runtimeMenu.page == MsxRuntimeMenuPage::DebugCart ||
-           s_runtimeMenu.page == MsxRuntimeMenuPage::DebugProfile;
+           s_runtimeMenu.page == MsxRuntimeMenuPage::DebugProfile ||
+           s_runtimeMenu.page == MsxRuntimeMenuPage::DebugInput;
 }
 
 static MsxDebugMenuGroup msx_runtime_menu_current_debug_group(void)
@@ -416,6 +431,7 @@ static MsxDebugMenuGroup msx_runtime_menu_current_debug_group(void)
         case MsxRuntimeMenuPage::DebugCore: return MsxDebugMenuGroup::Core;
         case MsxRuntimeMenuPage::DebugCart: return MsxDebugMenuGroup::Cart;
         case MsxRuntimeMenuPage::DebugProfile: return MsxDebugMenuGroup::Profile;
+        case MsxRuntimeMenuPage::DebugInput: return MsxDebugMenuGroup::Input;
         case MsxRuntimeMenuPage::DebugRoot:
         case MsxRuntimeMenuPage::Main:
         case MsxRuntimeMenuPage::Performance:
@@ -434,6 +450,7 @@ static const MsxDebugMenuGroupDef* msx_runtime_menu_group_def(MsxDebugMenuGroup 
         case MsxDebugMenuGroup::Core: return &kMsxDebugMenuGroups[2];
         case MsxDebugMenuGroup::Cart: return &kMsxDebugMenuGroups[3];
         case MsxDebugMenuGroup::Profile: return &kMsxDebugMenuGroups[4];
+        case MsxDebugMenuGroup::Input: return &kMsxDebugMenuGroups[5];
         case MsxDebugMenuGroup::Root:
         default:
             return nullptr;
@@ -897,6 +914,7 @@ static uint8_t* msx_runtime_menu_debug_selected_index_ptr(MsxDebugMenuGroup grou
         case MsxDebugMenuGroup::Core: return &s_runtimeMenu.debugCoreSelectedIndex;
         case MsxDebugMenuGroup::Cart: return &s_runtimeMenu.debugCartSelectedIndex;
         case MsxDebugMenuGroup::Profile: return &s_runtimeMenu.debugProfileSelectedIndex;
+        case MsxDebugMenuGroup::Input: return &s_runtimeMenu.debugInputSelectedIndex;
         case MsxDebugMenuGroup::Root:
         default:
             return &s_runtimeMenu.debugRootSelectedIndex;
@@ -911,6 +929,7 @@ static void msx_runtime_menu_open_debug_group_page(MsxDebugMenuGroup group)
         case MsxDebugMenuGroup::Core: s_runtimeMenu.page = MsxRuntimeMenuPage::DebugCore; break;
         case MsxDebugMenuGroup::Cart: s_runtimeMenu.page = MsxRuntimeMenuPage::DebugCart; break;
         case MsxDebugMenuGroup::Profile: s_runtimeMenu.page = MsxRuntimeMenuPage::DebugProfile; break;
+        case MsxDebugMenuGroup::Input: s_runtimeMenu.page = MsxRuntimeMenuPage::DebugInput; break;
         case MsxDebugMenuGroup::Root:
         default:
             s_runtimeMenu.page = MsxRuntimeMenuPage::DebugRoot;
@@ -2363,6 +2382,289 @@ static void msx_diag_action_label(const MsxInputBindingCache& bindings, char* ds
     }
 }
 
+static uint32_t msx_trace_hash_step(uint32_t hash, uint32_t value)
+{
+    return ((hash << 5) + hash) ^ value;
+}
+
+static uint32_t msx_trace_keyboard_raw_hash(const Keyboard_Class::KeysState& keys)
+{
+    uint32_t hash = 5381u;
+    hash = msx_trace_hash_step(hash, M5Cardputer.Keyboard.isChange() ? 1u : 0u);
+    hash = msx_trace_hash_step(hash, M5Cardputer.Keyboard.isPressed() ? 1u : 0u);
+    hash = msx_trace_hash_step(hash, M5Cardputer.BtnA.isPressed() ? 1u : 0u);
+    hash = msx_trace_hash_step(hash, M5Cardputer.Keyboard.isKeyPressed(KEY_ARROW_UP) ? 1u : 0u);
+    hash = msx_trace_hash_step(hash, M5Cardputer.Keyboard.isKeyPressed(KEY_ARROW_DOWN) ? 1u : 0u);
+    hash = msx_trace_hash_step(hash, M5Cardputer.Keyboard.isKeyPressed(KEY_ARROW_LEFT) ? 1u : 0u);
+    hash = msx_trace_hash_step(hash, M5Cardputer.Keyboard.isKeyPressed(KEY_ARROW_RIGHT) ? 1u : 0u);
+    hash = msx_trace_hash_step(hash, keys.fn ? 1u : 0u);
+    hash = msx_trace_hash_step(hash, keys.shift ? 1u : 0u);
+    hash = msx_trace_hash_step(hash, keys.ctrl ? 1u : 0u);
+    hash = msx_trace_hash_step(hash, keys.opt ? 1u : 0u);
+    hash = msx_trace_hash_step(hash, keys.alt ? 1u : 0u);
+    hash = msx_trace_hash_step(hash, keys.enter ? 1u : 0u);
+    hash = msx_trace_hash_step(hash, keys.del ? 1u : 0u);
+    hash = msx_trace_hash_step(hash, keys.tab ? 1u : 0u);
+    hash = msx_trace_hash_step(hash, keys.space ? 1u : 0u);
+    for (char ch : keys.word) {
+        hash = msx_trace_hash_step(hash, static_cast<uint8_t>(ch));
+    }
+    return hash;
+}
+
+static uint32_t msx_trace_keyboard_matrix_hash(const MsxKeyboardMatrix& matrix)
+{
+    uint32_t hash = 2166136261u;
+    for (uint8_t row = 0; row < kMsxKeyboardRowCount; ++row) {
+        hash ^= matrix.rows[row];
+        hash *= 16777619u;
+    }
+    return hash;
+}
+
+static uint32_t msx_trace_action_mask(const MsxInputState& state)
+{
+    uint32_t mask = 0u;
+    if (state.up) { mask |= 1u << 0; }
+    if (state.down) { mask |= 1u << 1; }
+    if (state.left) { mask |= 1u << 2; }
+    if (state.right) { mask |= 1u << 3; }
+    if (state.fire1) { mask |= 1u << 4; }
+    if (state.fire2) { mask |= 1u << 5; }
+    if (state.start) { mask |= 1u << 6; }
+    if (state.select) { mask |= 1u << 7; }
+    if (state.joystickEnabled) { mask |= 1u << 8; }
+    if (state.keyboardEnabled) { mask |= 1u << 9; }
+    if (state.basicKeyboardEnabled) { mask |= 1u << 10; }
+    if (state.vausEnabled) { mask |= 1u << 11; }
+    if (state.menuVisible) { mask |= 1u << 12; }
+    if (state.virtualKeyPickerVisible) { mask |= 1u << 13; }
+    return mask;
+}
+
+static void msx_trace_action_label(const MsxInputState& state, char* dst, size_t dstSize)
+{
+    if (!dst || dstSize == 0) {
+        return;
+    }
+
+    dst[0] = '\0';
+    if (state.up) { msx_diag_append(dst, dstSize, "UP"); }
+    if (state.down) { msx_diag_append(dst, dstSize, "DOWN"); }
+    if (state.left) { msx_diag_append(dst, dstSize, "LEFT"); }
+    if (state.right) { msx_diag_append(dst, dstSize, "RIGHT"); }
+    if (state.fire1) { msx_diag_append(dst, dstSize, "FIRE1"); }
+    if (state.fire2) { msx_diag_append(dst, dstSize, "FIRE2"); }
+    if (state.start) { msx_diag_append(dst, dstSize, "START"); }
+    if (state.select) { msx_diag_append(dst, dstSize, "SELECT"); }
+    if (dst[0] == '\0') {
+        std::snprintf(dst, dstSize, "IDLE");
+    }
+}
+
+static bool msx_keyboard_matrix_has_press(const MsxKeyboardMatrix& matrix)
+{
+    for (uint8_t row = 0; row < kMsxKeyboardRowCount; ++row) {
+        if (matrix.rows[row] != 0xFFu) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static void msx_trace_keyboard_input(const Keyboard_Class::KeysState& keys,
+                                     const MsxInputState& state,
+                                     uint32_t padState)
+{
+    if (!msx_log_category_enabled(MsxLogCategory::InputKbd)) {
+        return;
+    }
+
+    const uint32_t rawHash = msx_trace_keyboard_raw_hash(keys);
+    const uint32_t actionMask = msx_trace_action_mask(state);
+    const uint32_t matrixHash = msx_trace_keyboard_matrix_hash(state.keyboardMatrix);
+    const bool active =
+        (actionMask & 0xFFu) != 0u ||
+        msx_keyboard_matrix_has_press(state.keyboardMatrix) ||
+        M5Cardputer.Keyboard.isPressed() ||
+        M5Cardputer.BtnA.isPressed();
+
+    static bool s_traceInit = false;
+    static uint32_t s_lastRawHash = 0u;
+    static uint32_t s_lastActionMask = 0u;
+    static uint32_t s_lastMatrixHash = 0u;
+    static uint32_t s_heldSinceMs = 0u;
+    static uint32_t s_nextHeldLogMs = 0u;
+
+    const uint32_t nowMs = millis();
+    const bool changed =
+        !s_traceInit ||
+        rawHash != s_lastRawHash ||
+        actionMask != s_lastActionMask ||
+        matrixHash != s_lastMatrixHash;
+    bool heldLog = false;
+    if (active) {
+        if (changed || s_heldSinceMs == 0u) {
+            s_heldSinceMs = nowMs;
+            s_nextHeldLogMs = nowMs + 1000u;
+        } else if (static_cast<int32_t>(nowMs - s_nextHeldLogMs) >= 0) {
+            heldLog = true;
+            s_nextHeldLogMs = nowMs + 1000u;
+        }
+    } else {
+        s_heldSinceMs = 0u;
+        s_nextHeldLogMs = 0u;
+    }
+
+    if (!changed && !heldLog) {
+        return;
+    }
+
+    char raw[48];
+    char actions[48];
+    char rows[96];
+    msx_diag_raw_label(keys, raw, sizeof(raw));
+    msx_trace_action_label(state, actions, sizeof(actions));
+    msx_diag_keyboard_label(state.keyboardMatrix, rows, sizeof(rows));
+
+    MSX_CATEGORY_LOG(MsxLogCategory::InputKbd,
+                     "[MSX][INPUT][KBD] %s raw=%s action=%s rows=%s hash=%08lX/%08lX/%08lX held=%lums chg=%u prs=%u mods=%c%c%c%c%c pad=%02lX cfg=%c%c%c\n",
+                     changed ? "change" : "held",
+                     raw,
+                     actions,
+                     rows,
+                     static_cast<unsigned long>(rawHash),
+                     static_cast<unsigned long>(actionMask),
+                     static_cast<unsigned long>(matrixHash),
+                     static_cast<unsigned long>(s_heldSinceMs != 0u ? nowMs - s_heldSinceMs : 0u),
+                     M5Cardputer.Keyboard.isChange() ? 1u : 0u,
+                     M5Cardputer.Keyboard.isPressed() ? 1u : 0u,
+                     keys.fn ? 'F' : '-',
+                     keys.shift ? 'S' : '-',
+                     keys.ctrl ? 'C' : '-',
+                     keys.alt ? 'A' : '-',
+                     keys.opt ? 'O' : '-',
+                     static_cast<unsigned long>(padState),
+                     state.joystickEnabled ? 'J' : '-',
+                     state.keyboardEnabled ? 'K' : '-',
+                     state.vausEnabled ? 'V' : '-');
+
+    s_traceInit = true;
+    s_lastRawHash = rawHash;
+    s_lastActionMask = actionMask;
+    s_lastMatrixHash = matrixHash;
+}
+
+static const char* msx_trace_i2c_type_label(uint8_t type)
+{
+    switch (type) {
+        case 1u: return "JoyV2";
+        case 2u: return "Joy1.1";
+        default: return "none";
+    }
+}
+
+static void msx_trace_pad_label(uint32_t state, char* dst, size_t dstSize)
+{
+    if (!dst || dstSize == 0) {
+        return;
+    }
+
+    dst[0] = '\0';
+    if ((state & share::PAD_UP) != 0u) { msx_diag_append(dst, dstSize, "UP"); }
+    if ((state & share::PAD_DOWN) != 0u) { msx_diag_append(dst, dstSize, "DOWN"); }
+    if ((state & share::PAD_LEFT) != 0u) { msx_diag_append(dst, dstSize, "LEFT"); }
+    if ((state & share::PAD_RIGHT) != 0u) { msx_diag_append(dst, dstSize, "RIGHT"); }
+    if ((state & share::PAD_A) != 0u) { msx_diag_append(dst, dstSize, "A"); }
+    if ((state & share::PAD_B) != 0u) { msx_diag_append(dst, dstSize, "B"); }
+    if ((state & share::PAD_START) != 0u) { msx_diag_append(dst, dstSize, "START"); }
+    if ((state & share::PAD_SELECT) != 0u) { msx_diag_append(dst, dstSize, "SELECT"); }
+    if (dst[0] == '\0') {
+        std::snprintf(dst, dstSize, "IDLE");
+    }
+}
+
+static void msx_trace_i2c_pad(uint32_t padState)
+{
+    if (!msx_log_category_enabled(MsxLogCategory::InputI2c)) {
+        return;
+    }
+
+    share::I2cPadDiagnostic diag = {};
+    share::getI2cPadDiagnostic(&diag);
+    if (!diag.present) {
+        static bool s_loggedMissing = false;
+        if (!s_loggedMissing) {
+            MSX_CATEGORY_LOG(MsxLogCategory::InputI2c,
+                             "[MSX][INPUT][I2C] no pad detected\n");
+            s_loggedMissing = true;
+        }
+        return;
+    }
+
+    static bool s_traceInit = false;
+    static uint32_t s_lastState = 0u;
+    static bool s_lastReadOk = false;
+    static uint32_t s_lastFailCount = 0u;
+    static uint32_t s_heldSinceMs = 0u;
+    static uint32_t s_nextLogMs = 0u;
+
+    const uint32_t nowMs = millis();
+    const bool failed = !diag.lastReadOk;
+    const bool changed =
+        !s_traceInit ||
+        diag.state != s_lastState ||
+        diag.lastReadOk != s_lastReadOk;
+    const bool failureLog =
+        failed &&
+        diag.failCount != s_lastFailCount &&
+        (!s_traceInit || static_cast<int32_t>(nowMs - s_nextLogMs) >= 0);
+    bool heldLog = false;
+
+    if (diag.state != 0u) {
+        if (changed || s_heldSinceMs == 0u) {
+            s_heldSinceMs = nowMs;
+            s_nextLogMs = nowMs + 1000u;
+        } else if (static_cast<int32_t>(nowMs - s_nextLogMs) >= 0) {
+            heldLog = true;
+            s_nextLogMs = nowMs + 1000u;
+        }
+    } else if (failureLog) {
+        s_nextLogMs = nowMs + 1000u;
+    } else {
+        s_heldSinceMs = 0u;
+    }
+
+    if (!changed && !failureLog && !heldLog) {
+        return;
+    }
+
+    char buttons[48];
+    msx_trace_pad_label(diag.state, buttons, sizeof(buttons));
+
+    MSX_CATEGORY_LOG(MsxLogCategory::InputI2c,
+                     "[MSX][INPUT][I2C] %s type=%s addr=0x%02X ok=%u err=%u xy=%u/%u btn=%02X state=%02lX pollState=%02lX buttons=%s held=%lums polls=%lu fails=%lu\n",
+                     changed ? "change" : (failureLog ? "fail" : "held"),
+                     msx_trace_i2c_type_label(diag.type),
+                     static_cast<unsigned>(diag.address),
+                     diag.lastReadOk ? 1u : 0u,
+                     static_cast<unsigned>(diag.lastErrorStage),
+                     static_cast<unsigned>(diag.x),
+                     static_cast<unsigned>(diag.y),
+                     static_cast<unsigned>(diag.button),
+                     static_cast<unsigned long>(diag.state),
+                     static_cast<unsigned long>(padState),
+                     buttons,
+                     static_cast<unsigned long>(s_heldSinceMs != 0u ? nowMs - s_heldSinceMs : 0u),
+                     static_cast<unsigned long>(diag.pollCount),
+                     static_cast<unsigned long>(diag.failCount));
+
+    s_traceInit = true;
+    s_lastState = diag.state;
+    s_lastReadOk = diag.lastReadOk;
+    s_lastFailCount = diag.failCount;
+}
+
 static void msx_poll_runtime_menu(const Keyboard_Class::KeysState& keys,
                                   const MsxInputBindingCache& bindings,
                                   uint32_t padState,
@@ -2727,6 +3029,7 @@ void msx_input_poll(MsxInputState* state)
     if (bindings.hasI2cPad) {
         padState = share::pollI2cPad();
     }
+    msx_trace_i2c_pad(padState);
 
     bool goShortClicked = false;
     bool goLongToggledMenu = false;
@@ -2850,6 +3153,7 @@ void msx_input_poll(MsxInputState* state)
                               s_runtimeOptions.joystickEnabled,
                               basicKeyboardEnabled,
                               virtualKeyPickerAllowed);
+    msx_trace_keyboard_input(keys, *state, padState);
 
     const bool ctrlArrow = keys.ctrl && !keys.fn;
     msx_video_set_zoom_follow_input(

@@ -40,6 +40,21 @@ extern uint32_t lastPadState;
 
 namespace share
 {
+    struct I2cPadDiagnostic {
+        bool present;
+        bool lastReadOk;
+        uint8_t type;
+        uint8_t address;
+        uint8_t x;
+        uint8_t y;
+        uint8_t button;
+        uint8_t lastErrorStage;
+        uint32_t state;
+        uint32_t pollCount;
+        uint32_t failCount;
+        uint32_t lastPollMs;
+    };
+
     bool shouldPollInput(); 
     void checkCommonInput(const Keyboard_Class::KeysState& status);
 
@@ -47,6 +62,7 @@ namespace share
     void detectI2cPad();
     bool hasI2cPad();
     uint32_t pollI2cPad();
+    void getI2cPadDiagnostic(I2cPadDiagnostic* diagnostic);
 
     // Bitmask
     enum PadBits : uint32_t {

@@ -62,6 +62,7 @@ static const char* msx_display_runtime_debug_group_label(uint8_t group)
         case 3u: return "CORE";
         case 4u: return "CART";
         case 5u: return "PROFILE";
+        case 6u: return "INPUT";
         default: return "DEBUG";
     }
 }
@@ -115,6 +116,13 @@ static const char* msx_display_runtime_debug_category_label(uint8_t group, uint8
                 case 1u: return "BACK";
                 default: return "";
             }
+        case 6u:
+            switch (index) {
+                case 0u: return "KEYBOARD";
+                case 1u: return "I2C PAD";
+                case 2u: return "BACK";
+                default: return "";
+            }
         default:
             return "";
     }
@@ -128,6 +136,7 @@ static int msx_display_runtime_debug_category_count(uint8_t group)
         case 3u: return 2;
         case 4u: return 1;
         case 5u: return 1;
+        case 6u: return 2;
         default: return 0;
     }
 }
@@ -163,6 +172,9 @@ static MsxLogCategory msx_display_runtime_debug_category(uint8_t group, uint8_t 
         case 4u:
             return MsxLogCategory::Cart;
         case 5u:
+            return MsxLogCategory::Profile;
+        case 6u:
+            return index == 0u ? MsxLogCategory::InputKbd : MsxLogCategory::InputI2c;
         default:
             return MsxLogCategory::Profile;
     }
@@ -357,7 +369,8 @@ static const char* msx_display_runtime_menu_label(const MsxInputOverlayState& ov
                 case 2u: return "CORE";
                 case 3u: return "CART";
                 case 4u: return "PROFILE";
-                case 5u: return "BACK";
+                case 5u: return "INPUT";
+                case 6u: return "BACK";
                 default: return "";
             }
         }
@@ -458,7 +471,7 @@ static const char* msx_display_runtime_menu_value(const MsxInputOverlayState& ov
     if (overlay.debugSubmenuVisible) {
         static char debugValue[16];
         if (overlay.debugMenuGroup == 0u) {
-            if (index >= 5u) {
+            if (index >= 6u) {
                 return nullptr;
             }
             const uint8_t group = static_cast<uint8_t>(index + 1u);

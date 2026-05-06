@@ -25,6 +25,8 @@ enum class MsxLogCategory : uint32_t {
     VdpTrace = 1u << 18,
     VdpBootDiag = 1u << 19,
     PsgPeak = 1u << 20,
+    InputKbd = 1u << 21,
+    InputI2c = 1u << 22,
 };
 
 bool msx_logs_enabled(void);

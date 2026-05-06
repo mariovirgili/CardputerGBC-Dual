@@ -145,6 +145,8 @@ const char* msx_log_category_label(MsxLogCategory category)
         case MsxLogCategory::VdpTrace: return "VDP TRACE";
         case MsxLogCategory::VdpBootDiag: return "VDP BOOT";
         case MsxLogCategory::PsgPeak: return "PEAK";
+        case MsxLogCategory::InputKbd: return "INPUT KBD";
+        case MsxLogCategory::InputI2c: return "INPUT I2C";
         default: return "LOG";
     }
 }
