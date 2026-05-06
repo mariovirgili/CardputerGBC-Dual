@@ -23,6 +23,7 @@ struct MsxInputState {
     bool vausEnabled;
     bool menuVisible;
     bool virtualKeyPickerVisible;
+    bool runtimePaused;
     bool quitRequested;
     bool resetRequested;
     bool toggleLogsRequested;
@@ -60,6 +61,7 @@ struct MsxInputOverlayState {
     bool casChangeAvailable;
     bool dskChangeAvailable;
     bool virtualKeyPickerVisible;
+    bool runtimePaused;
     char virtualKeyPickerLabel[8];
     uint8_t selectedIndex;
 };

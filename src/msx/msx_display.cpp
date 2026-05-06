@@ -36,6 +36,7 @@ static MsxInternalViewMode s_lastViewMode = MsxInternalViewMode::Wide;
 static MsxInputOverlayState s_lastMenuOverlay = {};
 static bool s_lastMenuVisible = false;
 static bool s_lastVirtualKeyPickerVisible = false;
+static bool s_lastPauseOverlayVisible = false;
 static char s_lastVirtualKeyPickerLabel[8] = "";
 static uint8_t s_lastScrollIndex = 0;
 static uint8_t s_lastStateSlot = 0;
@@ -727,6 +728,36 @@ static void msx_display_draw_virtual_key_picker(const MsxInputOverlayState& over
     display.drawCenterString(value, displayW / 2, boxY + 23, &fonts::Font2);
 }
 
+static void msx_display_draw_pause_overlay(void)
+{
+    const int displayW = msx_display_active_width();
+    const int displayH = msx_display_active_height();
+    const int boxW = msx_display_game_on_external() ? 132 : 96;
+    const int boxH = msx_display_game_on_external() ? 52 : 38;
+    const int boxX = (displayW - boxW) / 2;
+    const int boxY = (displayH - boxH) / 2;
+
+    if (msx_display_game_on_external()) {
+        msx_display_prepare_external_tft();
+        auto& tft = msx_display_external_tft();
+        tft.fillRoundRect(boxX + 3, boxY + 3, boxW, boxH, 4, TFT_BLACK);
+        tft.fillRoundRect(boxX, boxY, boxW, boxH, 4, TFT_BLACK);
+        tft.drawRoundRect(boxX, boxY, boxW, boxH, 4, PRIMARY_COLOR);
+        tft.drawRoundRect(boxX + 2, boxY + 2, boxW - 4, boxH - 4, 3, RECT_COLOR_DARK);
+        tft.setTextColor(TFT_WHITE, TFT_BLACK);
+        tft.drawCentreString("Paused!", displayW / 2, boxY + 15, 4);
+        return;
+    }
+
+    auto& display = M5Cardputer.Display;
+    display.fillRoundRect(boxX + 3, boxY + 3, boxW, boxH, 4, TFT_BLACK);
+    display.fillRoundRect(boxX, boxY, boxW, boxH, 4, TFT_BLACK);
+    display.drawRoundRect(boxX, boxY, boxW, boxH, 4, PRIMARY_COLOR);
+    display.drawRoundRect(boxX + 2, boxY + 2, boxW - 4, boxH - 4, 3, RECT_COLOR_DARK);
+    display.setTextColor(TFT_WHITE, TFT_BLACK);
+    display.drawCenterString("Paused!", displayW / 2, boxY + 10, &fonts::Font4);
+}
+
 static bool msx_display_runtime_menu_overlay_equals(const MsxInputOverlayState& a,
                                                     const MsxInputOverlayState& b)
 {
@@ -810,6 +841,7 @@ void msx_display_init(void)
     s_lastMenuOverlay = {};
     s_lastMenuVisible = false;
     s_lastVirtualKeyPickerVisible = false;
+    s_lastPauseOverlayVisible = false;
     s_lastVirtualKeyPickerLabel[0] = '\0';
     msx_video_init();
 }
@@ -836,6 +868,32 @@ void msx_display_submit_frame(const MsxDisplayFrame* frame, const MsxDisplayStat
 
     const MsxInternalViewMode currentViewMode = msx_config_get_active_view_mode();
     const uint8_t currentStateSlot = msx_input_get_state_slot();
+    if (overlay.runtimePaused) {
+        msx_video_lock();
+        msx_video_set_runtime_menu_active(false);
+        msx_video_set_state_overlay_active(true);
+        if (!s_lastPauseOverlayVisible) {
+            msx_display_draw_pause_overlay();
+        }
+        s_lastPauseOverlayVisible = true;
+        s_lastMenuVisible = false;
+        s_lastVirtualKeyPickerVisible = false;
+        s_lastVirtualKeyPickerLabel[0] = '\0';
+        msx_video_unlock();
+        return;
+    }
+
+    if (s_lastPauseOverlayVisible) {
+        msx_video_lock();
+        msx_video_set_state_overlay_active(false);
+        if (msx_display_game_on_external()) {
+            msx_video_finish_external_ui();
+        }
+        s_lastPauseOverlayVisible = false;
+        msx_video_unlock();
+        msx_video_request_full_redraw();
+    }
+
     if (overlay.menuVisible) {
         msx_video_lock();
         msx_video_set_runtime_menu_active(true);

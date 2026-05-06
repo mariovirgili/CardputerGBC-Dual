@@ -2285,13 +2285,14 @@ void run_msx(const uint8_t* romData, size_t romLen, const char* romName, SdServi
             msx_handle_load_state(&core, romName, useExternal, sd);
         }
 
-        const uint32_t pauseNowMs = millis();
         const bool menuPaused = input.menuVisible || input.virtualKeyPickerVisible;
-        msx_sound_set_paused(menuPaused);
+        const bool runtimePaused = input.runtimePaused;
+        const bool emulationPaused = menuPaused || runtimePaused;
+        msx_sound_set_paused(emulationPaused);
         msx_core_handle_input(&core, &input);
         msx_force_keyboard_input_refresh(&core, input);
 
-        if (menuPaused) {
+        if (emulationPaused) {
             msx_core_drain_audio(&core, nullptr, 0u);
         } else {
             size_t audioMixCapacity = 0;
@@ -2324,7 +2325,7 @@ void run_msx(const uint8_t* romData, size_t romLen, const char* romName, SdServi
 
         if (!audioState.compiledIn) {
             std::snprintf(audioLine, sizeof(audioLine), "AUDIO: build OFF");
-        } else if (menuPaused) {
+        } else if (emulationPaused) {
             std::snprintf(audioLine, sizeof(audioLine), "AUDIO: paused");
         } else if (!audioState.enabled) {
             std::snprintf(audioLine, sizeof(audioLine), "AUDIO: init OFF");
@@ -2356,7 +2357,7 @@ void run_msx(const uint8_t* romData, size_t romLen, const char* romName, SdServi
 
         frameCount++;
         msx_cart_sram_autosave_tick(&core, &sramAutosave, nowMs);
-        msx_runtime_update_fps_overlay(&fpsOverlay, menuPaused, nowMs);
+        msx_runtime_update_fps_overlay(&fpsOverlay, emulationPaused, nowMs);
         if (MSX_RUN_LOG_ENABLED && (nowMs - lastLogMs >= 1000)) {
             msx_runtime_log_summary(&core,
                                     &audioState,
@@ -2585,12 +2586,13 @@ void run_msx_disk(const uint8_t* dskData, size_t dskLen, const char* dskName, Sd
             msx_handle_load_state(&core, currentDskPath.c_str(), useExternal, sd);
         }
 
-        const uint32_t pauseNowMs = millis();
         const bool menuPaused = input.menuVisible || input.virtualKeyPickerVisible;
-        msx_sound_set_paused(menuPaused);
+        const bool runtimePaused = input.runtimePaused;
+        const bool emulationPaused = menuPaused || runtimePaused;
+        msx_sound_set_paused(emulationPaused);
         msx_core_handle_input(&core, &input);
         msx_force_keyboard_input_refresh(&core, input);
-        if (menuPaused) {
+        if (emulationPaused) {
             msx_core_drain_audio(&core, nullptr, 0u);
         } else {
             size_t audioMixCapacity = 0;
@@ -2621,7 +2623,7 @@ void run_msx_disk(const uint8_t* dskData, size_t dskLen, const char* dskName, Sd
 
         if (!audioState.compiledIn) {
             std::snprintf(audioLine, sizeof(audioLine), "AUDIO: build OFF");
-        } else if (menuPaused) {
+        } else if (emulationPaused) {
             std::snprintf(audioLine, sizeof(audioLine), "AUDIO: paused");
         } else if (!audioState.enabled) {
             std::snprintf(audioLine, sizeof(audioLine), "AUDIO: init OFF");
@@ -2648,7 +2650,7 @@ void run_msx_disk(const uint8_t* dskData, size_t dskLen, const char* dskName, Sd
         msx_display_submit_frame(&core.displayFrame, &status);
 
         frameCount++;
-        msx_runtime_update_fps_overlay(&fpsOverlay, menuPaused, nowMs);
+        msx_runtime_update_fps_overlay(&fpsOverlay, emulationPaused, nowMs);
         if (MSX_RUN_LOG_ENABLED && (nowMs - lastLogMs >= 1000)) {
             msx_runtime_log_summary(&core,
                                     &audioState,
@@ -2832,12 +2834,13 @@ void run_msx_basic(const char* name, SdService& sd)
             msx_handle_load_state(&core, name, useExternal, sd);
         }
 
-        const uint32_t pauseNowMs = millis();
         const bool menuPaused = input.menuVisible || input.virtualKeyPickerVisible;
-        msx_sound_set_paused(menuPaused);
+        const bool runtimePaused = input.runtimePaused;
+        const bool emulationPaused = menuPaused || runtimePaused;
+        msx_sound_set_paused(emulationPaused);
         msx_core_handle_input(&core, &input);
         msx_force_keyboard_input_refresh(&core, input);
-        if (menuPaused) {
+        if (emulationPaused) {
             msx_core_drain_audio(&core, nullptr, 0u);
         } else {
             size_t audioMixCapacity = 0;
@@ -2868,7 +2871,7 @@ void run_msx_basic(const char* name, SdService& sd)
         const MsxAudioHookState& audioState = msx_sound_get_state();
         if (!audioState.compiledIn) {
             status.audioLine = "AUDIO: build OFF";
-        } else if (menuPaused) {
+        } else if (emulationPaused) {
             status.audioLine = "AUDIO: paused";
         } else if (!audioState.enabled) {
             status.audioLine = "AUDIO: init OFF";
@@ -2893,7 +2896,7 @@ void run_msx_basic(const char* name, SdService& sd)
         msx_display_submit_frame(&core.displayFrame, &status);
 
         frameCount++;
-        msx_runtime_update_fps_overlay(&fpsOverlay, menuPaused, nowMs);
+        msx_runtime_update_fps_overlay(&fpsOverlay, emulationPaused, nowMs);
         if (MSX_RUN_LOG_ENABLED && (nowMs - lastLogMs >= 1000)) {
             msx_runtime_log_summary(&core,
                                     &audioState,
@@ -3110,12 +3113,13 @@ void run_msx_cas(const uint8_t* casData, size_t casLen, const char* casName, SdS
             msx_handle_load_state(&core, currentCasPath.c_str(), useExternal, sd);
         }
 
-        const uint32_t pauseNowMs = millis();
         const bool menuPaused = input.menuVisible || input.virtualKeyPickerVisible;
-        msx_sound_set_paused(menuPaused);
+        const bool runtimePaused = input.runtimePaused;
+        const bool emulationPaused = menuPaused || runtimePaused;
+        msx_sound_set_paused(emulationPaused);
         msx_core_handle_input(&core, &input);
         msx_force_keyboard_input_refresh(&core, input);
-        if (menuPaused) {
+        if (emulationPaused) {
             msx_core_drain_audio(&core, nullptr, 0u);
         } else {
             size_t audioMixCapacity = 0;
@@ -3127,7 +3131,7 @@ void run_msx_cas(const uint8_t* casData, size_t casLen, const char* casName, SdS
         }
 
         if (casBasicBootRefreshPending &&
-            !menuPaused &&
+            !emulationPaused &&
             core.frameCounter >= 120u &&
             core.vdp.frameReady &&
             msx_vdp_display_enabled(&core.vdp) &&
@@ -3157,7 +3161,7 @@ void run_msx_cas(const uint8_t* casData, size_t casLen, const char* casName, SdS
         static char casAudioLine[48];
         if (!audioState.compiledIn) {
             std::snprintf(casAudioLine, sizeof(casAudioLine), "AUDIO: build OFF");
-        } else if (menuPaused) {
+        } else if (emulationPaused) {
             std::snprintf(casAudioLine, sizeof(casAudioLine), "AUDIO: paused");
         } else if (!audioState.enabled) {
             std::snprintf(casAudioLine, sizeof(casAudioLine), "AUDIO: init OFF");
@@ -3186,7 +3190,7 @@ void run_msx_cas(const uint8_t* casData, size_t casLen, const char* casName, SdS
         msx_display_submit_frame(&core.displayFrame, &status);
 
         frameCount++;
-        msx_runtime_update_fps_overlay(&fpsOverlay, menuPaused, nowMs);
+        msx_runtime_update_fps_overlay(&fpsOverlay, emulationPaused, nowMs);
         if (MSX_RUN_LOG_ENABLED && (nowMs - lastLogMs >= 1000)) {
             msx_runtime_log_summary(&core,
                                     &audioState,

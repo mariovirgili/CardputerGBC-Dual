@@ -52,6 +52,8 @@ static bool s_suppressGoClick = false;
 static uint32_t s_suppressGoUntilMs = 0;
 static bool s_viewToggleHeld = false;
 static uint32_t s_lastViewToggleMs = 0;
+static bool s_runtimePaused = false;
+static bool s_fnPauseHandled = false;
 
 struct MsxRuntimeOptions {
     bool joystickEnabled;
@@ -2449,6 +2451,8 @@ void msx_input_init(void)
     s_goLongHandled = false;
     s_suppressGoClick = false;
     s_suppressGoUntilMs = 0;
+    s_runtimePaused = false;
+    s_fnPauseHandled = false;
     const MsxRuntimeOptionConfig config = msx_input_load_runtime_option_config();
     s_runtimeOptions = {
         config.joystickEnabled,
@@ -2538,6 +2542,26 @@ void msx_input_poll(MsxInputState* state)
     msx_load_binding_cache(&bindings);
     msx_apply_system_keys(keys);
 
+    const bool fnPausePressed = keys.fn && msx_key_pressed_any('p', 'P');
+    bool pauseToggled = false;
+    if (fnPausePressed) {
+        if (!s_fnPauseHandled) {
+            s_fnPauseHandled = true;
+            s_runtimePaused = !s_runtimePaused;
+            pauseToggled = true;
+            s_runtimeMenu.visible = false;
+            s_virtualKeyPickerVisible = false;
+            msx_reset_menu_latches();
+        }
+    } else {
+        s_fnPauseHandled = false;
+    }
+
+    state->runtimePaused = s_runtimePaused;
+    if (pauseToggled || s_runtimePaused) {
+        return;
+    }
+
     static bool s_fnSLHandled = false;
     if (keys.fn && (msx_key_pressed('s') || msx_key_pressed('l'))) {
         if (!s_fnSLHandled) {
@@ -2566,11 +2590,24 @@ void msx_input_poll(MsxInputState* state)
         s_fnDelHandled = false;
     }
 
+    static bool s_fnConfigMenuHandled = false;
+    bool fnConfigToggledMenu = false;
+    if (keys.fn && msx_key_pressed_any('m', 'M')) {
+        if (!s_fnConfigMenuHandled) {
+            s_fnConfigMenuHandled = true;
+            msx_toggle_runtime_menu();
+            msx_runtime_log_options();
+            fnConfigToggledMenu = true;
+        }
+    } else {
+        s_fnConfigMenuHandled = false;
+    }
+
     static bool s_fnCasMacroHandled = false;
-    if (keys.fn && (msx_key_pressed('c') || msx_key_pressed('b'))) {
+    if (keys.fn && (msx_key_pressed_any('c', 'C') || msx_key_pressed_any('b', 'B'))) {
         if (!s_fnCasMacroHandled) {
             s_fnCasMacroHandled = true;
-            if (msx_key_pressed('b')) {
+            if (msx_key_pressed_any('b', 'B')) {
                 msx_start_cas_text_macro("BLOAD\"CAS:\",R\n");
             } else {
                 msx_start_cas_text_macro("RUN\"CAS:\"\n");
@@ -2654,8 +2691,9 @@ void msx_input_poll(MsxInputState* state)
     state->vausEnabled = s_runtimeOptions.vausEnabled && !basicKeyboardEnabled;
     state->menuVisible = s_runtimeMenu.visible;
     state->virtualKeyPickerVisible = s_virtualKeyPickerVisible;
+    state->runtimePaused = s_runtimePaused;
 
-    if (menuWasVisible || s_runtimeMenu.visible || goLongToggledMenu) {
+    if (menuWasVisible || s_runtimeMenu.visible || goLongToggledMenu || fnConfigToggledMenu) {
         return;
     }
 
@@ -2749,6 +2787,7 @@ void msx_input_get_overlay_state(MsxInputOverlayState* state)
     state->casChangeAvailable = s_runtimeOptions.changeCasAvailable;
     state->dskChangeAvailable = s_runtimeOptions.changeDskAvailable;
     state->virtualKeyPickerVisible = s_virtualKeyPickerVisible;
+    state->runtimePaused = s_runtimePaused;
     std::snprintf(state->virtualKeyPickerLabel,
                   sizeof(state->virtualKeyPickerLabel),
                   "%s",
