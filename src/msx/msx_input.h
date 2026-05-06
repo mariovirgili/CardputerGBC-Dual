@@ -24,6 +24,7 @@ struct MsxInputState {
     bool menuVisible;
     bool virtualKeyPickerVisible;
     bool quitRequested;
+    bool resetRequested;
     bool toggleLogsRequested;
     bool toggleViewRequested;
 };

@@ -543,7 +543,7 @@ const char* msx_config_performance_preset_label(MsxPerformancePreset preset)
         case MsxPerformancePreset::Fast:
             return "FAST";
         case MsxPerformancePreset::Manbow:
-            return "Scanline";
+            return "SCLINE";
         case MsxPerformancePreset::Custom:
         default:
             return "CUSTOM";

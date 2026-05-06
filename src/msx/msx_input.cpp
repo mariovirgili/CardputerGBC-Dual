@@ -61,6 +61,7 @@ struct MsxRuntimeOptions {
     uint8_t stateSlot;
     bool saveRequested;
     bool loadRequested;
+    bool resetRequested;
     bool changeCasAvailable;
     bool changeCasRequested;
     bool changeDskAvailable;
@@ -82,6 +83,7 @@ enum class MsxRuntimeMenuItem : uint8_t {
     LoadState,
     ChangeDsk,
     CasMenu,
+    Reset,
     Close,
     Count,
 };
@@ -152,7 +154,7 @@ struct MsxRuntimeMenuState {
 };
 
 static constexpr uint8_t kRuntimeMenuVisibleRows = 5u;
-static MsxRuntimeOptions s_runtimeOptions = {false, true, false, false, 0, false, false, false, false, false, false};
+static MsxRuntimeOptions s_runtimeOptions = {false, true, false, false, 0, false, false, false, false, false, false, false};
 static MsxRuntimeMenuState s_runtimeMenu = {
     false,
     MsxRuntimeMenuPage::Main,
@@ -425,7 +427,7 @@ static const MsxDebugMenuGroupDef* msx_runtime_menu_group_def(MsxDebugMenuGroup 
 
 static uint8_t msx_get_main_menu_item_count(void)
 {
-    uint8_t count = 13u;
+    uint8_t count = 14u;
     if (s_runtimeOptions.changeDskAvailable) {
         ++count;
     }
@@ -513,6 +515,10 @@ static MsxRuntimeMenuItem msx_get_menu_item(uint8_t index)
         }
         ++dynamicIndex;
     }
+    if (index == dynamicIndex) {
+        return MsxRuntimeMenuItem::Reset;
+    }
+    ++dynamicIndex;
     return MsxRuntimeMenuItem::Close;
 }
 
@@ -1415,6 +1421,10 @@ static void msx_runtime_menu_accept(void)
                 M5Cardputer.Display.fillScreen(TFT_BLACK);
                 break;
             }
+        case MsxRuntimeMenuItem::Reset:
+            s_runtimeOptions.resetRequested = true;
+            s_runtimeMenu.visible = false;
+            break;
         case MsxRuntimeMenuItem::Close:
             s_runtimeMenu.visible = false;
             break;
@@ -2543,6 +2553,19 @@ void msx_input_poll(MsxInputState* state)
         s_fnSLHandled = false;
     }
 
+    static bool s_fnDelHandled = false;
+    if (keys.fn && keys.del) {
+        if (!s_fnDelHandled) {
+            s_fnDelHandled = true;
+            s_runtimeOptions.resetRequested = true;
+            s_runtimeMenu.visible = false;
+            s_virtualKeyPickerVisible = false;
+            msx_reset_menu_latches();
+        }
+    } else {
+        s_fnDelHandled = false;
+    }
+
     static bool s_fnCasMacroHandled = false;
     if (keys.fn && (msx_key_pressed('c') || msx_key_pressed('b'))) {
         if (!s_fnCasMacroHandled) {
@@ -2612,6 +2635,9 @@ void msx_input_poll(MsxInputState* state)
     if (menuWasVisible) {
         msx_poll_runtime_menu(keys, bindings, padState, goShortClicked);
     }
+
+    state->resetRequested = s_runtimeOptions.resetRequested;
+    s_runtimeOptions.resetRequested = false;
 
     if (!menuWasVisible && goShortClicked) {
         state->quitRequested = true;

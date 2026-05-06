@@ -813,6 +813,77 @@ bool msx_core_try_skip_boot_animation(MsxCoreState* state)
     return msx_core_try_skip_boot_animation_internal(state);
 }
 
+void msx_core_reset(MsxCoreState* state)
+{
+    if (!state || !state->initialized) {
+        return;
+    }
+
+    state->initialized = false;
+    state->frameCounter = 0u;
+    state->lastFrameCpuUs = 0u;
+    state->lastFrameVdpUs = 0u;
+    state->lastFramePresentUs = 0u;
+    state->lastFrameOtherUs = 0u;
+    state->lastFrameTotalUs = 0u;
+    state->lastFrameCycles = 0u;
+    state->lastStatusFrame = 0u;
+    state->lastInputJoy = 0xFFu;
+    state->lastInputConfigFlags = 0u;
+    state->lastInputJoystickMode = false;
+    state->lastInputCaptured = false;
+    msx_keyboard_matrix_clear(&state->lastInputKeyboardMatrix);
+
+    if (state->disk.ready) {
+        msx_disk_reset(&state->disk);
+    }
+    if (state->cas.ready) {
+        state->cas.casPos = 0u;
+    }
+
+    msx_vdp_reset(&state->vdp);
+    msx_memory_reset(&state->memory);
+    msx_core_attach_runtime_devices(state);
+
+    if (state->memory.cart.ready && state->memory.cart.rom && state->memory.cart.size != 0u) {
+        state->bootPc = msx_core_select_boot_pc(&state->memory.cart, &state->directBoot);
+        msx_core_apply_boot_mapping(
+            state,
+            state->directBoot ? kMsxBootSlotCart : kMsxBootSlotBios,
+            msx_core_default_secondary_slot_reg(state->machineMode, state->directBoot)
+        );
+    } else {
+        const bool hasDiskRom = (state->memory.diskRom != nullptr) &&
+                                (state->memory.diskRomSize != 0u);
+        state->bootPc = 0x0000u;
+        state->directBoot = false;
+        msx_core_apply_boot_mapping(
+            state,
+            kMsxBootSlotBios,
+            hasDiskRom
+                ? kMsxBootSecondaryDisk
+                : msx_core_default_secondary_slot_reg(state->machineMode, false)
+        );
+    }
+
+    msx_cpu_init(&state->cpu);
+    msx_cpu_reset(&state->cpu, state->bootPc, kMsxDefaultStack);
+    msx_vdp_render(&state->vdp);
+    msx_vdp_get_display_frame(&state->vdp, &state->displayFrame);
+
+    state->initialized = true;
+    msx_core_set_status(state,
+                        "%s RESET %s",
+                        state->memory.cart.ready ? "CART" : (state->disk.ready ? "DISK" : (state->cas.ready ? "CAS" : "BASIC")),
+                        msx_media_bios_target_label(state->biosTarget));
+    msx_core_capture_status_state(state);
+
+    std::printf("[MSX] core reset: boot=%s pc=%04X machine=%s\n",
+                state->directBoot ? "cart" : "bios",
+                static_cast<unsigned>(state->bootPc),
+                msx_config_machine_mode_label(state->machineMode));
+}
+
 bool msx_core_init(MsxCoreState* state,
                    const MsxRomImage* rom,
                    const MsxBiosBundle* bios,

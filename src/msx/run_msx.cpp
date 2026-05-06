@@ -1521,6 +1521,24 @@ static void msx_apply_runtime_view_toggle(MsxCoreState* core, bool useExternal)
     }
 }
 
+static void msx_apply_runtime_reset(MsxCoreState* core, bool useExternal)
+{
+    if (!core) {
+        return;
+    }
+
+    msx_sound_set_paused(true);
+    msx_begin_state_overlay(useExternal);
+    msx_draw_osd_message("RESET", useExternal);
+    msx_core_reset(core);
+    delay(250);
+    msx_end_state_overlay(useExternal);
+    msx_video_set_fps_overlay_value(0u);
+    msx_video_request_full_redraw();
+    core->vdp.dirty = true;
+    msx_sound_set_paused(false);
+}
+
 static void msx_apply_runtime_sound_config(MsxCoreState* core,
                                            MsxVirtualSccMode* activeVirtualSccMode,
                                            uint8_t* activeSoundVolume,
@@ -2215,6 +2233,18 @@ void run_msx(const uint8_t* romData, size_t romLen, const char* romName, SdServi
             quitRequested = true;
             break;
         }
+        if (input.resetRequested) {
+            (void)msx_cart_sram_save_now(&core, &sramAutosave, true);
+            msx_apply_runtime_reset(&core, useExternal);
+            bootSkipAttempted = false;
+            timingWindow = {};
+            frameCount = 0;
+            lastLogMs = millis();
+            msx_runtime_reset_fps_overlay(&fpsOverlay, lastLogMs);
+            statusNotice = {};
+            nextFrameUs = esp_timer_get_time();
+            continue;
+        }
         if (!bootSkipAttempted &&
             (core.frameCounter <= kMsxBootSkipWindowFrames) &&
             (input.start || input.fire1) &&
@@ -2491,6 +2521,16 @@ void run_msx_disk(const uint8_t* dskData, size_t dskLen, const char* dskName, Sd
             quitRequested = true;
             break;
         }
+        if (input.resetRequested) {
+            msx_apply_runtime_reset(&core, useExternal);
+            timingWindow = {};
+            frameCount = 0;
+            lastLogMs = millis();
+            msx_runtime_reset_fps_overlay(&fpsOverlay, lastLogMs);
+            statusNotice = {};
+            nextFrameUs = esp_timer_get_time();
+            continue;
+        }
         if (input.toggleLogsRequested) {
             msx_sound_set_paused(true);
             msx_runtime_toggle_logs(&core);
@@ -2751,6 +2791,16 @@ void run_msx_basic(const char* name, SdService& sd)
             quitRequested = true;
             break;
         }
+        if (input.resetRequested) {
+            msx_apply_runtime_reset(&core, useExternal);
+            timingWindow = {};
+            frameCount = 0;
+            lastLogMs = millis();
+            msx_runtime_reset_fps_overlay(&fpsOverlay, lastLogMs);
+            statusNotice = {};
+            nextFrameUs = esp_timer_get_time();
+            continue;
+        }
         if (input.toggleLogsRequested) {
             msx_sound_set_paused(true);
             msx_runtime_toggle_logs(&core);
@@ -2995,6 +3045,17 @@ void run_msx_cas(const uint8_t* casData, size_t casLen, const char* casName, SdS
         if (input.quitRequested) {
             quitRequested = true;
             break;
+        }
+        if (input.resetRequested) {
+            msx_apply_runtime_reset(&core, useExternal);
+            timingWindow = {};
+            frameCount = 0;
+            lastLogMs = millis();
+            msx_runtime_reset_fps_overlay(&fpsOverlay, lastLogMs);
+            statusNotice = {};
+            casBasicBootRefreshPending = true;
+            nextFrameUs = esp_timer_get_time();
+            continue;
         }
         if (input.toggleLogsRequested) {
             msx_sound_set_paused(true);

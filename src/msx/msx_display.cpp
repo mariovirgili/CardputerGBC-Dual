@@ -393,7 +393,11 @@ static const char* msx_display_runtime_menu_label(const MsxInputOverlayState& ov
         ++dynamicIndex;
     }
     if (index == dynamicIndex) {
-        return "CLOSE";
+        return "RESET";
+    }
+    ++dynamicIndex;
+    if (index == dynamicIndex) {
+        return "BACK";
     }
     return "";
 }
