@@ -52,6 +52,31 @@ MSX is a registered trademark owned by MSX Licensing Corporation.
 MSX-AUDIO, FM-PAC/YM2413 synthesis, and FM audio in general are not emulated in
 this build yet.
 
+## Media
+
+<table>
+  <tr>
+    <td><img src="images/media/Uno.jpg" alt="Msx ADV Emulators media 1" width="260"></td>
+    <td><img src="images/media/Due.jpg" alt="Msx ADV Emulators media 2" width="260"></td>
+    <td><img src="images/media/Tre.jpg" alt="Msx ADV Emulators media 3" width="260"></td>
+  </tr>
+  <tr>
+    <td><img src="images/media/Quattro.jpg" alt="Msx ADV Emulators media 4" width="260"></td>
+    <td><img src="images/media/Cinque.jpg" alt="Msx ADV Emulators media 5" width="260"></td>
+    <td><img src="images/media/Sei.jpg" alt="Msx ADV Emulators media 6" width="260"></td>
+  </tr>
+  <tr>
+    <td><img src="images/media/Sette.jpg" alt="Msx ADV Emulators media 7" width="260"></td>
+    <td><img src="images/media/Otto.jpg" alt="Msx ADV Emulators media 8" width="260"></td>
+    <td><img src="images/media/Nove.jpg" alt="Msx ADV Emulators media 9" width="260"></td>
+  </tr>
+  <tr>
+    <td><img src="images/media/Dieci.jpg" alt="Msx ADV Emulators media 10" width="260"></td>
+    <td><img src="images/media/Undici.jpg" alt="Msx ADV Emulators media 11" width="260"></td>
+    <td></td>
+  </tr>
+</table>
+
 ## Current Polish Pass
 
 v0.6.114 also includes a large number of small fixes and optimizations that are easy
