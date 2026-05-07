@@ -503,18 +503,24 @@ static inline uint8_t msx_vdp_timeline_value_for_line(const MsxVdpState* state,
         return 0u;
     }
 
-    // Il main loop MSX2 esegue il budget CPU della scanline e poi renderizza la
-    // linea in slice mode. Campionare fino al ciclo immediatamente prima della
-    // scanline successiva fa combaciare la ricostruzione full-frame con quello
-    // stesso confine, inclusi i cambi R2/R23/R0/R1 fatti nell'HBlank IRQ handler.
-    uint32_t targetCycle = msx_vdp_cycle_for_line(state, y);
-    if ((y + 1u) < state->activeHeight) {
-        const uint32_t nextLineCycle = msx_vdp_cycle_for_line(state, y + 1u);
-        if (nextLineCycle > targetCycle) {
-            targetCycle = nextLineCycle - 1u;
+    // In slice mode usa i cicli effettivi di fine-slice (sliceRenderCycles) come cutoff:
+    // l'HBLANK handler gira nello slice N+1 e la sua write può cadere oltre il confine
+    // teorico (overshoot Z80). sliceRenderCycles ≥ write_cycle → write sempre inclusa
+    // nel frame corretto, eliminando il flutter ±1 scanline al boundary split.
+    // In full-frame mode (sliceRenderCycles==0) si usa il ciclo teorico invariato.
+    uint32_t targetCycle;
+    if (state->sliceRenderCycles > 0u) {
+        targetCycle = state->sliceRenderCycles;
+    } else {
+        targetCycle = msx_vdp_cycle_for_line(state, y);
+        if ((y + 1u) < state->activeHeight) {
+            const uint32_t nextLineCycle = msx_vdp_cycle_for_line(state, y + 1u);
+            if (nextLineCycle > targetCycle) {
+                targetCycle = nextLineCycle - 1u;
+            }
+        } else if (state->frameCycleBudget != 0u) {
+            targetCycle = state->frameCycleBudget - 1u;
         }
-    } else if (state->frameCycleBudget != 0u) {
-        targetCycle = state->frameCycleBudget - 1u;
     }
 
     uint8_t value = timeline[0].value;
@@ -6977,6 +6983,7 @@ void msx_vdp_render(MsxVdpState* state)
     if (!state) {
         return;
     }
+    state->sliceRenderCycles = 0u;
 
     if (!state->dirty && state->frameReady) {
         return;

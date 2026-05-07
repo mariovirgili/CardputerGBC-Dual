@@ -82,6 +82,7 @@ struct MsxVdpState {
     uint32_t frameCounter;
     uint32_t frameStartCpuCycles;
     uint32_t currentFrameCpuCycles;
+    uint32_t sliceRenderCycles;   // non-zero in slice rendering: actual CPU cycles at end of current slice
     uint32_t frameCycleBudget;
     uint32_t lineInterruptFrameTag;
     uint8_t lineInterruptLineTag;

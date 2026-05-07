@@ -1280,6 +1280,7 @@ void msx_core_step_frame(MsxCoreState* state)
                 if (collectTiming) {
                     vdpStartUs = esp_timer_get_time();
                 }
+                state->vdp.sliceRenderCycles = executedCycles;
                 msx_vdp_render_slice(&state->vdp, line, line + 1u, line + 1u == visibleLines);
                 if (collectTiming) {
                     vdpRenderUs += static_cast<uint32_t>(esp_timer_get_time() - vdpStartUs);
