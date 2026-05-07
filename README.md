@@ -1,6 +1,6 @@
 # Msx ADV Emulators v0.6.114
 
-![CardputerGBC-Dual external title screen](images/Externaltitle.png)
+![Msx ADV Emulators title screen](images/Title.png)
 
 Msx ADV Emulators v0.6.114 is an MSX-focused firmware for the M5Stack Cardputer
 with support for internal LCD play and optional external SPI TFT output.
