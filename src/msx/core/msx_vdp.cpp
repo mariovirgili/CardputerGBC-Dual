@@ -58,6 +58,10 @@
 #define MSX_VDP_DUALCORE_ENABLED 0
 #endif
 
+#ifndef MSX_VDP_APPLY_BITMAP4_HORIZONTAL_ADJUST
+#define MSX_VDP_APPLY_BITMAP4_HORIZONTAL_ADJUST 0
+#endif
+
 bool msx_vdp_render_internal(MsxVdpState* state);
 
 namespace {
@@ -5599,7 +5603,9 @@ static void msx_vdp_render_bitmap4_range(MsxVdpState* state, unsigned yStart, un
                 dst[x] = hasSprites && spriteLine[x] != 0u ? spriteLine[x] : pixel;
             }
         }
+#if MSX_VDP_APPLY_BITMAP4_HORIZONTAL_ADJUST
         msx_vdp_apply_horizontal_adjust_line(state, dst, kMsxFrameWidth, lineHAdjust);
+#endif
         msx_vdp_stream_line_if_needed(state, dst, y);
 
 #if MSX_VDP_VERBOSE_DIAG_ENABLED
