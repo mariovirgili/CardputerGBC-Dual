@@ -1,8 +1,8 @@
-# Msx ADV Emulators v0.5
+# Msx ADV Emulators v0.6.114
 
 ![CardputerGBC-Dual external title screen](images/Externaltitle.png)
 
-Msx ADV Emulators v0.5 is an MSX-focused firmware for the M5Stack Cardputer
+Msx ADV Emulators v0.6.114 is an MSX-focused firmware for the M5Stack Cardputer
 with support for internal LCD play and optional external SPI TFT output.
 
 This release is built for the `m5stack-stamps3-max-spiffs-msx2-flash`
@@ -12,25 +12,46 @@ the SD card and cache them into a dedicated flash partition.
 
 MSX is a registered trademark owned by MSX Licensing Corporation.
 
-## v0.5 Highlights
+## Revision
 
-- MSX1 and MSX2 runtime on ESP32-S3 without PSRAM.
+- Firmware version: `v0.6.114`
+- Repository revision: `r476`
+- Commit: `8c267f6`
+- Release environment: `m5stack-stamps3-max-spiffs-msx2-flash`
+- Flash layout: `partitions_a2600_8mb_msx2bios.csv`
+
+## v0.6.114 Highlights
+
+- Full MSX1 and MSX2 runtime on ESP32-S3 without PSRAM.
+- Full launch support for MSX `.rom`, `.cas`, and `.dsk` media.
 - Flash-backed MSX2 BIOS cache partition for `MSX2.ROM` and `MSX2EXT.ROM`.
 - Embedded C-BIOS fallback for MSX1 cartridge loading.
-- `.rom`, `.dsk`, and `.cas` launch support.
+- Dedicated cartridge, disk, and cassette launch workflows.
 - CAS runtime menu with `RUN"CAS:"`, `BLOAD"CAS:",R`, and CAS change actions.
+- Disk change action from the runtime menu when a `.dsk` is active.
 - Cartridge mapper support for plain ROMs, ASCII, and Konami-style cartridges.
 - MSX1 VDP and MSX2 V9938-oriented video paths, including MSX2 bitmap modes.
+- MSX2 VDP performance tuning for slice rendering, sprite flags, collision, and
+  VDP command timing.
 - Save states with selectable slots and quick save/load shortcuts.
-- Runtime configuration menu, startup configuration shortcuts, and editable keys.
+- Runtime configuration menu, startup configuration shortcuts, debug menus, and
+  editable keys.
 - Internal LCD or external SPI TFT output, with saved view settings.
 - External-screen helper overlay on the internal LCD showing ROM title and keys.
 - Virtual key picker for entering MSX keyboard characters while in joy/key modes.
+- Virtual SCC/SCC-I cartridge RAM and SCC audio support with runtime gain
+  controls.
+- MSX region selection between Auto, World, and Japan.
+- Zoom follow and internal zoom panning controls.
+- Runtime pause, reset, sound volume, and SCC volume controls.
 - Hidden About-page easter egg with an input diagnostic tester.
 
-## Two-Week Polish Pass
+MSX-AUDIO, FM-PAC/YM2413 synthesis, and FM audio in general are not emulated in
+this build yet.
 
-v0.5 also includes a large number of small fixes and optimizations that are easy
+## Current Polish Pass
+
+v0.6.114 also includes a large number of small fixes and optimizations that are easy
 to miss in a short feature list, but make the firmware feel much more solid on
 real Cardputer hardware.
 
@@ -88,22 +109,39 @@ Virtual keyboard and CAS macro fixes:
 
 ## Release Binary
 
-The v0.5 flashable image is:
+The v0.6.114 full-flash image is:
 
 ```text
-release/MsxADV-Emulators-v0.5-m5stack-stamps3-max-spiffs-msx2-flash-flashable.bin
+release/MsxADV-Emulators-v0.6.114-r476-8c267f6-m5stack-stamps3-max-spiffs-msx2-flash-full-flash.bin
 ```
+
+It is an 8 MB image containing the complete flash layout: bootloader, partition
+table, boot app data, firmware, and erased `0xFF` space for the data partitions
+(`nvs`, `spiffs`, and `msx2bios`).
 
 SHA-256:
 
 ```text
-64F03A5D63AF77D77384CC67A1F37800CE3D4364395F42CDBBC011400D57C98B
+8CA0EAD657AA564B976D74E4D168FD86779E9A4410C0488F32F21390A287604C
 ```
 
-Flash it at offset `0x0`:
+Recommended flash flow: erase the device, then write the full image at offset
+`0x0`. Replace `COM4` with your Cardputer serial port.
 
 ```powershell
-C:\Users\user\.platformio\penv\Scripts\python.exe -X utf8 C:\Users\user\.platformio\packages\tool-esptoolpy\esptool.py --chip esp32s3 --port COM4 --baud 921600 write_flash 0x0 release\MsxADV-Emulators-v0.5-m5stack-stamps3-max-spiffs-msx2-flash-flashable.bin
+C:\Users\user\.platformio\penv\Scripts\python.exe -X utf8 C:\Users\user\.platformio\packages\tool-esptoolpy\esptool.py --chip esp32s3 --port COM4 --baud 921600 erase_flash
+```
+
+```powershell
+C:\Users\user\.platformio\penv\Scripts\python.exe -X utf8 C:\Users\user\.platformio\packages\tool-esptoolpy\esptool.py --chip esp32s3 --port COM4 --baud 921600 write_flash 0x0 release\MsxADV-Emulators-v0.6.114-r476-8c267f6-m5stack-stamps3-max-spiffs-msx2-flash-full-flash.bin
+```
+
+If you only want to overwrite the firmware image without erasing first, the same
+`write_flash 0x0` command works, but old NVS/SPIFFS/MSX2 BIOS cache contents may
+remain in the data partitions.
+
+```powershell
+C:\Users\user\.platformio\penv\Scripts\python.exe -X utf8 C:\Users\user\.platformio\packages\tool-esptoolpy\esptool.py --chip esp32s3 --port COM4 --baud 921600 write_flash 0x0 release\MsxADV-Emulators-v0.6.114-r476-8c267f6-m5stack-stamps3-max-spiffs-msx2-flash-full-flash.bin
 ```
 
 ## Supported Media
@@ -127,7 +165,7 @@ Suggested folders:
 /sd/msx/
 ```
 
-For the default v0.5 flash build, place legally obtained MSX2 BIOS files here
+For the default v0.6.114 flash build, place legally obtained MSX2 BIOS files here
 before first MSX2 launch:
 
 ```text
@@ -200,9 +238,15 @@ On the `RESUME LAST GAME?` prompt:
 The startup `Config Menu` and the in-game MSX menu share the same runtime
 settings where applicable.
 
-Main options:
+Startup `Config Menu` options:
 
-- `Performance`: opens performance tuning.
+- `Performance`: cycles `NORMAL`, `FAST`, `SCLINE`, and `CUSTOM`. When set to
+  `CUSTOM`, selecting it opens the performance submenu.
+- `Debug Logs`: opens grouped debug logging categories.
+- `Virtual SCC`: cycles virtual cartridge mode between `OFF`, `SCC`, and
+  `SCC-I`.
+- `Zoom Follow`: follows joystick or cursor movement while internal zoom is
+  active.
 - `JOY EXTEND`: enables joystick plus extra MSX keyboard helper mappings.
 - `KEYB/JOY`: maps configured controls to MSX keyboard actions while keeping
   keyboard input available.
@@ -210,15 +254,37 @@ Main options:
   joystick and Vaus are disabled.
 - `Vaus`: Arkanoid-style Vaus input mode.
 - `View`: cycles the active view mode for the selected display.
+- `MSX REGION`: cycles `AUTO`, `WORLD`, and `JAPAN`.
 - `StateSlot`: selects save slot `0` to `9`.
-- `SaveState`: writes the selected save slot.
-- `LoadState`: loads the selected save slot.
-- `CAS MENU`: appears only when a `.cas` is loaded.
-- `Close`: returns to the emulator.
+- `Back`: returns to the startup menu.
+
+In-game `CONFIG MENU` options:
+
+- `PERF TUNE`: cycles the performance preset, or opens tuning when set to
+  `CUSTOM`.
+- `SOUND`: opens sound settings.
+- `ZOOM FOLLOW`: toggles internal zoom follow.
+- `DEBUG LOGS`: toggles master logging or opens debug groups.
+- `JOY EXTEND`: toggles joystick plus keyboard helpers.
+- `KEYB/JOY`: toggles configured MSX keyboard helper mappings.
+- `BASIC KBD`: toggles direct Cardputer keyboard input.
+- `VAUS`: toggles Arkanoid-style Vaus input.
+- `VIEW`: cycles the active view for the selected display.
+- `MSX REGION`: cycles `AUTO`, `WORLD`, and `JAPAN`.
+- `STATE SLOT` / `SELECT SLOT`: selects save slot `0` to `9`.
+- `SAVE STATE` / `SAVE SLOT`: writes the selected save slot.
+- `LOAD STATE` / `LOAD SLOT`: loads the selected save slot.
+- `CHANGE DSK`: appears only when disk swap is available.
+- `CAS MENU`: appears only when cassette actions are available.
+- `RESET`: resets the running MSX session.
+- `BACK`: returns to the emulator.
 
 Performance options:
 
-- `EXT 30FPS`: fixed 30 fps external display mode.
+- Presets: `NORMAL` for conservative timing, `FAST` for the default
+  Cardputer-oriented speed profile, `SCLINE` for the scanline-oriented Manbow
+  profile, and `CUSTOM` for manual tuning.
+- `EXT 30FPS` / `ExternalFixed30Fps`: fixed 30 fps external display mode.
 - `FRAMESKP`: frameskip mode, including adaptive and fixed ratios.
 - `FPS HUD`: show or hide frame statistics.
 - `SLICE RENDER`: MSX2 rendering strategy toggle.
@@ -226,6 +292,25 @@ Performance options:
 - `8-SPR FLAGS`: sprite overflow simplification.
 - `INSTANT CMD`: V9938 command timing simplification.
 - `BACK`: return to the main menu.
+
+Sound menu options:
+
+- `VIRTUAL SCC`: cycles virtual SCC cartridge mode.
+- `HDW DETECT`: toggles stricter SCC hardware-detection behavior.
+- `MASTER VOL`: changes MSX audio master volume.
+- `SCC VOL`: changes SCC gain.
+- `BACK`: return to the main menu.
+
+Debug menu options:
+
+- Root groups: `VDP`, `SOUND`, `CORE`, `CART`, `PROFILE`, `INPUT`, `BACK`.
+- `VDP`: `CMD`, `FIN`, `XFER`, `MODE`, `G4 DISP`, `INIT`, `DUALCORE`,
+  `SPRITE`, `CMDSEQ`, `G4 ADDR`, `HIGH VRAM`, `TRACE`, `BOOT`, `BACK`.
+- `SOUND`: `SCC`, `NOTICE`, `AUDIO`, `PEAK`, `BACK`.
+- `CORE`: `CORE TRACE`, `BOOTSTRAP`, `BACK`.
+- `CART`: `CART`, `BACK`.
+- `PROFILE`: `PROFILE`, `BACK`.
+- `INPUT`: `KEYBOARD`, `I2C PAD`, `BACK`.
 
 CAS menu options:
 
@@ -264,6 +349,9 @@ Global runtime controls:
 - short `G0` = quit safely and return to the ROM selector
 - long `G0` = open or close the runtime menu
 - long backtick = quit safely and return to the ROM selector
+- `Fn + M` = open or close the runtime menu
+- `Fn + P` = pause or resume emulation
+- `Fn + Del` = reset the running MSX session
 - `Fn + S` = quick save to the selected slot
 - `Fn + L` = quick load from the selected slot
 - `Fn + C` = type `RUN"CAS:"` plus Enter
@@ -273,7 +361,10 @@ Global runtime controls:
 - `Fn + ]` or `Fn + }` = internal LCD brightness up
 - `Fn + [` or `Fn + {` = internal LCD brightness down
 - `\` = change view
-- `Fn + ,` / `Fn + /` = zoom controls where supported
+- `Fn + arrow keys` = pan the internal zoom window when zoom is active
+- `Fn + Space` = center the internal zoom window when zoom is active
+- `Ctrl + arrow keys` = feed zoom-follow movement while direct keyboard input
+  is active
 
 MSX keyboard helpers:
 
@@ -337,7 +428,7 @@ with the runtime view shortcut.
 The startup `About` page shows:
 
 ```text
-Msx ADV Emulators v0.5
+Msx ADV Emulators v0.6.114
 MSX is a registered trademark owned by MSX Licensing Corporation
 ```
 
@@ -348,7 +439,7 @@ diagnosing how Cardputer keys are seen by the MSX layer in `JOY EXTEND`,
 ## Differences From fMSX
 
 This project uses fMSX and EMULib lineage where it makes sense, especially
-around the Z80/MSX heritage, but v0.5 is not a stock fMSX port.
+around the Z80/MSX heritage, but v0.6.114 is not a stock fMSX port.
 
 Major differences:
 
@@ -358,15 +449,18 @@ Major differences:
 - Custom MSX boot integration for MSX1/MSX2, sub-ROM, disk, and CAS workflows.
 - Local VDP work for Cardputer rendering, external display output, and MSX2
   modes on an ESP32-S3 without PSRAM.
-- Runtime menus, save states, CAS macros, control editor, and virtual key
-  picker are project-specific.
+- Runtime menus, performance tuning, sound controls, save states, CAS macros,
+  control editor, and virtual key picker are project-specific.
 - Hardware-specific input handling for Cardputer keyboard, `G0`, and optional
   M5Stack I2C joystick.
 
 Known limitations compared with a full desktop MSX emulator:
 
-- YM2413/FM-PAC audio synthesis is not enabled in this build.
-- SCC and SCC-I/SCC+ audio synthesis is not included in this build.
+- MSX-AUDIO is not emulated yet.
+- FM audio in general is not emulated yet; FM-PAC/YM2413 synthesis is disabled
+  in this build.
+- SCC and virtual SCC/SCC-I are present, but this is still tuned for Cardputer
+  playability rather than perfect hardware reproduction.
 - The goal is practical playability on Cardputer hardware, not cycle-perfect
   emulation of every MSX peripheral.
 - Official BIOS ROMs are not distributed. You must provide your own legally
@@ -398,10 +492,25 @@ Layout summary:
 - SPIFFS/ROM data partition: `0x4A4000`
 - MSX2 BIOS cache partition `msx2bios`: `0xC000`
 
-To regenerate the merged v0.5 flashable image:
+To regenerate the v0.6.114 full-flash release image, build the environment and
+create an 8 MB image filled with `0xFF`, then overlay these binaries:
+
+- `0x00000`: `.pio\build\m5stack-stamps3-max-spiffs-msx2-flash\bootloader.bin`
+- `0x08000`: `.pio\build\m5stack-stamps3-max-spiffs-msx2-flash\partitions.bin`
+- `0x0E000`: `C:\Users\user\.platformio\packages\framework-arduinoespressif32\tools\partitions\boot_app0.bin`
+- `0x10000`: `.pio\build\m5stack-stamps3-max-spiffs-msx2-flash\firmware.bin`
+
+The current release artifact generated this way is:
+
+```text
+release/MsxADV-Emulators-v0.6.114-r476-8c267f6-m5stack-stamps3-max-spiffs-msx2-flash-full-flash.bin
+```
+
+For a smaller merged image that only contains bootloader, partition table,
+boot_app0, and firmware, use:
 
 ```powershell
-C:\Users\user\.platformio\penv\Scripts\python.exe C:\Users\user\.platformio\packages\tool-esptoolpy\esptool.py --chip esp32s3 merge_bin -o release\MsxADV-Emulators-v0.5-m5stack-stamps3-max-spiffs-msx2-flash-flashable.bin --flash_mode dio --flash_freq 80m --flash_size 8MB 0x0 .pio\build\m5stack-stamps3-max-spiffs-msx2-flash\bootloader.bin 0x8000 .pio\build\m5stack-stamps3-max-spiffs-msx2-flash\partitions.bin 0xe000 C:\Users\user\.platformio\packages\framework-arduinoespressif32\tools\partitions\boot_app0.bin 0x10000 .pio\build\m5stack-stamps3-max-spiffs-msx2-flash\firmware.bin
+C:\Users\user\.platformio\penv\Scripts\python.exe C:\Users\user\.platformio\packages\tool-esptoolpy\esptool.py --chip esp32s3 merge_bin -o release\MsxADV-Emulators-v0.6.114-r476-8c267f6-m5stack-stamps3-max-spiffs-msx2-flash-merged.bin --flash_mode dio --flash_freq 80m --flash_size 8MB 0x0 .pio\build\m5stack-stamps3-max-spiffs-msx2-flash\bootloader.bin 0x8000 .pio\build\m5stack-stamps3-max-spiffs-msx2-flash\partitions.bin 0xe000 C:\Users\user\.platformio\packages\framework-arduinoespressif32\tools\partitions\boot_app0.bin 0x10000 .pio\build\m5stack-stamps3-max-spiffs-msx2-flash\firmware.bin
 ```
 
 Keep flash mode as `DIO`.
