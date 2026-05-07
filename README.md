@@ -230,8 +230,11 @@ Controls:
 - hold `A` or `D` = fast repeat scrolling
 - `P` or `Enter` = open folder or select file
 - `K` = parent folder or back
-- type letters/numbers = filter list
-- `Del` = delete filter character
+- `Tab` = activate the search/filter bar
+- while search is active, type letters/numbers = filter list
+- while search is active, `Del` = delete filter character
+- while search is active, `Enter` = apply the filter
+- while a filter is active, back/left clears the filter
 - long-press `G0` = selector options, including index refresh
 
 On the `RESUME LAST GAME?` prompt:
