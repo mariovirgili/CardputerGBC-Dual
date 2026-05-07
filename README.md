@@ -43,6 +43,9 @@ MSX is a registered trademark owned by MSX Licensing Corporation.
   controls.
 - MSX region selection between Auto, World, and Japan.
 - Zoom follow and internal zoom panning controls.
+- Internal LCD performance is prioritized for 60 fps gameplay; external SPI TFT
+  speed has intentionally been sacrificed where needed to keep the internal path
+  fast and stable.
 - Runtime pause, reset, sound volume, and SCC volume controls.
 - Hidden About-page easter egg with an input diagnostic tester.
 
@@ -70,6 +73,9 @@ Display and performance fixes:
 
 - Internal and external display paths are treated independently, avoiding
   unnecessary redraw work on the screen that is not running the game.
+- The internal Cardputer LCD is the primary 60 fps target. External SPI TFT
+  output is treated as a secondary display path, and some external-screen speed
+  has been traded away to keep the internal renderer at full speed.
 - When playing on the external TFT, the internal LCD shows the ROM title and
   controls once, then stops refreshing.
 - When playing on the internal LCD, the external TFT now shows a static MSX1 or
@@ -411,6 +417,11 @@ The firmware can run on:
 - internal Cardputer LCD
 - external SPI TFT
 
+The internal Cardputer LCD is the preferred performance target and is tuned for
+60 fps gameplay. External SPI TFT output remains supported, but its speed has
+been deliberately de-prioritized in places so the internal screen can keep the
+full-speed path.
+
 When the game runs on the external display, the internal LCD remains on and
 shows the ROM title and controls. It is not continuously redrawn during external
 gameplay, which saves time and avoids fighting the external video path.
@@ -422,6 +433,38 @@ screen.
 
 View choices are saved and can be changed from `Config Menu`, `Config Keys`, or
 with the runtime view shortcut.
+
+View modes on the internal LCD:
+
+- `CROP`: pixel-perfect 1:1 crop. This is the internal zoom mode.
+- `WIDE`: scaled 4:3 view fitted to the Cardputer LCD.
+- `WIDE+`: alternate wide view label; on the internal LCD it uses the same
+  wide-style scaling path.
+
+View modes on the external SPI TFT:
+
+- `1:1`: pixel-perfect crop.
+- `FAST`: reduced-size fast external scaling.
+- `FAST+`: more aggressive external fast mode using a smaller target width to
+  save time on SPI output.
+
+Internal zoom controls:
+
+- Internal zoom is active when the internal view is `CROP`.
+- `Fn + arrow keys` pans the cropped window manually.
+- `Fn + Space` recenters the cropped window.
+- Manual panning temporarily pauses automatic follow so the view does not fight
+  your input.
+
+Zoom follow:
+
+- `ZOOM FOLLOW` can be enabled from the startup `Config Menu` or in-game
+  `CONFIG MENU`.
+- It only affects internal `CROP` zoom mode.
+- It samples screen activity and combines that with joystick/cursor direction
+  to bias the crop toward the active area.
+- `Ctrl + arrow keys` can feed zoom-follow direction while direct keyboard input
+  is active.
 
 ## About And Easter Egg
 
