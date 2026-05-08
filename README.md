@@ -190,18 +190,18 @@ ROM files must be uncompressed. Do not use `.zip`, `.7z`, or `.rar`.
 Suggested folders:
 
 ```text
-/sd/roms/MSX/
-/sd/bios/private/
-/sd/bios/msx/
-/sd/msx/
+roms/MSX/
+bios/private/
+bios/msx/
+msx/
 ```
 
 For the default v0.6.114 flash build, place legally obtained MSX2 BIOS files here
 before first MSX2 launch:
 
 ```text
-/sd/bios/private/MSX2.ROM
-/sd/bios/private/MSX2EXT.ROM
+bios/private/MSX2.ROM
+bios/private/MSX2EXT.ROM
 ```
 
 The firmware validates them and writes them into the `msx2bios` flash
@@ -210,16 +210,18 @@ partition. After that, MSX2 can start without loading those two files into RAM.
 Other useful BIOS files:
 
 ```text
-/sd/bios/msx/MSX.ROM
-/sd/bios/msx/DISK.ROM
-/sd/bios/msx/MSXDOS2.ROM
-/sd/bios/msx/FMPAC.ROM
+bios/msx/MSX.ROM
+bios/msx/DISK.ROM
+bios/msx/MSXDOS2.ROM
+bios/msx/FMPAC.ROM
 ```
 
 Reference hashes shown by the firmware:
 
 ```text
 MSX.ROM      364a1a579fe5cb8dba54519bcfcdac0d
+MSX2.ROM     ec3a01c91f24fbddcbcab0ad301bc9ef
+MSX2EXT.ROM  2183c2aff17cf4297bdb496de78c2e8a
 DISK.ROM     80dcd1ad1a4cf65d64b7ba10504e8190
 MSXDOS2.ROM  6418d091cd6907bbcf940324339e43bb
 FMPAC.ROM    6f69cc8b5ed761b03afd78000dfb0e19
