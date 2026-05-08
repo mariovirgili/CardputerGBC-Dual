@@ -1068,10 +1068,7 @@ static void msx_runtime_toggle_performance_item(MsxPerformanceMenuItem item)
             msx_config_cycle_frameskip_mode(1, true);
             break;
         case MsxPerformanceMenuItem::FpsOverlay:
-            msx_config_set_fps_overlay_enabled(
-                !msx_config_get_fps_overlay_enabled(),
-                true
-            );
+            msx_config_cycle_fps_overlay_mode(1, true);
             break;
         case MsxPerformanceMenuItem::SliceRendering:
             msx_config_set_performance_flag(
@@ -3196,7 +3193,7 @@ void msx_input_get_overlay_state(MsxInputOverlayState* state)
         msx_config_get_performance_flag(MsxPerformanceFlag::InstantVdpCommands);
     state->perfExternalFixed30Fps =
         msx_config_get_performance_flag(MsxPerformanceFlag::ExternalFixed30Fps);
-    state->perfShowFpsOverlay = msx_config_get_fps_overlay_enabled();
+    state->perfFpsOverlayMode = msx_config_get_fps_overlay_mode();
     state->perfFrameskipMode = msx_config_get_frameskip_mode();
     state->virtualSccMode = msx_config_get_virtual_scc_mode();
     state->sccHardwareDetectEnabled = msx_config_get_scc_hardware_detect_enabled();

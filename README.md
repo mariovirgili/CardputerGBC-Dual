@@ -1,8 +1,8 @@
-# Msx ADV Emulators v0.6.114
+# Msx ADV Emulators v0.6.115
 
 ![Msx ADV Emulators title screen](images/Title.png)
 
-Msx ADV Emulators v0.6.114 is an MSX-focused firmware for the M5Stack Cardputer
+Msx ADV Emulators v0.6.115 is an MSX-focused firmware for the M5Stack Cardputer
 with support for internal LCD play and optional external SPI TFT output.
 
 This release is built for the `m5stack-stamps3-max-spiffs-msx2-flash`
@@ -14,13 +14,13 @@ MSX is a registered trademark owned by MSX Licensing Corporation.
 
 ## Revision
 
-- Firmware version: `v0.6.114`
+- Firmware version: `v0.6.115`
 - Repository revision: `r476`
 - Commit: `8c267f6`
 - Release environment: `m5stack-stamps3-max-spiffs-msx2-flash`
 - Flash layout: `partitions_a2600_8mb_msx2bios.csv`
 
-## v0.6.114 Highlights
+## v0.6.115 Highlights
 
 - Full MSX1 and MSX2 runtime on ESP32-S3 without PSRAM.
 - Full launch support for MSX `.rom`, `.cas`, and `.dsk` media.
@@ -79,7 +79,7 @@ this build yet.
 
 ## Current Polish Pass
 
-v0.6.114 also includes a large number of small fixes and optimizations that are easy
+v0.6.115 also includes a large number of small fixes and optimizations that are easy
 to miss in a short feature list, but make the firmware feel much more solid on
 real Cardputer hardware.
 
@@ -105,7 +105,7 @@ Display and performance fixes:
   controls once, then stops refreshing.
 - When playing on the internal LCD, the external TFT now shows a static MSX1 or
   MSX2 title panel plus the current game name, then stops refreshing.
-- External 30 fps mode, frameskip choices, FPS HUD, and MSX2 render toggles are
+- External 30 fps mode, frameskip choices, FPS HUD modes, and MSX2 render toggles are
   exposed as runtime performance controls.
 - Runtime overlays, CAS selector, About page, and input tester received redraw
   throttling and centering fixes to reduce flicker.
@@ -140,7 +140,7 @@ Virtual keyboard and CAS macro fixes:
 
 ## Release Binary
 
-The v0.6.114 full-flash image is:
+The current published v0.6.114 full-flash image is:
 
 ```text
 release/MsxADV-Emulators-v0.6.114-r476-8c267f6-m5stack-stamps3-max-spiffs-msx2-flash-full-flash.bin
@@ -167,12 +167,26 @@ C:\Users\user\.platformio\penv\Scripts\python.exe -X utf8 C:\Users\user\.platfor
 C:\Users\user\.platformio\penv\Scripts\python.exe -X utf8 C:\Users\user\.platformio\packages\tool-esptoolpy\esptool.py --chip esp32s3 --port COM4 --baud 921600 write_flash 0x0 release\MsxADV-Emulators-v0.6.114-r476-8c267f6-m5stack-stamps3-max-spiffs-msx2-flash-full-flash.bin
 ```
 
-If you only want to overwrite the firmware image without erasing first, the same
-`write_flash 0x0` command works, but old NVS/SPIFFS/MSX2 BIOS cache contents may
-remain in the data partitions.
+Firmware-only update image:
+
+```text
+release/MsxADV-Emulators-v0.6.115-m5stack-stamps3-max-spiffs-msx2-flash-app-only.bin
+```
+
+SHA-256:
+
+```text
+F450D73194E0F664FE39A949E99D69E51A5FEA17F5007142E5CD2D2A4D18969F
+```
+
+Use the firmware-only image when the device already has the correct
+`m5stack-stamps3-max-spiffs-msx2-flash` partition layout, for example after
+flashing the v0.6.114 full-flash image once. This writes only the factory app at
+`0x10000` and preserves the other partitions: NVS settings, SPIFFS data, and the
+MSX2 BIOS cache partition.
 
 ```powershell
-C:\Users\user\.platformio\penv\Scripts\python.exe -X utf8 C:\Users\user\.platformio\packages\tool-esptoolpy\esptool.py --chip esp32s3 --port COM4 --baud 921600 write_flash 0x0 release\MsxADV-Emulators-v0.6.114-r476-8c267f6-m5stack-stamps3-max-spiffs-msx2-flash-full-flash.bin
+C:\Users\user\.platformio\penv\Scripts\python.exe -X utf8 C:\Users\user\.platformio\packages\tool-esptoolpy\esptool.py --chip esp32s3 --port COM4 --baud 921600 write_flash 0x10000 release\MsxADV-Emulators-v0.6.115-m5stack-stamps3-max-spiffs-msx2-flash-app-only.bin
 ```
 
 ## Supported Media
@@ -196,7 +210,7 @@ bios/msx/
 msx/
 ```
 
-For the default v0.6.114 flash build, place legally obtained MSX2 BIOS files here
+For the default v0.6.115 flash build, place legally obtained MSX2 BIOS files here
 before first MSX2 launch:
 
 ```text
@@ -323,7 +337,8 @@ Performance options:
   profile, and `CUSTOM` for manual tuning.
 - `EXT 30FPS` / `ExternalFixed30Fps`: fixed 30 fps external display mode.
 - `FRAMESKP`: frameskip mode, including adaptive and fixed ratios.
-- `FPS HUD`: show or hide frame statistics.
+- `FPS HUD`: `OFF` hides frame statistics, `SIMPLE` keeps the current core FPS
+  readout, and `DUAL` shows `Core/LCD` FPS so 60/30 locks are visible.
 - `SLICE RENDER`: MSX2 rendering strategy toggle.
 - `SPR COLL`: sprite collision behavior toggle.
 - `8-SPR FLAGS`: sprite overflow simplification.
@@ -502,7 +517,7 @@ Zoom follow:
 The startup `About` page shows:
 
 ```text
-Msx ADV Emulators v0.6.114
+Msx ADV Emulators v0.6.115
 MSX is a registered trademark owned by MSX Licensing Corporation
 ```
 
@@ -513,7 +528,7 @@ diagnosing how Cardputer keys are seen by the MSX layer in `JOY EXTEND`,
 ## Differences From fMSX
 
 This project uses fMSX and EMULib lineage where it makes sense, especially
-around the Z80/MSX heritage, but v0.6.114 is not a stock fMSX port.
+around the Z80/MSX heritage, but v0.6.115 is not a stock fMSX port.
 
 Major differences:
 
@@ -566,7 +581,7 @@ Layout summary:
 - SPIFFS/ROM data partition: `0x4A4000`
 - MSX2 BIOS cache partition `msx2bios`: `0xC000`
 
-To regenerate the v0.6.114 full-flash release image, build the environment and
+To regenerate the v0.6.115 full-flash release image, build the environment and
 create an 8 MB image filled with `0xFF`, then overlay these binaries:
 
 - `0x00000`: `.pio\build\m5stack-stamps3-max-spiffs-msx2-flash\bootloader.bin`

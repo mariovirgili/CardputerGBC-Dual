@@ -52,7 +52,7 @@ struct MsxInputOverlayState {
     bool perfSimplifySpriteOverflow;
     bool perfInstantVdpCommands;
     bool perfExternalFixed30Fps;
-    bool perfShowFpsOverlay;
+    MsxFpsOverlayMode perfFpsOverlayMode;
     MsxFrameskipMode perfFrameskipMode;
     MsxVirtualSccMode virtualSccMode;
     bool sccHardwareDetectEnabled;

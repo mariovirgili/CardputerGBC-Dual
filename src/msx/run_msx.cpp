@@ -108,6 +108,7 @@ struct MsxRuntimeTimingWindow {
 
 struct MsxFpsOverlayWindow {
     uint32_t frames;
+    uint32_t presentedFrameStart;
     uint32_t windowStartMs;
 };
 
@@ -331,6 +332,10 @@ void msx_runtime_reset_fps_overlay(MsxFpsOverlayWindow* window, uint32_t nowMs)
     }
 
     window->frames = 0u;
+    window->presentedFrameStart =
+        msx_config_get_fps_overlay_mode() == MsxFpsOverlayMode::Dual
+            ? msx_video_get_presented_frame_counter()
+            : 0u;
     window->windowStartMs = nowMs;
 }
 
@@ -357,15 +362,30 @@ void msx_runtime_update_fps_overlay(MsxFpsOverlayWindow* window,
         return;
     }
 
-    const uint32_t fps10 =
+    const uint32_t coreFps10 =
         elapsedMs != 0u
             ? static_cast<uint32_t>(
                   std::min<uint64_t>(
                       9999u,
                       (static_cast<uint64_t>(window->frames) * 10000ull + (elapsedMs / 2u)) / elapsedMs))
             : 0u;
-    msx_video_set_fps_overlay_value(static_cast<uint16_t>(fps10));
+    uint32_t presentedFrameNow = window->presentedFrameStart;
+    uint32_t displayFps10 = coreFps10;
+    if (msx_config_get_fps_overlay_mode() == MsxFpsOverlayMode::Dual) {
+        presentedFrameNow = msx_video_get_presented_frame_counter();
+        const uint32_t displayFrames = presentedFrameNow - window->presentedFrameStart;
+        displayFps10 =
+            elapsedMs != 0u
+                ? static_cast<uint32_t>(
+                      std::min<uint64_t>(
+                          9999u,
+                          (static_cast<uint64_t>(displayFrames) * 10000ull + (elapsedMs / 2u)) / elapsedMs))
+                : 0u;
+    }
+    msx_video_set_fps_overlay_values(static_cast<uint16_t>(coreFps10),
+                                     static_cast<uint16_t>(displayFps10));
     window->frames = 0u;
+    window->presentedFrameStart = presentedFrameNow;
     window->windowStartMs = nowMs;
 }
 
@@ -2117,7 +2137,7 @@ void run_msx(const uint8_t* romData, size_t romLen, const char* romName, SdServi
 
     msx_config_load_internal_view_mode();
     msx_config_load_performance_mode();
-    msx_config_load_fps_overlay_enabled();
+    msx_config_load_fps_overlay_mode();
     msx_config_load_frameskip_mode();
     msx_load_sound_config();
     viewModeGuard.configureForTarget(useExternal);
@@ -2415,7 +2435,7 @@ void run_msx_disk(const uint8_t* dskData, size_t dskLen, const char* dskName, Sd
 
     msx_config_load_internal_view_mode();
     msx_config_load_performance_mode();
-    msx_config_load_fps_overlay_enabled();
+    msx_config_load_fps_overlay_mode();
     msx_config_load_frameskip_mode();
     msx_load_sound_config();
     viewModeGuard.configureForTarget(useExternal);
@@ -2707,7 +2727,7 @@ void run_msx_basic(const char* name, SdService& sd)
 
     msx_config_load_internal_view_mode();
     msx_config_load_performance_mode();
-    msx_config_load_fps_overlay_enabled();
+    msx_config_load_fps_overlay_mode();
     msx_config_load_frameskip_mode();
     msx_load_sound_config();
     viewModeGuard.configureForTarget(useExternal);
@@ -2955,7 +2975,7 @@ void run_msx_cas(const uint8_t* casData, size_t casLen, const char* casName, SdS
 
     msx_config_load_internal_view_mode();
     msx_config_load_performance_mode();
-    msx_config_load_fps_overlay_enabled();
+    msx_config_load_fps_overlay_mode();
     msx_config_load_frameskip_mode();
     msx_load_sound_config();
     viewModeGuard.configureForTarget(useExternal);

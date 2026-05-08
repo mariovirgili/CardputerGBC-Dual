@@ -73,6 +73,7 @@ struct MsxVideoPlan {
 struct MsxLineStreamState {
     bool active;
     bool cropOnly;
+    bool emittedFrame;
     int srcX0;
     int srcY0;
     int roiH;
@@ -137,7 +138,9 @@ static bool s_dmaAllocLogged = false;
 static MsxLineStreamState s_lineStream = {};
 static bool s_externalFixedSkipNextPresent = false;
 static uint16_t s_fpsHudValue10 = 0u;
+static uint16_t s_fpsHudDisplayValue10 = 0u;
 static char s_fpsHudText[16] = "0.0";
+static uint32_t s_presentedFrameCounter = 0u;
 static int s_internalZoomPanX = 0;
 static int s_internalZoomPanY = 0;
 static bool s_zoomFollowEnabled = false;
@@ -326,6 +329,10 @@ uint8_t IRAM_ATTR msx_video_fps_glyph_row(char ch, int row)
             static constexpr uint8_t kRows[kFpsHudGlyphH] = {0x00u, 0x00u, 0x00u, 0x00u, 0x02u};
             return kRows[row];
         }
+        case '/': {
+            static constexpr uint8_t kRows[kFpsHudGlyphH] = {0x01u, 0x01u, 0x02u, 0x04u, 0x04u};
+            return kRows[row];
+        }
         case ' ':
         default:
             return 0u;
@@ -354,7 +361,7 @@ int msx_video_fps_hud_box_height(void)
 
 bool msx_video_should_draw_fps_hud(int dstW, int dstH)
 {
-    if (!msx_config_get_fps_overlay_enabled()) {
+    if (msx_config_get_fps_overlay_mode() == MsxFpsOverlayMode::Off) {
         return false;
     }
 
@@ -922,7 +929,7 @@ static void IRAM_ATTR msx_video_emit_stream_line(MsxLineStreamState& stream,
                                               s_xmap,
                                               stream.paletteEntries);
         }
-        
+        stream.emittedFrame = true;
         stream.batchCount++;
         if (stream.batchCount >= kBatchLines || dstY == stream.dstH - 1) {
             s_extTft.pushColors(reinterpret_cast<uint16_t*>(s_lineBuf12), (bytesPerLine * stream.batchCount + 1) / 2, false);
@@ -948,6 +955,7 @@ static void IRAM_ATTR msx_video_emit_stream_line(MsxLineStreamState& stream,
         msx_video_draw_fps_hud_row(s_lineBuf, stream.dstW, dstY);
     }
 
+    stream.emittedFrame = true;
     M5Cardputer.Display.pushPixels(s_lineBuf, stream.dstW);
     taskYIELD();
 }
@@ -959,6 +967,14 @@ bool msx_video_begin_line_stream_impl(const MsxDisplayFrame* frame)
     }
 
     s_lineStream.active = false;
+    if (msx_video_game_on_external() &&
+        msx_config_get_performance_flag(MsxPerformanceFlag::ExternalFixed30Fps)) {
+        const bool skipPresent = s_externalFixedSkipNextPresent;
+        s_externalFixedSkipNextPresent = !s_externalFixedSkipNextPresent;
+        if (skipPresent) {
+            return false;
+        }
+    }
     if (frame->paletteEntryCount == 0u) {
         return false;
     }
@@ -990,6 +1006,7 @@ bool msx_video_begin_line_stream_impl(const MsxDisplayFrame* frame)
 
     s_lineStream.active = true;
     s_lineStream.cropOnly = plan.cropOnly;
+    s_lineStream.emittedFrame = false;
     s_lineStream.srcX0 = plan.srcX0;
     s_lineStream.srcY0 = plan.srcY0;
     s_lineStream.roiH = plan.roiH;
@@ -1069,6 +1086,10 @@ void msx_video_end_line_stream_impl(void)
     }
 
     msx_video_end_active_write();
+    if (s_lineStream.emittedFrame &&
+        msx_config_get_fps_overlay_mode() == MsxFpsOverlayMode::Dual) {
+        s_presentedFrameCounter++;
+    }
     msx_video_finish_zoom_follow_stream(s_zoomFollowPrevW, s_zoomFollowPrevH);
     s_lineStream = {};
 }
@@ -1945,6 +1966,9 @@ bool msx_video_present_frame(const MsxDisplayFrame* frame)
             s_lastPresentUs = frameUs;
             s_spiPushUs += frameUs;
             s_spiPushFrames++;
+            if (msx_config_get_fps_overlay_mode() == MsxFpsOverlayMode::Dual) {
+                s_presentedFrameCounter++;
+            }
             if (frameUs > s_videoPerfWorstUs) {
                 s_videoPerfWorstUs = frameUs;
             }
@@ -2043,12 +2067,32 @@ void msx_video_clear_last_present_us(void)
 
 void msx_video_set_fps_overlay_value(uint16_t fps10)
 {
-    s_fpsHudValue10 = fps10;
+    msx_video_set_fps_overlay_values(fps10, fps10);
+}
+
+void msx_video_set_fps_overlay_values(uint16_t coreFps10, uint16_t displayFps10)
+{
+    s_fpsHudValue10 = coreFps10;
+    s_fpsHudDisplayValue10 = displayFps10;
+    if (msx_config_get_fps_overlay_mode() == MsxFpsOverlayMode::Dual) {
+        std::snprintf(s_fpsHudText,
+                      sizeof(s_fpsHudText),
+                      "%u/%u",
+                      static_cast<unsigned>((s_fpsHudValue10 + 5u) / 10u),
+                      static_cast<unsigned>((s_fpsHudDisplayValue10 + 5u) / 10u));
+        return;
+    }
+
     std::snprintf(s_fpsHudText,
                   sizeof(s_fpsHudText),
                   "%u.%u",
                   static_cast<unsigned>(s_fpsHudValue10 / 10u),
                   static_cast<unsigned>(s_fpsHudValue10 % 10u));
+}
+
+uint32_t msx_video_get_presented_frame_counter(void)
+{
+    return s_presentedFrameCounter;
 }
 
 void msx_video_request_full_redraw(void)

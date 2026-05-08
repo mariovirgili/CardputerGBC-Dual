@@ -429,7 +429,7 @@ static const char* msx_display_runtime_menu_value(const MsxInputOverlayState& ov
             case 1u:
                 return msx_config_frameskip_mode_label(overlay.perfFrameskipMode);
             case 2u:
-                return overlay.perfShowFpsOverlay ? "ON" : "OFF";
+                return msx_config_fps_overlay_mode_label(overlay.perfFpsOverlayMode);
             case 3u:
                 if (!overlay.machineIsMsx2) {
                     return "N/A";
@@ -799,7 +799,7 @@ static bool msx_display_runtime_menu_overlay_equals(const MsxInputOverlayState& 
            a.perfInstantVdpCommands == b.perfInstantVdpCommands &&
            a.perfExternalFixed30Fps == b.perfExternalFixed30Fps &&
            a.perfFrameskipMode == b.perfFrameskipMode &&
-           a.perfShowFpsOverlay == b.perfShowFpsOverlay &&
+           a.perfFpsOverlayMode == b.perfFpsOverlayMode &&
            a.virtualSccMode == b.virtualSccMode &&
            a.sccHardwareDetectEnabled == b.sccHardwareDetectEnabled &&
            a.regionMode == b.regionMode &&

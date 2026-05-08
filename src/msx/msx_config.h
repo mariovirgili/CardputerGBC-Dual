@@ -55,6 +55,13 @@ enum class MsxFrameskipMode : uint8_t {
     Count,
 };
 
+enum class MsxFpsOverlayMode : uint8_t {
+    Off = 0,
+    Simple = 1,
+    Dual = 2,
+    Count,
+};
+
 enum class MsxVirtualSccMode : uint8_t {
     Off = 0,
     Scc = 1,
@@ -123,6 +130,12 @@ void msx_config_cycle_frameskip_mode(int delta, bool persist);
 bool msx_config_load_fps_overlay_enabled(void);
 bool msx_config_get_fps_overlay_enabled(void);
 void msx_config_set_fps_overlay_enabled(bool enabled, bool persist);
+MsxFpsOverlayMode msx_config_load_fps_overlay_mode(void);
+MsxFpsOverlayMode msx_config_get_fps_overlay_mode(void);
+const char* msx_config_fps_overlay_mode_label(MsxFpsOverlayMode mode);
+const char* msx_config_get_fps_overlay_mode_label(void);
+void msx_config_set_fps_overlay_mode(MsxFpsOverlayMode mode, bool persist);
+void msx_config_cycle_fps_overlay_mode(int delta, bool persist);
 
 MsxVirtualSccMode msx_config_load_virtual_scc_mode(void);
 MsxVirtualSccMode msx_config_get_virtual_scc_mode(void);

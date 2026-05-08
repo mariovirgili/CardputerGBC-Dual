@@ -31,7 +31,7 @@
 #include "cardputer/WelcomeExternalImage.h"
 #include "cardputer/VerticalSelector.h"
 
-static constexpr const char* kAppBuildVersion = "v0.6.114";
+static constexpr const char* kAppBuildVersion = "v0.6.115";
 static constexpr const char* kAppTitlePrefix = "Msx ADV Emulators ";
 
 static TFT_eSPI& startupExternalTft();
@@ -1182,7 +1182,7 @@ static void showStartupMsxPerformanceMenu(CardputerView& display, CardputerInput
   for (;;) {
     msx_config_load_performance_flags();
     msx_config_load_frameskip_mode();
-    msx_config_load_fps_overlay_enabled();
+    msx_config_load_fps_overlay_mode();
     const bool machineIsMsx2 = msx_config_load_machine_mode() != MsxMachineMode::MSX1;
 
     const std::vector<std::string> options = {
@@ -1198,7 +1198,7 @@ static void showStartupMsxPerformanceMenu(CardputerView& display, CardputerInput
     const std::vector<std::string> values = {
         startupBoolLabel(msx_config_get_performance_flag(MsxPerformanceFlag::ExternalFixed30Fps)),
         msx_config_get_frameskip_mode_label(),
-        startupBoolLabel(msx_config_get_fps_overlay_enabled()),
+        msx_config_get_fps_overlay_mode_label(),
         machineIsMsx2 ? (msx_config_get_performance_flag(MsxPerformanceFlag::DisableSliceRendering) ? "OFF" : "ON") : "N/A",
         msx_config_get_performance_flag(MsxPerformanceFlag::DisableSpriteCollision) ? "OFF" : "ON",
         msx_config_get_performance_flag(MsxPerformanceFlag::SimplifySpriteOverflow) ? "OFF" : "ON",
@@ -1235,7 +1235,7 @@ static void showStartupMsxPerformanceMenu(CardputerView& display, CardputerInput
         msx_config_cycle_frameskip_mode(1, true);
         break;
       case 2:
-        msx_config_set_fps_overlay_enabled(!msx_config_get_fps_overlay_enabled(), true);
+        msx_config_cycle_fps_overlay_mode(1, true);
         break;
       case 3:
         if (machineIsMsx2) {

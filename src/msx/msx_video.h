@@ -44,3 +44,5 @@ MsxVideoPerfSummary msx_video_get_perf_summary(void);
 uint32_t msx_video_get_last_present_us(void);
 void msx_video_clear_last_present_us(void);
 void msx_video_set_fps_overlay_value(uint16_t fps10);
+void msx_video_set_fps_overlay_values(uint16_t coreFps10, uint16_t displayFps10);
+uint32_t msx_video_get_presented_frame_counter(void);

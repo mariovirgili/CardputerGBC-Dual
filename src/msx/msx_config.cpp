@@ -15,6 +15,7 @@ constexpr const char* kMsxPerformanceFlagsKey = "perf_flags";
 constexpr const char* kMsxPerformancePresetKey = "perf_preset";
 constexpr const char* kMsxFrameskipKey = "frameskip";
 constexpr const char* kMsxFpsOverlayKey = "fps_hud";
+constexpr const char* kMsxFpsOverlayModeKey = "fps_hud_mode";
 constexpr const char* kMsxVirtualSccKey = "virt_scc";
 constexpr const char* kMsxSccHardwareDetectKey = "scc_hdw";
 constexpr const char* kMsxRegionModeKey = "region";
@@ -44,6 +45,7 @@ constexpr MsxPerformancePreset kMsxDefaultPerformancePreset = MsxPerformancePres
 constexpr uint8_t kMsxDefaultPerformanceFlags = kMsxFastPerformancePresetFlags;
 constexpr MsxFrameskipMode kMsxDefaultFrameskipMode = MsxFrameskipMode::Adaptive;
 constexpr bool kMsxDefaultFpsOverlayEnabled = true;
+constexpr MsxFpsOverlayMode kMsxDefaultFpsOverlayMode = MsxFpsOverlayMode::Simple;
 constexpr MsxVirtualSccMode kMsxDefaultVirtualSccMode = MsxVirtualSccMode::Off;
 constexpr bool kMsxDefaultSccHardwareDetectEnabled = false;
 constexpr MsxRegionMode kMsxDefaultRegionMode = MsxRegionMode::Auto;
@@ -62,7 +64,7 @@ MsxPerformanceMode s_performanceMode = kMsxDefaultPerformanceMode;
 MsxPerformancePreset s_performancePreset = kMsxDefaultPerformancePreset;
 uint8_t s_performanceFlags = kMsxDefaultPerformanceFlags;
 MsxFrameskipMode s_frameskipMode = kMsxDefaultFrameskipMode;
-bool s_fpsOverlayEnabled = kMsxDefaultFpsOverlayEnabled;
+MsxFpsOverlayMode s_fpsOverlayMode = kMsxDefaultFpsOverlayMode;
 MsxVirtualSccMode s_virtualSccMode = kMsxDefaultVirtualSccMode;
 bool s_sccHardwareDetectEnabled = kMsxDefaultSccHardwareDetectEnabled;
 MsxRegionMode s_regionMode = kMsxDefaultRegionMode;
@@ -171,6 +173,19 @@ MsxFrameskipMode msx_sanitize_frameskip_mode(uint8_t value)
         return static_cast<MsxFrameskipMode>(value);
     }
     return kMsxDefaultFrameskipMode;
+}
+
+MsxFpsOverlayMode msx_sanitize_fps_overlay_mode(uint8_t value)
+{
+    switch (value) {
+        case static_cast<uint8_t>(MsxFpsOverlayMode::Off):
+            return MsxFpsOverlayMode::Off;
+        case static_cast<uint8_t>(MsxFpsOverlayMode::Dual):
+            return MsxFpsOverlayMode::Dual;
+        case static_cast<uint8_t>(MsxFpsOverlayMode::Simple):
+        default:
+            return MsxFpsOverlayMode::Simple;
+    }
 }
 
 MsxRegionMode msx_sanitize_region_mode(uint8_t value)
@@ -791,40 +806,111 @@ void msx_config_cycle_frameskip_mode(int delta, bool persist)
 
 bool msx_config_load_fps_overlay_enabled(void)
 {
-    Preferences prefs;
-    prefs.begin(kMsxConfigNs, true);
-    const bool hasSavedValue = prefs.isKey(kMsxFpsOverlayKey);
-    const bool savedValue = prefs.getBool(kMsxFpsOverlayKey, kMsxDefaultFpsOverlayEnabled);
-    prefs.end();
-
-    s_fpsOverlayEnabled = hasSavedValue ? savedValue : kMsxDefaultFpsOverlayEnabled;
-
-    if (!hasSavedValue) {
-        Preferences writePrefs;
-        writePrefs.begin(kMsxConfigNs, false);
-        writePrefs.putBool(kMsxFpsOverlayKey, s_fpsOverlayEnabled);
-        writePrefs.end();
-    }
-
-    return s_fpsOverlayEnabled;
+    return msx_config_load_fps_overlay_mode() != MsxFpsOverlayMode::Off;
 }
 
 bool msx_config_get_fps_overlay_enabled(void)
 {
-    return s_fpsOverlayEnabled;
+    return s_fpsOverlayMode != MsxFpsOverlayMode::Off;
 }
 
 void msx_config_set_fps_overlay_enabled(bool enabled, bool persist)
 {
-    s_fpsOverlayEnabled = enabled;
+    msx_config_set_fps_overlay_mode(
+        enabled ? MsxFpsOverlayMode::Simple : MsxFpsOverlayMode::Off,
+        persist
+    );
+}
+
+MsxFpsOverlayMode msx_config_load_fps_overlay_mode(void)
+{
+    Preferences prefs;
+    prefs.begin(kMsxConfigNs, true);
+    const bool hasSavedMode = prefs.isKey(kMsxFpsOverlayModeKey);
+    const uint8_t savedMode = prefs.getUChar(
+        kMsxFpsOverlayModeKey,
+        static_cast<uint8_t>(kMsxDefaultFpsOverlayMode)
+    );
+    const bool hasLegacyValue = prefs.isKey(kMsxFpsOverlayKey);
+    const bool legacyValue = prefs.getBool(kMsxFpsOverlayKey, kMsxDefaultFpsOverlayEnabled);
+    prefs.end();
+
+    if (hasSavedMode) {
+        s_fpsOverlayMode = msx_sanitize_fps_overlay_mode(savedMode);
+    } else if (hasLegacyValue) {
+        s_fpsOverlayMode = legacyValue ? MsxFpsOverlayMode::Simple : MsxFpsOverlayMode::Off;
+    } else {
+        s_fpsOverlayMode = kMsxDefaultFpsOverlayMode;
+    }
+
+    if (!hasSavedMode || savedMode != static_cast<uint8_t>(s_fpsOverlayMode)) {
+        Preferences writePrefs;
+        writePrefs.begin(kMsxConfigNs, false);
+        writePrefs.putUChar(kMsxFpsOverlayModeKey, static_cast<uint8_t>(s_fpsOverlayMode));
+        writePrefs.end();
+    }
+
+    return s_fpsOverlayMode;
+}
+
+MsxFpsOverlayMode msx_config_get_fps_overlay_mode(void)
+{
+    return s_fpsOverlayMode;
+}
+
+const char* msx_config_fps_overlay_mode_label(MsxFpsOverlayMode mode)
+{
+    switch (mode) {
+        case MsxFpsOverlayMode::Off:
+            return "OFF";
+        case MsxFpsOverlayMode::Dual:
+            return "DUAL";
+        case MsxFpsOverlayMode::Simple:
+        default:
+            return "SIMPLE";
+    }
+}
+
+const char* msx_config_get_fps_overlay_mode_label(void)
+{
+    return msx_config_fps_overlay_mode_label(s_fpsOverlayMode);
+}
+
+void msx_config_set_fps_overlay_mode(MsxFpsOverlayMode mode, bool persist)
+{
+    s_fpsOverlayMode = msx_sanitize_fps_overlay_mode(static_cast<uint8_t>(mode));
     if (!persist) {
         return;
     }
 
     Preferences prefs;
     prefs.begin(kMsxConfigNs, false);
-    prefs.putBool(kMsxFpsOverlayKey, s_fpsOverlayEnabled);
+    prefs.putUChar(kMsxFpsOverlayModeKey, static_cast<uint8_t>(s_fpsOverlayMode));
     prefs.end();
+}
+
+void msx_config_cycle_fps_overlay_mode(int delta, bool persist)
+{
+    constexpr MsxFpsOverlayMode kOrder[] = {
+        MsxFpsOverlayMode::Off,
+        MsxFpsOverlayMode::Simple,
+        MsxFpsOverlayMode::Dual,
+    };
+    constexpr int count = static_cast<int>(sizeof(kOrder) / sizeof(kOrder[0]));
+    int current = 0;
+    for (int i = 0; i < count; ++i) {
+        if (kOrder[i] == s_fpsOverlayMode) {
+            current = i;
+            break;
+        }
+    }
+
+    int next = current + delta;
+    while (next < 0) {
+        next += count;
+    }
+    next %= count;
+    msx_config_set_fps_overlay_mode(kOrder[next], persist);
 }
 
 MsxVirtualSccMode msx_config_load_virtual_scc_mode(void)
