@@ -1,8 +1,8 @@
-# Msx ADV Emulators v0.6.115
+# Msx ADV Emulators v0.6.116
 
 ![Msx ADV Emulators title screen](images/Title.png)
 
-Msx ADV Emulators v0.6.115 is an MSX-focused firmware for the M5Stack Cardputer
+Msx ADV Emulators v0.6.116 is an MSX-focused firmware for the M5Stack Cardputer
 with support for internal LCD play and optional external SPI TFT output.
 
 This release is built for the `m5stack-stamps3-max-spiffs-msx2-flash`
@@ -14,13 +14,13 @@ MSX is a registered trademark owned by MSX Licensing Corporation.
 
 ## Revision
 
-- Firmware version: `v0.6.115`
+- Firmware version: `v0.6.116`
 - Repository revision: `r476`
 - Commit: `8c267f6`
 - Release environment: `m5stack-stamps3-max-spiffs-msx2-flash`
 - Flash layout: `partitions_a2600_8mb_msx2bios.csv`
 
-## v0.6.115 Highlights
+## v0.6.116 Highlights
 
 - Full MSX1 and MSX2 runtime on ESP32-S3 without PSRAM.
 - Full launch support for MSX `.rom`, `.cas`, and `.dsk` media.
@@ -79,7 +79,7 @@ this build yet.
 
 ## Current Polish Pass
 
-v0.6.115 also includes a large number of small fixes and optimizations that are easy
+v0.6.116 also includes a large number of small fixes and optimizations that are easy
 to miss in a short feature list, but make the firmware feel much more solid on
 real Cardputer hardware.
 
@@ -170,13 +170,13 @@ C:\Users\user\.platformio\penv\Scripts\python.exe -X utf8 C:\Users\user\.platfor
 Firmware-only update image:
 
 ```text
-release/MsxADV-Emulators-v0.6.115-m5stack-stamps3-max-spiffs-msx2-flash-app-only.bin
+release/MsxADV-Emulators-v0.6.116-m5stack-stamps3-max-spiffs-msx2-flash-app-only.bin
 ```
 
 SHA-256:
 
 ```text
-F450D73194E0F664FE39A949E99D69E51A5FEA17F5007142E5CD2D2A4D18969F
+2F6A0171BBD22EC304C0AAAD738AAA1CA7ABD8646371152AF77F4A5606A1876E
 ```
 
 Use the firmware-only image when the device already has the correct
@@ -186,7 +186,7 @@ flashing the v0.6.114 full-flash image once. This writes only the factory app at
 MSX2 BIOS cache partition.
 
 ```powershell
-C:\Users\user\.platformio\penv\Scripts\python.exe -X utf8 C:\Users\user\.platformio\packages\tool-esptoolpy\esptool.py --chip esp32s3 --port COM4 --baud 921600 write_flash 0x10000 release\MsxADV-Emulators-v0.6.115-m5stack-stamps3-max-spiffs-msx2-flash-app-only.bin
+C:\Users\user\.platformio\penv\Scripts\python.exe -X utf8 C:\Users\user\.platformio\packages\tool-esptoolpy\esptool.py --chip esp32s3 --port COM4 --baud 921600 write_flash 0x10000 release\MsxADV-Emulators-v0.6.116-m5stack-stamps3-max-spiffs-msx2-flash-app-only.bin
 ```
 
 ## Supported Media
@@ -210,7 +210,7 @@ bios/msx/
 msx/
 ```
 
-For the default v0.6.115 flash build, place legally obtained MSX2 BIOS files here
+For the default v0.6.116 flash build, place legally obtained MSX2 BIOS files here
 before first MSX2 launch:
 
 ```text
@@ -350,7 +350,7 @@ Sound menu options:
 - `VIRTUAL SCC`: cycles virtual SCC cartridge mode.
 - `HDW DETECT`: toggles stricter SCC hardware-detection behavior.
 - `MASTER VOL`: changes MSX audio master volume.
-- `SCC VOL`: changes SCC gain.
+- `SCC VOL`: changes SCC gain; the standard default is `3.00x`.
 - `BACK`: return to the main menu.
 
 Debug menu options:
@@ -517,7 +517,7 @@ Zoom follow:
 The startup `About` page shows:
 
 ```text
-Msx ADV Emulators v0.6.115
+Msx ADV Emulators v0.6.116
 MSX is a registered trademark owned by MSX Licensing Corporation
 ```
 
@@ -528,7 +528,7 @@ diagnosing how Cardputer keys are seen by the MSX layer in `JOY EXTEND`,
 ## Differences From fMSX
 
 This project uses fMSX and EMULib lineage where it makes sense, especially
-around the Z80/MSX heritage, but v0.6.115 is not a stock fMSX port.
+around the Z80/MSX heritage, but v0.6.116 is not a stock fMSX port.
 
 Major differences:
 
@@ -581,7 +581,7 @@ Layout summary:
 - SPIFFS/ROM data partition: `0x4A4000`
 - MSX2 BIOS cache partition `msx2bios`: `0xC000`
 
-To regenerate the v0.6.115 full-flash release image, build the environment and
+To regenerate the v0.6.116 full-flash release image, build the environment and
 create an 8 MB image filled with `0xFF`, then overlay these binaries:
 
 - `0x00000`: `.pio\build\m5stack-stamps3-max-spiffs-msx2-flash\bootloader.bin`
