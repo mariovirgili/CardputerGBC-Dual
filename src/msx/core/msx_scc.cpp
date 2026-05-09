@@ -28,7 +28,7 @@ static const uint8_t DRAM_ATTR kMsxSccWaveBaseByMode[2][5] = {
 static int16_t* s_sccRing = nullptr;
 static size_t s_sccRingSamples = 0u;
 static uint16_t s_sccRingMask = static_cast<uint16_t>(kMsxSccRingSamplesDefault - 1u);
-static uint16_t s_sccOutputGainPercent = 150u;
+static uint16_t s_sccOutputGainPercent = 300u;
 
 size_t msx_scc_ring_samples()
 {

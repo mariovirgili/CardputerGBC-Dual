@@ -18,6 +18,7 @@ constexpr uint16_t kMsxVausMax = 309u;
 constexpr uint16_t kMsxVausCenter = 236u;
 constexpr uint8_t kMsxVausBits = 9u;
 constexpr uint16_t kMsxVausStep = 4u;
+constexpr int32_t kMsxPsgOutputGainPercent = 100;
 static const int16_t DRAM_ATTR kMsxPsgVolumeTable[16] = {
     0, 64, 90, 128, 181, 256, 362, 512,
     724, 1024, 1448, 2048, 2896, 4096, 5792, 8192,
@@ -368,8 +369,7 @@ int16_t IRAM_ATTR msx_psg_render_sample(MsxPsgState* state)
     int32_t dcFiltered = mix - s_dcFilterX + ((s_dcFilterY * 8184) >> 13);
     s_dcFilterX = mix;
     s_dcFilterY = dcFiltered;
-    // Raddoppiamo il mix per renderlo udibile e bilanciato sul piccolo speaker
-    mix = dcFiltered * 2;
+    mix = (dcFiltered * kMsxPsgOutputGainPercent) / 100;
 
     if (mix > 32767) {
         mix = 32767;

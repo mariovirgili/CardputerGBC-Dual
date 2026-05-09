@@ -21,6 +21,7 @@ constexpr const char* kMsxSccHardwareDetectKey = "scc_hdw";
 constexpr const char* kMsxRegionModeKey = "region";
 constexpr const char* kMsxSoundVolumeKey = "snd_vol";
 constexpr const char* kMsxSccGainKey = "scc_gain";
+constexpr const char* kMsxSccGainDefaultV2Key = "scc_gain_v2";
 constexpr const char* kMsxBiosPathKey = "bios_path";
 constexpr const char* kMsx1BiosPathKey = "bios_msx1";
 constexpr const char* kMsx2BiosPathKey = "bios_msx2";
@@ -50,7 +51,8 @@ constexpr MsxVirtualSccMode kMsxDefaultVirtualSccMode = MsxVirtualSccMode::Off;
 constexpr bool kMsxDefaultSccHardwareDetectEnabled = false;
 constexpr MsxRegionMode kMsxDefaultRegionMode = MsxRegionMode::Auto;
 constexpr uint8_t kMsxDefaultSoundVolume = 112;
-constexpr uint16_t kMsxDefaultSccGainPercent = 150;
+constexpr uint16_t kMsxLegacyDefaultSccGainPercent = 150;
+constexpr uint16_t kMsxDefaultSccGainPercent = 300;
 constexpr uint16_t kMsxMinSccGainPercent = 0;
 constexpr uint16_t kMsxMaxSccGainPercent = 300;
 
@@ -1150,17 +1152,25 @@ uint16_t msx_config_load_scc_gain_percent(void)
     Preferences prefs;
     prefs.begin(kMsxConfigNs, true);
     const bool hasSavedValue = prefs.isKey(kMsxSccGainKey);
+    const bool defaultV2Applied = prefs.getBool(kMsxSccGainDefaultV2Key, false);
     const uint16_t savedValue = prefs.getUShort(kMsxSccGainKey, kMsxDefaultSccGainPercent);
     prefs.end();
 
-    s_sccGainPercent = hasSavedValue
-                           ? msx_sanitize_scc_gain_percent(savedValue)
-                           : kMsxDefaultSccGainPercent;
+    const bool migrateLegacyDefault =
+        hasSavedValue &&
+        !defaultV2Applied &&
+        savedValue == kMsxLegacyDefaultSccGainPercent;
+    s_sccGainPercent = migrateLegacyDefault
+                           ? kMsxDefaultSccGainPercent
+                           : (hasSavedValue
+                                  ? msx_sanitize_scc_gain_percent(savedValue)
+                                  : kMsxDefaultSccGainPercent);
 
-    if (!hasSavedValue || savedValue != s_sccGainPercent) {
+    if (!hasSavedValue || savedValue != s_sccGainPercent || !defaultV2Applied) {
         Preferences writePrefs;
         writePrefs.begin(kMsxConfigNs, false);
         writePrefs.putUShort(kMsxSccGainKey, s_sccGainPercent);
+        writePrefs.putBool(kMsxSccGainDefaultV2Key, true);
         writePrefs.end();
     }
 

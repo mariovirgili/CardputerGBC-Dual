@@ -31,7 +31,7 @@
 #include "cardputer/WelcomeExternalImage.h"
 #include "cardputer/VerticalSelector.h"
 
-static constexpr const char* kAppBuildVersion = "v0.6.115";
+static constexpr const char* kAppBuildVersion = "v0.6.116";
 static constexpr const char* kAppTitlePrefix = "Msx ADV Emulators ";
 
 static TFT_eSPI& startupExternalTft();

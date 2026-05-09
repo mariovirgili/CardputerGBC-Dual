@@ -1,0 +1,1 @@
+SHA256  2F6A0171BBD22EC304C0AAAD738AAA1CA7ABD8646371152AF77F4A5606A1876E  release\MsxADV-Emulators-v0.6.116-m5stack-stamps3-max-spiffs-msx2-flash-app-only.bin
