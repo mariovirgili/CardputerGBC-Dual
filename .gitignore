@@ -14,3 +14,5 @@ bios/private/*
 /temp_esp8bit2/
 /temp_espmcume/
 /temp_retro_go/
+/src/videopac/
+/.codex-thmi-c64/

@@ -1,8 +1,11 @@
 #include "display_target.h"
+#include "hardware_target.h"
 #include <Preferences.h>
 
-// Global display target - default to external
-emu_display_target_t g_emu_display_target = EMU_DISPLAY_EXTERNAL;
+// Global display target. It starts internal because M5 board autodetect is only
+// reliable after M5Cardputer.begin(); launcher code loads the real default at
+// selection time.
+emu_display_target_t g_emu_display_target = EMU_DISPLAY_INTERNAL;
 
 // Global color depth - default to 16-bit
 emu_color_depth_t g_emu_color_depth = EMU_COLOR_16BIT;
@@ -11,19 +14,23 @@ emu_color_depth_t g_emu_color_depth = EMU_COLOR_16BIT;
 bool g_emu_aux_screen_locked = false;
 
 // ROM type values from select_rom.h RomType enum
-// UNKNOWN=0, MSX=1, MSX_DISK=2, COLECO=3, MSX_CAS=4
+// UNKNOWN=0, MSX=1, MSX_DISK=2, MSX_CAS=3, C64_PRG=4
 static constexpr int kRomMsx = 1;
 static constexpr int kRomMsxDisk = 2;
-static constexpr int kRomColeco = 3;
-static constexpr int kRomMsxCas = 4;
+static constexpr int kRomMsxCas = 3;
+static constexpr int kRomC64Prg = 4;
 
 bool emu_has_external_display_support(int romType)
 {
+    if (!cardputer_has_external_tft()) {
+        return false;
+    }
+
     switch (romType) {
         case kRomMsx:
         case kRomMsxDisk:
-        case kRomColeco:
         case kRomMsxCas:
+        case kRomC64Prg:
             return true;
         default:
             return false;
@@ -35,8 +42,8 @@ static const char* romTypeToKey(int romType)
     switch (romType) {
         case kRomMsx: return "msx";
         case kRomMsxDisk: return "dsk";
-        case kRomColeco: return "coleco";
         case kRomMsxCas: return "cas";
+        case kRomC64Prg: return "c64";
         default:        return "unk";
     }
 }
@@ -45,6 +52,10 @@ static constexpr const char* kNvsNamespace = "disp_tgt";
 
 emu_display_target_t emu_load_display_target(int romType)
 {
+    if (!cardputer_has_external_tft()) {
+        return EMU_DISPLAY_INTERNAL;
+    }
+
     Preferences prefs;
     prefs.begin(kNvsNamespace, true);
     int val = prefs.getInt(romTypeToKey(romType), (int)EMU_DISPLAY_EXTERNAL);
@@ -54,6 +65,10 @@ emu_display_target_t emu_load_display_target(int romType)
 
 void emu_save_display_target(int romType, emu_display_target_t target)
 {
+    if (!cardputer_has_external_tft()) {
+        return;
+    }
+
     Preferences prefs;
     prefs.begin(kNvsNamespace, false);
     prefs.putInt(romTypeToKey(romType), (int)target);
@@ -65,11 +80,11 @@ emu_color_depth_t emu_recommended_color_depth(int romType)
     switch (romType) {
         case kRomMsx:
         case kRomMsxDisk:
-        case kRomColeco:
         case kRomMsxCas:
+        case kRomC64Prg:
             // MSX1 uses a tiny fixed palette and MSX2 tops out at 9-bit RGB,
-            // ColecoVision uses the same small VDP palette family,
-            // so RGB444 is enough and cheaper to push on the external TFT.
+            // C64 has 16 colors, so RGB444 is enough and cheaper to push on
+            // the external TFT.
             return EMU_COLOR_12BIT;
         default:
             return EMU_COLOR_16BIT;

@@ -42,8 +42,22 @@ constexpr ControlEntry kMsxEntries[] = {
     {EmuAction::Select, "select", "MENU", '2'},
 };
 
+constexpr ControlEntry kC64Entries[] = {
+    {EmuAction::Up, "up", "UP", 'e'},
+    {EmuAction::Down, "down", "DOWN", 's'},
+    {EmuAction::Left, "left", "LEFT", 'a'},
+    {EmuAction::Right, "right", "RIGHT", 'd'},
+    {EmuAction::A, "fire1", "FIRE", 'l'},
+    {EmuAction::B, "fire2", "SPACE", 'k'},
+    {EmuAction::Start, "start", "RUN/STOP", '1'},
+    {EmuAction::Select, "select", "RESTORE", '2'},
+    {EmuAction::Option, "f1", "F1", '3'},
+    {EmuAction::Option2, "f3", "F3", '4'},
+};
+
 constexpr ProfileDef kProfiles[] = {
     {"MSX", "MSX.opt", kMsxEntries, sizeof(kMsxEntries) / sizeof(kMsxEntries[0])},
+    {"C64", "C64.opt", kC64Entries, sizeof(kC64Entries) / sizeof(kC64Entries[0])},
 };
 
 constexpr size_t kProfileCount = static_cast<size_t>(EmuProfile::Count);
@@ -476,7 +490,7 @@ bool emuControlsEdit(SdService& sd, EmuProfile profile, CardputerView& display, 
             );
 
             display.topBar(saved ? "CONFIG SAVED" : "SAVE FAILED", false, false);
-            display.subMessage(saved ? "MSX settings updated" : "Could not write config", 700);
+            display.subMessage(saved ? "Settings updated" : "Could not write config", 700);
             input.flushInput(120);
             return saved;
         }

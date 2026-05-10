@@ -18,12 +18,14 @@
 #include "msx/msx_input.h"
 #include "msx/msx_logging.h"
 #include "msx/msx_media.h"
+#include "c64/run_c64.h"
 #include "last_game.h"
 #include "esp_system.h"
 #include "esp_task_wdt.h"
 #include "share/input.h"
 #include "share/emu_controls.h"
 #include "share/display_target.h"
+#include "share/hardware_target.h"
 #include <TFT_eSPI.h>
 #include <algorithm>
 #include "tft_setup.h"
@@ -31,13 +33,17 @@
 #include "cardputer/WelcomeExternalImage.h"
 #include "cardputer/VerticalSelector.h"
 
-static constexpr const char* kAppBuildVersion = "v0.6.116";
+static constexpr const char* kAppBuildVersion = "v0.6.117";
 static constexpr const char* kAppTitlePrefix = "Msx ADV Emulators ";
 
 static TFT_eSPI& startupExternalTft();
 
 static void showExternalRomSelectorTft()
 {
+  if (!cardputer_has_external_tft()) {
+    return;
+  }
+
   emu_set_aux_screen_locked(false);
   TFT_eSPI& extTft = startupExternalTft();
   extTft.setSwapBytes(true);
@@ -49,6 +55,9 @@ static TFT_eSPI& startupExternalTft()
 {
   static TFT_eSPI extTft;
   static bool initialized = false;
+  if (!cardputer_has_external_tft()) {
+    return extTft;
+  }
   emu_set_aux_screen_locked(false);
   if (!initialized) {
     extTft.begin();
@@ -284,6 +293,9 @@ static void drawExternalRomBrowserInfo(const std::string& folder,
                                        void* context)
 {
   (void)context;
+  if (!cardputer_has_external_tft()) {
+    return;
+  }
   if (entry.empty()) {
     return;
   }
@@ -1391,6 +1403,10 @@ static void showStartupMsxConfigMenu(CardputerView& display, CardputerInput& inp
 
 static void welcomeExternalTft()
 {
+  if (!cardputer_has_external_tft()) {
+    return;
+  }
+
   emu_set_aux_screen_locked(false);
   TFT_eSPI extTft;
   extTft.begin();
@@ -1761,7 +1777,7 @@ void setup() {
   };
 
   RomType ext = ROM_TYPE_UNKNOWN;
-  const share::EmuProfile emuProfile = share::EmuProfile::MSX;
+  share::EmuProfile emuProfile = share::EmuProfile::MSX;
   bool hasProfile = false;
   std::string romName;
 
@@ -1777,7 +1793,11 @@ void setup() {
     }
 
     ext = getRomType(romPath);
-    hasProfile = (ext == ROM_TYPE_MSX || ext == ROM_TYPE_MSX_DISK || ext == ROM_TYPE_MSX_CAS);
+    hasProfile = (ext == ROM_TYPE_MSX ||
+                  ext == ROM_TYPE_MSX_DISK ||
+                  ext == ROM_TYPE_MSX_CAS ||
+                  ext == ROM_TYPE_C64_PRG);
+    emuProfile = (ext == ROM_TYPE_C64_PRG) ? share::EmuProfile::C64 : share::EmuProfile::MSX;
     if (hasProfile) {
       share::emuControlsLoad(sd, emuProfile);
     }
@@ -1787,7 +1807,7 @@ void setup() {
 
     if (!pendingLaunch.valid() && selectedFromBrowser && ext != ROM_TYPE_UNKNOWN) {
       MsxMachineMode chosenMachineMode = msx_config_load_machine_mode();
-      if (hasProfile) {
+      if (ext == ROM_TYPE_MSX || ext == ROM_TYPE_MSX_DISK || ext == ROM_TYPE_MSX_CAS) {
         const MsxMachineSelectionResult machineSelection = selectMsxLaunchSystem(display, input);
         if (machineSelection.backToRomBrowser) {
           reopenMsxLaunchBrowser(romPath);
@@ -1795,9 +1815,11 @@ void setup() {
         }
         chosenMachineMode = machineSelection.mode;
       }
-      msx_config_set_machine_mode(chosenMachineMode, false);
-      if (!s_msxStartupMsx1Only) {
-        restartForPendingLaunch(display, sd, romPath, static_cast<int>(chosenMachineMode));
+      if (ext == ROM_TYPE_MSX || ext == ROM_TYPE_MSX_DISK || ext == ROM_TYPE_MSX_CAS) {
+        msx_config_set_machine_mode(chosenMachineMode, false);
+        if (!s_msxStartupMsx1Only) {
+          restartForPendingLaunch(display, sd, romPath, static_cast<int>(chosenMachineMode));
+        }
       }
     }
 
@@ -1825,7 +1847,7 @@ void setup() {
         g_emu_color_depth = EMU_COLOR_16BIT;
       }
 
-      if (hasProfile) {
+      if (ext == ROM_TYPE_MSX || ext == ROM_TYPE_MSX_DISK || ext == ROM_TYPE_MSX_CAS) {
         msx_config_load_performance_flags();
         msx_config_load_virtual_scc_mode();
         if (g_emu_display_target == EMU_DISPLAY_EXTERNAL) {
@@ -1955,6 +1977,10 @@ void setup() {
   else if (ext == ROM_TYPE_MSX_CAS) {
       // MSX cassette tape image (.cas) — ROM partition holds CAS data via XIP
       run_msx_cas(get_rom_ptr(), get_rom_size(), romName.c_str(), sd);
+  }
+  else if (ext == ROM_TYPE_C64_PRG) {
+      // Commodore 64 single-file PRG
+      run_c64_prg(get_rom_ptr(), get_rom_size(), romName.c_str(), sd);
   }
   else {
       display.topBar("ERROR", false, false);

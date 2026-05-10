@@ -12,6 +12,7 @@ namespace share {
 
 enum class EmuProfile : uint8_t {
     MSX = 0,
+    C64,
     Count
 };
 

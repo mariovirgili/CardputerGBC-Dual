@@ -19,7 +19,8 @@ enum RomType {
     ROM_TYPE_UNKNOWN = 0,
     ROM_TYPE_MSX,
     ROM_TYPE_MSX_DISK,
-    ROM_TYPE_MSX_CAS
+    ROM_TYPE_MSX_CAS,
+    ROM_TYPE_C64_PRG
 };
 
 using RomBrowserSelectionInfoCallback = void (*)(const std::string& folder,
@@ -56,7 +57,7 @@ static inline bool hasRomExt(const std::string& path) {
     for (auto& ch : ext)
         ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
 
-    return (ext == "rom" || ext == "dsk" || ext == "cas");
+    return (ext == "rom" || ext == "dsk" || ext == "cas" || ext == "prg");
 }
 
 static inline RomType getRomType(const std::string& path) {
@@ -74,6 +75,7 @@ static inline RomType getRomType(const std::string& path) {
     if (ext == "rom") return ROM_TYPE_MSX;
     if (ext == "dsk") return ROM_TYPE_MSX_DISK;
     if (ext == "cas") return ROM_TYPE_MSX_CAS;
+    if (ext == "prg") return ROM_TYPE_C64_PRG;
 
     return ROM_TYPE_UNKNOWN;
 }
@@ -126,7 +128,7 @@ static inline std::string getRomPath(SdService& sdService,
                                      void* infoCallbackContext = nullptr,
                                      bool* backToStartupMenu = nullptr) {
     VerticalSelector verticalSelector(display, input);
-    std::vector<std::string> supportedExts = {".rom", ".dsk", ".cas"};
+    std::vector<std::string> supportedExts = {".rom", ".dsk", ".cas", ".prg"};
     static constexpr size_t kRomBrowserMaxElements = 1024;
     static constexpr int kRomBrowserMenuResult = -3;
     static constexpr int kRomBrowserStartupMenuResult = -4;
