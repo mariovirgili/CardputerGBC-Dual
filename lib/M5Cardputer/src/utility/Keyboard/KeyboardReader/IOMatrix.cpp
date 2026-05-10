@@ -50,13 +50,36 @@ void IOMatrixKeyboardReader::update()
     _key_list.clear();
 
     Point2D_t coor;
-    uint8_t input_value = 0;
+    uint8_t input_values[8] = {};
+    uint8_t input_press_count[7] = {};
 
     for (int i = 0; i < 8; i++) {
         set_output(output_list, i);
-        input_value = get_input(input_list);
-        /* If key pressed */
+        delayMicroseconds(3);
+        const uint8_t input_value = get_input(input_list);
+        input_values[i] = input_value;
 
+        for (int j = 0; j < 7; j++) {
+            if (input_value & (0x01 << j)) {
+                input_press_count[j]++;
+            }
+        }
+    }
+
+    uint8_t stuck_input_mask = 0;
+    for (int j = 0; j < 7; j++) {
+        if (input_press_count[j] == 8) {
+            stuck_input_mask |= (0x01 << j);
+        }
+    }
+    if (stuck_input_mask != _stuck_input_mask) {
+        printf("[Keyboard] classic stuck input mask: 0x%02X\n", stuck_input_mask);
+        _stuck_input_mask = stuck_input_mask;
+    }
+
+    for (int i = 0; i < 8; i++) {
+        uint8_t input_value = input_values[i] & ~_stuck_input_mask;
+        /* If key pressed */
         if (input_value) {
             /* Get X */
             for (int j = 0; j < 7; j++) {
