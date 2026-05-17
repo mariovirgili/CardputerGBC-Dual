@@ -1,9 +1,10 @@
 // gbc_sound.cpp
 #include "gbc_sound.h"
 
-#include <Arduino.h>
+#include "compat/arduino_compat.h"
 #include <M5Cardputer.h>
 #include <string.h>
+#include "cardputer/CardputerAudio.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "share/emu_log_cpp.h"
@@ -19,7 +20,10 @@ static TaskHandle_t s_audioTask  = nullptr;
 static volatile bool s_running   = false;
 
 static constexpr int kRingSamples = 2048;
+static constexpr int kPlayChunk = 512;
 static int16_t* s_ring            = nullptr;
+static int16_t* s_playBuf[cardputer_audio::kRuntimeAudioBufferCount] = { nullptr, nullptr, nullptr };
+static uint8_t  s_playSlot        = 0;
 static int      s_ringSize        = 0;
 static int      s_ringRead        = 0;
 static int      s_ringWrite       = 0;
@@ -32,20 +36,28 @@ static portMUX_TYPE s_ringMux = portMUX_INITIALIZER_UNLOCKED;
 
 static void gbc_audio_task(void* arg)
 {
-    static const int kChunk = 512;
-    int16_t local[kChunk];
-
     while (s_running) {
         if (s_ringCount == 0) {
             vTaskDelay(pdMS_TO_TICKS(1));
             continue;
         }
 
-        // Lit un chunk
+        if (M5Cardputer.Speaker.isPlaying(kChannel) >= 2) {
+            vTaskDelay(pdMS_TO_TICKS(1));
+            continue;
+        }
+
+        if (!s_playBuf[0] || !s_playBuf[1] || !s_playBuf[2]) {
+            vTaskDelay(pdMS_TO_TICKS(1));
+            continue;
+        }
+
+        int16_t* local = s_playBuf[s_playSlot];
+
         int toRead = 0;
         portENTER_CRITICAL(&s_ringMux);
         if (s_ringCount > 0) {
-            toRead = (s_ringCount < kChunk) ? s_ringCount : kChunk;
+            toRead = (s_ringCount < kPlayChunk) ? s_ringCount : kPlayChunk;
 
             for (int i = 0; i < toRead; ++i) {
                 local[i] = s_ring[s_ringRead];
@@ -62,56 +74,12 @@ static void gbc_audio_task(void* arg)
             continue;
         }
 
-        int queued = M5Cardputer.Speaker.isPlaying(kChannel);
-
-        if (queued == 0) {
-            // Primer chunk
-
-            // Envoi premier
-            M5Cardputer.Speaker.playRaw(
-                local,
-                (size_t)toRead,
-                (uint32_t)gbc_sampleRate,
-                false, 1, kChannel, false
-            );
-
-            // Envoi deuxieme
-            int16_t local2[kChunk];
-            int toRead2 = 0;
-
-            portENTER_CRITICAL(&s_ringMux);
-            if (s_ringCount > 0) {
-                toRead2 = (s_ringCount < kChunk) ? s_ringCount : kChunk;
-                for (int i = 0; i < toRead2; ++i) {
-                    local2[i] = s_ring[s_ringRead];
-                    s_ringRead++;
-                    if (s_ringRead >= s_ringSize) s_ringRead = 0;
-                }
-                s_ringCount -= toRead2;
-            }
-            portEXIT_CRITICAL(&s_ringMux);
-
-            if (toRead2 > 0) {
-                M5Cardputer.Speaker.playRaw(
-                    local2,
-                    (size_t)toRead2,
-                    (uint32_t)gbc_sampleRate,
-                    false, 1, kChannel, false
-                );
-            }
+        if (cardputer_audio::queueRuntimeAudioBuffer(
+                s_playBuf, s_playSlot, (size_t)toRead, (uint32_t)gbc_sampleRate, false, kChannel)) {
+            continue;
         }
-        else if (queued == 1) {
-            // un seul chunk
-            M5Cardputer.Speaker.playRaw(
-                local,
-                (size_t)toRead,
-                (uint32_t)gbc_sampleRate,
-                false, 1, kChannel, false
-            );
-        }
-        else {
-            // queued >= 2
-        }
+
+        vTaskDelay(pdMS_TO_TICKS(1));
     }
 
     vTaskDelete(nullptr);
@@ -128,21 +96,10 @@ extern "C" void gbc_sound_init(int sample_rate)
         gbc_sampleRate = sample_rate;
     }
 
-    auto cfg = M5Cardputer.Speaker.config();
-    cfg.sample_rate       = gbc_sampleRate;
-    cfg.stereo            = false;
-    cfg.dma_buf_len       = 512;
-    cfg.dma_buf_count     = 8;
-    cfg.task_priority     = 4;
-    cfg.task_pinned_core  = 1;
-    M5Cardputer.Speaker.config(cfg);
-
-    if (!M5Cardputer.Speaker.isRunning()) {
-        M5Cardputer.Speaker.begin();
-    }
-
-    M5Cardputer.Speaker.setVolume(60);
+    cardputer_audio::beginSpeaker(gbc_sampleRate, false, 512, 8, 60, "gbc", 4, 1);
     M5Cardputer.Speaker.stop(kChannel);
+    cardputer_audio::allocRuntimeAudioBuffers(s_playBuf, kPlayChunk, "gbc");
+    s_playSlot = 0;
 
     // Ring buffer
     if (!s_ring) {
@@ -194,6 +151,7 @@ extern "C" void gbc_sound_shutdown(void)
     }
 
     M5Cardputer.Speaker.stop(kChannel);
+    cardputer_audio::freeRuntimeAudioBuffers(s_playBuf);
 
     if (s_ring) {
         free(s_ring);

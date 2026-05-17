@@ -18,7 +18,6 @@
 #ifndef _ADAFRUIT_TCA8418_H
 #define _ADAFRUIT_TCA8418_H
 
-// #include <Arduino.h>
 // #include <Adafruit_I2CDevice.h>
 // #include <Adafruit_I2CRegister.h>
 #include "Adafruit_TCA8418_registers.h"

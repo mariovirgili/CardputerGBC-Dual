@@ -2,7 +2,7 @@
 
 #include <string.h>
 #include <stdint.h>
-#include <Arduino.h>
+#include "compat/arduino_compat.h"
 
 #include "partitioner.h"
 #include "esp_heap_caps.h"
@@ -54,7 +54,7 @@ static bool verify_partition_buffer(const uint8_t *expectedBuf, uint8_t *readBuf
         return false;
     }
 
-    esp_err_t err = spi_flash_read(PARTITION_ADDR, readBuf, PARTITION_SIZE);
+    esp_err_t err = esp_flash_read(NULL, readBuf, PARTITION_ADDR, PARTITION_SIZE);
     if (err != ESP_OK) {
         return false;
     }

@@ -1,5 +1,8 @@
-set(COMPONENT_SRCDIRS ".")
-set(COMPONENT_ADD_INCLUDEDIRS ".")
-set(COMPONENT_REQUIRES "retro-go")
-register_component()
-rg_setup_compile_options(-O3)
+file(GLOB GNUBOY_SRCS "*.c")
+
+idf_component_register(
+    SRCS ${GNUBOY_SRCS}
+    INCLUDE_DIRS "."
+)
+
+target_compile_options(${COMPONENT_LIB} PRIVATE -O3)

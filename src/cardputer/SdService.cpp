@@ -2,51 +2,95 @@
 
 #include "SdService.h"
 
+#include <algorithm>
+#include <cstdio>
+#include <cstring>
+#include <dirent.h>
+#include <sys/stat.h>
+#include <unistd.h>
+
+#include "compat/arduino_compat.h"
+#include "driver/sdspi_host.h"
+#include "driver/spi_common.h"
+#include "esp_err.h"
+#include "esp_vfs_fat.h"
+
 SdService::SdService() {}
 
+std::string SdService::toMountedPath(const std::string& path) const {
+    if (path.rfind("/sd", 0) == 0) {
+        return path;
+    }
+    if (path.empty() || path[0] != '/') {
+        return "/sd/" + path;
+    }
+    return "/sd" + path;
+}
+
 bool SdService::begin() {
-    sdCardSPI.begin(
-        SD_SCK,
-        SD_MISO,
-        SD_MOSI,
-        SD_CS
-    );
+    if (sdCardMounted) {
+        return true;
+    }
+
     delay(10);
 
-    // find best speed
-    const uint32_t speeds[] = { 40000000u, 20000000u };
-    for (uint32_t hz : speeds) {
-        if (SD.begin(SD_CS, sdCardSPI, hz, "/sd")) {
-            sdCardMounted = true;
-            return true;
-        }
+    sdmmc_host_t host = SDSPI_HOST_DEFAULT();
+    host.slot = SPI2_HOST;
+    host.max_freq_khz = 20000;
+
+    spi_bus_config_t bus_cfg = {};
+    bus_cfg.mosi_io_num = SD_MOSI;
+    bus_cfg.miso_io_num = SD_MISO;
+    bus_cfg.sclk_io_num = SD_SCK;
+    bus_cfg.quadwp_io_num = -1;
+    bus_cfg.quadhd_io_num = -1;
+    bus_cfg.max_transfer_sz = 16 * 1024;
+
+    esp_err_t err = spi_bus_initialize((spi_host_device_t)host.slot, &bus_cfg, SDSPI_DEFAULT_DMA);
+    if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) {
+        sdCardMounted = false;
+        return false;
+    }
+
+    sdspi_device_config_t slot_config = SDSPI_DEVICE_CONFIG_DEFAULT();
+    slot_config.gpio_cs = (gpio_num_t)SD_CS;
+    slot_config.host_id = (spi_host_device_t)host.slot;
+
+    esp_vfs_fat_sdmmc_mount_config_t mount_config = {};
+    mount_config.format_if_mount_failed = false;
+    mount_config.max_files = 8;
+    mount_config.allocation_unit_size = 16 * 1024;
+
+    err = esp_vfs_fat_sdspi_mount("/sd", &host, &slot_config, &mount_config, &card);
+    if (err == ESP_OK) {
+        sdCardMounted = true;
+        return true;
     }
 
     sdCardMounted = false;
-    return sdCardMounted;
+    spi_bus_free((spi_host_device_t)host.slot);
+    return false;
 }
 
 void SdService::close() {
-    SD.end();
+    if (sdCardMounted) {
+        esp_vfs_fat_sdcard_unmount("/sd", card);
+        spi_bus_free(SPI2_HOST);
+    }
+    card = nullptr;
     sdCardMounted = false;
 }
 
 bool SdService::isFile(const std::string& filePath) {
-    File f = SD.open(filePath.c_str());
-    if (f && !f.isDirectory()) {
-        f.close();
-        return true;
-    }
-    return false;
+    struct stat st = {};
+    const std::string mounted = toMountedPath(filePath);
+    return stat(mounted.c_str(), &st) == 0 && S_ISREG(st.st_mode);
 }
 
 bool SdService::isDirectory(const std::string& path) {
-    File f = SD.open(path.c_str());
-    if (f && f.isDirectory()) {
-        f.close();
-        return true;
-    }
-    return false;
+    struct stat st = {};
+    const std::string mounted = toMountedPath(path);
+    return stat(mounted.c_str(), &st) == 0 && S_ISDIR(st.st_mode);
 }
 
 bool SdService::getSdState() {
@@ -63,43 +107,30 @@ std::vector<std::string> SdService::listElements(const std::string& dirPath, siz
 
     if (!sdCardMounted) return filesList;
 
-    File dir = SD.open(dirPath.c_str());
-    if (!dir || !dir.isDirectory()) return filesList;
-
-    dir.setBufferSize(1024);
-    dir.rewindDirectory();
+    const std::string mountedDir = toMountedPath(dirPath);
+    DIR* dir = opendir(mountedDir.c_str());
+    if (!dir) return filesList;
 
     size_t i = 0;
     while (true) {
-        bool isDir = false;
-        String sname = dir.getNextFileName(&isDir);
-        if (!sname.length()) break;
+        dirent* entry = readdir(dir);
+        if (!entry) break;
 
-        const char* p = sname.c_str();
-        size_t len = sname.length();
+        const char* name = entry->d_name;
+        if (!name || name[0] == '\0' || name[0] == '.') continue;
 
-        // erase trailing '/'
-        if (len && p[len - 1] == '/') --len;
-
-        size_t start = 0;
-        for (size_t k = len; k > 0; --k) {
-            if (p[k - 1] == '/') { start = k; break; }
-        }
-
-        size_t namelen = (len > start) ? (len - start) : 0;
-        if (namelen == 0) continue;
-
-        // ignore hidden files
-        if (p[start] == '.') continue;
+        const std::string fullPath = mountedDir + "/" + name;
+        struct stat st = {};
+        const bool isDir = (stat(fullPath.c_str(), &st) == 0) && S_ISDIR(st.st_mode);
 
         // push to the right list
-        if (isDir) foldersList.emplace_back(p + start, namelen);
-        else       filesList.emplace_back(p + start, namelen);
+        if (isDir) foldersList.emplace_back(name);
+        else       filesList.emplace_back(name);
 
         if (++i >= limit) break;
     }
 
-    dir.close();
+    closedir(dir);
 
     std::sort(foldersList.begin(), foldersList.end());
     std::sort(filesList.begin(), filesList.end());
@@ -113,13 +144,19 @@ std::vector<uint8_t> SdService::readBinaryFile(const std::string& filePath) {
         return content;
     }
 
-    File file = SD.open(filePath.c_str(), FILE_READ);
+    const std::string mounted = toMountedPath(filePath);
+    FILE* file = fopen(mounted.c_str(), "rb");
     if (file) {
-        content.reserve(file.size());
-        while (file.available()) {
-            content.push_back(file.read());
+        if (fseek(file, 0, SEEK_END) == 0) {
+            long size = ftell(file);
+            if (size > 0) {
+                content.resize((size_t)size);
+                rewind(file);
+                const size_t got = fread(content.data(), 1, content.size(), file);
+                content.resize(got);
+            }
         }
-        file.close();
+        fclose(file);
     }
     return content;
 }
@@ -130,12 +167,15 @@ std::string SdService::readFile(const std::string& filePath) {
         return content;
     }
 
-    File file = SD.open(filePath.c_str());
+    const std::string mounted = toMountedPath(filePath);
+    FILE* file = fopen(mounted.c_str(), "rb");
     if (file) {
-        while (file.available()) {
-            content += static_cast<char>(file.read());
+        char buffer[512];
+        size_t got = 0;
+        while ((got = fread(buffer, 1, sizeof(buffer), file)) > 0) {
+            content.append(buffer, got);
         }
-        file.close();
+        fclose(file);
     }
     return content;
 }
@@ -145,13 +185,12 @@ bool SdService::writeFile(const std::string& filePath, const std::string& data) 
         return false;
     }
 
-    File file = SD.open(filePath.c_str(), FILE_WRITE);
-    if (file) {
-        file.write(reinterpret_cast<const uint8_t*>(data.c_str()), data.size());
-        file.close();
-        return true;
-    }
-    return false;
+    const std::string mounted = toMountedPath(filePath);
+    FILE* file = fopen(mounted.c_str(), "wb");
+    if (!file) return false;
+    const size_t written = fwrite(data.data(), 1, data.size(), file);
+    fclose(file);
+    return written == data.size();
 }
 
 bool SdService::writeBinaryFile(const std::string& filePath, const std::vector<uint8_t>& data) {
@@ -159,13 +198,12 @@ bool SdService::writeBinaryFile(const std::string& filePath, const std::vector<u
         return false;
     }
 
-    File file = SD.open(filePath.c_str(), FILE_WRITE);
-    if (file) {
-        file.write(data.data(), data.size());
-        file.close();
-        return true;
-    }
-    return false;
+    const std::string mounted = toMountedPath(filePath);
+    FILE* file = fopen(mounted.c_str(), "wb");
+    if (!file) return false;
+    const size_t written = data.empty() ? 0 : fwrite(data.data(), 1, data.size(), file);
+    fclose(file);
+    return written == data.size();
 }
 
 bool SdService::appendToFile(const std::string& filePath, const std::string& data) {
@@ -173,13 +211,12 @@ bool SdService::appendToFile(const std::string& filePath, const std::string& dat
         return false;
     }
 
-    File file = SD.open(filePath.c_str(), FILE_APPEND);
-    if (file) {
-        file.write(reinterpret_cast<const uint8_t*>(data.c_str()), data.size());
-        file.close();
-        return true;
-    }
-    return false;
+    const std::string mounted = toMountedPath(filePath);
+    FILE* file = fopen(mounted.c_str(), "ab");
+    if (!file) return false;
+    const size_t written = fwrite(data.data(), 1, data.size(), file);
+    fclose(file);
+    return written == data.size();
 }
 
 bool SdService::deleteFile(const std::string& filePath) {
@@ -187,10 +224,8 @@ bool SdService::deleteFile(const std::string& filePath) {
         return false;
     }
 
-    if (SD.exists(filePath.c_str())) {
-        return SD.remove(filePath.c_str());
-    }
-    return false;
+    const std::string mounted = toMountedPath(filePath);
+    return unlink(mounted.c_str()) == 0;
 }
 
 std::string SdService::getFileExt(const std::string& path) {
@@ -242,8 +277,10 @@ bool SdService::ensureDirectory(const std::string& directory) {
         return false;
     }
 
-    if (!SD.exists(directory.c_str())) {
-        return SD.mkdir(directory.c_str()); // Create forlder
+    const std::string mounted = toMountedPath(directory);
+    struct stat st = {};
+    if (stat(mounted.c_str(), &st) == 0) {
+        return S_ISDIR(st.st_mode);
     }
-    return true; // Folder already exists
+    return mkdir(mounted.c_str(), 0775) == 0;
 }

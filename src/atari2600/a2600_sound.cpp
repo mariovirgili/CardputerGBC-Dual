@@ -5,6 +5,7 @@
 #include <M5Cardputer.h>
 #include <string.h>
 
+#include "cardputer/CardputerAudio.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "share/emu_log_cpp.h"
@@ -21,6 +22,8 @@ static int s_sampleRate = 31400;
 
 static TaskHandle_t s_audioTask = nullptr;
 static int16_t* s_ring = nullptr;
+static int16_t* s_playBuf[cardputer_audio::kRuntimeAudioBufferCount] = { nullptr, nullptr, nullptr };
+static uint8_t s_playSlot = 0;
 static int s_ringSize = 0;
 static volatile int s_ringRead = 0;
 static volatile int s_ringWrite = 0;
@@ -63,65 +66,24 @@ static void a2600_audio_task(void* arg)
 {
     (void)arg;
 
-    int16_t local1[kChunkSamples];
-    int16_t local2[kChunkSamples];
-
     while (s_running) {
         if (s_ringCount == 0) {
             vTaskDelay(pdMS_TO_TICKS(1));
             continue;
         }
 
-        const int queued = M5Cardputer.Speaker.isPlaying(kChannel);
-
-        if (queued <= 0) {
-            const int n1 = a2600_ring_pop(local1, kChunkSamples);
-            if (n1 > 0) {
-                M5Cardputer.Speaker.playRaw(
-                    local1,
-                    (size_t)n1,
-                    (uint32_t)s_sampleRate,
-                    false,
-                    1,
-                    kChannel,
-                    false
-                );
-            }
-
-            const int n2 = a2600_ring_pop(local2, kChunkSamples);
-            if (n2 > 0) {
-                M5Cardputer.Speaker.playRaw(
-                    local2,
-                    (size_t)n2,
-                    (uint32_t)s_sampleRate,
-                    false,
-                    1,
-                    kChannel,
-                    false
-                );
-            }
-
-            if (n1 == 0 && n2 == 0) {
-                vTaskDelay(pdMS_TO_TICKS(1));
-            }
+        if (M5Cardputer.Speaker.isPlaying(kChannel) >= 2 ||
+            !s_playBuf[0] || !s_playBuf[1] || !s_playBuf[2]) {
+            vTaskDelay(pdMS_TO_TICKS(1));
+            continue;
         }
-        else if (queued == 1) {
-            const int n = a2600_ring_pop(local1, kChunkSamples);
-            if (n > 0) {
-                M5Cardputer.Speaker.playRaw(
-                    local1,
-                    (size_t)n,
-                    (uint32_t)s_sampleRate,
-                    false,
-                    1,
-                    kChannel,
-                    false
-                );
-            } else {
-                vTaskDelay(pdMS_TO_TICKS(1));
-            }
-        }
-        else {
+
+        int16_t* local = s_playBuf[s_playSlot];
+        const int n = a2600_ring_pop(local, kChunkSamples);
+        if (n > 0) {
+            cardputer_audio::queueRuntimeAudioBuffer(
+                s_playBuf, s_playSlot, (size_t)n, (uint32_t)s_sampleRate, false, kChannel);
+        } else {
             vTaskDelay(pdMS_TO_TICKS(1));
         }
     }
@@ -142,21 +104,10 @@ void a2600_sound_init(int sampleRate)
         s_sampleRate = sampleRate;
     }
 
-    auto cfg = M5Cardputer.Speaker.config();
-    cfg.sample_rate = s_sampleRate;
-    cfg.stereo = false;
-    cfg.dma_buf_len = 512;
-    cfg.dma_buf_count = 8;
-    cfg.task_priority = 4;
-    cfg.task_pinned_core = 0;
-    M5Cardputer.Speaker.config(cfg);
-
-    if (!M5Cardputer.Speaker.isRunning()) {
-        M5Cardputer.Speaker.begin();
-    }
-
-    M5Cardputer.Speaker.setVolume(80);
+    cardputer_audio::beginSpeaker(s_sampleRate, false, 512, 8, 80, "a2600", 4, 0);
     M5Cardputer.Speaker.stop(kChannel);
+    cardputer_audio::allocRuntimeAudioBuffers(s_playBuf, kChunkSamples, "a2600");
+    s_playSlot = 0;
 
     s_ringSize = kRingSamples;
     s_ring = (int16_t*)malloc((size_t)s_ringSize * sizeof(int16_t));
@@ -209,6 +160,7 @@ void a2600_sound_shutdown(void)
     }
 
     M5Cardputer.Speaker.stop(kChannel);
+    cardputer_audio::freeRuntimeAudioBuffers(s_playBuf);
 
     free(s_ring);
     s_ring = nullptr;

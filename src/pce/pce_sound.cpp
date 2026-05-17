@@ -3,6 +3,7 @@
 
 #include "pce_sound.h"
 #include <M5Cardputer.h>
+#include "cardputer/CardputerAudio.h"
 #include "esp_heap_caps.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -15,7 +16,7 @@ extern "C" {
 static constexpr int kChannel = 0;
 static constexpr size_t kNumFrames = 62;
 static constexpr size_t kNumSamples = kNumFrames;
-static int16_t* s_buf[2] = { nullptr, nullptr };
+static int16_t* s_buf[cardputer_audio::kRuntimeAudioBufferCount] = { nullptr, nullptr, nullptr };
 static uint8_t  s_flip   = 0;
 static TaskHandle_t s_audioTaskHandle = nullptr;
 static volatile bool s_paused  = false;
@@ -45,17 +46,8 @@ static void pce_audio_task(void* arg)
     int16_t* out = s_buf[s_flip];
     psg_update(out, (int)kNumFrames, 0xFF);
 
-    (void)M5Cardputer.Speaker.playRaw(
-      (const int16_t*)out,
-      kNumSamples,
-      (uint32_t)s_sampleRate,
-      false,                    // mono=false
-      1,                        // repeat
-      kChannel,
-      false                     // do not cut what is already playing
-    );
-
-    s_flip ^= 1;
+    cardputer_audio::queueRuntimeAudioBuffer(
+      s_buf, s_flip, kNumSamples, (uint32_t)s_sampleRate, false, kChannel);
   }
 
   EMU_LOG("[PCE][AUDIO] task exit\n");
@@ -72,31 +64,13 @@ extern "C" bool pce_sound_init(int sample_rate)
 
   s_sampleRate = sample_rate > 0 ? sample_rate : s_sampleRate;
 
-  // Buffers audio
-  for (int i = 0; i < 2; ++i) {
-    s_buf[i] = (int16_t*)heap_caps_calloc(
-      kNumSamples, sizeof(int16_t),
-      MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT
-    );
-    if (!s_buf[i]) {
-      EMU_LOG("[PCE][AUDIO] buffer alloc failed (%d)\n", i);
-      return false;
-    }
+  cardputer_audio::freeRuntimeAudioBuffers(s_buf);
+  if (!cardputer_audio::allocRuntimeAudioBuffers(s_buf, kNumSamples, "pce")) {
+    EMU_LOG("[PCE][AUDIO] buffer alloc failed\n");
+    return false;
   }
 
-  auto cfg = M5Cardputer.Speaker.config();
-  cfg.sample_rate       = s_sampleRate;
-  cfg.stereo            = false;
-  cfg.dma_buf_len       = 512;
-  cfg.dma_buf_count     = 8;
-  cfg.task_priority     = 6;
-  cfg.task_pinned_core  = 0;
-  M5Cardputer.Speaker.config(cfg);
-
-  if (!M5Cardputer.Speaker.isRunning()) {
-    M5Cardputer.Speaker.begin();
-  }
-  M5Cardputer.Speaker.setVolume(80);
+  cardputer_audio::beginSpeaker(s_sampleRate, false, 512, 8, 80, "pce", 6, 0);
 
   M5Cardputer.Speaker.stop(kChannel);
 
@@ -141,10 +115,5 @@ extern "C" void pce_sound_deinit(void)
 
   M5Cardputer.Speaker.stop(kChannel);
 
-  for (int i = 0; i < 2; ++i) {
-    if (s_buf[i]) {
-      heap_caps_free(s_buf[i]);
-      s_buf[i] = nullptr;
-    }
-  }
+  cardputer_audio::freeRuntimeAudioBuffers(s_buf);
 }

@@ -299,7 +299,7 @@ bool prosystem_Load(const char *buffer, bool fast_saves)
          return false;
    }
    offset += 16;
-   buffer[offset++];
+   offset++;
 
    for(index = 0; index < 4; index++);
    offset += 4;

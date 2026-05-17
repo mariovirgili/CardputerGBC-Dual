@@ -8,7 +8,7 @@
 #include "genesis_display.h"
 #include "genesis_save.h"
 #include "share/utils.h"
-#include <Arduino.h>
+#include "compat/arduino_compat.h"
 #include <M5Cardputer.h>
 
 static uint32_t frame_count = 0;
@@ -183,7 +183,7 @@ static void run_one_frame() {
     last_fps_log_time = now;
     frame_count = 0;
     // Log FPS + heap RAM 
-    EMU_LOG("[FPS] ~%.1f fps | heap: %u\n", fps, heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
+    EMU_LOG("[FPS] ~%.1f fps | heap: %lu\n", fps, (unsigned long)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
   }
 }
 
@@ -203,7 +203,10 @@ extern "C" void run_genesis(const uint8_t* rom, size_t len, const char* rom_name
 
   // Save
   gwenesis_init_sram((uint8_t*)rom, (uint32_t)len);
-  EMU_LOG("[SRAM] enabled=%d start=%08X end=%08X\n", SRAM_ENABLED, SRAM_START, SRAM_END);
+  EMU_LOG("[SRAM] enabled=%d start=%08lX end=%08lX\n",
+          SRAM_ENABLED,
+          (unsigned long)SRAM_START,
+          (unsigned long)SRAM_END);
   genesis_save_init(rom_name);
   genesis_save_load();
 

@@ -3,6 +3,7 @@
 #include "CardputerView.h"
 #include "CardputerInput.h"
 #include "share/emu_log_cpp.h"
+#include "share/boot_log.h"
 #include "Welcome.h"
 
 M5GFX* CardputerView::Display = nullptr;
@@ -234,7 +235,10 @@ void CardputerView::welcome() {
     const int titleY = 65;
 
     if (!M5Cardputer.Speaker.isRunning()) {
-        M5Cardputer.Speaker.begin();
+        bool ok = M5Cardputer.Speaker.begin();
+        BOOT_LOG("AUDIO", "welcome speaker begin ok=%d running=%d",
+                 ok ? 1 : 0,
+                 M5Cardputer.Speaker.isRunning() ? 1 : 0);
     }
     M5Cardputer.Speaker.setVolume(70);
 

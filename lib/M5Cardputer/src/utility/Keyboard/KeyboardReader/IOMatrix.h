@@ -5,7 +5,7 @@
  */
 #pragma once
 #include "KeyboardReader.h"
-#include <Arduino.h>
+#include "compat/arduino_compat.h"
 #include <vector>
 
 struct Chart_t {

@@ -1,4 +1,4 @@
-#include <Arduino.h> 
+#include "compat/arduino_compat.h" 
 #include <string.h>
 #include <M5Cardputer.h>
 #include "run_ngp.h"

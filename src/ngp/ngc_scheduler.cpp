@@ -3,7 +3,7 @@
 #include "ngc_input.h"
 #include "ngc_display.h"
 #include <M5Cardputer.h>
-#include <Arduino.h>
+#include "compat/arduino_compat.h"
 
 static TaskHandle_t s_taskInput  = nullptr;
 static TaskHandle_t s_taskAudio  = nullptr;

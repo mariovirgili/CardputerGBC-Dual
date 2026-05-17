@@ -1,8 +1,11 @@
-set(COMPONENT_SRCDIRS "src")
-set(COMPONENT_ADD_INCLUDEDIRS ".")
-set(COMPONENT_REQUIRES "retro-go")
-register_component()
-rg_setup_compile_options(
+file(GLOB SNES9X_SRCS "src/*.c")
+
+idf_component_register(
+    SRCS ${SNES9X_SRCS}
+    INCLUDE_DIRS "." "src"
+)
+
+target_compile_options(${COMPONENT_LIB} PRIVATE
     -Wno-unused-function
     -Wno-unused-variable
     -Wno-array-bounds

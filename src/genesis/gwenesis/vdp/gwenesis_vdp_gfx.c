@@ -58,7 +58,7 @@ uint16_t *CRAM565_SH = NULL;   // shadow
 uint16_t *CRAM565_HI = NULL;   // highlight
 
 // Define screen buffers: original and scaled for host RGB
-unsigned char *screen, *scaled_screen;
+static unsigned char *screen, *scaled_screen;
 
 // Define screen buffers for embedded 565 format
 // static uint8_t *screen_buffer_line=0;

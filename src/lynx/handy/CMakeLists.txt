@@ -1,8 +1,11 @@
-set(COMPONENT_SRCDIRS ".")
-set(COMPONENT_ADD_INCLUDEDIRS ".")
-set(COMPONENT_REQUIRES "retro-go")
-register_component()
-rg_setup_compile_options(
+file(GLOB HANDY_SRCS "*.cpp")
+
+idf_component_register(
+    SRCS ${HANDY_SRCS}
+    INCLUDE_DIRS "."
+)
+
+target_compile_options(${COMPONENT_LIB} PRIVATE
     -O2
     -fno-rtti
     -fno-exceptions

@@ -3,7 +3,7 @@
 #ifndef VERTICAL_SELECTOR_H
 #define VERTICAL_SELECTOR_H
 
-#include <Arduino.h>
+#include "compat/arduino_compat.h"
 #include <string>
 #include <vector>
 #include <cardputer/CardputerView.h>

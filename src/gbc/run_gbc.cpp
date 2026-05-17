@@ -1,4 +1,4 @@
-#include <Arduino.h>
+#include "compat/arduino_compat.h"
 extern "C" {
   #include "gnuboy/gnuboy.h"
 }
@@ -7,6 +7,9 @@ extern "C" {
 #include "gbc_sound.h"
 #include "gbc_input.h"
 #include "gbc_save.h"
+#include "esp_heap_caps.h"
+#include "esp_system.h"
+#include "esp_timer.h"
 #include "share/utils.h"
 #include "share/emu_log_cpp.h"
 
@@ -138,7 +141,7 @@ void run_gbc(const uint8_t* romData, size_t romLen, const char* romPathOrName) {
         uint32_t nowMs = millis();
         if (nowMs - lastFpsMs >= 1000) {
             float fps = (frameCount * 1000.0f) / (nowMs - lastFpsMs);
-            EMU_LOG("[GBC] FPS: %.2f | HEAP %u\n", fps, esp_get_free_heap_size());
+            EMU_LOG("[GBC] FPS: %.2f | HEAP %lu\n", fps, (unsigned long)esp_get_free_heap_size());
             frameCount = 0;
             lastFpsMs  = nowMs;
         }

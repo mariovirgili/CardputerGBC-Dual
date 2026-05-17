@@ -2,9 +2,10 @@
 extern "C" {
   #include "oswan/WSApu.h" 
 }
-#include <Arduino.h>
+#include "compat/arduino_compat.h"
 #include <M5Cardputer.h>
 #include <string.h>
+#include "cardputer/CardputerAudio.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
@@ -26,9 +27,7 @@ static constexpr int kDefaultPeriodMs = WS_AUDIO_PERIOD_MS;
 static int           g_chunk       = 0; 
 static constexpr int kChannel      = 0;
 static constexpr int kMaxChunk     = 320;
-static int16_t* s_buf0 = NULL;
-static int16_t* s_buf1 = NULL;
-static int16_t* s_buf[2] = { NULL, NULL };
+static int16_t* s_buf[cardputer_audio::kRuntimeAudioBufferCount] = { NULL, NULL, NULL };
 static uint8_t  s_flip   = 0;
 static int16_t  s_lastSample = 0;
 #ifdef BENCHMARK_LOGS
@@ -119,7 +118,20 @@ static inline void build_block_from_apu(int16_t* dst) {
   }
 }
 
-static inline void queue_block(const int16_t* pcm) {
+static inline bool queue_block(const int16_t* pcm) {
+  const size_t depth = M5Cardputer.Speaker.isPlaying(kChannel);
+  if (depth >= 2) {
+    cardputer_audio::recordQueueDiag((size_t)g_chunk,
+                                     (uint32_t)g_sample_rate,
+                                     false,
+                                     kChannel,
+                                     depth,
+                                     false,
+                                     false,
+                                     true);
+    return false;
+  }
+
   const bool ok = M5Cardputer.Speaker.playRaw(
     pcm,
     (size_t)g_chunk,
@@ -129,11 +141,20 @@ static inline void queue_block(const int16_t* pcm) {
     kChannel,
     false // dont stop current sound
   );
+  cardputer_audio::recordQueueDiag((size_t)g_chunk,
+                                   (uint32_t)g_sample_rate,
+                                   false,
+                                   kChannel,
+                                   depth,
+                                   ok,
+                                   false,
+                                   false);
   if (!ok) WS_SOUND_BENCH_INC(s_statPlayFails);
 #ifdef BENCHMARK_LOGS
   size_t queued = M5Cardputer.Speaker.isPlaying(kChannel);
   s_statPostQueueDepth[queued < 2 ? queued : 2]++;
 #endif
+  return ok;
 }
 
 // -----------------------------------------------------------------------------
@@ -147,34 +168,12 @@ extern "C" void ws_sound_init(int sample_rate_hz) {
     g_chunk = kMaxChunk;
   }
 
-  if (s_buf0 || s_buf1) {
-          free(s_buf0);
-          free(s_buf1);
-          s_buf0 = s_buf1 = NULL;
-          s_buf[0] = s_buf[1] = NULL;
-      }
-
-  s_buf0 = (int16_t*)malloc(kMaxChunk * sizeof(int16_t));
-  s_buf1 = (int16_t*)malloc(kMaxChunk * sizeof(int16_t));
-  memset(s_buf0, 0, kMaxChunk * sizeof(int16_t));
-  memset(s_buf1, 0, kMaxChunk * sizeof(int16_t));
-  s_buf[0] = s_buf0;
-  s_buf[1] = s_buf1;
-
-
-  if (!M5Cardputer.Speaker.isRunning()) {
-    auto cfg = M5Cardputer.Speaker.config();
-    cfg.sample_rate       = g_sample_rate;
-    cfg.stereo            = false;  // sortie mono
-    cfg.dma_buf_len       = WS_AUDIO_DMA_LEN;
-    cfg.dma_buf_count     = WS_AUDIO_DMA_COUNT;
-    cfg.task_priority     = 4;
-    cfg.task_pinned_core  = 0;
-    M5Cardputer.Speaker.config(cfg);
-    M5Cardputer.Speaker.begin();
+  cardputer_audio::freeRuntimeAudioBuffers(s_buf);
+  if (!cardputer_audio::allocRuntimeAudioBuffers(s_buf, kMaxChunk, "ws")) {
+    return;
   }
 
-  M5Cardputer.Speaker.setVolume(80);
+  cardputer_audio::beginSpeaker(g_sample_rate, false, WS_AUDIO_DMA_LEN, WS_AUDIO_DMA_COUNT, 80, "ws", 4, 0);
   s_flip = 0;
   s_lastSample = 0;
 #ifdef BENCHMARK_LOGS
@@ -203,9 +202,12 @@ extern "C" void ws_sound_set_volume(uint8_t vol) {
 extern "C" void ws_sound_shutdown(void) {
   ws_sound_stop_task();
   M5Cardputer.Speaker.stop(kChannel);
+  cardputer_audio::freeRuntimeAudioBuffers(s_buf);
 }
 
 extern "C" void ws_sound_frame(void) {
+  if (!s_buf[0] || !s_buf[1] || !s_buf[2]) return;
+
   size_t queued = M5Cardputer.Speaker.isPlaying(kChannel);
   WS_SOUND_BENCH_MAX(s_statMaxQueueDepth, queued);
 #ifdef BENCHMARK_LOGS
@@ -216,14 +218,16 @@ extern "C" void ws_sound_frame(void) {
     // Amorcer 2 blocs
     for (int i = 0; i < 2; ++i) {
       build_block_from_apu(s_buf[s_flip]);
-      queue_block(s_buf[s_flip]);
-      s_flip ^= 1;
+      if (queue_block(s_buf[s_flip])) {
+        s_flip = (uint8_t)((s_flip + 1) % cardputer_audio::kRuntimeAudioBufferCount);
+      }
     }
   } else if (queued == 1) {
     // Maintenir 2 blocs
     build_block_from_apu(s_buf[s_flip]);
-    queue_block(s_buf[s_flip]);
-    s_flip ^= 1;
+    if (queue_block(s_buf[s_flip])) {
+      s_flip = (uint8_t)((s_flip + 1) % cardputer_audio::kRuntimeAudioBufferCount);
+    }
   } else {
     // queued >= 2
   }

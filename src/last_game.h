@@ -4,7 +4,7 @@
 
 #include <string>
 #include <algorithm>
-#include <Preferences.h>
+#include "compat/preferences_compat.h"
 #include "cardputer/SdService.h"
 #include "cardputer/CardputerView.h"
 #include "cardputer/CardputerInput.h"
@@ -24,15 +24,15 @@ static inline std::string getLastGameFromNvs(
 ) {
     Preferences prefs;
     prefs.begin("cardputer_emu", true);
-    String lastGame = prefs.getString("last_game", "");
+    std::string lastGame = prefs.getString("last_game", "");
     prefs.end();
 
     // No last game saved
-    if (lastGame.isEmpty()) {
+    if (lastGame.empty()) {
         return "";
     }
 
-    std::string path = lastGame.c_str();
+    std::string path = lastGame;
 
     display.topBar("GETTING LAST GAME", false, false);
     display.subMessage("Loading...", 0);
@@ -70,14 +70,14 @@ static inline std::string getRomFolderFromNvs(
 ) {
     Preferences prefs;
     prefs.begin("cardputer_emu", true);
-    String lastGame = prefs.getString("last_game", "");
+    std::string lastGame = prefs.getString("last_game", "");
     prefs.end();
 
-    if (lastGame.isEmpty()) {
+    if (lastGame.empty()) {
         return "";
     }
 
-    std::string path = lastGame.c_str();
+    std::string path = lastGame;
 
     // Get the folder
     size_t slash = path.find_last_of("/\\");

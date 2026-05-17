@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: MIT
  */
 #include "IOMatrix.h"
-#include <Arduino.h>
+#include "compat/arduino_compat.h"
 
 void IOMatrixKeyboardReader::set_output(const std::vector<int>& pinList, uint8_t output)
 {

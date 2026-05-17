@@ -6,7 +6,7 @@
 #pragma once
 #include "KeyboardReader/KeyboardReader.h"
 #include "Keyboard_def.h"
-#include <Arduino.h>
+#include "compat/arduino_compat.h"
 #include <vector>
 #include <memory>
 

@@ -28,8 +28,11 @@
 #define RETRO_COMPAT_IMPLEMENTATION
 #include "ngp/race/retro_compat.h"
 #include "esp_task_wdt.h"
+#include "esp_heap_caps.h"
+#include "nvs_flash.h"
 #include "share/input.h"
 #include "share/emu_log_cpp.h"
+#include "share/boot_log.h"
 
 static constexpr size_t COLECO_BIOS_SIZE = 8192;
 
@@ -171,44 +174,75 @@ static const char* colecoFlashStatusText(ColecoFlashStatus st) {
     default: return "OK";
   }
 }
-
 #if defined(CONFIG_BT_ENABLED)
 extern "C" bool btInUse(void) {
   return false;
 }
 #endif
 
-void setup() {
-  // Set high priority for the current task (where the emulator will run)
-  vTaskPrioritySet(NULL, 19);
+static void initialize_nvs()
+{
+  esp_err_t err = nvs_flash_init();
+  if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+    ESP_ERROR_CHECK(nvs_flash_erase());
+    err = nvs_flash_init();
+  }
+  ESP_ERROR_CHECK(err);
+}
+extern "C" void app_main(void) {
+  BOOT_LOG("BOOT", "app_main entered");
+  initialize_nvs();
+  BOOT_LOG("BOOT", "NVS initialized");
+
+  // Keep the emulator task below the audio/I2S service tasks. A very high
+  // priority starves M5Unified's speaker task and causes broken, sporadic audio.
+  vTaskPrioritySet(NULL, 5);
+  BOOT_LOG("BOOT", "main task priority set=5");
 
   // Copied from Gameboy Enhanced Firmware setup
 #ifdef DISABLE_WATCHDOGS
-  M5.Log.printf("Disabling all WatchDogs...\n");
-  esp_task_wdt_deinit(); // fully disables and removes TWDT
-  disableCore0WDT(); // disable WDT
-  disableCore1WDT(); // disable WDT
-  esp_task_wdt_delete(NULL); // disable WDT on this therad - legacy
+  BOOT_LOG("BOOT", "disabling task watchdog");
+  esp_err_t currentTaskWdt = esp_task_wdt_status(NULL);
+  if (currentTaskWdt == ESP_OK) {
+    BOOT_LOG("BOOT", "current task is in TWDT, deleting");
+    esp_task_wdt_delete(NULL);
+  } else {
+    BOOT_LOG("BOOT", "current task not in TWDT status=%d", (int)currentTaskWdt);
+  }
+  esp_err_t deinitWdt = esp_task_wdt_deinit(); // fully disables and removes TWDT
+  BOOT_LOG("BOOT", "task watchdog deinit status=%d", (int)deinitWdt);
 #endif
 
   auto cfg = M5.config();
   cfg.output_power = true;
+  BOOT_LOG("HW", "M5Cardputer.begin start");
   M5Cardputer.begin(cfg);
+  BOOT_LOG("HW", "M5Cardputer.begin done");
+  BOOT_LOG("INPUT", "creating CardputerInput");
   CardputerInput input;
+  BOOT_LOG("SD", "creating SdService");
   SdService sd;
+  BOOT_LOG("DISPLAY", "creating CardputerView");
   CardputerView display;
+  BOOT_LOG("DISPLAY", "initialize start");
   display.initialize();
+  BOOT_LOG("DISPLAY", "initialize done");
 
   // SD
+  BOOT_LOG("SD", "mount start");
+  unsigned sdRetry = 0;
   while (!sd.begin()) {
+    BOOT_LOG("SD", "mount failed retry=%u", ++sdRetry);
     display.topBar("SD CARD FOR ROMS", false, false);
     display.subMessage("No SD card found", 1000);
     display.subMessage("Insert SD card", 0);
   }
+  BOOT_LOG("SD", "mounted");
 
   std::string romPath;
   auto romFolder = getRomFolderFromNvs(display, input, sd);
   romFolder = romFolder.empty() ? "/" : romFolder;
+  BOOT_LOG("MENU", "ROM folder='%s'", romFolder.c_str());
 
   if (isQuittingGame()) {
     romPath = getRomPath(sd, display, input, romFolder, true);
@@ -226,20 +260,26 @@ void setup() {
     }
   }
   EMU_LOG("Selected ROM: %s\n", romPath.c_str());
+  BOOT_LOG("MENU", "selected ROM='%s'", romPath.c_str());
 
   display.topBar("COPYING ROM TO FLASH", false, false);
   display.subMessage("Loading...", 0);
   auto ext = getRomType(romPath);
+  BOOT_LOG("ROM", "type=%d", (int)ext);
   
   // Find the rom partition (SPIFFS)
+  BOOT_LOG("FLASH", "finding ROM partition");
   const esp_partition_t* romPart = findRomPartition("spiffs");
   if (!romPart) {
+    BOOT_LOG("FLASH", "ROM partition not found");
     while (1) {
       display.topBar("ERROR", false, false);
       display.subMessage("No ROM partition", 0);
       delay(1500);
     }
   }
+  BOOT_LOG("FLASH", "ROM partition offset=0x%08lx size=%lu",
+           (unsigned long)romPart->address, (unsigned long)romPart->size);
 
   // Copy the ROM file to the partition
   size_t mappedSize = 0;
@@ -247,6 +287,7 @@ void setup() {
   size_t xipRomSize = 0;
   ColecoFlashStatus colecoStatus = ColecoFlashStatus::Ok;
   bool copiedToFlash = false;
+  BOOT_LOG("FLASH", "copy to partition start");
   if (ext == ROM_TYPE_COLECO) {
     colecoStatus = copyColecoBundleToPartition(
         romPath, romPart, &mappedSize, &xipRomOffset, &xipRomSize,
@@ -257,6 +298,12 @@ void setup() {
         romPath.c_str(), romPart, &mappedSize, CardputerView::copyProgress, &display);
     xipRomSize = mappedSize;
   }
+  BOOT_LOG("FLASH", "copy done ok=%d mapped=%lu rom_offset=%lu rom_size=%lu status=%d",
+           copiedToFlash ? 1 : 0,
+           (unsigned long)mappedSize,
+           (unsigned long)xipRomOffset,
+           (unsigned long)xipRomSize,
+           (int)colecoStatus);
 
   if (!copiedToFlash) {
     if (ext == ROM_TYPE_COLECO && colecoStatus != ColecoFlashStatus::TooLarge) {
@@ -294,17 +341,22 @@ void setup() {
     }
   }
 
+  BOOT_LOG("INPUT", "flush input before XIP");
   input.flushInput(10); // flush any input just in case
 
   // Map the ROM partition in XIP
+  BOOT_LOG("XIP", "map start size=%lu", (unsigned long)mappedSize);
   if (xip_map_rom_partition("spiffs", mappedSize) != 0) {
+    BOOT_LOG("XIP", "map failed");
     while (1) {
       display.topBar("ERROR", false, false);
       display.subMessage("Map ROM failed", 0);
       delay(1500);
     }
   }
+  BOOT_LOG("XIP", "map done base=%p size=%lu", get_rom_ptr(), (unsigned long)get_rom_size());
   // Register the XIP VFS
+  BOOT_LOG("XIP", "register VFS");
   vfs_xip_register();
   const uint8_t* xipBase = get_rom_ptr();
   const uint8_t* xipRomPtr = xipBase ? xipBase + xipRomOffset : nullptr;
@@ -318,11 +370,15 @@ void setup() {
   display.showKeymapping(numButtons);
 
   // Wait for key press or show tips
+  BOOT_LOG("INPUT", "waiting for start key");
   uint32_t lastUpdate = millis();
   int state = 0;
   for (;;) {
     char key = input.readChar();
-    if (key != KEY_NONE) break;
+    if (key != KEY_NONE) {
+      BOOT_LOG("INPUT", "start key received code=%d", (int)key);
+      break;
+    }
 
     // Show tips
     uint32_t now = millis();
@@ -350,10 +406,13 @@ void setup() {
   std::string romName = (pos == std::string::npos) ? romPath : romPath.substr(pos + 1);
 
   // Initialize I2C M5Stack JoyV2 if any
+  BOOT_LOG("INPUT", "external I2C joypad detect start");
   share::detectI2cPad();
+  BOOT_LOG("INPUT", "external I2C joypad detect done");
   
-  EMU_LOG("HEAP BEFORE EMU: %u bytes\n", esp_get_free_heap_size());
-  EMU_LOG("MAX BLOCK BEFORE EMU: %u bytes\n", heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
+  EMU_LOG("HEAP BEFORE EMU: %lu bytes\n", (unsigned long)esp_get_free_heap_size());
+  EMU_LOG("MAX BLOCK BEFORE EMU: %lu bytes\n", (unsigned long)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
+  BOOT_LOG("EMU", "launch ext=%d name='%s'", (int)ext, romName.c_str());
 
   // Run the emulator
   if (ext == ROM_TYPE_NES) {
@@ -426,6 +485,3 @@ void setup() {
   }
 }
 
-void loop() {
-  /* run_emulator is blocking */
-}

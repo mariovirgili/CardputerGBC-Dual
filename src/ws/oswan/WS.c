@@ -16,6 +16,7 @@ $Rev: 71 $
 //#include "entry.h"
 #include "WSRender.h"
 #include "WS.h"
+#include "WSFileio.h"
 #include "WSApu.h"
 #include "WSInput.h"
 #include "WSPdata.h"

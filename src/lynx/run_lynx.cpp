@@ -1,12 +1,16 @@
 #include "run_lynx.h"
 
-#include <Arduino.h>
+#include "compat/arduino_compat.h"
 #include "handy/handy.h"
 #include "lynx_display.h"
 #include "lynx_input.h"
 #include "lynx_sound.h"
 #include "share/utils.h"
 #include "share/emu_log_cpp.h"
+
+#include "esp_heap_caps.h"
+#include "esp_system.h"
+#include "esp_timer.h"
 
 static CSystem*  s_lynx     = nullptr;
 static uint16_t* s_fb       = nullptr;
@@ -160,8 +164,8 @@ void run_lynx(const uint8_t* romData, size_t romLen, const char* romName)
         uint32_t nowMs = millis();
         if (nowMs - lastLogMs >= 1000) {
             float fps = (frameCount * 1000.0f) / (nowMs - lastLogMs);
-            EMU_LOG("[LYNX] FPS: %.2f | HEAP %u\n",
-                   fps, esp_get_free_heap_size());
+            EMU_LOG("[LYNX] FPS: %.2f | HEAP %lu\n",
+                   fps, (unsigned long)esp_get_free_heap_size());
             frameCount = 0;
             lastLogMs  = nowMs;
         }

@@ -2,7 +2,7 @@
 #include <string.h>
 #include <stdio.h>
 #include "esp_heap_caps.h"
-#include <Arduino.h>
+#include "compat/arduino_compat.h"
 #include <M5Cardputer.h>
 #include "share/emu_log_cpp.h"
 
@@ -206,7 +206,7 @@ extern "C" void genesis_display_start(void) {
   if (!g_scanQ) {
     g_scanQ = xQueueCreate(SCANLINE_QUEUE_DEPTH, sizeof(ScanMsg));
     if (!g_scanQ) {
-      EMU_LOG("[DISPLAY] queue create failed\n");
+      EMU_LOG("[GENESIS][VIDEO] queue create failed\n");
       return;
     }
   }
@@ -217,7 +217,7 @@ extern "C" void genesis_display_start(void) {
       0 /* core  */
     );
     if (ok != pdPASS) {
-      EMU_LOG("[DISPLAY] task create failed\n");
+      EMU_LOG("[GENESIS][VIDEO] task create failed\n");
       vQueueDelete(g_scanQ); g_scanQ = nullptr;
     }
   }

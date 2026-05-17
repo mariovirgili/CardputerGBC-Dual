@@ -23,6 +23,7 @@ __license__ = "GPLv3"
 
 #define GW_BIT(v, idx) (((v) >> (idx)) & 1)
 #define BITS(v, idx, n) (((v) >> (idx)) & ((1 << (n)) - 1))
+#define VRAM gwenesis_VRAM
 
 // VDP registers
 #define REG0_DISABLE_DISPLAY (gwenesis_vdp_regs[0] & 1)

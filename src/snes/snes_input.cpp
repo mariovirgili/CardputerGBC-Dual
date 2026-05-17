@@ -1,7 +1,7 @@
 #include "snes_input.h"
 
 #include <M5Cardputer.h>
-#include <Arduino.h>
+#include "compat/arduino_compat.h"
 #include "share/input.h"
 #include "esp_heap_caps.h"
 

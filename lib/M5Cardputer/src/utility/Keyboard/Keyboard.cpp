@@ -8,7 +8,7 @@
 #include "KeyboardReader/KeyboardReader.h"
 #include "KeyboardReader/IOMatrix.h"
 #include "KeyboardReader/TCA8418.h"
-#include <Arduino.h>
+#include "compat/arduino_compat.h"
 #include <M5Unified.h>
 #include <memory>
 

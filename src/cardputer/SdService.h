@@ -3,11 +3,11 @@
 #ifndef SD_SERVICE_H
 #define SD_SERVICE_H
 
-#include <SD.h>
-#include <SPI.h>
 #include <vector>
 #include <string>
 #include <unordered_map>
+
+#include "sdmmc_cmd.h"
 
 static constexpr int SD_SCK  = 40;
 static constexpr int SD_MISO = 39;
@@ -16,9 +16,11 @@ static constexpr int SD_CS   = 12;
 
 class SdService {
 private:
-    SPIClass sdCardSPI;
     bool sdCardMounted = false;
+    sdmmc_card_t* card = nullptr;
     std::unordered_map<std::string, std::vector<std::string>> cachedDirectoryElements;
+
+    std::string toMountedPath(const std::string& path) const;
 public:
     SdService();
 

@@ -1,6 +1,7 @@
 #pragma GCC optimize ("Os")
 
 #include <M5Cardputer.h>
+#include "cardputer/CardputerAudio.h"
 
 extern "C" {
   #include <osd.h>
@@ -19,28 +20,17 @@ static constexpr int kChannel    = 0;
 static void (*s_audio_cb)(void *buffer, int length) = nullptr;
 
 // Double buffer mono (Nofrendo to HP)
-static int16_t* s_buf[2] = { nullptr, nullptr };
+static int16_t* s_buf[cardputer_audio::kRuntimeAudioBufferCount] = { nullptr, nullptr, nullptr };
 static uint8_t s_flip = 0;
 
 extern "C" {
 
 int osd_init_sound() {
-  s_buf[0] = (int16_t*) heap_caps_calloc(kChunk, sizeof(int16_t), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-  s_buf[1] = (int16_t*) heap_caps_calloc(kChunk, sizeof(int16_t), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+  cardputer_audio::freeRuntimeAudioBuffers(s_buf);
+  cardputer_audio::allocRuntimeAudioBuffers(s_buf, kChunk, "nes");
+  s_flip = 0;
 
-  auto cfg = M5Cardputer.Speaker.config();
-  cfg.sample_rate    = kSampleRate;
-  cfg.stereo         = false;   // mono
-  cfg.dma_buf_len    = 512;     // buffers DMA
-  cfg.dma_buf_count  = 8;
-  cfg.task_priority  = 4;       // high priority
-  cfg.task_pinned_core = 0;     // pin to core 0 (avoid conflict with main task)
-  M5Cardputer.Speaker.config(cfg);
-
-  if (!M5Cardputer.Speaker.isRunning()) {
-    M5Cardputer.Speaker.begin();
-  }
-  M5Cardputer.Speaker.setVolume(80);// 0..255
+  cardputer_audio::beginSpeaker(kSampleRate, false, 512, 8, 80, "nes", 4, 0);
 
   M5Cardputer.Speaker.stop(kChannel);
   return 0;
@@ -49,6 +39,7 @@ int osd_init_sound() {
 void osd_stopsound() {
   s_audio_cb = nullptr;
   M5Cardputer.Speaker.stop(kChannel);
+  cardputer_audio::freeRuntimeAudioBuffers(s_buf);
 }
 
 void osd_setsound(void (*playfunc)(void *buffer, int length)) {
@@ -62,6 +53,7 @@ void osd_getsoundinfo(sndinfo_t *info) {
 
 void do_audio_frame() {
   if (!s_audio_cb) return;
+  if (!s_buf[0] || !s_buf[1] || !s_buf[2]) return;
 
   size_t st = M5Cardputer.Speaker.isPlaying(kChannel);
 
@@ -69,12 +61,7 @@ void do_audio_frame() {
   if (st == 0) {
     for (int i = 0; i < 2; ++i) {
       s_audio_cb((void*)s_buf[s_flip], kChunk);
-      (void)M5Cardputer.Speaker.playRaw(
-        (const int16_t*)s_buf[s_flip], (size_t)kChunk,
-        (uint32_t)kSampleRate, false /*mono*/,
-        1 /*repeat*/, kChannel, false /*stop_current_sound*/
-      );
-      s_flip ^= 1;
+      cardputer_audio::queueRuntimeAudioBuffer(s_buf, s_flip, (size_t)kChunk, (uint32_t)kSampleRate, false, kChannel);
     }
     return;
   }
@@ -82,12 +69,7 @@ void do_audio_frame() {
   // if we have space, we add exactly 1 chunk
   if (st == 1) {
     s_audio_cb((void*)s_buf[s_flip], kChunk);
-    (void)M5Cardputer.Speaker.playRaw(
-      (const int16_t*)s_buf[s_flip], (size_t)kChunk,
-      (uint32_t)kSampleRate, false /*mono*/,
-      1 /*repeat*/, kChannel, false /*no cut*/
-    );
-    s_flip ^= 1;
+    cardputer_audio::queueRuntimeAudioBuffer(s_buf, s_flip, (size_t)kChunk, (uint32_t)kSampleRate, false, kChannel);
   }
 
   // st == 2, we have 2 chunks playing, nothing to do

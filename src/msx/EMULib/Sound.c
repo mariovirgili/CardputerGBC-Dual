@@ -32,6 +32,11 @@
 typedef unsigned char byte;
 typedef unsigned short word;
 
+#if !defined(WINDOWS)
+extern unsigned int InitAudio(unsigned int Rate,unsigned int Latency);
+extern void TrashAudio(void);
+#endif
+
 struct SndDriverStruct SndDriver =
 {
   (void (*)(int,int))0,
@@ -49,6 +54,7 @@ static const struct { byte Note;word Wheel; } Freqs[4096] =
 };
 #endif /* !NO_MIDI */
 
+#ifndef NO_MIDI
 static const int Programs[] =
 {
   80,  /* SND_MELODIC/SND_RECTANGLE */
@@ -58,7 +64,6 @@ static const int Programs[] =
   80,  /* SND_WAVE */
 };
 
-#ifndef NO_MIDI
 static struct
 {
   int Type;

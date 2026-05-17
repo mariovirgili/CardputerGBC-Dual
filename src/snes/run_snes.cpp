@@ -1,7 +1,7 @@
 #pragma GCC optimize ("O3")
 
 #include "run_snes.h"
-#include <Arduino.h>
+#include "compat/arduino_compat.h"
 #include "share/utils.h"
 #include "esp_heap_caps.h"
 #include "esp_timer.h"
@@ -94,9 +94,9 @@ static inline void snes_log_fps_and_heap(uint32_t &frameCount, uint32_t &lastFps
 
     snes_update_interlace_from_fps(fps);
 
-    EMU_LOG("[SNES] FPS: %.2f | HEAP: %u | INTERLACE: %s\n",
+    EMU_LOG("[SNES] FPS: %.2f | HEAP: %lu | INTERLACE: %s\n",
            fps,
-           esp_get_free_heap_size(),
+           (unsigned long)esp_get_free_heap_size(),
            interlace_enabled ? "ON" : "OFF");
 
     frameCount = 0;
@@ -214,11 +214,11 @@ extern "C" void S9xSetLineCallback(S9xLineCallback cb);
 
 static void snes_log_heap_step(const char* step)
 {
-    EMU_LOG("[SNES][INIT] %-14s heap=%u largestInternal=%u largest8=%u\n",
+    EMU_LOG("[SNES][INIT] %-14s heap=%lu largestInternal=%lu largest8=%lu\n",
             step,
-            esp_get_free_heap_size(),
-            heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL),
-            heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
+            (unsigned long)esp_get_free_heap_size(),
+            (unsigned long)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL),
+            (unsigned long)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
 }
 
 /* ---------------------------------------------------- */

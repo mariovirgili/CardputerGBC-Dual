@@ -84,8 +84,12 @@ char CardputerInput::readChar() {
         return c;
     }
 
-    if (status.enter) return KEY_OK;
-    if (status.del) return KEY_DEL;
+    if (status.enter) {
+        return KEY_OK;
+    }
+    if (status.del) {
+        return KEY_DEL;
+    }
 
     return KEY_NONE;
 }

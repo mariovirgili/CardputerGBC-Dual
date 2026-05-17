@@ -1,6 +1,6 @@
 #include "ngc_input.h"
 #include <M5Cardputer.h>
-#include <Arduino.h>
+#include "compat/arduino_compat.h"
 #include "race/input.h"
 #include "share/input.h"
 

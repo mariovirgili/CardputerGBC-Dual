@@ -1,7 +1,7 @@
 #include "lynx_input.h"
 
 #include <M5Cardputer.h>
-#include <Arduino.h>
+#include "compat/arduino_compat.h"
 #include "share/input.h"
 #include "handy/handy.h"
 #include "handy/susie.h"

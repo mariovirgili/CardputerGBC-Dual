@@ -1,0 +1,4 @@
+# M5GFX/M5Unified are consumed as local ESP-IDF components via
+# EXTRA_COMPONENT_DIRS in the project root CMakeLists.txt. The public ESP-IDF
+# component registry does not currently resolve these exact M5Stack packages.
+dependencies: {}

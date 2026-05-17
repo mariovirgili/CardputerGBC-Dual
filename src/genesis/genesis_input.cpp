@@ -2,7 +2,7 @@
 #include "share/input.h"
 
 #include <M5Cardputer.h>
-#include <Arduino.h>
+#include "compat/arduino_compat.h"
 
 extern "C" {
   // Gwenesis APIs 

@@ -1,6 +1,7 @@
 #include "sound.h"
 #include <M5Cardputer.h>
 #include <algorithm>
+#include "cardputer/CardputerAudio.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
@@ -11,7 +12,7 @@ static constexpr int kSampleRate = 22050;   // Hz
 static constexpr int kChannel    = 0;
 static constexpr int   kChunk      = 128; 
 static constexpr int kBufSize = 888;
-static int16_t* s_buf[2] = {nullptr, nullptr};
+static int16_t* s_buf[cardputer_audio::kRuntimeAudioBufferCount] = {nullptr, nullptr, nullptr};
 static uint8_t s_flip = 0;
 
 static inline int clamp16(int x){ return x < -32768 ? -32768 : (x > 32767 ? 32767 : x); }
@@ -20,41 +21,21 @@ static void mix_lr_to(int16_t* dst, const int16_t* L, const int16_t* R, int n){
 }
 
 void sms_audio_init(){
-  auto cfg = M5Cardputer.Speaker.config();
-  cfg.sample_rate       = kSampleRate;
-  cfg.stereo            = false;
-  cfg.dma_buf_len       = 512;
-  cfg.dma_buf_count     = 8;
-  cfg.task_priority     = 4;
-  cfg.task_pinned_core  = 0;
-  M5Cardputer.Speaker.config(cfg);
+  cardputer_audio::beginSpeaker(kSampleRate, false, 512, 8, 80, "sms", 4, 0);
 
-  if (!s_buf[0]) {
-    s_buf[0] = (int16_t*) heap_caps_malloc(
-        kBufSize * sizeof(int16_t),
-        MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA | MALLOC_CAP_8BIT
-    );
-  }
-  if (!s_buf[1]) {
-    s_buf[1] = (int16_t*) heap_caps_malloc(
-        kBufSize * sizeof(int16_t),
-        MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA | MALLOC_CAP_8BIT
-    );
-  }
+  cardputer_audio::allocRuntimeAudioBuffers(s_buf, kBufSize, "sms");
 
-  if (!M5Cardputer.Speaker.isRunning())
-    M5Cardputer.Speaker.begin();
-
-  M5Cardputer.Speaker.setVolume(80);
   M5Cardputer.Speaker.stop(kChannel);
 }
 
 void sms_audio_stop(){
   M5Cardputer.Speaker.stop(kChannel);
+  cardputer_audio::freeRuntimeAudioBuffers(s_buf);
 }
 
 void sms_audio_frame(){
   if (!snd.buffer[0] || !snd.buffer[1] || snd.bufsize <= 0) return;
+  if (!s_buf[0] || !s_buf[1] || !s_buf[2]) return;
 
   int n = std::min((int)snd.bufsize, kBufSize);
   n &= ~1;
@@ -63,19 +44,16 @@ void sms_audio_frame(){
 
   if (st == 0) {
     mix_lr_to(s_buf[s_flip], snd.buffer[0], snd.buffer[1], n);
-    M5Cardputer.Speaker.playRaw(s_buf[s_flip], (size_t)n, (uint32_t)kSampleRate, false, 1, kChannel, false);
-    s_flip ^= 1;
+    cardputer_audio::queueRuntimeAudioBuffer(s_buf, s_flip, (size_t)n, (uint32_t)kSampleRate, false, kChannel);
 
     mix_lr_to(s_buf[s_flip], snd.buffer[0], snd.buffer[1], n);
-    M5Cardputer.Speaker.playRaw(s_buf[s_flip], (size_t)n, (uint32_t)kSampleRate, false, 1, kChannel, false);
-    s_flip ^= 1;
+    cardputer_audio::queueRuntimeAudioBuffer(s_buf, s_flip, (size_t)n, (uint32_t)kSampleRate, false, kChannel);
     return;
   }
 
   if (st == 1) {
     mix_lr_to(s_buf[s_flip], snd.buffer[0], snd.buffer[1], n);
-    M5Cardputer.Speaker.playRaw(s_buf[s_flip], (size_t)n, (uint32_t)kSampleRate, false, 1, kChannel, false);
-    s_flip ^= 1;
+    cardputer_audio::queueRuntimeAudioBuffer(s_buf, s_flip, (size_t)n, (uint32_t)kSampleRate, false, kChannel);
   }
 }
 

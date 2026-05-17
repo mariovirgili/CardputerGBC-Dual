@@ -6,7 +6,7 @@
 #pragma once
 #include "KeyboardReader.h"
 #include "../../Adafruit_TCA8418/Adafruit_TCA8418.h"
-#include <Arduino.h>
+#include "compat/arduino_compat.h"
 #include <vector>
 #include <memory>
 

@@ -2,6 +2,7 @@
 
 #ifdef SNES_NO_SOUND
 #include "port.h"
+void S9xResetAPU(void);
 uint8_t S9xAPUReadPort(int32_t Address);
 void S9xAPUWritePort(int32_t Address, uint8_t Byte);
 #else

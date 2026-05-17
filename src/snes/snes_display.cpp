@@ -1,6 +1,6 @@
 #include "snes_display.h"
 
-#include <Arduino.h>
+#include "compat/arduino_compat.h"
 #include <M5Cardputer.h>
 #include "esp_heap_caps.h"
 

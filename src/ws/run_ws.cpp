@@ -214,11 +214,15 @@ extern "C" void run_ws(const uint8_t* rom, size_t len, const char* rom_name, boo
       const uint32_t largest8 = heap_caps_get_largest_free_block(MALLOC_CAP_8BIT);
       const uint32_t largestInternal = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
       const uint32_t minFree = heap_caps_get_minimum_free_size(MALLOC_CAP_8BIT);
-      EMU_LOG("[WS][BENCH] heap free=%u largest8=%u largestInternal=%u minFree=%u\n",
-              heapFree, largest8, largestInternal, minFree);
+      EMU_LOG("[WS][BENCH] heap free=%lu largest8=%lu largestInternal=%lu minFree=%lu\n",
+              (unsigned long)heapFree,
+              (unsigned long)largest8,
+              (unsigned long)largestInternal,
+              (unsigned long)minFree);
       if (benchLastLargestInternal && largestInternal + 16384u < benchLastLargestInternal) {
-        EMU_LOG("[WS][BENCH][HEAP] largestInternal drop %u -> %u bytes\n",
-                benchLastLargestInternal, largestInternal);
+        EMU_LOG("[WS][BENCH][HEAP] largestInternal drop %lu -> %lu bytes\n",
+                (unsigned long)benchLastLargestInternal,
+                (unsigned long)largestInternal);
       }
       benchLastLargestInternal = largestInternal;
       benchCoreTotalUs = 0;
@@ -228,7 +232,7 @@ extern "C" void run_ws(const uint8_t* rom, size_t len, const char* rom_name, boo
       benchIdleDelayUs = 0;
       benchIdleSpinUs = 0;
 #else
-      WS_LOG("[WS] HEAP: %u bytes\n", esp_get_free_heap_size());
+      WS_LOG("[WS] HEAP: %lu bytes\n", (unsigned long)esp_get_free_heap_size());
 #endif
       frameCount = 0;
       lastLog = now;

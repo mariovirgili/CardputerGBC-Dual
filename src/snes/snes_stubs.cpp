@@ -1,5 +1,5 @@
 #include "snes_stubs.h"
-#include <Arduino.h>
+#include "compat/arduino_compat.h"
 #include <cstdio>
 
 extern "C" {

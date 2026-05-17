@@ -1,3 +1,77 @@
+#ifndef CARDPUTER_LIBRETRO_STDSTRING_MINIMAL_H
+#define CARDPUTER_LIBRETRO_STDSTRING_MINIMAL_H
+
+#include <ctype.h>
+#include <stdbool.h>
+#include <stddef.h>
+#include <string.h>
+
+#ifndef STRLEN_CONST
+#define STRLEN_CONST(x) ((sizeof((x)) - 1))
+#endif
+
+#ifndef ISDIGIT
+#define ISDIGIT(c) isdigit((unsigned char)(c))
+#endif
+
+static inline bool string_is_empty(const char *data)
+{
+   return !data || (*data == '\0');
+}
+
+static inline bool string_is_equal(const char *a, const char *b)
+{
+   return (a && b) ? (strcmp(a, b) == 0) : false;
+}
+
+static inline bool string_starts_with_size(const char *str, const char *prefix, size_t size)
+{
+   return (str && prefix) ? (strncmp(prefix, str, size) == 0) : false;
+}
+
+static inline bool string_starts_with(const char *str, const char *prefix)
+{
+   return (str && prefix) ? (strncmp(prefix, str, strlen(prefix)) == 0) : false;
+}
+
+static inline bool string_is_equal_case_insensitive(const char *a, const char *b)
+{
+   int result = 0;
+   const unsigned char *p1 = (const unsigned char *)a;
+   const unsigned char *p2 = (const unsigned char *)b;
+
+   if (!a || !b) {
+      return false;
+   }
+   if (p1 == p2) {
+      return true;
+   }
+
+   while ((result = tolower(*p1) - tolower(*p2++)) == 0) {
+      if (*p1++ == '\0') {
+         break;
+      }
+   }
+
+   return result == 0;
+}
+
+#define string_is_equal_noncase string_is_equal_case_insensitive
+
+static inline char *string_to_lower(char *s)
+{
+   char *cs = s;
+   if (!cs) {
+      return s;
+   }
+   for (; *cs != '\0'; ++cs) {
+      *cs = (char)tolower((unsigned char)*cs);
+   }
+   return s;
+}
+
+#endif
+
 // /* Copyright  (C) 2010-2020 The RetroArch team
 //  *
 //  * ---------------------------------------------------------------------------------------

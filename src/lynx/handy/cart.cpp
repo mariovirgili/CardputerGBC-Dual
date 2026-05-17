@@ -196,8 +196,8 @@ CCart::CCart(const UBYTE *gamedata, ULONG gamesize)
    mCartBank0A = nullptr;
    mCartBank1A = nullptr;
 
-   log_printf("Cart(XIP) name='%s', crc32=%08X, bank0=%d, bank1=%d\n",
-      mFileHeader.cartname, mCRC32, bank0size, bank1size);
+   log_printf("Cart(XIP) name='%s', crc32=%08lX, bank0=%d, bank1=%d\n",
+      mFileHeader.cartname, (unsigned long)mCRC32, bank0size, bank1size);
 }
 
 CCart::~CCart()

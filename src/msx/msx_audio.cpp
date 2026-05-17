@@ -5,6 +5,7 @@
 #include <cstdlib>
 #include <cstring>
 
+#include "cardputer/CardputerAudio.h"
 #include "esp_heap_caps.h"
 
 extern "C" unsigned int InitAudio(unsigned int Rate, unsigned int)
@@ -16,20 +17,7 @@ extern "C" unsigned int InitAudio(unsigned int Rate, unsigned int)
     }
     if (!g_host.audioBuf) return 0;
 
-    auto cfg = M5Cardputer.Speaker.config();
-    cfg.sample_rate      = Rate;
-    cfg.stereo           = false;
-    cfg.dma_buf_len      = 512;
-    cfg.dma_buf_count    = 8;
-    cfg.task_priority    = 4;
-    cfg.task_pinned_core = 0;
-    M5Cardputer.Speaker.config(cfg);
-
-    if (!M5Cardputer.Speaker.isRunning()) {
-        M5Cardputer.Speaker.begin();
-    }
-
-    M5Cardputer.Speaker.setVolume(60);
+    cardputer_audio::beginSpeaker(Rate, false, 512, 8, 60, "msx", 4, 0);
     M5Cardputer.Speaker.stop(kAudioChannel);
 
     for (int i = 0; i < kAudioBufCount; ++i) {
@@ -52,7 +40,7 @@ extern "C" void TrashAudio(void)
 
     if (msx::g_host.audioBuf) {
         for (int i = 0; i < msx::kAudioBufCount; ++i) {
-            std::free(msx::g_host.audioBuf[i]);
+            heap_caps_free(msx::g_host.audioBuf[i]);
             msx::g_host.audioBuf[i] = nullptr;
         }
         std::free(msx::g_host.audioBuf);
@@ -74,17 +62,22 @@ extern "C" unsigned int WriteAudio(sample* data, unsigned int length)
 
     if (!data || !length || length > (unsigned)kAudioChunk || !g_host.audioBuf) return 0;
 
-    if (M5Cardputer.Speaker.isPlaying(kAudioChannel) > 1) {
+    const size_t depth = M5Cardputer.Speaker.isPlaying(kAudioChannel);
+    if (depth > 1) {
+        cardputer_audio::recordQueueDiag(length, kAudioRate, false, kAudioChannel, depth, false, false, true);
         return 0;
     }
 
     sample* dst = g_host.audioBuf[g_host.audioBufIndex];
-    if (!dst) return 0;
+    if (!dst) {
+        cardputer_audio::recordQueueDiag(length, kAudioRate, false, kAudioChannel, depth, false, true, false);
+        return 0;
+    }
 
     std::memcpy(dst, data, length * sizeof(sample));
     g_host.audioBufIndex = (g_host.audioBufIndex + 1) % kAudioBufCount;
 
-    M5Cardputer.Speaker.playRaw(
+    const bool ok = M5Cardputer.Speaker.playRaw(
         dst,
         length,
         (uint32_t)kAudioRate,
@@ -94,7 +87,8 @@ extern "C" unsigned int WriteAudio(sample* data, unsigned int length)
         false
     );
 
-    return length;
+    cardputer_audio::recordQueueDiag(length, kAudioRate, false, kAudioChannel, depth, ok, false, false);
+    return ok ? length : 0;
 }
 
 extern "C" void PlayAllSound(int uSec)

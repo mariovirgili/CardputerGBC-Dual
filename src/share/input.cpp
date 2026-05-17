@@ -4,7 +4,9 @@
 #include <esp_sleep.h>
 #include <esp_system.h>
 #include "game_save.h"
-#include <Preferences.h>
+#include "compat/preferences_compat.h"
+#include "compat/i2c_bus.h"
+#include "share/boot_log.h"
 
 static uint32_t s_lastInputUs = 0;
 uint32_t lastPadState = 0xFFFFFFFF;
@@ -64,19 +66,23 @@ namespace share
     {
         // Bouton GO → restart (hack for quit game and reset memory)
         if (M5Cardputer.BtnA.pressedFor(1000)) {
+            BOOT_LOG("INPUT", "BtnA pressedFor(1000) -> quit/restart");
             Preferences prefs; // Mark quit game flag in NVS
             prefs.begin("cardputer_emu", false);  // RW
             prefs.putBool("quit_game", true);
             prefs.end();
 
             if (s_beforeRestartCallback) {
+                BOOT_LOG("INPUT", "beforeRestart callback start");
                 s_beforeRestartCallback();
+                BOOT_LOG("INPUT", "beforeRestart callback done");
             }
             
             while (gameIsSaving()) {
                 delay(1); // wait for save to finish
             }
             
+            BOOT_LOG("INPUT", "esp_restart from common input");
             esp_restart();
         }
 
@@ -108,12 +114,15 @@ namespace share
 
     void detectI2cPad()
     {
-        Wire.begin(CARDPUTER_I2C_SDA, CARDPUTER_I2C_SCL);
-        Wire.setClock(400000);
+        if (!compat::i2c_port_a_begin(CARDPUTER_I2C_SDA, CARDPUTER_I2C_SCL, 400000)) {
+            s_i2cPadType = I2C_PAD_NONE;
+            printf("[INPUT] Failed to initialize I2C joystick bus (SDA=%d, SCL=%d)\n",
+                   CARDPUTER_I2C_SDA, CARDPUTER_I2C_SCL);
+            return;
+        }
 
         // Try JoyV2 first (0x63)
-        Wire.beginTransmission(JOYSTICK2_ADDR);
-        if (Wire.endTransmission() == 0) {
+        if (compat::i2c_port_a_probe(JOYSTICK2_ADDR)) {
             s_i2cPadType = I2C_PAD_JOYV2;
             printf("[INPUT] M5 Unit JoyV2 detected at 0x%02X (SDA=%d, SCL=%d)\n",
                    JOYSTICK2_ADDR, CARDPUTER_I2C_SDA, CARDPUTER_I2C_SCL);
@@ -121,8 +130,7 @@ namespace share
         }
 
         // Then try Joystick v1.1 (0x52)
-        Wire.beginTransmission(JOYSTICK1_ADDR);
-        if (Wire.endTransmission() == 0) {
+        if (compat::i2c_port_a_probe(JOYSTICK1_ADDR)) {
             s_i2cPadType = I2C_PAD_JOYV1_1;
             printf("[INPUT] M5 Unit Joystick v1.1 detected at 0x%02X (SDA=%d, SCL=%d)\n",
                    JOYSTICK1_ADDR, CARDPUTER_I2C_SDA, CARDPUTER_I2C_SCL);
@@ -133,7 +141,7 @@ namespace share
         printf("[INPUT] No I2C joystick found (SDA=%d, SCL=%d)\n",
                CARDPUTER_I2C_SDA, CARDPUTER_I2C_SCL);
                
-        Wire.end();
+        compat::i2c_port_a_end();
     }
 
     bool hasI2cPad()
@@ -144,49 +152,39 @@ namespace share
     // JoyV2: read 2 bytes X/Y from register 0x10
     static bool joystick2_read_xy(uint8_t& x, uint8_t& y)
     {
-        // Select 8bit register
-        Wire.beginTransmission(JOYSTICK2_ADDR);
-        Wire.write(JOYSTICK2_ADC_VALUE_8BITS_REG);
-        if (Wire.endTransmission(false) != 0) {
+        uint8_t data[2] = {};
+        if (!compat::i2c_port_a_read_register(JOYSTICK2_ADDR, JOYSTICK2_ADC_VALUE_8BITS_REG, data, sizeof(data))) {
             return false;
         }
 
-        if (Wire.requestFrom(JOYSTICK2_ADDR, (uint8_t)2) != 2) {
-            return false;
-        }
-
-        x = Wire.read();
-        y = Wire.read();
+        x = data[0];
+        y = data[1];
         return true;
     }
 
     // JoyV2: read button from register 0x20
     static bool joystick2_read_button(uint8_t& btn)
     {
-        Wire.beginTransmission(JOYSTICK2_ADDR);
-        Wire.write(JOYSTICK2_BUTTON_REG);
-        if (Wire.endTransmission(false) != 0) {
+        uint8_t data = 0;
+        if (!compat::i2c_port_a_read_register(JOYSTICK2_ADDR, JOYSTICK2_BUTTON_REG, &data, 1)) {
             return false;
         }
 
-        if (Wire.requestFrom(JOYSTICK2_ADDR, (uint8_t)1) != 1) {
-            return false;
-        }
-
-        btn = Wire.read();
+        btn = data;
         return true;
     }
 
     // Joystick v1.1: read 3 bytes (X, Y, BTN) in one shot
     static bool joystick1_read_all(uint8_t& x, uint8_t& y, uint8_t& btn)
     {
-        if (Wire.requestFrom(JOYSTICK1_ADDR, (uint8_t)3) != 3) {
+        uint8_t data[3] = {};
+        if (!compat::i2c_port_a_read(JOYSTICK1_ADDR, data, sizeof(data))) {
             return false;
         }
 
-        x   = Wire.read();
-        y   = Wire.read();
-        btn = Wire.read();
+        x   = data[0];
+        y   = data[1];
+        btn = data[2];
         return true;
     }
 

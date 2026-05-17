@@ -1,8 +1,8 @@
 #include "run_a7800.h"
 
-#include <Arduino.h>
+#include "compat/arduino_compat.h"
 
-#include <Preferences.h>
+#include "compat/preferences_compat.h"
 
 // #include <cmath>
 
@@ -114,13 +114,13 @@ void run_a7800(const uint8_t* romData, size_t romLen, const char* romName)
             const int32_t avgVideoMs = videoCount ? (int32_t)(videoUs / 1000 / videoCount) : 0;
             const int32_t avgCpuMs = avgFrameMs - avgVideoMs;
 
-            EMU_LOG("[A7800] EMU %.1f fps | RENDER %.1f fps | frame %ldms (cpu %ldms + vid %ldms) | HEAP %u\n",
+            EMU_LOG("[A7800] EMU %.1f fps | RENDER %.1f fps | frame %ldms (cpu %ldms + vid %ldms) | HEAP %lu\n",
                    fps,
                    rfps,
                    (long)avgFrameMs,
                    (long)avgCpuMs,
                    (long)avgVideoMs,
-                   esp_get_free_heap_size());
+                   (unsigned long)esp_get_free_heap_size());
 
             frameCount = 0;
             renderCount = 0;

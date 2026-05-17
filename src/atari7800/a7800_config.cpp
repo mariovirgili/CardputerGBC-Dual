@@ -1,6 +1,6 @@
 #include "a7800_config.h"
 
-#include <Preferences.h>
+#include "compat/preferences_compat.h"
 
 static constexpr const char* kA7800DisplayNs = "a7800_disp";
 static constexpr const char* kA7800ViewKey = "int_view";

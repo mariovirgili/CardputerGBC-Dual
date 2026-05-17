@@ -1,6 +1,6 @@
 #include "gbc_input.h"
 #include <M5Cardputer.h>
-#include <Arduino.h>
+#include "compat/arduino_compat.h"
 #include "share/input.h"
 
 extern "C" {

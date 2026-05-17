@@ -6,7 +6,7 @@
 #include "TCA8418.h"
 #include "../../common.h"
 #include "../../Adafruit_TCA8418/Adafruit_TCA8418_registers.h"
-#include <Arduino.h>
+#include "compat/arduino_compat.h"
 #include <M5Unified.h>
 
 // Default interrupt pin for M5Cardputer ADV
@@ -29,7 +29,6 @@ void TCA8418KeyboardReader::begin()
 {
     _tca8418 = std::make_unique<Adafruit_TCA8418>();
     if (!_tca8418->begin()) {
-        printf("[error] TCA8418KeyboardReader: Failed to initialize TCA8418\n");
         return;
     }
 
@@ -58,7 +57,7 @@ void TCA8418KeyboardReader::update()
 
     while (to_process--) {
         uint8_t eventRaw = _tca8418->getEvent();
-        if ((eventRaw & 0x7F) == 0) continue; 
+        if ((eventRaw & 0x7F) == 0) continue;
 
         KeyEventRaw_t ev = get_key_event_raw(eventRaw);
         remap(ev);

@@ -87,7 +87,7 @@ static bool a2600_init_core(const uint8_t* romData, size_t romLen, const char* r
     }
 
     s_settings->setValue("sound", true);
-    s_settings->setValue("volume", 80);
+    s_settings->setValue("volume", Variant(80u));
     s_settings->setValue("palette", "standard");
     s_settings->setValue("colorloss", false);
     s_settings->setValue("stats", false);
@@ -231,7 +231,7 @@ void run_a2600(const uint8_t* romData, size_t romLen, const char* romName)
         const uint32_t nowMs = millis();
         if (nowMs - lastLogMs >= 1000) {
             const float fps = (frameCount * 1000.0f) / (float)(nowMs - lastLogMs);
-            EMU_LOG("[A2600] FPS: %.2f | HEAP %u\n", fps, esp_get_free_heap_size());
+            EMU_LOG("[A2600] FPS: %.2f | HEAP %lu\n", fps, (unsigned long)esp_get_free_heap_size());
             frameCount = 0;
             lastLogMs = nowMs;
         }

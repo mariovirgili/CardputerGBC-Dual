@@ -5,6 +5,7 @@
 #include <string.h>
 #include <stdint.h>
 #include <stdio.h>
+#include "cardputer/CardputerAudio.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
 #include "freertos/task.h"
@@ -31,6 +32,8 @@ static TaskHandle_t s_audioTask = nullptr;
 static volatile bool s_audioRunning = false;
 static GX4000AudioMsg *s_msgPool = nullptr;
 static int16_t *s_batchBuf = nullptr;
+static int16_t *s_playBuf[cardputer_audio::kRuntimeAudioBufferCount] = { nullptr, nullptr, nullptr };
+static uint8_t  s_playSlot = 0;
 static int      s_batchCount = 0;
 
 // Rate measurement / lock state.
@@ -74,11 +77,21 @@ static void gx4000_audio_task(void *arg)
             break;
         }
 
-        bool ok = M5Cardputer.Speaker.playRaw(msg->samples,
-                                              (size_t)msg->count,
-                                              msg->rate,
-                                              false, 1, kChannel, false);
+        int16_t* out = s_playBuf[s_playSlot];
+        if (!out) {
+            (void)xQueueSend(s_audioFreeQ, &slot, 0);
+            continue;
+        }
+
+        memcpy(out, msg->samples, (size_t)msg->count * sizeof(int16_t));
         (void)xQueueSend(s_audioFreeQ, &slot, 0);
+
+        bool ok = cardputer_audio::queueRuntimeAudioBuffer(s_playBuf,
+                                                           s_playSlot,
+                                                           (size_t)msg->count,
+                                                           msg->rate,
+                                                           false,
+                                                           kChannel);
         if (!ok) {
             s_statQueueSat++;
             continue;
@@ -138,19 +151,9 @@ void gx4000_sound_init(int sample_rate)
     s_statQueueSat      = 0;
     s_batchCount        = 0;
     s_audioRunning      = false;
+    s_playSlot          = 0;
 
-    auto cfg = M5Cardputer.Speaker.config();
-    cfg.sample_rate      = (uint32_t)sample_rate;
-    cfg.stereo           = false;
-    cfg.dma_buf_len      = 512;
-    cfg.dma_buf_count    = 8;
-    cfg.task_priority    = 4;
-    cfg.task_pinned_core = 0;
-    M5Cardputer.Speaker.config(cfg);
-    if (!M5Cardputer.Speaker.isRunning()) {
-        M5Cardputer.Speaker.begin();
-    }
-    M5Cardputer.Speaker.setVolume(60);
+    cardputer_audio::beginSpeaker((uint32_t)sample_rate, false, 512, 8, 60, "gx4000", 4, 0);
     M5Cardputer.Speaker.stop(kChannel);
 }
 
@@ -174,6 +177,7 @@ void gx4000_sound_shutdown(void)
 
     if (s_batchBuf)   { heap_caps_free(s_batchBuf);   s_batchBuf = nullptr; }
     if (s_msgPool)    { heap_caps_free(s_msgPool);    s_msgPool = nullptr; }
+    cardputer_audio::freeRuntimeAudioBuffers(s_playBuf);
 
     s_rateLocked = false;
 
@@ -194,6 +198,10 @@ static bool gx4000_sound_ensure_runtime(void)
             sizeof(GX4000AudioMsg) * kAudioMsgPoolCount,
             MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA | MALLOC_CAP_8BIT);
         if (!s_msgPool) return false;
+    }
+
+    if (!cardputer_audio::allocRuntimeAudioBuffers(s_playBuf, kMaxFrameSamples, "gx4000")) {
+        return false;
     }
 
     if (!s_audioFreeQ) {

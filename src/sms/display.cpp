@@ -88,7 +88,6 @@ void sms_display_init() {
   }
 
   M5.Display.fillScreen(TFT_BLACK);
-  EMU_LOG("Display init: %dx%d OK\n", LCD_W, LCD_H);
 }
 
 void sms_palette_init_fixed(){

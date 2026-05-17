@@ -1,6 +1,6 @@
 #include "a7800_input.h"
 
-#include <Arduino.h>
+#include "compat/arduino_compat.h"
 #include <M5Cardputer.h>
 
 #include <algorithm>

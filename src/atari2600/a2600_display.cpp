@@ -2,7 +2,7 @@
 
 #include "a2600_display.h"
 #include <M5Cardputer.h>
-#include <Preferences.h>
+#include "compat/preferences_compat.h"
 #include <string>
 #include "esp_heap_caps.h"
 #include "share/emu_log_cpp.h"

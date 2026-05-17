@@ -1,9 +1,10 @@
 // lynx_sound.cpp
 #include "lynx_sound.h"
 
-#include <Arduino.h>
+#include "compat/arduino_compat.h"
 #include <M5Cardputer.h>
 #include <string.h>
+#include "cardputer/CardputerAudio.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "share/emu_log_cpp.h"
@@ -19,7 +20,10 @@ static TaskHandle_t   s_audioTask  = nullptr;
 static volatile bool  s_running    = false;
 
 static constexpr int  kRingSamples = 4096;
+static constexpr int  kPlayChunk   = 512;
 static int16_t*       s_ring       = nullptr;
+static int16_t*       s_playBuf[cardputer_audio::kRuntimeAudioBufferCount] = { nullptr, nullptr, nullptr };
+static uint8_t        s_playSlot   = 0;
 static int            s_ringSize   = 0;
 static volatile int   s_ringRead   = 0;
 static volatile int   s_ringWrite  = 0;
@@ -34,22 +38,28 @@ static void lynx_audio_task(void* arg)
 {
     (void)arg;
 
-    static const int kChunk = 512; 
-    int16_t local[kChunk];
-
     while (s_running) {
         if (s_ringCount == 0) {
             // nothing to read
-            vTaskDelay(pdMS_TO_TICKS(8));
+            vTaskDelay(pdMS_TO_TICKS(1));
             continue;
         }
 
-        int toRead = 0;
+        if (M5Cardputer.Speaker.isPlaying(kChannel) >= 2) {
+            vTaskDelay(pdMS_TO_TICKS(1));
+            continue;
+        }
 
-        // Read a chunk from the ring buffer
+        if (!s_playBuf[0] || !s_playBuf[1] || !s_playBuf[2]) {
+            vTaskDelay(pdMS_TO_TICKS(1));
+            continue;
+        }
+
+        int16_t* local = s_playBuf[s_playSlot];
+        int toRead = 0;
         portENTER_CRITICAL(&s_ringMux);
         if (s_ringCount > 0) {
-            toRead = (s_ringCount < kChunk) ? s_ringCount : kChunk;
+            toRead = (s_ringCount < kPlayChunk) ? s_ringCount : kPlayChunk;
 
             for (int i = 0; i < toRead; ++i) {
                 local[i] = s_ring[s_ringRead];
@@ -62,57 +72,16 @@ static void lynx_audio_task(void* arg)
         portEXIT_CRITICAL(&s_ringMux);
 
         if (toRead <= 0) {
-            vTaskDelay(pdMS_TO_TICKS(8));
+            vTaskDelay(pdMS_TO_TICKS(1));
             continue;
         }
 
-        int queued = M5Cardputer.Speaker.isPlaying(kChannel);
-
-        if (queued == 0) {
-            // Startup: send 2 chunks to fill the pipe
-            M5Cardputer.Speaker.playRaw(
-                local,
-                (size_t)toRead,
-                (uint32_t)lynx_sampleRate,
-                false,   // stereo
-                1,       // repeat
-                kChannel,
-                false    // dont stop current sound
-            );
-
-            // Send another chunk if available
-            int16_t local2[kChunk];
-            int toRead2 = 0;
-
-            portENTER_CRITICAL(&s_ringMux);
-            if (s_ringCount > 0) {
-                toRead2 = (s_ringCount < kChunk) ? s_ringCount : kChunk;
-                for (int i = 0; i < toRead2; ++i) {
-                    local2[i] = s_ring[s_ringRead];
-                    s_ringRead++;
-                    if (s_ringRead >= s_ringSize) s_ringRead = 0;
-                }
-                s_ringCount -= toRead2;
-            }
-            portEXIT_CRITICAL(&s_ringMux);
-
-            if (toRead2 > 0) {
-                M5Cardputer.Speaker.playRaw(
-                    local2,
-                    (size_t)toRead2,
-                    (uint32_t)lynx_sampleRate,
-                    false, 1, kChannel, false
-                );
-            }
-        } else {
-            // There is already at least 1 buffer in the queue: we still feed it
-            M5Cardputer.Speaker.playRaw(
-                local,
-                (size_t)toRead,
-                (uint32_t)lynx_sampleRate,
-                false, 1, kChannel, false
-            );
+        if (cardputer_audio::queueRuntimeAudioBuffer(
+                s_playBuf, s_playSlot, (size_t)toRead, (uint32_t)lynx_sampleRate, false, kChannel)) {
+            continue;
         }
+
+        vTaskDelay(pdMS_TO_TICKS(1));
     }
 
     vTaskDelete(nullptr);
@@ -128,21 +97,10 @@ extern "C" void lynx_sound_init(int sample_rate)
         lynx_sampleRate = sample_rate;
     }
 
-    auto cfg = M5Cardputer.Speaker.config();
-    cfg.sample_rate       = lynx_sampleRate;
-    cfg.stereo            = false;      // downmix to mono
-    cfg.dma_buf_len       = 512;
-    cfg.dma_buf_count     = 8;
-    cfg.task_priority     = 4;
-    cfg.task_pinned_core  = 0;
-    M5Cardputer.Speaker.config(cfg);
-
-    if (!M5Cardputer.Speaker.isRunning()) {
-        M5Cardputer.Speaker.begin();
-    }
-
-    M5Cardputer.Speaker.setVolume(80);
+    cardputer_audio::beginSpeaker(lynx_sampleRate, false, 512, 8, 80, "lynx", 4, 0);
     M5Cardputer.Speaker.stop(kChannel);
+    cardputer_audio::allocRuntimeAudioBuffers(s_playBuf, kPlayChunk, "lynx");
+    s_playSlot = 0;
 
     // Ring buffer
     if (!s_ring) {
@@ -194,6 +152,7 @@ extern "C" void lynx_sound_shutdown(void)
     }
 
     M5Cardputer.Speaker.stop(kChannel);
+    cardputer_audio::freeRuntimeAudioBuffers(s_playBuf);
 
     if (s_ring) {
         free(s_ring);

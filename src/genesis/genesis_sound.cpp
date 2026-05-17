@@ -3,10 +3,12 @@
 #include <string.h>
 #include <stdio.h>
 #include "esp_heap_caps.h"
-#include <Arduino.h>
+#include "compat/arduino_compat.h"
 #include <M5Cardputer.h>
+#include "cardputer/CardputerAudio.h"
 #include "genesis_sound.h"
-#include <task.h>
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 
 extern "C" {
   void YM2612Init(void);
@@ -38,11 +40,11 @@ static StaticQueue_t s_ymQueueStruct;
 static uint8_t*      s_ymQueueStorage = nullptr;    // 128 * sizeof(YmWrite)
 static QueueHandle_t s_ymQ = nullptr;
 
-// Cardputer speaker double buffer
+// Cardputer speaker runtime buffers. M5Unified keeps raw pointers until played.
 static uint8_t s_flip = 0;
 static bool s_primed = false;
 static portMUX_TYPE g_ymMux = portMUX_INITIALIZER_UNLOCKED;
-static int16_t* s_buf[2]   = { nullptr, nullptr };
+static int16_t* s_buf[cardputer_audio::kRuntimeAudioBufferCount] = { nullptr, nullptr, nullptr };
 uint8_t genesis_audio_volume = 50;
 
 // Audio config
@@ -66,11 +68,7 @@ void genesis_alloc_audio_buffers(void) {
       (size_t)AUDIO_POOL * (size_t)AUDIO_CHUNK, sizeof(int16_t),
       MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
 
-  // Double buffer for cardputer speaker
-  s_buf[0] = (int16_t*) heap_caps_calloc(
-      AUDIO_CHUNK, sizeof(int16_t), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-  s_buf[1] = (int16_t*) heap_caps_calloc(
-      AUDIO_CHUNK, sizeof(int16_t), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+  cardputer_audio::allocRuntimeAudioBuffers(s_buf, AUDIO_CHUNK, "genesis");
 
   // Storage queue YM
   s_ymQueueStorage = (uint8_t*) heap_caps_calloc(
@@ -84,13 +82,8 @@ void genesis_alloc_audio_buffers(void) {
 }
 
 /* Push mixed audio to cardputer speaker */
-static void audio_task(void*){
-  for(;;){
-    taskYIELD();
-    AudioMsg m;
-    if (xQueueReceive(s_audioQ, &m, portMAX_DELAY) != pdTRUE) continue;
-    M5.Speaker.playRaw(m.buf, m.n, AUDIO_SR, AUDIO_STEREO, 1, /*channel*/0, /*stop_current*/false);
-  }
+static void audio_task(void*) {
+  vTaskDelete(nullptr);
 }
 
 /* Initialize cardputer speaker and audio task */
@@ -98,23 +91,10 @@ void genesis_sound_init() {
   sn76489_index = sn76489_clock = 0;
   ym2612_index  = ym2612_clock  = 0;
 
-  auto cfg = M5Cardputer.Speaker.config();
-  cfg.sample_rate       = AUDIO_SR;
-  cfg.stereo            = AUDIO_STEREO;
-  cfg.dma_buf_len       = 512;
-  cfg.dma_buf_count     = 8;
-  cfg.task_priority     = 4;
-  cfg.task_pinned_core  = 0;
-  M5Cardputer.Speaker.config(cfg);
-  if (!M5Cardputer.Speaker.isRunning()) M5Cardputer.Speaker.begin();
+  cardputer_audio::beginSpeaker(AUDIO_SR, AUDIO_STEREO, 512, 8, genesis_audio_volume, "genesis", 4, 0);
   M5Cardputer.Speaker.setVolume(genesis_audio_volume);
 
-  if (!s_audioQ) {
-    s_audioQ = xQueueCreate(AUDIO_Q_DEPTH, sizeof(AudioMsg));
-  }
-  if (!s_audioTask) {
-    xTaskCreatePinnedToCore(audio_task, "AudioTask", 2048, nullptr, 6, &s_audioTask, 0);
-  }
+  s_flip = 0;
 }
 
 /* Submit a frame of audio to the cardputer speaker */
@@ -129,6 +109,14 @@ void genesis_sound_submit_frame(void) {
   int n = ym_n > psg_n ? ym_n : psg_n;
   if (n <= 0) return;
   if (n > AUDIO_CHUNK) n = AUDIO_CHUNK;
+
+  if (M5Cardputer.Speaker.isPlaying(kChannel) >= 2 || !s_buf[0] || !s_buf[1] || !s_buf[2]) {
+    taskENTER_CRITICAL(&g_ymMux);
+    ym2612_index  = 0;
+    sn76489_index = 0;
+    taskEXIT_CRITICAL(&g_ymMux);
+    return;
+  }
 
   // Mix dans current buffer
   int16_t *dst = s_buf[s_flip];
@@ -148,13 +136,7 @@ void genesis_sound_submit_frame(void) {
   sn76489_index = 0;
   taskEXIT_CRITICAL(&g_ymMux);
 
-  // Send
-  AudioMsg m{ dst, AUDIO_CHUNK };
-  if (s_audioQ && xQueueSend(s_audioQ, &m, 0) == pdPASS) {
-    s_flip ^= 1; // switch buffer
-  } else {
-    // drop
-  }
+  cardputer_audio::queueRuntimeAudioBuffer(s_buf, s_flip, AUDIO_CHUNK, AUDIO_SR, AUDIO_STEREO, kChannel);
 }
 
 

@@ -2,7 +2,6 @@
 
 #include "rom_xip.h"
 #include "esp_partition.h"
-#include "esp_spi_flash.h"
 #include "esp_log.h"
 #include <stdio.h>
 
@@ -10,7 +9,7 @@
 
 static const uint8_t *g_rom_ptr = NULL;
 static size_t g_rom_size = 0;
-static spi_flash_mmap_handle_t g_rom_mmap = 0;
+static esp_partition_mmap_handle_t g_rom_mmap = 0;
 
 
 int xip_map_rom_partition(const char *part_name, size_t rom_size_effective)
@@ -27,7 +26,7 @@ int xip_map_rom_partition(const char *part_name, size_t rom_size_effective)
         return -1;
     }
 
-    if (esp_partition_mmap(p, 0, p->size, SPI_FLASH_MMAP_DATA, &ptr, &g_rom_mmap) != ESP_OK) {
+    if (esp_partition_mmap(p, 0, p->size, ESP_PARTITION_MMAP_DATA, &ptr, &g_rom_mmap) != ESP_OK) {
         ESP_LOGE("ROM_XIP", "esp_partition_mmap() failed");
         return -2;
     }
@@ -50,7 +49,7 @@ size_t get_rom_size(void) {
 void xip_unmap(void)
 {
     if (g_rom_mmap) {
-        spi_flash_munmap(g_rom_mmap);
+        esp_partition_munmap(g_rom_mmap);
         g_rom_mmap = 0;
     }
     g_rom_ptr = NULL;

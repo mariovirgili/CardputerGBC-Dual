@@ -4,7 +4,7 @@
 #define CONFIRMATION_SELECTOR_H
 
 #include <string>
-#include <Arduino.h>
+#include "compat/arduino_compat.h"
 #include "cardputer/CardputerInput.h"
 #include "cardputer/CardputerView.h"
 
