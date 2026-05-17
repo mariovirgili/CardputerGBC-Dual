@@ -34,7 +34,6 @@ idf_component_register(
     SRCS ${APP_SRCS}
     INCLUDE_DIRS ${APP_INCLUDE_DIRS}
     REQUIRES
-        app_update
         driver
         esp_partition
         esp_timer
@@ -55,7 +54,29 @@ idf_build_set_property(COMPILE_OPTIONS "-Wno-error=maybe-uninitialized" APPEND)
 
 target_compile_features(${COMPONENT_LIB} PUBLIC cxx_std_17)
 
+# Logging is intentionally opt-in. Enable one flag by removing its leading '#'.
 target_compile_definitions(${COMPONENT_LIB} PRIVATE
+    # EMU_LOGS_ENABLED
+    # BOOT_DIAG_LOGS
+    # SNES_LOGS
+    # NES_DIAG_LOGS
+    # NES_BENCHMARK_LOGS
+    # WS_LOGS_ENABLED
+    # WS_BENCHMARK_LOGS
+    # WS_RENDER_PROFILE
+    # WS_CPU_PROFILE
+    # WS_CPU_BRANCH_PROFILE
+    # WS_TILE_ROW_CACHE=1
+    # WS_TILE_ROW_CACHE_ENTRIES=2048
+    # WS_APU_IRAM=1
+    # WS_CORE_IRAM=1
+    # WS_AUDIO_PERIOD_MS=10
+    # WS_AUDIO_DMA_LEN=640
+    # WS_AUDIO_DMA_COUNT=8
+    # NGP_TRACE_LOGS
+    # COLECO_DEBUG_LOGS
+    # BENCHMARK_LOGS
+    # EMU_ALLOW_RAW_PRINTF
     USE_CZ80=1
     CZ80=1
     USE_SDL=1
@@ -67,6 +88,7 @@ target_compile_definitions(${COMPONENT_LIB} PRIVATE
     GNW_TARGET_ZELDA=0
     WS_SAVE_ENABLED=1
     WS_NO_SPLASH_SCREEN=1
+    WS_PPU_IRAM=1
     WS_CPU_SAFE_POLL_WAIT_FASTPATH=1
     WS_AUDIO_POLL_MS=4
     NO_ZERO_LUT
@@ -75,8 +97,6 @@ target_compile_definitions(${COMPONENT_LIB} PRIVATE
     SNES_NO_BYTE2000
     SNES_NO_THREADED_INPUT
     SNES_NO_THREADED_SAVE
-    SNES_LOGS=1
-    BOOT_DIAG_LOGS=1
     CORE_DEBUG_LEVEL=0
     LOG_LOCAL_LEVEL=ESP_LOG_WARN
     REMOVE_PRINTF
@@ -128,6 +148,10 @@ target_compile_options(${COMPONENT_LIB} PRIVATE
     -Wno-error=unused-label
     -Wno-error=unused-value
     -Wno-error=zero-length-bounds
+    -Wno-implicit-fallthrough
+    -Wno-maybe-uninitialized
+    -Wno-unused-but-set-variable
+    -Wno-unused-variable
     -Wno-unused-parameter
     -Wno-sign-compare
     "-include${SRC_ROOT}/compat/arduino_compat.h"

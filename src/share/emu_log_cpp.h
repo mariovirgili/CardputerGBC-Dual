@@ -1,9 +1,7 @@
 #pragma once
 
 #include <cstdio>
+#include "share/emu_log.h"
 
-#if defined(REMOVE_PRINTF) && !defined(BENCHMARK_LOGS) && !defined(WS_LOGS_ENABLED) && !defined(COLECO_DEBUG_LOGS) && !defined(NES_DIAG_LOGS) && !defined(NGP_TRACE_LOGS) && !defined(SNES_LOGS)
-  #define EMU_LOG(...) ((int)0)
-#else
-  #define EMU_LOG(...) ::printf(__VA_ARGS__)
-#endif
+/* Compatibility include for C++ files. The EMU_LOG macro is defined by
+ * emu_log.h so C and C++ share the same master/per-core gating rules. */

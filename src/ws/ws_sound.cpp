@@ -30,7 +30,7 @@ static constexpr int kMaxChunk     = 320;
 static int16_t* s_buf[cardputer_audio::kRuntimeAudioBufferCount] = { NULL, NULL, NULL };
 static uint8_t  s_flip   = 0;
 static int16_t  s_lastSample = 0;
-#ifdef BENCHMARK_LOGS
+#ifdef WS_BENCHMARK_LOGS
 static volatile uint32_t s_statBlocks = 0;
 static volatile uint32_t s_statUnderflows = 0;
 static volatile uint32_t s_statMaxAvailable = 0;
@@ -150,7 +150,7 @@ static inline bool queue_block(const int16_t* pcm) {
                                    false,
                                    false);
   if (!ok) WS_SOUND_BENCH_INC(s_statPlayFails);
-#ifdef BENCHMARK_LOGS
+#ifdef WS_BENCHMARK_LOGS
   size_t queued = M5Cardputer.Speaker.isPlaying(kChannel);
   s_statPostQueueDepth[queued < 2 ? queued : 2]++;
 #endif
@@ -176,7 +176,7 @@ extern "C" void ws_sound_init(int sample_rate_hz) {
   cardputer_audio::beginSpeaker(g_sample_rate, false, WS_AUDIO_DMA_LEN, WS_AUDIO_DMA_COUNT, 80, "ws", 4, 0);
   s_flip = 0;
   s_lastSample = 0;
-#ifdef BENCHMARK_LOGS
+#ifdef WS_BENCHMARK_LOGS
   s_statBlocks = 0;
   s_statUnderflows = 0;
   s_statMaxAvailable = 0;
@@ -210,7 +210,7 @@ extern "C" void ws_sound_frame(void) {
 
   size_t queued = M5Cardputer.Speaker.isPlaying(kChannel);
   WS_SOUND_BENCH_MAX(s_statMaxQueueDepth, queued);
-#ifdef BENCHMARK_LOGS
+#ifdef WS_BENCHMARK_LOGS
   s_statQueueDepth[queued < 2 ? queued : 2]++;
 #endif
 
@@ -277,7 +277,7 @@ extern "C" void ws_sound_pause_task(int pause) {
   }
 }
 
-#ifdef BENCHMARK_LOGS
+#ifdef WS_BENCHMARK_LOGS
 extern "C" void ws_sound_get_and_reset_stats(uint32_t* blocks,
                                               uint32_t* underflows,
                                               uint32_t* max_available,

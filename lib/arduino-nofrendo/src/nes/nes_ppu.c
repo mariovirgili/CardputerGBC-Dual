@@ -553,7 +553,7 @@ void ppu_write(uint32 address, uint8 value)
 ** Note that we set it up 3 times so that we flip bits on the primary
 ** NES buffer for priorities
 */
-static void ppu_buildpalette(ppu_t *src_ppu, rgb_t *pal)
+static void ppu_buildpalette(ppu_t *src_ppu, const rgb_t *pal)
 {
    int i;
 
@@ -577,7 +577,7 @@ static void ppu_buildpalette(ppu_t *src_ppu, rgb_t *pal)
 ** input palette can be either nes_palette or a 64-entry RGB palette
 ** read in from disk (i.e. for VS games)
 */
-void ppu_setpal(ppu_t *src_ppu, rgb_t *pal)
+void ppu_setpal(ppu_t *src_ppu, const rgb_t *pal)
 {
    ppu_buildpalette(src_ppu, pal);
    vid_setpalette(src_ppu->curpal);

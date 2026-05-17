@@ -216,6 +216,9 @@
 #define MPAN            0xFD44  //
 #define MSTEREO			0xfd50
 #define INTRST			0xfd80
+#ifdef INTSET
+#undef INTSET
+#endif
 #define INTSET			0xfd81
 #define MAGRDY0			0xfd84
 #define MAGRDY1			0xfd85

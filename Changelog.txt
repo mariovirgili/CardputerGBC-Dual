@@ -1,0 +1,60 @@
+Dall’ultimo commit f3ee2b5 platform: migrate CardputerGBC from Arduino to native ESP-IDF, lo stato attuale contiene 53 file modificati, con circa 689 righe aggiunte e 7745 rimosse. La rimozione enorme è quasi tutta dovuta all’eliminazione dei BIOS MSX embedded.
+
+In sintesi: abbiamo continuato la fase di slimming + stabilizzazione core + gestione BIOS esterni.
+
+Cose principali fatte
+
+Dimagrimento ESP-IDF / M5
+
+Limitato il grafo ESP-IDF con COMPONENTS main M5GFX M5Unified __pio_env.
+Ridotta M5GFX a sorgenti esplicitamente necessari, evitando font enormi e codice non usato.
+Patchata M5GFX per Cardputer ADV: ST7789, pin SPI corretti, rotazione/inversione pannello.
+Ridotta M5Unified: niente touch, RTC, IMU, LED, BMI270; speaker e BtnA restano.
+Disattivati o ridotti logging IDF, assert, stack overflow check, BT, TLS/mBedTLS e varie sezioni inutili in sdkconfig.
+Rimozione C-BIOS MSX embedded
+
+Eliminati:
+src/msx/msx_cbios_msx1.h
+src/msx/msx_cbios_msx2.h
+src/msx/msx_cbios_sub.h
+MSX ora richiede obbligatoriamente MSX.ROM su SD.
+Aggiunti percorsi di ricerca, inclusi roms/msx e roms.
+Se manca il BIOS, appare un messaggio a video con i percorsi validi, senza mostrare il prefisso interno /sd.
+Coleco BIOS ora obbligatorio da SD
+
+Rimossa la fallback BIOS zero-fill interna.
+coleco.rom deve essere reale e di 8192 byte.
+Aggiunti percorsi di ricerca:
+cartella ROM corrente
+bios/coleco
+bios/Coleco
+bios
+roms/Coleco
+roms/coleco
+roms
+root SD
+Se manca o ha dimensione errata, ora viene mostrato un messaggio dedicato a video.
+Stabilità core / crash
+
+PC Engine: spostato l’avvio audio dopo l’inizializzazione ROM/core e aggiunto guard in psg_update() per evitare null dereference.
+Neo Geo Pocket: convertiti buffer audio heap in statici e aggiunti controlli difensivi.
+WonderSwan, SMS, NES, GBC, GX4000, Lynx: vari fix per collisioni macro, signedness, const-correctness e warning reali.
+Diversi BIT, INTSET, register sono stati isolati o rimossi per compatibilità con toolchain ESP-IDF/C++17.
+Audio
+
+Lasciati log audio specializzati.
+I log ora mostrano rate, DMA, task core/priority, queued samples, empty/full/fail e dimensioni buffer.
+Questo serve a distinguere problemi di pipeline I2S/speaker da problemi di emulazione o produzione campioni.
+UI / colori / info
+
+Ripristinata la logica colori distinta per emulatori, invece del forcing globale blu.
+Aggiornato testo MSX: ora indica che serve MSX.ROM su SD.
+Tolti quasi tutti i log display rumorosi, lasciando solo quelli essenziali di boot/init.
+Warning cleanup
+
+Aggiunti vari -Wno-* dove i core legacy generano warning non utili.
+Fixati warning veri in NES, Lynx, GX4000, VFS, GBC, SMS, MSX.
+Rimossa inclusione deprecata esp_spi_flash.h in alcuni file.
+Risultato pratico
+
+La build si è alleggerita soprattutto grazie alla rimozione C-BIOS: l’ultima build verificata dopo quella parte era circa 2,477,671 byte flash, contro circa 2,510,143 byte dopo il primo slimming M5. Quindi il risparmio reale visto lì era circa 32 KB.

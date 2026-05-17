@@ -109,6 +109,9 @@ A = LB(acc); }
 
 #define SWAP(r) { r = ((r & 0x0F) << 4) | ((r & 0xF0) >> 4); F = ZFLAG(r); }
 
+#ifdef BIT
+#undef BIT
+#endif
 #define BIT(n,r) { F = (F & FC) | ZFLAG((r & (1 << (n)))) | FH; }
 #define RES(n,r) { r &= ~(1 << (n)); }
 #define SET(n,r) { r |= (1 << (n)); }

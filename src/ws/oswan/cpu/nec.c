@@ -114,12 +114,12 @@ static void nec_profile_print_top(const char* label, const UINT32* counts)
         }
     }
 
-    printf("[WS][CPU][PROFILE] %s", label);
+    EMU_LOG("[WS][CPU][PROFILE] %s", label);
     for(UINT32 i = 0; i < 8 && topCount[i]; ++i)
     {
-        printf(" %02X=%u", topOp[i], topCount[i]);
+        EMU_LOG(" %02X=%u", topOp[i], topCount[i]);
     }
-    printf("\n");
+    EMU_LOG("\n");
 }
 
 #define NEC_PROFILE_OP(op)  (nec_profile_op[(op) & 0xff]++)
@@ -198,17 +198,17 @@ static void nec_profile_print_branches(void)
         const nec_branch_profile_entry_t* entry = &nec_profile_branch[best];
         const UINT32 targetBase = (((UINT32)entry->cs) << 4) + entry->target;
         const UINT32 fromBase = (((UINT32)entry->cs) << 4) + entry->from;
-        printf("[WS][CPU][BRANCH] %04X:%04X<-%04X op=%02X n=%u t=%02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X f=%02X %02X %02X %02X\n",
-               entry->cs, entry->target, entry->from, entry->op, entry->count,
-               PEEKOP(targetBase + 0), PEEKOP(targetBase + 1), PEEKOP(targetBase + 2),
-               PEEKOP(targetBase + 3), PEEKOP(targetBase + 4), PEEKOP(targetBase + 5),
-               PEEKOP(targetBase + 6), PEEKOP(targetBase + 7), PEEKOP(targetBase + 8),
-               PEEKOP(targetBase + 9), PEEKOP(targetBase + 10), PEEKOP(targetBase + 11),
-               PEEKOP(targetBase + 12), PEEKOP(targetBase + 13), PEEKOP(targetBase + 14),
-               PEEKOP(targetBase + 15), PEEKOP(targetBase + 16), PEEKOP(targetBase + 17),
-               PEEKOP(targetBase + 18), PEEKOP(targetBase + 19), PEEKOP(targetBase + 20),
-               PEEKOP(targetBase + 21), PEEKOP(targetBase + 22), PEEKOP(targetBase + 23),
-               PEEKOP(fromBase + 0), PEEKOP(fromBase + 1), PEEKOP(fromBase + 2), PEEKOP(fromBase + 3));
+        EMU_LOG("[WS][CPU][BRANCH] %04X:%04X<-%04X op=%02X n=%u t=%02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X f=%02X %02X %02X %02X\n",
+                entry->cs, entry->target, entry->from, entry->op, entry->count,
+                PEEKOP(targetBase + 0), PEEKOP(targetBase + 1), PEEKOP(targetBase + 2),
+                PEEKOP(targetBase + 3), PEEKOP(targetBase + 4), PEEKOP(targetBase + 5),
+                PEEKOP(targetBase + 6), PEEKOP(targetBase + 7), PEEKOP(targetBase + 8),
+                PEEKOP(targetBase + 9), PEEKOP(targetBase + 10), PEEKOP(targetBase + 11),
+                PEEKOP(targetBase + 12), PEEKOP(targetBase + 13), PEEKOP(targetBase + 14),
+                PEEKOP(targetBase + 15), PEEKOP(targetBase + 16), PEEKOP(targetBase + 17),
+                PEEKOP(targetBase + 18), PEEKOP(targetBase + 19), PEEKOP(targetBase + 20),
+                PEEKOP(targetBase + 21), PEEKOP(targetBase + 22), PEEKOP(targetBase + 23),
+                PEEKOP(fromBase + 0), PEEKOP(fromBase + 1), PEEKOP(fromBase + 2), PEEKOP(fromBase + 3));
     }
 
     memset(nec_profile_branch, 0, sizeof(nec_profile_branch));
@@ -268,23 +268,23 @@ void nec_profile_log_and_reset(void)
        nec_pollwait_movbx_es_cmpb_jnz_exits ||
        nec_pollwait_movbx_es_cmpb_jnz_slices)
     {
-        printf("[WS][CPU][POLLWAIT] mov_cmp_jb exits=%u slices=%u moval_cmp_imm_jnz exits=%u slices=%u cmp_imm_jnz exits=%u slices=%u cmpb_imm_jnz exits=%u slices=%u cmpb_imm_jz exits=%u slices=%u es_mov_and_jnz exits=%u slices=%u es_cmpb_jnz exits=%u slices=%u movbx_es_cmpb_jnz exits=%u slices=%u\n",
-               nec_pollwait_mov_cmp_jb_exits,
-               nec_pollwait_mov_cmp_jb_slices,
-               nec_pollwait_moval_cmp_imm_jnz_exits,
-               nec_pollwait_moval_cmp_imm_jnz_slices,
-               nec_pollwait_cmp_imm_jnz_exits,
-               nec_pollwait_cmp_imm_jnz_slices,
-               nec_pollwait_cmpb_imm_jnz_exits,
-               nec_pollwait_cmpb_imm_jnz_slices,
-               nec_pollwait_cmpb_imm_jz_exits,
-               nec_pollwait_cmpb_imm_jz_slices,
-               nec_pollwait_es_mov_and_jnz_exits,
-               nec_pollwait_es_mov_and_jnz_slices,
-               nec_pollwait_es_cmpb_jnz_exits,
-               nec_pollwait_es_cmpb_jnz_slices,
-               nec_pollwait_movbx_es_cmpb_jnz_exits,
-               nec_pollwait_movbx_es_cmpb_jnz_slices);
+        EMU_LOG("[WS][CPU][POLLWAIT] mov_cmp_jb exits=%u slices=%u moval_cmp_imm_jnz exits=%u slices=%u cmp_imm_jnz exits=%u slices=%u cmpb_imm_jnz exits=%u slices=%u cmpb_imm_jz exits=%u slices=%u es_mov_and_jnz exits=%u slices=%u es_cmpb_jnz exits=%u slices=%u movbx_es_cmpb_jnz exits=%u slices=%u\n",
+                nec_pollwait_mov_cmp_jb_exits,
+                nec_pollwait_mov_cmp_jb_slices,
+                nec_pollwait_moval_cmp_imm_jnz_exits,
+                nec_pollwait_moval_cmp_imm_jnz_slices,
+                nec_pollwait_cmp_imm_jnz_exits,
+                nec_pollwait_cmp_imm_jnz_slices,
+                nec_pollwait_cmpb_imm_jnz_exits,
+                nec_pollwait_cmpb_imm_jnz_slices,
+                nec_pollwait_cmpb_imm_jz_exits,
+                nec_pollwait_cmpb_imm_jz_slices,
+                nec_pollwait_es_mov_and_jnz_exits,
+                nec_pollwait_es_mov_and_jnz_slices,
+                nec_pollwait_es_cmpb_jnz_exits,
+                nec_pollwait_es_cmpb_jnz_slices,
+                nec_pollwait_movbx_es_cmpb_jnz_exits,
+                nec_pollwait_movbx_es_cmpb_jnz_slices);
         nec_pollwait_mov_cmp_jb_exits = 0;
         nec_pollwait_mov_cmp_jb_slices = 0;
         nec_pollwait_moval_cmp_imm_jnz_exits = 0;

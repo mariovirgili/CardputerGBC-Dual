@@ -1601,6 +1601,9 @@ static __inline__ UINT8 SRL(UINT8 value)
 /***************************************************************
  * BIT  bit,r8
  ***************************************************************/
+#ifdef BIT
+#undef BIT
+#endif
 #define BIT(bit,reg)                                            \
 	_F = (_F & CF) | HF | SZ_BIT[reg & (1<<bit)]
 

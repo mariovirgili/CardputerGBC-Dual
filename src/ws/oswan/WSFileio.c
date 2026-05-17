@@ -13,7 +13,7 @@ $Rev: 71 $
 #include "cpu/necintrf.h"
 
 #ifdef WS_LOGS_ENABLED
-#define WS_LOGF(...) printf(__VA_ARGS__)
+#define WS_LOGF(...) EMU_LOG(__VA_ARGS__)
 #else
 #define WS_LOGF(...) ((void)0)
 #endif
@@ -82,7 +82,7 @@ int WsSetPdata(void)
     CartKind = 0;
     if ((ROMMap[0xFF] = (BYTE*)malloc(0x10000)) == NULL)
     {
-		fprintf(stderr,"WsSetPdata\n");
+		WS_LOGF("WsSetPdata\n");
 
         //ErrorMsg(ERR_MALLOC);
         return 0;
@@ -114,14 +114,14 @@ int WsCreate(char *CartName)
     if ((fp = fopen(CartName, "rb")) == NULL)
     {
         //ErrorMsg(ERR_FOPEN);
-		fprintf(stderr,"ERR_FOPEN");
+		WS_LOGF("ERR_FOPEN");
         return ERR_FOPEN;
     }
     fseek(fp, -10, SEEK_END);
     if (fread(buf, 1, 10, fp) != 10)
     {
         //ErrorMsg(ERR_FREAD_ROMINFO);
-		fprintf(stderr,"ERR_FREAD_ROMINFO");
+		WS_LOGF("ERR_FREAD_ROMINFO");
         return ERR_FREAD_ROMINFO;
     }
     switch (buf[4])
@@ -160,7 +160,7 @@ int WsCreate(char *CartName)
     if (ROMBanks == 0)
     {
         //ErrorMsg(ERR_ILLEGAL_ROMSIZE);
-		fprintf(stderr,"ERR_ILLEGAL_ROMSIZE\n");
+		WS_LOGF("ERR_ILLEGAL_ROMSIZE\n");
         return ERR_ILLEGAL_ROMSIZE;
     }
     switch (buf[5])
@@ -224,14 +224,14 @@ int WsCreate(char *CartName)
             else
             {
                 //ErrorMsg(ERR_FREAD_ROM);
-				fprintf(stderr,"ERR_FREAD_ROM\n");
+				WS_LOGF("ERR_FREAD_ROM\n");
                 break;
             }
         }
         else
         {
             //ErrorMsg(ERR_MALLOC);
-			fprintf(stderr,"ERR_MALLOC\n");
+			WS_LOGF("ERR_MALLOC\n");
             return ERR_MALLOC;
         }
     }
@@ -243,7 +243,7 @@ int WsCreate(char *CartName)
     if (Checksum & 0xFFFF)
     {
         //ErrorMsg(ERR_CHECKSUM);
-		fprintf(stderr,"ERR_CHECKSUM\n");
+		WS_LOGF("ERR_CHECKSUM\n");
     }
     if (RAMBanks)
     {
@@ -256,7 +256,7 @@ int WsCreate(char *CartName)
             else
             {
                 //ErrorMsg(ERR_MALLOC);
-				fprintf(stderr,"ERR_MALLOC 1\n");
+				WS_LOGF("ERR_MALLOC 1\n");
 				return ERR_MALLOC;
             }
         }
@@ -272,7 +272,7 @@ int WsCreate(char *CartName)
                     if (fread(RAMMap[i], 1, RAMSize, fp) != RAMSize)
                     {
                         //ErrorMsg(ERR_FREAD_SAVE);
-						fprintf(stderr,"ERR_FREAD_SAVE\n");
+						WS_LOGF("ERR_FREAD_SAVE\n");
 						break;
                     }
                 }
@@ -281,7 +281,7 @@ int WsCreate(char *CartName)
                     if (fread(RAMMap[i], 1, 0x10000, fp) != 0x10000)
                     {
                         //ErrorMsg(ERR_FREAD_SAVE);
-						fprintf(stderr,"ERR_FREAD_SAVE 1\n");
+						WS_LOGF("ERR_FREAD_SAVE 1\n");
                         break;
                     }
                 }

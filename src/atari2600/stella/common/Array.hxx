@@ -42,8 +42,8 @@ class Array
     typedef const T *const_iterator;
 
   public:
-    Array<T>() : _capacity(0), _size(0), _data(0) {}
-    Array<T>(const Array<T>& array) : _capacity(0), _size(0), _data(0)
+    Array() : _capacity(0), _size(0), _data(0) {}
+    Array(const Array<T>& array) : _capacity(0), _size(0), _data(0)
     {
       _size = array._size;
       _capacity = _size + 128;
@@ -52,7 +52,7 @@ class Array
         _data[i] = array._data[i];
     }
 
-    ~Array<T>()
+    ~Array()
     {
       if (_data)
         delete [] _data;
@@ -80,7 +80,7 @@ class Array
 
     void insert_at(uInt32 idx, const T& element)
     {
-      assert(idx >= 0 && idx <= _size);
+      assert(idx <= _size);
       ensureCapacity(_size + 1);
       // The following loop is not efficient if you can just memcpy things around.
       // e.g. if you have a list of ints. But for real objects (String...), memcpy
@@ -96,7 +96,7 @@ class Array
 
     T remove_at(uInt32 idx)
     {
-      assert(idx >= 0 && idx < _size);
+      assert(idx < _size);
       T tmp = _data[idx];
       for(uInt32 i = idx; i < _size - 1; i++)
         _data[i] = _data[i+1];
@@ -106,13 +106,13 @@ class Array
 
     T& operator [](uInt32 idx)
     {
-      assert(idx >= 0 && idx < _size);
+      assert(idx < _size);
       return _data[idx];
     }
 
     const T& operator [](uInt32 idx) const
     {
-      assert(idx >= 0 && idx < _size);
+      assert(idx < _size);
       return _data[idx];
     }
 

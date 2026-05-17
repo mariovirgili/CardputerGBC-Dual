@@ -8,7 +8,7 @@ extern "C" {
 void ws_display_init(void);
 void ws_display_start(void);
 void ws_display_stop(void);
-#ifdef BENCHMARK_LOGS
+#ifdef WS_BENCHMARK_LOGS
 void ws_display_get_and_reset_stats(uint32_t* frames,
                                     uint32_t* total_us,
                                     uint32_t* max_us,

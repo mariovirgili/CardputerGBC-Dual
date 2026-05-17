@@ -61,11 +61,11 @@ static unsigned long nes_diag_frames;
 
 static void nes_diag_log_heap(const char *stage)
 {
-   printf("[NES][CORE] %-12s heap=%u largest8=%u largestInternal=%u\n",
-          stage,
-          (unsigned)heap_caps_get_free_size(MALLOC_CAP_8BIT),
-          (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT),
-          (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
+   EMU_LOG("[NES][CORE] %-12s heap=%u largest8=%u largestInternal=%u\n",
+           stage,
+           (unsigned)heap_caps_get_free_size(MALLOC_CAP_8BIT),
+           (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT),
+           (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
 }
 
 static void nes_diag_log_frame(bool draw)
@@ -79,22 +79,22 @@ static void nes_diag_log_frame(bool draw)
    if (nes_diag_frames > 5 && (nes_diag_frames % 60UL) != 0)
       return;
 
-   printf("[NES][FRAME %lu] draw=%u PC=%04lX A=%02X X=%02X Y=%02X S=%02X P=%02X scan=%d jam=%u irq=%u fiq=%u ticks=%d heap=%u largest8=%u\n",
-          nes_diag_frames,
-          (unsigned)draw,
-          (unsigned long)(cpu_ctx.pc_reg & 0xFFFFU),
-          (unsigned)cpu_ctx.a_reg,
-          (unsigned)cpu_ctx.x_reg,
-          (unsigned)cpu_ctx.y_reg,
-          (unsigned)cpu_ctx.s_reg,
-          (unsigned)cpu_ctx.p_reg,
-          nes.scanline,
-          (unsigned)cpu_ctx.jammed,
-          (unsigned)cpu_ctx.int_pending,
-          (unsigned)nes.fiq_state,
-          nofrendo_ticks,
-          (unsigned)heap_caps_get_free_size(MALLOC_CAP_8BIT),
-          (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
+   EMU_LOG("[NES][FRAME %lu] draw=%u PC=%04lX A=%02X X=%02X Y=%02X S=%02X P=%02X scan=%d jam=%u irq=%u fiq=%u ticks=%d heap=%u largest8=%u\n",
+           nes_diag_frames,
+           (unsigned)draw,
+           (unsigned long)(cpu_ctx.pc_reg & 0xFFFFU),
+           (unsigned)cpu_ctx.a_reg,
+           (unsigned)cpu_ctx.x_reg,
+           (unsigned)cpu_ctx.y_reg,
+           (unsigned)cpu_ctx.s_reg,
+           (unsigned)cpu_ctx.p_reg,
+           nes.scanline,
+           (unsigned)cpu_ctx.jammed,
+           (unsigned)cpu_ctx.int_pending,
+           (unsigned)nes.fiq_state,
+           nofrendo_ticks,
+           (unsigned)heap_caps_get_free_size(MALLOC_CAP_8BIT),
+           (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
 }
 #endif
 
@@ -424,16 +424,16 @@ void nes_emulate(void)
    nes_diag_frames = 0;
    nes_diag_log_heap("emulate");
    if (nes.rominfo)
-      printf("[NES][CORE] rom prg=%d chr=%d mapper=%d mirror=%c flags=%02X rom=%p vrom=%p vram=%p sram=%p\n",
-             nes.rominfo->rom_banks,
-             nes.rominfo->vrom_banks,
-             nes.rominfo->mapper_number,
-             (nes.rominfo->mirror == MIRROR_VERT) ? 'V' : 'H',
-             (unsigned)nes.rominfo->flags,
-             (void *)nes.rominfo->rom,
-             (void *)nes.rominfo->vrom,
-             (void *)nes.rominfo->vram,
-             (void *)nes.rominfo->sram);
+      EMU_LOG("[NES][CORE] rom prg=%d chr=%d mapper=%d mirror=%c flags=%02X rom=%p vrom=%p vram=%p sram=%p\n",
+              nes.rominfo->rom_banks,
+              nes.rominfo->vrom_banks,
+              nes.rominfo->mapper_number,
+              (nes.rominfo->mirror == MIRROR_VERT) ? 'V' : 'H',
+              (unsigned)nes.rominfo->flags,
+              (void *)nes.rominfo->rom,
+              (void *)nes.rominfo->vrom,
+              (void *)nes.rominfo->vram,
+              (void *)nes.rominfo->sram);
 #endif
 
    osd_setsound(nes.apu->process);
@@ -518,18 +518,18 @@ void nes_reset(int reset_type)
       ? (unsigned)reset_page[RESET_VECTOR & NES6502_BANKMASK]
         | ((unsigned)reset_page[(RESET_VECTOR + 1) & NES6502_BANKMASK] << 8)
       : 0xFFFFU;
-   printf("[NES][CORE] reset=%s PC=%04lX vector=%04X S=%02X P=%02X mem0=%p mem6=%p mem7=%p mem8=%p memC=%p memF=%p\n",
-          (HARD_RESET == reset_type) ? "hard" : "soft",
-          (unsigned long)(cpu_ctx.pc_reg & 0xFFFFU),
-          reset_vector,
-          (unsigned)cpu_ctx.s_reg,
-          (unsigned)cpu_ctx.p_reg,
-          (void *)cpu_ctx.mem_page[0],
-          (void *)cpu_ctx.mem_page[6],
-          (void *)cpu_ctx.mem_page[7],
-          (void *)cpu_ctx.mem_page[8],
-          (void *)cpu_ctx.mem_page[12],
-          (void *)cpu_ctx.mem_page[15]);
+   EMU_LOG("[NES][CORE] reset=%s PC=%04lX vector=%04X S=%02X P=%02X mem0=%p mem6=%p mem7=%p mem8=%p memC=%p memF=%p\n",
+           (HARD_RESET == reset_type) ? "hard" : "soft",
+           (unsigned long)(cpu_ctx.pc_reg & 0xFFFFU),
+           reset_vector,
+           (unsigned)cpu_ctx.s_reg,
+           (unsigned)cpu_ctx.p_reg,
+           (void *)cpu_ctx.mem_page[0],
+           (void *)cpu_ctx.mem_page[6],
+           (void *)cpu_ctx.mem_page[7],
+           (void *)cpu_ctx.mem_page[8],
+           (void *)cpu_ctx.mem_page[12],
+           (void *)cpu_ctx.mem_page[15]);
 #endif
 
    gui_sendmsg(GUI_GREEN, "NES %s",
@@ -577,7 +577,7 @@ int nes_insertcart(const char *filename, nes_t *machine)
    nes6502_setcontext(machine->cpu);
 
 #ifdef NES_DIAG_LOGS
-   printf("[NES][CART] load %s\n", filename ? filename : "(null)");
+   EMU_LOG("[NES][CART] load %s\n", filename ? filename : "(null)");
    nes_diag_log_heap("cart start");
 #endif
 
@@ -586,24 +586,24 @@ int nes_insertcart(const char *filename, nes_t *machine)
    if (NULL == machine->rominfo)
    {
 #ifdef NES_DIAG_LOGS
-      printf("[NES][CART] rom_load failed\n");
+      EMU_LOG("[NES][CART] rom_load failed\n");
 #endif
       goto _fail;
    }
 
 #ifdef NES_DIAG_LOGS
-   printf("[NES][CART] loaded prg=%d chr=%d mapper=%d mirror=%c flags=%02X sramBanks=%d vramBanks=%d rom=%p vrom=%p vram=%p sram=%p\n",
-          machine->rominfo->rom_banks,
-          machine->rominfo->vrom_banks,
-          machine->rominfo->mapper_number,
-          (machine->rominfo->mirror == MIRROR_VERT) ? 'V' : 'H',
-          (unsigned)machine->rominfo->flags,
-          machine->rominfo->sram_banks,
-          machine->rominfo->vram_banks,
-          (void *)machine->rominfo->rom,
-          (void *)machine->rominfo->vrom,
-          (void *)machine->rominfo->vram,
-          (void *)machine->rominfo->sram);
+   EMU_LOG("[NES][CART] loaded prg=%d chr=%d mapper=%d mirror=%c flags=%02X sramBanks=%d vramBanks=%d rom=%p vrom=%p vram=%p sram=%p\n",
+           machine->rominfo->rom_banks,
+           machine->rominfo->vrom_banks,
+           machine->rominfo->mapper_number,
+           (machine->rominfo->mirror == MIRROR_VERT) ? 'V' : 'H',
+           (unsigned)machine->rominfo->flags,
+           machine->rominfo->sram_banks,
+           machine->rominfo->vram_banks,
+           (void *)machine->rominfo->rom,
+           (void *)machine->rominfo->vrom,
+           (void *)machine->rominfo->vram,
+           (void *)machine->rominfo->sram);
    nes_diag_log_heap("cart rom");
 #endif
 
@@ -619,13 +619,13 @@ int nes_insertcart(const char *filename, nes_t *machine)
    if (NULL == machine->mmc)
    {
 #ifdef NES_DIAG_LOGS
-      printf("[NES][CART] mmc_create failed mapper=%d\n", machine->rominfo->mapper_number);
+      EMU_LOG("[NES][CART] mmc_create failed mapper=%d\n", machine->rominfo->mapper_number);
 #endif
       goto _fail;
    }
 
 #ifdef NES_DIAG_LOGS
-   printf("[NES][CART] mmc=%p intf=%p\n", (void *)machine->mmc, (void *)machine->mmc->intf);
+   EMU_LOG("[NES][CART] mmc=%p intf=%p\n", (void *)machine->mmc, (void *)machine->mmc->intf);
 #endif
 
    /* if there's VRAM, let the PPU know */

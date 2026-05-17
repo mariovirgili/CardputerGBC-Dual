@@ -186,11 +186,11 @@ void palette_init16(DWORD dwRBitMask, DWORD dwGBitMask, DWORD dwBBitMask)
 
 #ifdef NGP_TRACE_LOGS
     if (totalpalette) {
-        printf("[NGP][GFX] palette_init16 masks R=%08lX G=%08lX B=%08lX totalpal=%p sample=%04X/%04X/%04X/%04X/%04X\n",
-               (unsigned long)dwRBitMask, (unsigned long)dwGBitMask, (unsigned long)dwBBitMask,
-               totalpalette,
-               totalpalette[0x000], totalpalette[0x00F], totalpalette[0x0F0],
-               totalpalette[0xF00], totalpalette[0xFFF]);
+        EMU_LOG("[NGP][GFX] palette_init16 masks R=%08lX G=%08lX B=%08lX totalpal=%p sample=%04X/%04X/%04X/%04X/%04X\n",
+                (unsigned long)dwRBitMask, (unsigned long)dwGBitMask, (unsigned long)dwBBitMask,
+                totalpalette,
+                totalpalette[0x000], totalpalette[0x00F], totalpalette[0x0F0],
+                totalpalette[0xF00], totalpalette[0xFFF]);
     }
 #endif
 }
@@ -685,21 +685,21 @@ void myGraphicsBlitLine(unsigned char render)
 #ifdef NGP_TRACE_LOGS
             if (s_ngp_trace_gfx_frame < 5 || ((s_ngp_trace_gfx_frame % 60u) == 0u)) {
                 if (y == 0u || y == 76u || y == 151u) {
-                    printf("[NGP][LINE f=%u y=%u] render=%u bw=%d winEmpty=%d x=%d..%d bg=%04X oow=%04X f1=%02X p2front=%u pri=%u/%u/%u pix=%04X/%04X/%04X pal=%04X/%04X tileF=%04X tileB=%04X scrollF=%u,%u scrollB=%u,%u\n",
-                           s_ngp_trace_gfx_frame, y, (unsigned)render, is_bw, win_empty,
-                           x0, x1, bgcol, OOWCol, frame1, (unsigned)plane2_front,
-                           mySprPri40 ? mySprPri40->count : 0,
-                           mySprPri80 ? mySprPri80->count : 0,
-                           mySprPriC0 ? mySprPriC0->count : 0,
-                           draw[0], draw[80], draw[159],
-                           myPalettes ? myPalettes[0] : 0xFFFF,
-                           myPalettes ? myPalettes[1] : 0xFFFF,
-                           tile_table_front ? tile_table_front[0] : 0xFFFF,
-                           tile_table_back ? tile_table_back[0] : 0xFFFF,
-                           scrollFrontX ? *scrollFrontX : 0xFF,
-                           scrollFrontY ? *scrollFrontY : 0xFF,
-                           scrollBackX ? *scrollBackX : 0xFF,
-                           scrollBackY ? *scrollBackY : 0xFF);
+                    EMU_LOG("[NGP][LINE f=%u y=%u] render=%u bw=%d winEmpty=%d x=%d..%d bg=%04X oow=%04X f1=%02X p2front=%u pri=%u/%u/%u pix=%04X/%04X/%04X pal=%04X/%04X tileF=%04X tileB=%04X scrollF=%u,%u scrollB=%u,%u\n",
+                            s_ngp_trace_gfx_frame, y, (unsigned)render, is_bw, win_empty,
+                            x0, x1, bgcol, OOWCol, frame1, (unsigned)plane2_front,
+                            mySprPri40 ? mySprPri40->count : 0,
+                            mySprPri80 ? mySprPri80->count : 0,
+                            mySprPriC0 ? mySprPriC0->count : 0,
+                            draw[0], draw[80], draw[159],
+                            myPalettes ? myPalettes[0] : 0xFFFF,
+                            myPalettes ? myPalettes[1] : 0xFFFF,
+                            tile_table_front ? tile_table_front[0] : 0xFFFF,
+                            tile_table_back ? tile_table_back[0] : 0xFFFF,
+                            scrollFrontX ? *scrollFrontX : 0xFF,
+                            scrollFrontY ? *scrollFrontY : 0xFF,
+                            scrollBackX ? *scrollBackX : 0xFF,
+                            scrollBackY ? *scrollBackY : 0xFF);
                 }
             }
 #endif
@@ -713,9 +713,9 @@ void myGraphicsBlitLine(unsigned char render)
             g_frame_ready = 1;
 #ifdef NGP_TRACE_LOGS
             if (s_ngp_trace_gfx_frame < 5 || ((s_ngp_trace_gfx_frame % 60u) == 0u)) {
-                printf("[NGP][GFXFRAME %u] ready=1 ifr=%02X->%02X scan=%u draw=%p\n",
-                       s_ngp_trace_gfx_frame, ifr, tlcsMemReadB(0x00008010),
-                       scanlineY ? *scanlineY : 0xFF, drawBuffer);
+                EMU_LOG("[NGP][GFXFRAME %u] ready=1 ifr=%02X->%02X scan=%u draw=%p\n",
+                        s_ngp_trace_gfx_frame, ifr, tlcsMemReadB(0x00008010),
+                        scanlineY ? *scanlineY : 0xFF, drawBuffer);
             }
             s_ngp_trace_gfx_frame++;
 #endif
@@ -776,7 +776,7 @@ BOOL graphics_init(void)
         if (!scanlineY) {
             static unsigned char dummy = 0;
             scanlineY = &dummy;
-            printf("[SAFE INIT] scanlineY not mapped yet -> using dummy\n");
+            EMU_LOG("[SAFE INIT] scanlineY not mapped yet -> using dummy\n");
         }
     }
 
@@ -798,10 +798,10 @@ BOOL graphics_init(void)
     }
 
 #ifdef NGP_TRACE_LOGS
-    printf("[NGP][GFX] init machine=%d draw=%p totalpal=%p myPal=%p palettes=%p sprBlock=%p sprites=%p scan=%p frame0=%p frame1=%p bgSel=%p palTable=%p bwPal=%p\n",
-           m_emuInfo.machine, drawBuffer, totalpalette, myPalettes, palettes,
-           mySprPriBlock, mySprites, scanlineY, frame0Pri, frame1Pri,
-           bgSelect, palette_table, bw_palette_table);
+    EMU_LOG("[NGP][GFX] init machine=%d draw=%p totalpal=%p myPal=%p palettes=%p sprBlock=%p sprites=%p scan=%p frame0=%p frame1=%p bgSel=%p palTable=%p bwPal=%p\n",
+            m_emuInfo.machine, drawBuffer, totalpalette, myPalettes, palettes,
+            mySprPriBlock, mySprites, scanlineY, frame0Pri, frame1Pri,
+            bgSelect, palette_table, bw_palette_table);
 #endif
 
     return TRUE;

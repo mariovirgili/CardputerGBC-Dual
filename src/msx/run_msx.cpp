@@ -21,6 +21,36 @@ extern "C" {
 
 namespace {
 
+void draw_centered(const char* text, int y, float size, uint16_t color)
+{
+    auto& display = M5Cardputer.Display;
+    display.setTextSize(size);
+    display.setTextColor(color);
+    const int x = (display.width() - display.textWidth(text)) / 2;
+    display.setCursor(x < 0 ? 0 : x, y);
+    display.printf("%s", text);
+}
+
+void show_missing_bios_message()
+{
+    auto& display = M5Cardputer.Display;
+    display.setRotation(1);
+    display.setSwapBytes(true);
+    display.fillScreen(TFT_BLACK);
+    display.drawRect(1, 1, display.width() - 2, display.height() - 2, TFT_ORANGE);
+
+    draw_centered("MSX.ROM REQUIRED", 7, 1.45f, TFT_ORANGE);
+    draw_centered("File: MSX.ROM", 25, 1.0f, TFT_WHITE);
+    draw_centered("Folders:", 39, 1.0f, TFT_ORANGE);
+    draw_centered("ROM folder", 52, 0.95f, TFT_WHITE);
+    draw_centered("msx/", 64, 0.95f, TFT_WHITE);
+    draw_centered("msx_bios/", 76, 0.95f, TFT_WHITE);
+    draw_centered("bios/msx/", 88, 0.95f, TFT_WHITE);
+    draw_centered("bios/", 100, 0.95f, TFT_WHITE);
+    draw_centered("roms/msx/ or roms/", 112, 0.95f, TFT_WHITE);
+    draw_centered("or SD root", 124, 0.95f, TFT_ORANGE);
+}
+
 int choose_mode_from_extension(const char* romName)
 {
     const char* dot = romName ? std::strrchr(romName, '.') : nullptr;
@@ -67,7 +97,8 @@ void run_msx(const uint8_t* rom, size_t len, const char* romName, const char* ro
     const int preferred = choose_mode_from_extension(romName);
     const int mode = choose_best_available_mode(preferred);
     if (mode < 0) {
-        EMU_LOG("[MSX][ERR] Missing BIOS. Expected MSX.ROM or full MSX2/MSX2+ sets in /sd/msx, /sd/msx_bios, or /sd/bios/msx\n");
+        EMU_LOG("[MSX][ERR] Missing BIOS. Expected MSX.ROM in ROM folder, msx, msx_bios, bios/msx, bios, SD root, roms/msx, or roms\n");
+        show_missing_bios_message();
         for (;;) delay(1000);
     }
 

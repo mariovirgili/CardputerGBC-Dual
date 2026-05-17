@@ -16,10 +16,6 @@
 #include "share/emu_log_cpp.h"
 #include "share/input.h"
 
-// WARNING: The real BIOS is needed for Coleco emulation.
-// It is loaded from coleco.rom next to the selected cartridge and mapped in XIP.
-static const unsigned char ColecoVision_ZeroBIOS[8192] = {0};
-
 static uint8_t map_console_type(SmsConsoleMode mode)
 {
   switch (mode) {
@@ -48,6 +44,14 @@ void run_sms(const uint8_t* romPtr, size_t romLen, SmsConsoleMode mode, const ch
   /* Persistent SRAM is only relevant for SMS/GG mappers. */
   const bool needsSram = (mode == SMS_MODE_SMS || mode == SMS_MODE_GG);
   const uint8_t consoleType = map_console_type(mode);
+  const bool hasColecoBios = isColeco && colecoBiosPtr && colecoBiosLen >= 8192;
+
+  if (isColeco && !hasColecoBios) {
+    EMU_LOG("[COL][ERR] missing required coleco.rom BIOS\n");
+    display.topBar("COLECO BIOS REQUIRED", false, false);
+    display.subMessage("Missing coleco.rom", 2500);
+    return;
+  }
 
   // Runtime buffers only: no core allocation at boot.
   uint8_t* videoBuf = (uint8_t*)heap_caps_aligned_alloc(
@@ -71,10 +75,7 @@ void run_sms(const uint8_t* romPtr, size_t romLen, SmsConsoleMode mode, const ch
     share::clearBeforeRestartCallback();
   }
 
-  const bool hasColecoBios = isColeco && colecoBiosPtr && colecoBiosLen >= 8192;
-  sms.coleco_bios = isColeco
-      ? (uint8_t*)(hasColecoBios ? colecoBiosPtr : ColecoVision_ZeroBIOS)
-      : nullptr;
+  sms.coleco_bios = isColeco ? (uint8_t*)colecoBiosPtr : nullptr;
 
   // Mapping structures core
   sms.dummy = dummyBuf;
@@ -103,7 +104,7 @@ void run_sms(const uint8_t* romPtr, size_t romLen, SmsConsoleMode mode, const ch
             romName ? romName : "(null)", romPtr, (unsigned)romLen, (unsigned)cart.pages);
     EMU_LOG("[COL][BOOT] buffers video=%p dummy=%p ram=%p sram=%p bios=%p (%s)\n",
             videoBuf, sms.dummy, sms.ram, sms.sram, sms.coleco_bios,
-            hasColecoBios ? "xip coleco.rom" : "zero fallback");
+            "xip coleco.rom");
     EMU_LOG("[COL][BOOT] rom[0..15]=");
     for (size_t i = 0; i < romLen && i < 16; ++i) EMU_LOG(" %02X", romPtr[i]);
     EMU_LOG("\n");

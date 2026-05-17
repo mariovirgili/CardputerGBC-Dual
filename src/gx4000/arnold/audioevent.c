@@ -365,7 +365,7 @@ unsigned long Tape_Volume = 0;
 
 
 
-char *AudioEvent_UpdateCycle(char *pAudioPtr)
+unsigned char *AudioEvent_UpdateCycle(unsigned char *pAudioPtr)
 {
 	PSG_OUTPUT_VOLUME PSG_Output;
     signed char LeftVolume;
@@ -805,7 +805,7 @@ int     AudioEvent_TraverseAudioEventsAndBuildSampleData(int CPCNopCount, int No
 					}
 				}
 			
-				pAudioPtr = (char *)AudioEvent_UpdateCycle(pAudioPtr);
+				pAudioPtr = AudioEvent_UpdateCycle(pAudioPtr);
             
 				NopCount.FixedPoint.L += NopsPerSampleScaled.FixedPoint.L;    
 			}

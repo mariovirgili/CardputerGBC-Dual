@@ -59,7 +59,7 @@ void apuAllocateBuffers(void) {
         sndbuffer[ch] = (int16_t*)malloc(SND_RNGSIZE * sizeof(int16_t));
         if (sndbuffer[ch] == NULL) {
             // In case of allocation error
-            fprintf(stderr, "Error: unable to allocate APU buffer for channel %d\n", ch);
+            EMU_LOG("Error: unable to allocate APU buffer for channel %d\n", ch);
             exit(1);
         }
         memset(sndbuffer[ch], 0, SND_RNGSIZE * sizeof(int16_t));
@@ -69,7 +69,7 @@ void apuAllocateBuffers(void) {
     for (int i = 0; i < 4; ++i) {
         PData[i] = (unsigned char*)malloc(32 * sizeof(unsigned char));
         if (PData[i] == NULL) {
-            fprintf(stderr, "Erreur: impossible d’allouer PData[%d]\n", i);
+            EMU_LOG("Error: unable to allocate PData[%d]\n", i);
             exit(1);
         }
         memset(PData[i], 0, 32 * sizeof(unsigned char));
@@ -170,7 +170,7 @@ void apuEnd(void)
 // -----------------------------------------------------------------------------
 unsigned int apuMrand(unsigned int Degree)
 {
-#define BIT(n) (1U<<(n))
+#define APU_BIT(n) (1U<<(n))
   typedef struct {
     unsigned int N;
     int          InputBit;
@@ -179,24 +179,24 @@ unsigned int apuMrand(unsigned int Degree)
 
   static POLYNOMIAL TblMask[] =
   {
-    { 2, BIT(2),  BIT(0)|BIT(1)},
-    { 3, BIT(3),  BIT(0)|BIT(1)},
-    { 4, BIT(4),  BIT(0)|BIT(1)},
-    { 5, BIT(5),  BIT(0)|BIT(2)},
-    { 6, BIT(6),  BIT(0)|BIT(1)},
-    { 7, BIT(7),  BIT(0)|BIT(1)},
-    { 8, BIT(8),  BIT(0)|BIT(2)|BIT(3)|BIT(4)},
-    { 9, BIT(9),  BIT(0)|BIT(4)},
-    {10, BIT(10), BIT(0)|BIT(3)},
-    {11, BIT(11), BIT(0)|BIT(2)},
-    {12, BIT(12), BIT(0)|BIT(1)|BIT(4)|BIT(6)},
-    {13, BIT(13), BIT(0)|BIT(1)|BIT(3)|BIT(4)},
-    {14, BIT(14), BIT(0)|BIT(1)|BIT(4)|BIT(5)},
-    {15, BIT(15), BIT(0)|BIT(1)},
+    { 2, APU_BIT(2),  APU_BIT(0)|APU_BIT(1)},
+    { 3, APU_BIT(3),  APU_BIT(0)|APU_BIT(1)},
+    { 4, APU_BIT(4),  APU_BIT(0)|APU_BIT(1)},
+    { 5, APU_BIT(5),  APU_BIT(0)|APU_BIT(2)},
+    { 6, APU_BIT(6),  APU_BIT(0)|APU_BIT(1)},
+    { 7, APU_BIT(7),  APU_BIT(0)|APU_BIT(1)},
+    { 8, APU_BIT(8),  APU_BIT(0)|APU_BIT(2)|APU_BIT(3)|APU_BIT(4)},
+    { 9, APU_BIT(9),  APU_BIT(0)|APU_BIT(4)},
+    {10, APU_BIT(10), APU_BIT(0)|APU_BIT(3)},
+    {11, APU_BIT(11), APU_BIT(0)|APU_BIT(2)},
+    {12, APU_BIT(12), APU_BIT(0)|APU_BIT(1)|APU_BIT(4)|APU_BIT(6)},
+    {13, APU_BIT(13), APU_BIT(0)|APU_BIT(1)|APU_BIT(3)|APU_BIT(4)},
+    {14, APU_BIT(14), APU_BIT(0)|APU_BIT(1)|APU_BIT(4)|APU_BIT(5)},
+    {15, APU_BIT(15), APU_BIT(0)|APU_BIT(1)},
     { 0, 0, 0},
   };
   static POLYNOMIAL *pTbl   = TblMask;
-  static int         ShiftReg = BIT(2)-1;
+  static int         ShiftReg = APU_BIT(2)-1;
   int XorReg = 0;
   int Masked;
 
@@ -220,7 +220,9 @@ unsigned int apuMrand(unsigned int Degree)
   else        ShiftReg &= ~pTbl->InputBit;
 
   ShiftReg >>= 1;
-  return (unsigned int)ShiftReg;
+  unsigned int result = (unsigned int)ShiftReg;
+#undef APU_BIT
+  return result;
 }
 
 // -----------------------------------------------------------------------------

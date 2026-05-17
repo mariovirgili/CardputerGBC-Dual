@@ -310,5 +310,5 @@ extern "C" IRAM_ATTR void graphics_paint(unsigned char render)
    s_interlace_parity = !s_interlace_parity; // parity is set by tlcs_execute() if using NGP_HW_INTERLACED
 #endif
 
-  g_frame_counter++;
+  g_frame_counter = g_frame_counter + 1;
 }

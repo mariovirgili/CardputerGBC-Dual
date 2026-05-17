@@ -14,6 +14,11 @@
 #ifndef MSX_H
 #define MSX_H
 
+#if defined(__cplusplus) && (__cplusplus >= 201703L)
+#define FMSX_REGISTER_COMPAT
+#define register
+#endif
+
 #define ResetZ80   fmsx_ResetZ80
 #define ExecZ80    fmsx_ExecZ80
 #define IntZ80     fmsx_IntZ80
@@ -540,5 +545,9 @@ void RefreshLine12(byte Y);
 
 #ifdef __cplusplus
 }
+#endif
+#ifdef FMSX_REGISTER_COMPAT
+#undef register
+#undef FMSX_REGISTER_COMPAT
 #endif
 #endif /* MSX_H */

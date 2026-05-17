@@ -7,7 +7,7 @@ extern "C" {
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_heap_caps.h"
-#ifdef BENCHMARK_LOGS
+#ifdef WS_BENCHMARK_LOGS
 #include "esp_timer.h"
 #endif
 #include <algorithm>
@@ -51,7 +51,7 @@ static uint8_t*  s_xmap   = nullptr;  // map X (dstW -> srcX)
 static uint8_t*  s_ymap   = nullptr;  // map Y (dstH -> srcY)
 static int s_dstW = kDstW, s_dstH = kDstH;
 static int s_offX = 0,     s_offY = 0;
-#ifdef BENCHMARK_LOGS
+#ifdef WS_BENCHMARK_LOGS
 static volatile uint32_t s_statFrames = 0;
 static volatile uint32_t s_statTotalUs = 0;
 static volatile uint32_t s_statMaxUs = 0;
@@ -182,14 +182,14 @@ static void ws_display_task(void* arg)
   for (;;) {
     // Wait for notification
     uint32_t pending = ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
-#ifdef BENCHMARK_LOGS
+#ifdef WS_BENCHMARK_LOGS
     if (pending > 1) s_statPendingNotifications += pending - 1;
     int64_t t0 = esp_timer_get_time();
 #else
     (void)pending;
 #endif
     ws_render_one_frame();
-#ifdef BENCHMARK_LOGS
+#ifdef WS_BENCHMARK_LOGS
     uint32_t us = (uint32_t)(esp_timer_get_time() - t0);
     s_statFrames++;
     s_statTotalUs += us;
@@ -201,7 +201,7 @@ static void ws_display_task(void* arg)
   }
 }
 
-#ifdef BENCHMARK_LOGS
+#ifdef WS_BENCHMARK_LOGS
 extern "C" void ws_display_get_and_reset_stats(uint32_t* frames,
                                                 uint32_t* total_us,
                                                 uint32_t* max_us,

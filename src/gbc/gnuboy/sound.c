@@ -186,15 +186,19 @@ void gb_sound_emulate(void)
 			int s = snd->wave[(S3.pos>>22) & 15];
 
 			if (S3.pos & (1<<21))
+			{
 				s &= 15;
+			}
 			else
+			{
 				s >>= 4;
+			}
 
-				s -= 8;
-				S3.pos += S3.freq;
+			s -= 8;
+			S3.pos += S3.freq;
 
-				if ((R_NR34 & 64) && ((S3.cnt += snd->rate) >= S3.len))
-					S3.on = 0;
+			if ((R_NR34 & 64) && ((S3.cnt += snd->rate) >= S3.len))
+				S3.on = 0;
 
 			if (R_NR32 & 96)
 				s <<= (3 - ((R_NR32>>5)&3));
@@ -210,15 +214,19 @@ void gb_sound_emulate(void)
 			int s;
 
 			if (R_NR43 & 8)
+			{
 				s = 1 & (noise7[(S4.pos>>20)&15] >> (7-((S4.pos>>17)&7)));
+			}
 			else
+			{
 				s = 1 & (noise15[(S4.pos>>20)&4095] >> (7-((S4.pos>>17)&7)));
+			}
 
-				s = (-s) & S4.envol;
-				S4.pos += S4.freq;
+			s = (-s) & S4.envol;
+			S4.pos += S4.freq;
 
-				if ((R_NR44 & 64) && ((S4.cnt += snd->rate) >= S4.len))
-					S4.on = 0;
+			if ((R_NR44 & 64) && ((S4.cnt += snd->rate) >= S4.len))
+				S4.on = 0;
 
 				if (S4.enlen && (S4.encnt += snd->rate) >= S4.enlen)
 				{

@@ -146,7 +146,7 @@ extern UBYTE    *gPrimaryFrameBuffer;
 #define crc32_le(a, b, c) rg_crc32(a, b, c)
 #else
 #include <stdio.h>
-#define log_printf(x...) printf(x)
+#define log_printf(x...) EMU_LOG(x)
 #define crc32_le(a, b, c) (0)
 #endif
 

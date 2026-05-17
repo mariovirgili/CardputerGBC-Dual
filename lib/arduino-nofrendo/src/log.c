@@ -114,16 +114,28 @@ void nofrendo_log_shutdown(void)
 
 int nofrendo_log_print(const char *string)
 {
+#if EMU_LOG_MASTER_ENABLED && defined(NES_DIAG_LOGS)
+   if (string)
+      fputs(string, stdout);
+#else
    UNUSED(string);
+#endif
 
    return 0;
 }
 
 int nofrendo_log_printf(const char *format, ...)
 {
+#if EMU_LOG_MASTER_ENABLED && defined(NES_DIAG_LOGS)
+   va_list arg;
+   va_start(arg, format);
+   int ret = vfprintf(stdout, format, arg);
+   va_end(arg);
+   return ret;
+#else
    UNUSED(format);
-
    return 0; /* should be number of chars written */
+#endif
 }
 #endif /* !NOFRENDO_DEBUG */
 

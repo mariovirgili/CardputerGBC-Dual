@@ -9,7 +9,6 @@
 #include "esp_flash.h"
 #include "esp_log.h"
 #include "esp_system.h"
-#include "esp_spi_flash.h"
 #include "esp32s3/rom/spi_flash.h"
 #include "esp_partition.h"
 #include "esp_ipc_isr.h"
@@ -93,14 +92,14 @@ static bool write_gamestation_partition_once(const uint32_t *buf32) {
 }
 
 static bool write_gamestation_partition() {
-    printf("[ROM] Preparing Game Station partition buffer...\n");
+    EMU_LOG("[ROM] Preparing Game Station partition buffer...\n");
 
     uint8_t *buf8 = (uint8_t *)heap_caps_malloc(
         PARTITION_SIZE,
         MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT
     );
     if (!buf8) {
-        printf("[ROM][ERROR] Failed to allocate partition buffer\n");
+        EMU_LOG("[ROM][ERROR] Failed to allocate partition buffer\n");
         return false;
     }
 
@@ -109,20 +108,20 @@ static bool write_gamestation_partition() {
         MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT
     );
     if (!readBuf) {
-        printf("[ROM][ERROR] Failed to allocate verify buffer\n");
+        EMU_LOG("[ROM][ERROR] Failed to allocate verify buffer\n");
         heap_caps_free(buf8);
         return false;
     }
 
     if ((((uintptr_t)buf8) & 0x3) != 0) {
-        printf("[ROM][ERROR] Partition buffer is not 4-byte aligned\n");
+        EMU_LOG("[ROM][ERROR] Partition buffer is not 4-byte aligned\n");
         heap_caps_free(readBuf);
         heap_caps_free(buf8);
         return false;
     }
 
     if (!build_partition_buffer(buf8)) {
-        printf("[ROM][ERROR] Failed to build partition buffer\n");
+        EMU_LOG("[ROM][ERROR] Failed to build partition buffer\n");
         heap_caps_free(readBuf);
         heap_caps_free(buf8);
         return false;
@@ -131,7 +130,7 @@ static bool write_gamestation_partition() {
     const uint32_t *buf32 = reinterpret_cast<const uint32_t *>(buf8);
 
     for (int attempt = 1; attempt <= MAX_WRITE_RETRIES; ++attempt) {
-        printf("[ROM] Write attempt %d/%d...\n", attempt, MAX_WRITE_RETRIES);
+        EMU_LOG("[ROM] Write attempt %d/%d...\n", attempt, MAX_WRITE_RETRIES);
 
         if (!write_gamestation_partition_once(buf32)) {
             delay(1);
@@ -140,7 +139,7 @@ static bool write_gamestation_partition() {
         }
 
         if (verify_partition_buffer(buf8, readBuf)) {
-            printf("[ROM] Full sector verification OK.\n");
+            EMU_LOG("[ROM] Full sector verification OK.\n");
             heap_caps_free(readBuf);
             heap_caps_free(buf8);
             return true;
@@ -152,7 +151,7 @@ static bool write_gamestation_partition() {
 
     heap_caps_free(readBuf);
     heap_caps_free(buf8);
-    printf("[ROM][ERROR] All write attempts failed.\n");
+    EMU_LOG("[ROM][ERROR] All write attempts failed.\n");
     return false;
 }
 
@@ -166,30 +165,30 @@ bool isLauncherLayout() {
         );
 
     if (!spiffs) {
-        printf("[GUARD] No SPIFFS partition with label 'spiffs' found, aborting.\n");
+        EMU_LOG("[GUARD] No SPIFFS partition with label 'spiffs' found, aborting.\n");
         return false;
     }
 
-    printf("[GUARD] Current SPIFFS size: 0x%X (%u KB)\n",
-           (unsigned)spiffs->size, (unsigned)(spiffs->size / 1024));
+    EMU_LOG("[GUARD] Current SPIFFS size: 0x%X (%u KB)\n",
+            (unsigned)spiffs->size, (unsigned)(spiffs->size / 1024));
 
     if (spiffs->size != LAUNCHER_SPIFFS_SIZE) {
-        printf("[GUARD] SPIFFS size != 1 MiB (launcher layout), aborting.\n");
+        EMU_LOG("[GUARD] SPIFFS size != 1 MiB (launcher layout), aborting.\n");
         return false;
     }
 
-    printf("[GUARD] Launcher layout detected (SPIFFS = 1 MiB).\n");
+    EMU_LOG("[GUARD] Launcher layout detected (SPIFFS = 1 MiB).\n");
     return true;
 }
 
 bool flashGameStationPartition() {
-    printf("Writing Game Station partition (ROM hack)...\n");
+    EMU_LOG("Writing Game Station partition (ROM hack)...\n");
 
     if (!write_gamestation_partition()) {
-        printf("[ERROR] Game Station partition write FAILED\n");
+        EMU_LOG("[ERROR] Game Station partition write FAILED\n");
         return false;
     }
 
-    printf("[OK] Game Station partition verified successfully.\n");
+    EMU_LOG("[OK] Game Station partition verified successfully.\n");
     return true;
 }

@@ -551,8 +551,8 @@ void run_snes_alt(const uint8_t* rom, size_t romSize, const char* romName)
 void run_snes(const uint8_t* rom, size_t romSize, const char* romName)
 {
 #ifdef SNES_LOGS
-    printf("[SNES][BOOT] run_snes entered rom=%s ptr=%p size=%zu\n",
-           romName ? romName : "(null)", rom, romSize);
+    EMU_LOG("[SNES][BOOT] run_snes entered rom=%s ptr=%p size=%zu\n",
+            romName ? romName : "(null)", rom, romSize);
 #endif
 
     const bool alt = isAltGame(rom, romSize);

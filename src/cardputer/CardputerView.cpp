@@ -25,6 +25,9 @@ constexpr uint16_t kSplashPalette[] = {
     0xD95F  // magenta
 };
 
+constexpr uint16_t kSplashPulseBase = 0x6000; // dark red
+constexpr uint16_t kSplashPulsePeak = 0xF800; // vivid red
+
 struct SplashNote {
     float freq;
     uint16_t durationMs;
@@ -52,6 +55,33 @@ void drawSplashTitle(M5GFX* display, const std::string& title, int x, int y, uin
         display->printf("%s", c);
         cursorX += display->textWidth(c);
     }
+}
+
+uint16_t blendRgb565(uint16_t from, uint16_t to, uint32_t amount) {
+    const uint8_t fromR = (from >> 11) & 0x1F;
+    const uint8_t fromG = (from >> 5) & 0x3F;
+    const uint8_t fromB = from & 0x1F;
+    const uint8_t toR = (to >> 11) & 0x1F;
+    const uint8_t toG = (to >> 5) & 0x3F;
+    const uint8_t toB = to & 0x1F;
+
+    const uint8_t r = static_cast<uint8_t>(fromR + (((int)toR - fromR) * amount) / 255);
+    const uint8_t g = static_cast<uint8_t>(fromG + (((int)toG - fromG) * amount) / 255);
+    const uint8_t b = static_cast<uint8_t>(fromB + (((int)toB - fromB) * amount) / 255);
+    return static_cast<uint16_t>((r << 11) | (g << 5) | b);
+}
+
+void drawSplashPulseText(M5GFX* display, const std::string& text, int x, int y, uint32_t elapsedMs) {
+    constexpr uint32_t pulseMs = 900;
+    const uint32_t phase = elapsedMs % pulseMs;
+    const uint32_t amount = (phase < (pulseMs / 2))
+        ? (phase * 255) / (pulseMs / 2)
+        : ((pulseMs - phase) * 255) / (pulseMs / 2);
+
+    display->fillRect(0, y - 2, display->width(), display->fontHeight() + 6, BACKGROUND_COLOR);
+    display->setTextColor(blendRgb565(kSplashPulseBase, kSplashPulsePeak, amount));
+    display->setCursor(x, y);
+    display->printf("%s", text.c_str());
 }
 }
 
@@ -230,9 +260,13 @@ void CardputerView::welcome() {
     #endif
    
     const std::string title = "Game Station 1.2";
+    const std::string subtitle = "Enhanced";
     Display->setTextSize(TEXT_BIG);
     const int titleX = getCenterOffset(title);
-    const int titleY = 65;
+    const int titleY = 54;
+    Display->setTextSize(TEXT_LARGE);
+    const int subtitleX = getCenterOffset(subtitle);
+    const int subtitleY = 79;
 
     if (!M5Cardputer.Speaker.isRunning()) {
         bool ok = M5Cardputer.Speaker.begin();
@@ -249,7 +283,10 @@ void CardputerView::welcome() {
 
     while ((millis() - start) < kSplashDurationMs) {
         const uint32_t elapsed = millis() - start;
+        Display->setTextSize(TEXT_BIG);
         drawSplashTitle(Display, title, titleX, titleY, elapsed);
+        Display->setTextSize(TEXT_LARGE);
+        drawSplashPulseText(Display, subtitle, subtitleX, subtitleY, elapsed);
 
         if (noteIndex < (sizeof(kSplashTune) / sizeof(kSplashTune[0])) &&
             elapsed - noteStart >= kSplashTune[noteIndex].durationMs) {
@@ -266,7 +303,10 @@ void CardputerView::welcome() {
         delay(kSplashFrameMs);
     }
 
+    Display->setTextSize(TEXT_BIG);
     drawSplashTitle(Display, title, titleX, titleY, kSplashDurationMs);
+    Display->setTextSize(TEXT_LARGE);
+    drawSplashPulseText(Display, subtitle, subtitleX, subtitleY, kSplashDurationMs);
     M5Cardputer.Speaker.stop(kSplashToneChannel);
 
     Display->setSwapBytes(false);
@@ -1304,13 +1344,13 @@ void CardputerView::displayMsxInfo() {
     Display->setTextSize(TEXT_MEDIUM_WIDE);
     Display->setTextColor(TEXT_COLOR);
     {
-        std::string l1 = "An open BIOS is built-in";
+        std::string l1 = "Requires MSX.ROM on SD";
         auto x = getCenterOffset(l1, Display->width());
         Display->setCursor(x, 40);
         Display->printf("%s", l1.c_str());
     }
     {
-        std::string l2 = "You can use MSX.ROM from SD";
+        std::string l2 = "Use msx/MSX.ROM";
         auto x = getCenterOffset(l2, Display->width());
         Display->setCursor(x, 56);
         Display->printf("%s", l2.c_str());

@@ -79,8 +79,19 @@ static void make_save_path(char *dst, size_t dstlen)
 
 static void make_tmp_path(char *dst, size_t dstlen, const char *final_path)
 {
-    snprintf(dst, dstlen, "%s.tmp", final_path);
-    dst[dstlen - 1] = '\0';
+    if (!dst || dstlen == 0) return;
+    if (dstlen < 5) {
+        dst[0] = '\0';
+        return;
+    }
+
+    size_t base_len = 0;
+    base_len = strnlen(final_path, dstlen - 5);
+
+    if (base_len > 0) {
+        memcpy(dst, final_path, base_len);
+    }
+    memcpy(dst + base_len, ".tmp", 5);
 }
 
 static bool sram_autosave_flush(void)
@@ -90,7 +101,7 @@ static bool sram_autosave_flush(void)
     // Make paths
     char path[PATH_MAX];
     make_save_path(path, sizeof(path));
-    char tmp[PATH_MAX];
+    char tmp[PATH_MAX + 5];
     make_tmp_path(tmp, sizeof(tmp), path);
     ensure_saves_dir();
 

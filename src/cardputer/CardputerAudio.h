@@ -81,22 +81,22 @@ inline void maybeLogDiagStats(bool force = false)
 
     const uint32_t minSamples = (s.minSamples == UINT32_MAX) ? 0 : s.minSamples;
     const uint32_t avgSamples = s.queued ? (uint32_t)(s.samplesTotal / s.queued) : 0;
-    BOOT_LOG("AUDIO",
-             "stream reason=%s ch=%d rate=%lu stereo=%d queued=%lu attempts=%lu full=%lu empty=%lu fail=%lu invalid=%lu depthMax=%lu samples min/avg/max=%lu/%lu/%lu",
-             s.reason,
-             s.channel,
-             (unsigned long)s.sampleRate,
-             s.stereo ? 1 : 0,
-             (unsigned long)s.queued,
-             (unsigned long)s.attempts,
-             (unsigned long)s.queueFull,
-             (unsigned long)s.queueEmpty,
-             (unsigned long)s.playFail,
-             (unsigned long)s.invalid,
-             (unsigned long)s.maxDepth,
-             (unsigned long)minSamples,
-             (unsigned long)avgSamples,
-             (unsigned long)s.maxSamples);
+    AUDIO_LOG("AUDIO",
+              "stream reason=%s ch=%d rate=%lu stereo=%d queued=%lu attempts=%lu full=%lu empty=%lu fail=%lu invalid=%lu depthMax=%lu samples min/avg/max=%lu/%lu/%lu",
+              s.reason,
+              s.channel,
+              (unsigned long)s.sampleRate,
+              s.stereo ? 1 : 0,
+              (unsigned long)s.queued,
+              (unsigned long)s.attempts,
+              (unsigned long)s.queueFull,
+              (unsigned long)s.queueEmpty,
+              (unsigned long)s.playFail,
+              (unsigned long)s.invalid,
+              (unsigned long)s.maxDepth,
+              (unsigned long)minSamples,
+              (unsigned long)avgSamples,
+              (unsigned long)s.maxSamples);
 
     s.samplesTotal = 0;
     s.attempts = 0;
@@ -183,24 +183,24 @@ inline void applySpeakerPins(m5::speaker_config_t& cfg)
 
 inline void logSpeakerConfig(const char* reason, const m5::speaker_config_t& cfg)
 {
-    BOOT_LOG("AUDIO",
-             "speaker cfg reason=%s board=%d data=%d bck=%d ws=%d mck=%d port=%d rate=%lu stereo=%d dma=%u/%u task=%u/%u vol=%u enabled=%d running=%d",
-             reason ? reason : "?",
-             (int)M5.getBoard(),
-             cfg.pin_data_out,
-             cfg.pin_bck,
-             cfg.pin_ws,
-             cfg.pin_mck,
-             (int)cfg.i2s_port,
-             (unsigned long)cfg.sample_rate,
-             cfg.stereo ? 1 : 0,
-             (unsigned)cfg.dma_buf_len,
-             (unsigned)cfg.dma_buf_count,
-             (unsigned)cfg.task_priority,
-             (unsigned)cfg.task_pinned_core,
-             (unsigned)M5Cardputer.Speaker.getVolume(),
-             M5Cardputer.Speaker.isEnabled() ? 1 : 0,
-             M5Cardputer.Speaker.isRunning() ? 1 : 0);
+    AUDIO_LOG("AUDIO",
+              "speaker cfg reason=%s board=%d data=%d bck=%d ws=%d mck=%d port=%d rate=%lu stereo=%d dma=%u/%u task=%u/%u vol=%u enabled=%d running=%d",
+              reason ? reason : "?",
+              (int)M5.getBoard(),
+              cfg.pin_data_out,
+              cfg.pin_bck,
+              cfg.pin_ws,
+              cfg.pin_mck,
+              (int)cfg.i2s_port,
+              (unsigned long)cfg.sample_rate,
+              cfg.stereo ? 1 : 0,
+              (unsigned)cfg.dma_buf_len,
+              (unsigned)cfg.dma_buf_count,
+              (unsigned)cfg.task_priority,
+              (unsigned)cfg.task_pinned_core,
+              (unsigned)M5Cardputer.Speaker.getVolume(),
+              M5Cardputer.Speaker.isEnabled() ? 1 : 0,
+              M5Cardputer.Speaker.isRunning() ? 1 : 0);
 }
 
 inline bool beginSpeaker(uint32_t sampleRate,
@@ -214,7 +214,7 @@ inline bool beginSpeaker(uint32_t sampleRate,
                          bool restart = true)
 {
     if (M5Cardputer.Speaker.isRunning() && restart) {
-        BOOT_LOG("AUDIO", "speaker restart reason=%s", reason ? reason : "?");
+        AUDIO_LOG("AUDIO", "speaker restart reason=%s", reason ? reason : "?");
         M5Cardputer.Speaker.end();
         vTaskDelay(pdMS_TO_TICKS(5));
     }
@@ -236,12 +236,12 @@ inline bool beginSpeaker(uint32_t sampleRate,
     M5Cardputer.Speaker.setAllChannelVolume(255);
     resetDiagStats(reason, sampleRate, stereo, 0);
 
-    BOOT_LOG("AUDIO", "speaker begin reason=%s ok=%d enabled=%d running=%d volume=%u",
-             reason ? reason : "?",
-             ok ? 1 : 0,
-             M5Cardputer.Speaker.isEnabled() ? 1 : 0,
-             M5Cardputer.Speaker.isRunning() ? 1 : 0,
-             (unsigned)M5Cardputer.Speaker.getVolume());
+    AUDIO_LOG("AUDIO", "speaker begin reason=%s ok=%d enabled=%d running=%d volume=%u",
+              reason ? reason : "?",
+              ok ? 1 : 0,
+              M5Cardputer.Speaker.isEnabled() ? 1 : 0,
+              M5Cardputer.Speaker.isRunning() ? 1 : 0,
+              (unsigned)M5Cardputer.Speaker.getVolume());
     return ok;
 }
 
@@ -266,10 +266,10 @@ inline bool allocRuntimeAudioBuffers(int16_t* buffers[kRuntimeAudioBufferCount],
         buffers[i] = static_cast<int16_t*>(
             heap_caps_malloc(bytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA | MALLOC_CAP_8BIT));
         if (!buffers[i]) {
-            BOOT_LOG("AUDIO", "buffer alloc failed reason=%s slot=%u bytes=%lu",
-                     reason ? reason : "?",
-                     (unsigned)i,
-                     (unsigned long)bytes);
+            AUDIO_LOG("AUDIO", "buffer alloc failed reason=%s slot=%u bytes=%lu",
+                      reason ? reason : "?",
+                      (unsigned)i,
+                      (unsigned long)bytes);
             return false;
         }
         memset(buffers[i], 0, bytes);

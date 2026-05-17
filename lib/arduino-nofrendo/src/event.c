@@ -437,7 +437,7 @@ static void func_event_startsong(int code)
 }
 
 /* NES events */
-static const event_t nes_events[] =
+static event_t nes_events[] =
     {
         NULL, /* 0 */
         func_event_quit,

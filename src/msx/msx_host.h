@@ -19,7 +19,6 @@ void msx_host_unload_bios(void);
 
 const uint8_t* msx_host_get_mapped_rom(const char* fileName, unsigned int* size);
 const uint8_t* msx_host_get_builtin_file(const char* name, unsigned int* size);
-int msx_host_is_cbios_fallback_active(void);
 
 void msx_host_set_model_mode(int mode);
 int  msx_host_get_model_mode(void);

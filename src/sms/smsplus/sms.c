@@ -196,14 +196,14 @@ void sms_reset(void)
         cpu_writemap[7] = dummy;
 
 #ifdef COLECO_DEBUG_LOGS
-        printf("[COL][RESET] pages=%d rom=%p bios=%p dummy=%p ram=%p\n",
-               p, cart.rom, sms.coleco_bios, dummy, sms.ram);
-        printf("[COL][MAP] R0=%p R1=%p R2=%p R3=%p R4=%p R5=%p R6=%p R7=%p\n",
-               cpu_readmap[0], cpu_readmap[1], cpu_readmap[2], cpu_readmap[3],
-               cpu_readmap[4], cpu_readmap[5], cpu_readmap[6], cpu_readmap[7]);
-        printf("[COL][MAP] W0=%p W1=%p W2=%p W3=%p W4=%p W5=%p W6=%p W7=%p\n",
-               cpu_writemap[0], cpu_writemap[1], cpu_writemap[2], cpu_writemap[3],
-               cpu_writemap[4], cpu_writemap[5], cpu_writemap[6], cpu_writemap[7]);
+        EMU_LOG("[COL][RESET] pages=%d rom=%p bios=%p dummy=%p ram=%p\n",
+                p, cart.rom, sms.coleco_bios, dummy, sms.ram);
+        EMU_LOG("[COL][MAP] R0=%p R1=%p R2=%p R3=%p R4=%p R5=%p R6=%p R7=%p\n",
+                cpu_readmap[0], cpu_readmap[1], cpu_readmap[2], cpu_readmap[3],
+                cpu_readmap[4], cpu_readmap[5], cpu_readmap[6], cpu_readmap[7]);
+        EMU_LOG("[COL][MAP] W0=%p W1=%p W2=%p W3=%p W4=%p W5=%p W6=%p W7=%p\n",
+                cpu_writemap[0], cpu_writemap[1], cpu_writemap[2], cpu_writemap[3],
+                cpu_writemap[4], cpu_writemap[5], cpu_writemap[6], cpu_writemap[7]);
 #endif
     }
     else
@@ -574,21 +574,21 @@ void sms_debug_dump_state(unsigned frame)
     unsigned sp = z80_get_sp() & 0xFFFF;
     uint8 opcode = cpu_readmap[(pc >> 13) & 7][pc & 0x1FFF];
 
-    printf("[COL][FRAME %u] PC=%04X OP=%02X SP=%04X line=%u status=%02X r1=%02X irq=%u pio=%s pad=%08X sys=%08X\n",
-           frame, pc, opcode, sp, (unsigned)vdp.line, (unsigned)vdp.status,
-           (unsigned)vdp.reg[1], (unsigned)sms.irq,
-           coleco_pio_mode ? "joy" : "key",
-           (unsigned)input.pad[0], (unsigned)input.system);
-    printf("[COL][IO] W80=%u WA0=%u WC0=%u WE0=%u RA0=%u RE0=%u keySel=%u joySel=%u\n",
-           coleco_dbg_port_writes[0], coleco_dbg_port_writes[1],
-           coleco_dbg_port_writes[2], coleco_dbg_port_writes[3],
-           coleco_dbg_port_reads[0], coleco_dbg_port_reads[1],
-           coleco_dbg_keypad_selects, coleco_dbg_joystick_selects);
-    printf("[COL][MEMW] MW0=%u MW1=%u MW2=%u MW3=%u MW4=%u MW5=%u MW6=%u MW7=%u\n",
-           coleco_dbg_mem_writes[0], coleco_dbg_mem_writes[1],
-           coleco_dbg_mem_writes[2], coleco_dbg_mem_writes[3],
-           coleco_dbg_mem_writes[4], coleco_dbg_mem_writes[5],
-           coleco_dbg_mem_writes[6], coleco_dbg_mem_writes[7]);
+    EMU_LOG("[COL][FRAME %u] PC=%04X OP=%02X SP=%04X line=%u status=%02X r1=%02X irq=%u pio=%s pad=%08X sys=%08X\n",
+            frame, pc, opcode, sp, (unsigned)vdp.line, (unsigned)vdp.status,
+            (unsigned)vdp.reg[1], (unsigned)sms.irq,
+            coleco_pio_mode ? "joy" : "key",
+            (unsigned)input.pad[0], (unsigned)input.system);
+    EMU_LOG("[COL][IO] W80=%u WA0=%u WC0=%u WE0=%u RA0=%u RE0=%u keySel=%u joySel=%u\n",
+            coleco_dbg_port_writes[0], coleco_dbg_port_writes[1],
+            coleco_dbg_port_writes[2], coleco_dbg_port_writes[3],
+            coleco_dbg_port_reads[0], coleco_dbg_port_reads[1],
+            coleco_dbg_keypad_selects, coleco_dbg_joystick_selects);
+    EMU_LOG("[COL][MEMW] MW0=%u MW1=%u MW2=%u MW3=%u MW4=%u MW5=%u MW6=%u MW7=%u\n",
+            coleco_dbg_mem_writes[0], coleco_dbg_mem_writes[1],
+            coleco_dbg_mem_writes[2], coleco_dbg_mem_writes[3],
+            coleco_dbg_mem_writes[4], coleco_dbg_mem_writes[5],
+            coleco_dbg_mem_writes[6], coleco_dbg_mem_writes[7]);
 #else
     (void)frame;
 #endif

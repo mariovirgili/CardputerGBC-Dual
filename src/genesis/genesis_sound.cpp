@@ -48,12 +48,18 @@ static int16_t* s_buf[cardputer_audio::kRuntimeAudioBufferCount] = { nullptr, nu
 uint8_t genesis_audio_volume = 50;
 
 // Audio config
-static constexpr int kSampleRate = 53267;    // Hz
-static constexpr int kFps        = 60;      // frames per second
-static constexpr int kChunk      = (kSampleRate + kFps/2) / kFps;
 static constexpr uint8_t kChannel= 0;
 static uint16_t s_psgGainQ15 = 32768;  // x1.0
 static uint16_t s_fmGainQ15  = 32768;  // x1.0
+
+static inline int16_t mix_sample_at(int idx, int ym_n, int psg_n) {
+  int32_t s = 0;
+  if (idx < ym_n)  s += (int32_t)gwenesis_ym2612_buffer[idx];
+  if (idx < psg_n) s += (int32_t)gwenesis_sn76489_buffer[idx];
+  if (s >  32767) s =  32767;
+  if (s < -32768) s = -32768;
+  return (int16_t)s;
+}
 
 /* Allocate SN76489, YM2612 buffers and audio pool */
 void genesis_alloc_audio_buffers(void) {
@@ -108,7 +114,9 @@ void genesis_sound_submit_frame(void) {
 
   int n = ym_n > psg_n ? ym_n : psg_n;
   if (n <= 0) return;
-  if (n > AUDIO_CHUNK) n = AUDIO_CHUNK;
+  if (n > AUDIO_CORE_CHUNK) n = AUDIO_CORE_CHUNK;
+  if (ym_n > AUDIO_CORE_CHUNK) ym_n = AUDIO_CORE_CHUNK;
+  if (psg_n > AUDIO_CORE_CHUNK) psg_n = AUDIO_CORE_CHUNK;
 
   if (M5Cardputer.Speaker.isPlaying(kChannel) >= 2 || !s_buf[0] || !s_buf[1] || !s_buf[2]) {
     taskENTER_CRITICAL(&g_ymMux);
@@ -118,17 +126,23 @@ void genesis_sound_submit_frame(void) {
     return;
   }
 
-  // Mix dans current buffer
+  // Mix at the core's native MD rate, then resample the frame to the I2S rate.
   int16_t *dst = s_buf[s_flip];
-  for (int i = 0; i < n; ++i) {
-    int32_t s = 0;
-    if (i < ym_n)  s += (int32_t)gwenesis_ym2612_buffer[i];
-    if (i < psg_n) s += (int32_t)gwenesis_sn76489_buffer[i];
-    if (s >  32767) s =  32767;
-    if (s < -32768) s = -32768;
-    dst[i] = (int16_t)s;
+  if (n == 1) {
+    int16_t sample = mix_sample_at(0, ym_n, psg_n);
+    for (int i = 0; i < AUDIO_CHUNK; ++i) dst[i] = sample;
+  } else {
+    const uint32_t step = (uint32_t)(((uint64_t)(n - 1) << 16) / (AUDIO_CHUNK - 1));
+    uint32_t pos = 0;
+    for (int i = 0; i < AUDIO_CHUNK; ++i) {
+      int idx = (int)(pos >> 16);
+      uint32_t frac = pos & 0xFFFFu;
+      int32_t a = mix_sample_at(idx, ym_n, psg_n);
+      int32_t b = mix_sample_at((idx + 1 < n) ? idx + 1 : idx, ym_n, psg_n);
+      dst[i] = (int16_t)(a + (int32_t)(((int64_t)(b - a) * (int64_t)frac) >> 16));
+      pos += step;
+    }
   }
-  for (int i = n; i < AUDIO_CHUNK; ++i) dst[i] = 0;
 
   // Reset des index
   taskENTER_CRITICAL(&g_ymMux);

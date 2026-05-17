@@ -136,12 +136,12 @@ CSystem::CSystem(const char* filename, long displayformat, long samplerate)
       filedata = (UBYTE*)malloc(filesize);
       fseek(fp, 0, SEEK_SET);
       if (!filedata) {
-         log_printf("-> memory allocation failed (%d bytes)!\n", filesize);
+         log_printf("-> memory allocation failed (%lu bytes)!\n", (unsigned long)filesize);
       } else if (fread(filedata, filesize, 1, fp) != 1) {
-         log_printf("-> fread failed (%d bytes)!\n", filesize);
+         log_printf("-> fread failed (%lu bytes)!\n", (unsigned long)filesize);
       } else {
          // log_printf("-> read ok. size=%d, crc32=%08X\n", filesize, crc32_le(0, filedata, filesize));
-         log_printf("-> read ok. size=%d\n", filesize);
+         log_printf("-> read ok. size=%lu\n", (unsigned long)filesize);
       }
       fclose(fp);
    } else {
@@ -394,7 +394,7 @@ bool CSystem::ContextLoad(LSS_FILE *fp)
    if(strcmp(teststr,LSS_VERSION)==0) {
       ULONG checksum;
       // Read CRC32 and check against the CART for a match
-      lss_read(&checksum,sizeof(ULONG),1,fp);
+      (void)lss_read(&checksum,sizeof(ULONG),1,fp);
       if(mCart->CRC32()!=checksum) {
          log_printf("CSystem::ContextLoad() LSS Snapshot CRC does not match the loaded cartridge image...\n");
          // return 0;

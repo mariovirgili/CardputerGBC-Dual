@@ -1,0 +1,24 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(grep -E \"0x[0-9a-f]{8,}\")",
+      "Bash(xargs cat)",
+      "Bash(awk '{print $2, $3}')",
+      "Bash(sort -t'x' -k2 -rn)",
+      "Bash(grep -E \"^\\\\s+0x3[cC][0-9a-fA-F]{6}\\\\s+0x[1-9][0-9a-fA-F]{3,}\" \"d:/CardputerADV/Compile/Cardputer_ESP-IDF/.pio/build/cardputer_adv_idf/CardputerGBCDual.map\")",
+      "Bash(awk '{size=strtonum\\($2\\); if\\(size>=4096\\) print size, $0}')",
+      "Bash(grep -E \"^\\\\s+0x42[0-9a-fA-F]{6}\\\\s+0x[1-9][0-9a-fA-F]{3,}\" \"d:/CardputerADV/Compile/Cardputer_ESP-IDF/.pio/build/cardputer_adv_idf/CardputerGBCDual.map\")",
+      "Bash(awk '{size=strtonum\\($2\\); if\\(size>=8192\\) print size, $0}')",
+      "Bash(awk -F: '$2>0 {sum+=$2} END {print \"Total printf/EMU_LOG calls in .c files:\", sum}')",
+      "Bash(xargs grep -l \"printf\\\\|EMU_LOG\")",
+      "Bash(xargs grep -l \"EMU_LOG\\\\|BOOT_LOG\")",
+      "Bash(awk '{sum += strtonum\\($2\\)} END {printf \"Total rodata.str flash: %d bytes \\(%.1f KB\\)\\\\n\", sum, sum/1024}')",
+      "Bash(grep -v \"//.*printf\\\\|#define\\\\|EMU_LOG\\\\|BOOT_LOG\\\\|fprintf\")",
+      "Bash(grep -v \"//.*printf\\\\|#define\\\\|EMU_LOG\\\\|fprintf\")",
+      "Bash(grep -v \"//.*EMU_LOG\\\\|#define\")",
+      "Bash(grep -v \"//.*BOOT_LOG\\\\|#define\")",
+      "Bash(awk '{print $2, $1}')",
+      "Bash(grep -E \"\\\\s0x[1-9][0-9a-f]{3,}\")"
+    ]
+  }
+}

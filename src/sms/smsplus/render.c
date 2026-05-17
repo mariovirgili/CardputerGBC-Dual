@@ -434,7 +434,7 @@ void render_bg_sms(int line)
     {
         int x, c, a;
 
-        char *p = &linebuf[(0 - shift)+(column << 3)];
+        uint8 *p = &linebuf[(0 - shift)+(column << 3)];
 
         attr = nt[(column + nt_scroll) & 0x1F];
 

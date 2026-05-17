@@ -30,11 +30,90 @@
 #include "esp_task_wdt.h"
 #include "esp_heap_caps.h"
 #include "nvs_flash.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include "share/input.h"
 #include "share/emu_log_cpp.h"
 #include "share/boot_log.h"
 
 static constexpr size_t COLECO_BIOS_SIZE = 8192;
+
+#if EMU_LOG_MASTER_ENABLED
+static const char* emulatorNameForLog(RomType type) {
+  switch (type) {
+    case ROM_TYPE_NES:       return "NES";
+    case ROM_TYPE_SMS:       return "SMS";
+    case ROM_TYPE_GAMEGEAR:  return "Game Gear";
+    case ROM_TYPE_SG1000:    return "SG-1000";
+    case ROM_TYPE_COLECO:    return "ColecoVision";
+    case ROM_TYPE_NGP:       return "Neo Geo Pocket";
+    case ROM_TYPE_GENESIS:   return "Mega Drive";
+    case ROM_TYPE_WS:        return "WonderSwan";
+    case ROM_TYPE_PCE:       return "PC Engine";
+    case ROM_TYPE_GB:        return "Game Boy";
+    case ROM_TYPE_LYNX:      return "Lynx";
+    case ROM_TYPE_SNES:      return "SNES";
+    case ROM_TYPE_MSX:       return "MSX";
+    case ROM_TYPE_ATARI7800: return "Atari 7800";
+    case ROM_TYPE_ATARI2600: return "Atari 2600";
+    case ROM_TYPE_GX4000:    return "GX4000";
+    case ROM_TYPE_UNKNOWN:
+    default:                 return "Unknown";
+  }
+}
+
+static const char* emulatorHelperCoresForLog(RomType type) {
+  switch (type) {
+    case ROM_TYPE_NES:
+      return "display=CPU0";
+    case ROM_TYPE_SMS:
+    case ROM_TYPE_GAMEGEAR:
+    case ROM_TYPE_SG1000:
+    case ROM_TYPE_COLECO:
+      return "audio=CPU0";
+    case ROM_TYPE_NGP:
+      return "input/audio/video=CPU0";
+    case ROM_TYPE_GENESIS:
+      return "display/audio/save=CPU0";
+    case ROM_TYPE_WS:
+    case ROM_TYPE_PCE:
+    case ROM_TYPE_LYNX:
+    case ROM_TYPE_ATARI7800:
+    case ROM_TYPE_ATARI2600:
+    case ROM_TYPE_GX4000:
+      return "display/audio=CPU0";
+    case ROM_TYPE_GB:
+      return "display/audio/save=CPU0";
+    case ROM_TYPE_SNES:
+      return "display=CPU0,input/save=main";
+    case ROM_TYPE_MSX:
+      return "none";
+    case ROM_TYPE_UNKNOWN:
+    default:
+      return "unknown";
+  }
+}
+
+static const char* configuredMainTaskAffinityForLog() {
+#if defined(CONFIG_ESP_MAIN_TASK_AFFINITY_CPU0)
+  return "CPU0";
+#elif defined(CONFIG_ESP_MAIN_TASK_AFFINITY_CPU1)
+  return "CPU1";
+#elif defined(CONFIG_ESP_MAIN_TASK_AFFINITY_NO_AFFINITY)
+  return "no-affinity";
+#else
+  return "unknown";
+#endif
+}
+
+static void logEmulatorCoreUsage(RomType type) {
+  EMU_LOG("[CORE] emulator=%s main=CPU%d configured-main=%s helper-tasks=%s\n",
+          emulatorNameForLog(type),
+          xPortGetCoreID(),
+          configuredMainTaskAffinityForLog(),
+          emulatorHelperCoresForLog(type));
+}
+#endif
 
 enum class ColecoFlashStatus {
   Ok,
@@ -49,12 +128,6 @@ enum class ColecoFlashStatus {
   WriteFailed
 };
 
-static std::string colecoBiosPathForRom(const std::string& romPath) {
-  size_t pos = romPath.find_last_of("/\\");
-  if (pos == std::string::npos) return "coleco.rom";
-  return romPath.substr(0, pos + 1) + "coleco.rom";
-}
-
 static bool getFileSizeBytes(const char* path, size_t* outSize) {
   if (outSize) *outSize = 0;
   FILE* f = fopen(path, "rb");
@@ -68,6 +141,62 @@ static bool getFileSizeBytes(const char* path, size_t* outSize) {
   if (size <= 0) return false;
   if (outSize) *outSize = (size_t)size;
   return true;
+}
+
+static bool checkColecoBiosCandidate(
+    const std::string& path,
+    std::string* outPath,
+    size_t* outSize,
+    bool* sawInvalidSize
+) {
+  size_t size = 0;
+  if (!getFileSizeBytes(path.c_str(), &size)) return false;
+  if (size != COLECO_BIOS_SIZE) {
+    if (sawInvalidSize) *sawInvalidSize = true;
+    return false;
+  }
+  if (outPath) *outPath = path;
+  if (outSize) *outSize = size;
+  return true;
+}
+
+static bool findColecoBiosPathForRom(
+    const std::string& romPath,
+    std::string* outPath,
+    size_t* outSize,
+    bool* sawInvalidSize
+) {
+  if (outPath) outPath->clear();
+  if (outSize) *outSize = 0;
+  if (sawInvalidSize) *sawInvalidSize = false;
+
+  size_t pos = romPath.find_last_of("/\\");
+  if (pos != std::string::npos) {
+    std::string sameRomFolder = romPath.substr(0, pos + 1) + "coleco.rom";
+    if (checkColecoBiosCandidate(sameRomFolder, outPath, outSize, sawInvalidSize)) {
+      return true;
+    }
+  } else if (checkColecoBiosCandidate("coleco.rom", outPath, outSize, sawInvalidSize)) {
+    return true;
+  }
+
+  static const char* const kColecoBiosDirs[] = {
+      "/sd/bios/coleco",
+      "/sd/bios/Coleco",
+      "/sd/bios",
+      "/sd/roms/Coleco",
+      "/sd/roms/coleco",
+      "/sd/roms",
+      "/sd"
+  };
+
+  for (size_t i = 0; i < sizeof(kColecoBiosDirs) / sizeof(kColecoBiosDirs[0]); ++i) {
+    std::string path = std::string(kColecoBiosDirs[i]) + "/coleco.rom";
+    if (checkColecoBiosCandidate(path, outPath, outSize, sawInvalidSize)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 static ColecoFlashStatus appendFileToPartition(
@@ -130,11 +259,14 @@ static ColecoFlashStatus copyColecoBundleToPartition(
   if (outRomSize) *outRomSize = 0;
   if (!part) return ColecoFlashStatus::WriteFailed;
 
-  const std::string biosPath = colecoBiosPathForRom(romPath);
+  std::string biosPath;
   size_t biosSize = 0;
   size_t romSize = 0;
-  if (!getFileSizeBytes(biosPath.c_str(), &biosSize)) return ColecoFlashStatus::BiosOpenFailed;
-  if (biosSize != COLECO_BIOS_SIZE) return ColecoFlashStatus::BiosSizeInvalid;
+  bool sawInvalidBiosSize = false;
+  if (!findColecoBiosPathForRom(romPath, &biosPath, &biosSize, &sawInvalidBiosSize)) {
+    return sawInvalidBiosSize ? ColecoFlashStatus::BiosSizeInvalid
+                              : ColecoFlashStatus::BiosOpenFailed;
+  }
   if (!getFileSizeBytes(romPath.c_str(), &romSize)) return ColecoFlashStatus::RomOpenFailed;
   if (romSize == 0) return ColecoFlashStatus::RomSizeInvalid;
 
@@ -174,6 +306,42 @@ static const char* colecoFlashStatusText(ColecoFlashStatus st) {
     default: return "OK";
   }
 }
+
+static void showColecoFlashError(CardputerView& display, ColecoFlashStatus st) {
+  if (st == ColecoFlashStatus::BiosOpenFailed) {
+    static const char* const kMissingBiosLines[] = {
+        "Put coleco.rom in:",
+        "ROM folder",
+        "bios/coleco/",
+        "bios/",
+        "roms/Coleco/",
+        "roms/",
+        "or SD root"
+    };
+
+    while (1) {
+      display.topBar("COLECO BIOS REQUIRED", false, false);
+      for (size_t i = 0; i < sizeof(kMissingBiosLines) / sizeof(kMissingBiosLines[0]); ++i) {
+        display.subMessage(kMissingBiosLines[i], 1500);
+      }
+    }
+  }
+
+  if (st == ColecoFlashStatus::BiosSizeInvalid) {
+    while (1) {
+      display.topBar("COLECO BIOS ERROR", false, false);
+      display.subMessage("coleco.rom must be", 1500);
+      display.subMessage("8192 bytes", 1500);
+      display.subMessage("Check BIOS folders", 1500);
+    }
+  }
+
+  while (1) {
+    display.topBar("COLECO BIOS ERROR", false, false);
+    display.subMessage(colecoFlashStatusText(st), 1500);
+  }
+}
+
 #if defined(CONFIG_BT_ENABLED)
 extern "C" bool btInUse(void) {
   return false;
@@ -215,6 +383,13 @@ extern "C" void app_main(void) {
 
   auto cfg = M5.config();
   cfg.output_power = true;
+  cfg.external_display_value = 0;
+  cfg.external_speaker_value = 0;
+  cfg.external_imu = false;
+  cfg.external_rtc = false;
+  cfg.internal_imu = false;
+  cfg.internal_rtc = false;
+  cfg.internal_mic = false;
   BOOT_LOG("HW", "M5Cardputer.begin start");
   M5Cardputer.begin(cfg);
   BOOT_LOG("HW", "M5Cardputer.begin done");
@@ -307,11 +482,7 @@ extern "C" void app_main(void) {
 
   if (!copiedToFlash) {
     if (ext == ROM_TYPE_COLECO && colecoStatus != ColecoFlashStatus::TooLarge) {
-      while (1) {
-        display.topBar("COLECO BIOS ERROR", false, false);
-        display.subMessage(colecoFlashStatusText(colecoStatus), 0);
-        delay(1500);
-      }
+      showColecoFlashError(display, colecoStatus);
     }
     // User is using the launcher
     if (isLauncherLayout()) {
@@ -412,6 +583,9 @@ extern "C" void app_main(void) {
   
   EMU_LOG("HEAP BEFORE EMU: %lu bytes\n", (unsigned long)esp_get_free_heap_size());
   EMU_LOG("MAX BLOCK BEFORE EMU: %lu bytes\n", (unsigned long)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
+#if EMU_LOG_MASTER_ENABLED
+  logEmulatorCoreUsage(ext);
+#endif
   BOOT_LOG("EMU", "launch ext=%d name='%s'", (int)ext, romName.c_str());
 
   // Run the emulator

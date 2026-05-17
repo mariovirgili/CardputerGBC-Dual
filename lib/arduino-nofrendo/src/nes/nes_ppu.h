@@ -150,7 +150,7 @@ extern uint8 ppu_readhigh(uint32 address);
 extern void ppu_writehigh(uint32 address, uint8 value);
 
 /* rendering */
-extern void ppu_setpal(ppu_t *src_ppu, rgb_t *pal);
+extern void ppu_setpal(ppu_t *src_ppu, const rgb_t *pal);
 extern void ppu_setdefaultpal(ppu_t *src_ppu);
 
 /* bleh */

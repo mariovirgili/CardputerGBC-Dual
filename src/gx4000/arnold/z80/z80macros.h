@@ -229,6 +229,9 @@ Z80_FLAGS_REG = Z80_FLAGS_REG | ((Result>>16) & 0x01); \
 
 
 /* BIT n,r */
+#ifdef BIT
+#undef BIT
+#endif
 #define BIT(BitIndex,Register)          \
 {                                                                       \
 	Z80_BYTE	Flags;						\

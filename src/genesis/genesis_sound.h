@@ -6,9 +6,12 @@
 #include "freertos/queue.h"
 
 // Constantes audio
-static constexpr int  AUDIO_SR      = 53267;   // Hz
+static constexpr int  AUDIO_SR      = 44000;   // Hz
+static constexpr int  AUDIO_FPS     = 60;
+static constexpr int  AUDIO_CORE_SR = 53267;
+static constexpr int  AUDIO_CORE_CHUNK = (AUDIO_CORE_SR + AUDIO_FPS / 2) / AUDIO_FPS;
 static constexpr bool AUDIO_STEREO  = false;
-static constexpr int  AUDIO_CHUNK   = 888;     // 53.2kHz / 60fps
+static constexpr int  AUDIO_CHUNK   = (AUDIO_SR + AUDIO_FPS / 2) / AUDIO_FPS;
 static constexpr int  AUDIO_POOL    = 3; 
 static constexpr int  AUDIO_Q_DEPTH = 8;
 

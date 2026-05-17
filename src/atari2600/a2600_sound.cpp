@@ -47,7 +47,7 @@ static int a2600_ring_pop(int16_t* dst, int maxSamples)
 
         for (int i = 0; i < toRead; ++i) {
             dst[i] = s_ring[s_ringRead];
-            s_ringRead++;
+            s_ringRead = s_ringRead + 1;
             if (s_ringRead >= s_ringSize) {
                 s_ringRead = 0;
             }
@@ -195,7 +195,7 @@ void a2600_sound_submit_stereo(const int16_t* samples, size_t frames)
         }
 
         s_ring[s_ringWrite] = (int16_t)mono;
-        s_ringWrite++;
+        s_ringWrite = s_ringWrite + 1;
         if (s_ringWrite >= s_ringSize) {
             s_ringWrite = 0;
         }

@@ -13,6 +13,11 @@
 /**     changes to this file.                               **/
 /*************************************************************/
 
+#if defined(__cplusplus) && (__cplusplus >= 201703L)
+#define FMSX_COMMON_REGISTER_COMPAT
+#define register
+#endif
+
 static int FirstLine = 18;     /* First scanline in the XBuf */
 
 static void  Sprites(byte Y,pixel *Line);
@@ -921,3 +926,8 @@ void RefreshLineTx80(register byte Y)
 }
 
 #endif /* NARROW */
+
+#ifdef FMSX_COMMON_REGISTER_COMPAT
+#undef register
+#undef FMSX_COMMON_REGISTER_COMPAT
+#endif

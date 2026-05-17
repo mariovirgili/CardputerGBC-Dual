@@ -249,7 +249,7 @@ void gx4000_display_flush_line(int visY,
     /* Never block emulation with synchronous LCD I/O
        If no free line buffer is available, just drop this line */
     if (!dstLine || pooledIndex < 0) {
-        s_dropLines++;
+        s_dropLines = s_dropLines + 1;
         return;
     }
 
@@ -296,7 +296,7 @@ void gx4000_display_flush_line(int visY,
         if (xQueueSend(s_lineReadyQ, &msg, 0) != pdTRUE) {
             int idx = pooledIndex;
             (void)xQueueSend(s_lineFreeQ, &idx, 0);
-            s_dropLines++;
+            s_dropLines = s_dropLines + 1;
         }
     }
 }

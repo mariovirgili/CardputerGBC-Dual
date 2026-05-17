@@ -63,7 +63,7 @@ static void lynx_audio_task(void* arg)
 
             for (int i = 0; i < toRead; ++i) {
                 local[i] = s_ring[s_ringRead];
-                s_ringRead++;
+                s_ringRead = s_ringRead + 1;
                 if (s_ringRead >= s_ringSize) s_ringRead = 0;
             }
 
@@ -193,7 +193,7 @@ extern "C" void lynx_sound_submit_frames_stereo(const int16_t* samples, size_t f
         if (mono < -32768) mono = -32768;
 
         s_ring[s_ringWrite] = (int16_t)mono;
-        s_ringWrite++;
+        s_ringWrite = s_ringWrite + 1;
         if (s_ringWrite >= s_ringSize) s_ringWrite = 0;
     }
 

@@ -44,9 +44,11 @@ void run_pce(const uint8_t* rom, size_t len, const char* rom_name)
 
   pce_display_init();
   pce_display_start();
-  pce_sound_init(sampleRate);
 
-  InitPCE(sampleRate, false);
+  if (InitPCE(sampleRate, false) != 0) {
+    EMU_LOG("[PCE][ERR] Core init failed\n");
+    for (;;) delay(1000);
+  }
   EMU_LOG("[PCE] Core initialized\n");
 
   if (LoadCard((uint8_t*)rom, len) != 0) {
@@ -54,6 +56,8 @@ void run_pce(const uint8_t* rom, size_t len, const char* rom_name)
     for (;;) delay(1000);
   }
   EMU_LOG("[PCE] ROM loaded successfully\n");
+
+  pce_sound_init(sampleRate);
 
   EMU_LOG("[PCE] Entering RunPCE() loop\n");
   RunPCE();

@@ -223,7 +223,7 @@ bool gb_hw_init(void)
     gb_lcd_init();
 
 	if (!hw.rambanks || !hw.vbanks || !hw.ioregs ||
-		!hw.oam || !hw.pal || !hw.rmap || !hw.wmap ||
+		!hw.oam || !hw.pal ||
 		!hw.video.palette || !hw.cpu || !hw.snd)
 	{
 		return false;

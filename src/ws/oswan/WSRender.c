@@ -16,7 +16,7 @@ $Rev: 71 $
 #include "WS.h"
 #include "WSSegment.h"
 
-#if defined(BENCHMARK_LOGS) && defined(WS_RENDER_PROFILE)
+#if defined(WS_BENCHMARK_LOGS) && defined(WS_RENDER_PROFILE)
 #define WS_RENDER_PROFILE_ON 1
 extern unsigned long SDL_UXTimerRead(void);
 
@@ -505,7 +505,7 @@ WS_PPU_CODE void RefreshLine(int Line)
     WORD BaseCol;           // 
     const int packedMode = COLCTL & 0x20;
     const int color16 = COLCTL & 0x40;
-#ifdef BENCHMARK_LOGS
+#ifdef WS_BENCHMARK_LOGS
     unsigned int sprCandidates = 0;
     unsigned int sprVisible = 0;
     unsigned int sprPixels = 0;
@@ -804,7 +804,7 @@ WS_PPU_CODE void RefreshLine(int Line)
             for (int metaIndex = 0; metaIndex < SprMetaCount; ++metaIndex)
             {
                 const WsSpriteMeta* spriteMeta = &SprMeta[metaIndex];
-#ifdef BENCHMARK_LOGS
+#ifdef WS_BENCHMARK_LOGS
                 sprCandidates++;
 #endif
                 const int testY = spriteMeta->y;
@@ -816,7 +816,7 @@ WS_PPU_CODE void RefreshLine(int Line)
                 lineSprites[lineSpriteCount++] = spriteMeta;
                 if (lineSpriteCount == 32)
                 {
-#ifdef BENCHMARK_LOGS
+#ifdef WS_BENCHMARK_LOGS
                     sprLimited++;
 #endif
                     break;
@@ -841,7 +841,7 @@ WS_PPU_CODE void RefreshLine(int Line)
             if (LCD_MAIN_W <= sprX)
                 continue;
 
-#ifdef BENCHMARK_LOGS
+#ifdef WS_BENCHMARK_LOGS
             sprVisible++;
 #endif
             int firstPixel = 0;
@@ -849,14 +849,14 @@ WS_PPU_CODE void RefreshLine(int Line)
             if (sprX < 0)
             {
                 firstPixel = -sprX;
-#ifdef BENCHMARK_LOGS
+#ifdef WS_BENCHMARK_LOGS
                 sprClipLeft++;
 #endif
             }
             if (sprX + 8 > LCD_MAIN_W)
             {
                 lastPixel = LCD_MAIN_W - 1 - sprX;
-#ifdef BENCHMARK_LOGS
+#ifdef WS_BENCHMARK_LOGS
                 sprClipRight++;
 #endif
             }
@@ -892,7 +892,7 @@ WS_PPU_CODE void RefreshLine(int Line)
             const int zeroTransparent = color16 || (TMap & 0x0800);
             if(zeroTransparent && IsZeroTileRow(pbTData, color16))
             {
-#ifdef BENCHMARK_LOGS
+#ifdef WS_BENCHMARK_LOGS
                 sprTransparentSkips += (unsigned int)(lastPixel - firstPixel + 1);
 #endif
                 continue;
@@ -915,7 +915,7 @@ WS_PPU_CODE void RefreshLine(int Line)
                     if((!pixel) && zeroTransparent)
                     {
                         pSWrBuf++;
-#ifdef BENCHMARK_LOGS
+#ifdef WS_BENCHMARK_LOGS
                         sprTransparentSkips++;
 #endif
                         continue;
@@ -923,13 +923,13 @@ WS_PPU_CODE void RefreshLine(int Line)
                     if((*pZ) && lowPrioritySprite)
                     {
                         pSWrBuf++;
-#ifdef BENCHMARK_LOGS
+#ifdef WS_BENCHMARK_LOGS
                         sprPrioritySkips++;
 #endif
                         continue;
                     }
                     *pSWrBuf++ = spritePal[pixel];
-#ifdef BENCHMARK_LOGS
+#ifdef WS_BENCHMARK_LOGS
                     sprPixels++;
 #endif
                 }
@@ -942,7 +942,7 @@ WS_PPU_CODE void RefreshLine(int Line)
                     if(!*pW)
                     {
                         pSWrBuf++;
-#ifdef BENCHMARK_LOGS
+#ifdef WS_BENCHMARK_LOGS
                         sprWindowSkips++;
 #endif
                         continue;
@@ -951,7 +951,7 @@ WS_PPU_CODE void RefreshLine(int Line)
                     if((!pixel) && zeroTransparent)
                     {
                         pSWrBuf++;
-#ifdef BENCHMARK_LOGS
+#ifdef WS_BENCHMARK_LOGS
                         sprTransparentSkips++;
 #endif
                         continue;
@@ -959,13 +959,13 @@ WS_PPU_CODE void RefreshLine(int Line)
                     if((*pZ) && lowPrioritySprite)
                     {
                         pSWrBuf++;
-#ifdef BENCHMARK_LOGS
+#ifdef WS_BENCHMARK_LOGS
                         sprPrioritySkips++;
 #endif
                         continue;
                     }
                     *pSWrBuf++ = spritePal[pixel];
-#ifdef BENCHMARK_LOGS
+#ifdef WS_BENCHMARK_LOGS
                     sprPixels++;
 #endif
                 }
@@ -978,7 +978,7 @@ WS_PPU_CODE void RefreshLine(int Line)
                     if(*pW)
                     {
                         pSWrBuf++;
-#ifdef BENCHMARK_LOGS
+#ifdef WS_BENCHMARK_LOGS
                         sprWindowSkips++;
 #endif
                         continue;
@@ -987,7 +987,7 @@ WS_PPU_CODE void RefreshLine(int Line)
                     if((!pixel) && zeroTransparent)
                     {
                         pSWrBuf++;
-#ifdef BENCHMARK_LOGS
+#ifdef WS_BENCHMARK_LOGS
                         sprTransparentSkips++;
 #endif
                         continue;
@@ -995,13 +995,13 @@ WS_PPU_CODE void RefreshLine(int Line)
                     if((*pZ) && lowPrioritySprite)
                     {
                         pSWrBuf++;
-#ifdef BENCHMARK_LOGS
+#ifdef WS_BENCHMARK_LOGS
                         sprPrioritySkips++;
 #endif
                         continue;
                     }
                     *pSWrBuf++ = spritePal[pixel];
-#ifdef BENCHMARK_LOGS
+#ifdef WS_BENCHMARK_LOGS
                     sprPixels++;
 #endif
                 }
@@ -1011,7 +1011,7 @@ WS_PPU_CODE void RefreshLine(int Line)
         renderSpriteDrawUs += WsRenderElapsedUs(renderSectionStart);
 #endif
     }
-#ifdef BENCHMARK_LOGS
+#ifdef WS_BENCHMARK_LOGS
     WsBenchSpriteLine(sprCandidates, sprVisible, sprPixels, sprClipLeft,
                       sprClipRight, sprWindowSkips, sprPrioritySkips,
                       sprTransparentSkips, sprLimited);

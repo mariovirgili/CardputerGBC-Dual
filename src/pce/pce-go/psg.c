@@ -202,6 +202,14 @@ psg_term(void)
 void
 psg_update(int16_t *output, size_t length, uint32_t channels)
 {
+	if (output == NULL || length == 0)
+		return;
+
+	if (PCE.PSG.chan == NULL) {
+		memset(output, 0, length * (stereo ? 2 : 1) * sizeof(int16_t));
+		return;
+	}
+
 	int lvol = (PCE.PSG.volume >> 4);
 	int rvol = (PCE.PSG.volume & 0x0F);
 

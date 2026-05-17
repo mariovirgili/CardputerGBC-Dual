@@ -477,6 +477,9 @@
    }
 
 /* bit 7/6 of data move into N/V flags */
+#ifdef BIT
+#undef BIT
+#endif
 #define BIT(cycles, read_func) \
    {                           \
       read_func(data);         \
@@ -1121,7 +1124,7 @@ static nes6502_context cpu;
 static int remaining_cycles = 0; /* so we can release timeslice */
 /* memory region pointers */
 static uint8 *ram = NULL, *stack = NULL;
-static const uint8 null_page[NES6502_BANKSIZE];
+static uint8 null_page[NES6502_BANKSIZE];
 
 /*
 ** Zero-page helper macros

@@ -245,7 +245,7 @@ INLINE void gui_charline(char ch, int x_pos, int y_pos, uint8 color)
    }
 }
 
-static void gui_putchar(uint8 *dat, int height, int x_pos, int y_pos, uint8 color)
+static void gui_putchar(const uint8 *dat, int height, int x_pos, int y_pos, uint8 color)
 {
    while (height--)
       gui_charline(*dat++, x_pos, y_pos++, color);

@@ -928,22 +928,15 @@ int ResetMSX(int NewMode,int NewRAMPages,int NewVRAMPages)
   /* If hardware model changed ok, patch freshly loaded BIOS */
   if((Mode^NewMode)&MSX_MODEL)
   {
-    if(msx_host_is_cbios_fallback_active())
+    /* Apply patches to BIOS */
+    if(Verbose) printf("  Patching BIOS: ");
+    for(J=0;BIOSPatches[J];++J)
     {
-      if(Verbose) puts("  Skipping BIOS patches for C-BIOS fallback");
+      if(Verbose) printf("%04X..",BIOSPatches[J]);
+      P1=MemMap[0][0][0]+BIOSPatches[J];
+      P1[0]=0xED;P1[1]=0xFE;P1[2]=0xC9;
     }
-    else
-    {
-      /* Apply patches to BIOS */
-      if(Verbose) printf("  Patching BIOS: ");
-      for(J=0;BIOSPatches[J];++J)
-      {
-        if(Verbose) printf("%04X..",BIOSPatches[J]);
-        P1=MemMap[0][0][0]+BIOSPatches[J];
-        P1[0]=0xED;P1[1]=0xFE;P1[2]=0xC9;
-      }
-      PRINTOK;
-    }
+    PRINTOK;
   }
 
   /* If toggling BDOS patches... */

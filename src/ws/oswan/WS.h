@@ -34,7 +34,7 @@ extern struct EEPROM sCEep;
 extern int CartKind;
 extern int FrameSkip;
 
-#ifdef BENCHMARK_LOGS
+#ifdef WS_BENCHMARK_LOGS
 typedef struct WsCoreStats {
     unsigned int frames;
     unsigned int cpuSteps;
@@ -105,7 +105,7 @@ uint32_t WsStatePayloadVersion(void);
 uint32_t WsStateSramSize(void);
 int WsSaveStatePayload(FILE* fp);
 int WsLoadStatePayload(FILE* fp, uint32_t sramSize);
-#ifdef BENCHMARK_LOGS
+#ifdef WS_BENCHMARK_LOGS
 void WsGetAndResetStats(WsCoreStats* out);
 void WsBenchSpriteLine(unsigned int candidates, unsigned int visible,
                        unsigned int pixels, unsigned int clipLeft,

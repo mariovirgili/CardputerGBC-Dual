@@ -47,6 +47,7 @@ static uint8_t* s_bottomCache        = nullptr;
 static int      s_bottomCacheLines   = 0;
 static int      s_bottomCacheW       = 0;
 static int      s_bottomCacheStartY  = 0;
+static bool     s_bottomCacheDisabled = false;
 
 struct PceDisplayTransform {
   int   dstW;
@@ -199,25 +200,28 @@ static void pce_display_task(void *arg) {
       continue;
     }
 
-    // Prepare cache: 50% bottom of the framebuffer (tearing reduction)
-    // this will be overritten by the ppu during rendering, so we need to snapshot it
-    int cacheLines = (srcH * 60 + 99) / 100;   // ~55%, arrondi vers le haut
+    // Cache the lower framebuffer band to reduce tearing without requiring a large contiguous block.
+    int cacheLines = (srcH * 25 + 99) / 100;
     if (cacheLines < 1) cacheLines = 1;
 
-    // On commence le cache de façon à couvrir les 55% du bas
+    // Start the cache so it covers the lower portion of the source image.
     int cacheStartY = srcH - cacheLines;
     if (cacheStartY < 0) cacheStartY = 0;
 
     int neededCacheBytes = cacheLines * srcW;
 
-    if (!s_bottomCache || neededCacheBytes > (s_bottomCacheLines * s_bottomCacheW)) {
+    if (!s_bottomCacheDisabled && (!s_bottomCache || neededCacheBytes > (s_bottomCacheLines * s_bottomCacheW))) {
       if (s_bottomCache) {
         free(s_bottomCache);
         s_bottomCache = nullptr;
       }
       s_bottomCache = (uint8_t*)heap_caps_malloc(neededCacheBytes, MALLOC_CAP_8BIT);
       if (!s_bottomCache) {
-        EMU_LOG("[PCE] bottomCache alloc failed (%d bytes)\n", neededCacheBytes);
+        s_bottomCacheDisabled = true;
+        EMU_LOG("[PCE] bottomCache disabled need=%d largest=%lu heap=%lu\n",
+                neededCacheBytes,
+                (unsigned long)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT),
+                (unsigned long)esp_get_free_heap_size());
       } else {
         s_bottomCacheLines  = cacheLines;
         s_bottomCacheW      = srcW;
@@ -351,6 +355,14 @@ extern "C" void pce_display_stop(void) {
     s_lineBuf = nullptr;
     s_lineCap = 0;
   }
+  if (s_bottomCache) {
+    free(s_bottomCache);
+    s_bottomCache = nullptr;
+    s_bottomCacheLines = 0;
+    s_bottomCacheW = 0;
+    s_bottomCacheStartY = 0;
+  }
+  s_bottomCacheDisabled = false;
   if (pce_palette) {
     heap_caps_free(pce_palette);
     pce_palette = nullptr;

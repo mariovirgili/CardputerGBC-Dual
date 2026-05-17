@@ -116,30 +116,30 @@ namespace share
     {
         if (!compat::i2c_port_a_begin(CARDPUTER_I2C_SDA, CARDPUTER_I2C_SCL, 400000)) {
             s_i2cPadType = I2C_PAD_NONE;
-            printf("[INPUT] Failed to initialize I2C joystick bus (SDA=%d, SCL=%d)\n",
-                   CARDPUTER_I2C_SDA, CARDPUTER_I2C_SCL);
+            EMU_LOG("[INPUT] Failed to initialize I2C joystick bus (SDA=%d, SCL=%d)\n",
+                    CARDPUTER_I2C_SDA, CARDPUTER_I2C_SCL);
             return;
         }
 
         // Try JoyV2 first (0x63)
         if (compat::i2c_port_a_probe(JOYSTICK2_ADDR)) {
             s_i2cPadType = I2C_PAD_JOYV2;
-            printf("[INPUT] M5 Unit JoyV2 detected at 0x%02X (SDA=%d, SCL=%d)\n",
-                   JOYSTICK2_ADDR, CARDPUTER_I2C_SDA, CARDPUTER_I2C_SCL);
+            EMU_LOG("[INPUT] M5 Unit JoyV2 detected at 0x%02X (SDA=%d, SCL=%d)\n",
+                    JOYSTICK2_ADDR, CARDPUTER_I2C_SDA, CARDPUTER_I2C_SCL);
             return;
         }
 
         // Then try Joystick v1.1 (0x52)
         if (compat::i2c_port_a_probe(JOYSTICK1_ADDR)) {
             s_i2cPadType = I2C_PAD_JOYV1_1;
-            printf("[INPUT] M5 Unit Joystick v1.1 detected at 0x%02X (SDA=%d, SCL=%d)\n",
-                   JOYSTICK1_ADDR, CARDPUTER_I2C_SDA, CARDPUTER_I2C_SCL);
+            EMU_LOG("[INPUT] M5 Unit Joystick v1.1 detected at 0x%02X (SDA=%d, SCL=%d)\n",
+                    JOYSTICK1_ADDR, CARDPUTER_I2C_SDA, CARDPUTER_I2C_SCL);
             return;
         }
 
         s_i2cPadType = I2C_PAD_NONE;
-        printf("[INPUT] No I2C joystick found (SDA=%d, SCL=%d)\n",
-               CARDPUTER_I2C_SDA, CARDPUTER_I2C_SCL);
+        EMU_LOG("[INPUT] No I2C joystick found (SDA=%d, SCL=%d)\n",
+                CARDPUTER_I2C_SDA, CARDPUTER_I2C_SCL);
                
         compat::i2c_port_a_end();
     }

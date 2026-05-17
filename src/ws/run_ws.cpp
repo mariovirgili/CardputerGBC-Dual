@@ -7,7 +7,7 @@ extern "C" {
 
 #include <M5Cardputer.h>
 #include "esp_timer.h"
-#ifdef BENCHMARK_LOGS
+#ifdef WS_BENCHMARK_LOGS
 #include "esp_heap_caps.h"
 #endif
 #include "ws_display.h"
@@ -47,7 +47,7 @@ static void ws_update_adaptive_frameskip(uint32_t core_us, uint32_t frame_us)
     FrameSkip--;
   }
 
-#ifdef BENCHMARK_LOGS
+#ifdef WS_BENCHMARK_LOGS
   if (FrameSkip != oldSkip) {
     EMU_LOG("[WS][BENCH] adaptive frameskip %d -> %d (avg %.2f ms, overBudget %lu/%lu)\n",
             oldSkip, FrameSkip, (float)avg_us / 1000.0f,
@@ -97,7 +97,7 @@ extern "C" void run_ws(const uint8_t* rom, size_t len, const char* rom_name, boo
   WS_LOG("[WS] Frame pacing: %uus/frame\n", frame_us);
   uint32_t frameCount = 0;
   uint32_t lastLog = millis();
-#ifdef BENCHMARK_LOGS
+#ifdef WS_BENCHMARK_LOGS
   uint64_t benchCoreTotalUs = 0;
   uint32_t benchCoreMaxUs = 0;
   uint32_t benchLateFrames = 0;
@@ -113,7 +113,7 @@ extern "C" void run_ws(const uint8_t* rom, size_t len, const char* rom_name, boo
     WsRun();
     uint32_t coreUs = (uint32_t)(esp_timer_get_time() - tRun0);
     ws_update_adaptive_frameskip(coreUs, frame_us);
-#ifdef BENCHMARK_LOGS
+#ifdef WS_BENCHMARK_LOGS
     benchCoreTotalUs += coreUs;
     if (coreUs > benchCoreMaxUs) benchCoreMaxUs = coreUs;
 #endif
@@ -127,7 +127,7 @@ extern "C" void run_ws(const uint8_t* rom, size_t len, const char* rom_name, boo
       WS_LOG("[WS] %lu frames rendered (%.2f FPS)\n",
              (unsigned long)frameCount,
              (float)frameCount / ((now - lastLog) / 1000.0f));
-#ifdef BENCHMARK_LOGS
+#ifdef WS_BENCHMARK_LOGS
       WsCoreStats coreStats;
       WsGetAndResetStats(&coreStats);
 
@@ -241,7 +241,7 @@ extern "C" void run_ws(const uint8_t* rom, size_t len, const char* rom_name, boo
     // Frame pacing (75Hz)
     next += frame_us;
     int64_t remain = (int64_t)next - (int64_t)esp_timer_get_time();
-#ifdef BENCHMARK_LOGS
+#ifdef WS_BENCHMARK_LOGS
     if (remain < 0) {
       uint32_t lateUs = (uint32_t)(-remain);
       benchLateFrames++;

@@ -88,7 +88,7 @@ static int TblSkip[5][5] = {
 };
 static void WsRefreshSpriteTable(void);
 static void WsApplyLoadedStatePointers(void);
-#ifdef BENCHMARK_LOGS
+#ifdef WS_BENCHMARK_LOGS
 static WsCoreStats s_coreStats;
 #define WS_BENCH_INC(field)       (s_coreStats.field++)
 #define WS_BENCH_ADD(field, val)  (s_coreStats.field += (unsigned int)(val))
@@ -525,7 +525,7 @@ void WsAllocateBuffers(void)
     memset(IRAM, 0, 0x10000u);
 }
 
-#ifdef BENCHMARK_LOGS
+#ifdef WS_BENCHMARK_LOGS
 void WsBenchSpriteLine(unsigned int candidates, unsigned int visible,
                        unsigned int pixels, unsigned int clipLeft,
                        unsigned int clipRight, unsigned int windowSkips,
@@ -602,7 +602,7 @@ static void WsRefreshSpriteTable(void)
     SprETMap = bytes > 0 ? SprTMap + bytes - 4 : NULL;
     WsPrecomputeSpriteTable(count);
 
-#ifdef BENCHMARK_LOGS
+#ifdef WS_BENCHMARK_LOGS
     s_coreStats.spriteTableBase = (unsigned int)tableBase;
     s_coreStats.spriteFirst = (unsigned int)first;
     s_coreStats.spriteCountReg = (unsigned int)SPRCNT;
@@ -1907,7 +1907,7 @@ int WsLoadStatePayload(FILE* fp, uint32_t sramSize)
     return 1;
 }
 
-#ifdef BENCHMARK_LOGS
+#ifdef WS_BENCHMARK_LOGS
 void WsGetAndResetStats(WsCoreStats* out)
 {
     if(out)

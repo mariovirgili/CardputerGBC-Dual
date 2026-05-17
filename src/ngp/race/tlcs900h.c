@@ -3732,6 +3732,9 @@ int zcf(void)
 ////////////////////////////// BIT ///////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////////
 
+#ifdef BIT
+#undef BIT
+#endif
 #define BIT(A,B) gen_regsSR = (gen_regsSR & ~(ZF|NF)) | ((A & power2[B]) ? HF : HF|ZF);
 
 int bit4rB(void)
@@ -7593,7 +7596,7 @@ int tlcs_alloc_tables(void)
 void tlcs_init(void)
 {
     if (tlcs_alloc_tables() < 0) {
-        fprintf(stderr, "tlcs_init: unable to allocate tables\n");
+        EMU_LOG("tlcs_init: unable to allocate tables\n");
         exit(1);
     }
 

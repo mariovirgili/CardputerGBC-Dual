@@ -40,6 +40,10 @@ SoundChip *toneChip;
 SoundChip *noiseChip;
 int *fixsoundmahjong;
 
+static SoundChip s_toneChipState;
+static SoundChip s_noiseChipState;
+static int s_fixSoundMahjongState;
+
 /* ==== DAC */
 #define DAC_BUFFERSIZE		(4 * 1024)
 
@@ -66,16 +70,13 @@ static _u32 UpdateStep = 0;	/* Number of steps during one sample. */
 int sound_allocate_state(void)
 {
     if (!toneChip)
-        toneChip = (SoundChip*)calloc(1, sizeof(*toneChip));
+        toneChip = &s_toneChipState;
 
     if (!noiseChip)
-        noiseChip = (SoundChip*)calloc(1, sizeof(*noiseChip));
+        noiseChip = &s_noiseChipState;
 
     if (!fixsoundmahjong)
-        fixsoundmahjong = (int*)calloc(1, sizeof(*fixsoundmahjong));
-
-    if (!toneChip || !noiseChip || !fixsoundmahjong)
-        return 0;
+        fixsoundmahjong = &s_fixSoundMahjongState;
 
     return 1;
 }
@@ -423,7 +424,7 @@ void sound_init(int SampleRate)
 	int i;
 	double out;
 
-	if (!sound_allocate_state())
+	if (!sound_allocate_state() || !toneChip || !noiseChip || !fixsoundmahjong)
 		return;
 
 	/* the base clock for the tone generators is the chip clock divided by 16; */

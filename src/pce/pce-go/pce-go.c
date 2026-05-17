@@ -381,8 +381,8 @@ void RunPCE(void)
             float fps = (float)frameCounter * 1000000.0f
                         / (float)(now - lastFpsTime);
 
-            printf("[PCE] FPS: %.2f | HEAP: %lu | skipNext=%d\n",
-                   fps, (unsigned long)esp_get_free_heap_size(), (int)skipNextFrame);
+            EMU_LOG("[PCE] FPS: %.2f | HEAP: %lu | skipNext=%d\n",
+                    fps, (unsigned long)esp_get_free_heap_size(), (int)skipNextFrame);
 
             frameCounter = 0;
             lastFpsTime  = now;

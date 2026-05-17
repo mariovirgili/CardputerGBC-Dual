@@ -17,7 +17,6 @@
 #include <esp_heap_caps.h>
 #include <esp_timer.h>
 #include "esp_partition.h"
-#include "esp_spi_flash.h"
 
 /* Nofrendo / OSD headers */
 #include <noftypes.h>
@@ -68,7 +67,7 @@ extern void osd_set_rompath_for_saves(const char *p);
 /* This runs on core 0 */
 QueueHandle_t vidQueue;
 
-#ifdef BENCHMARK_LOGS
+#ifdef NES_BENCHMARK_LOGS
 static uint32_t s_benchCoreFrames = 0;
 static uint32_t s_benchDrawnFrames = 0;
 static uint32_t s_benchDroppedFrames = 0;
@@ -94,7 +93,7 @@ static void nes_benchmark_log_if_due(void)
         : 0.0f;
     float speedPct = (coreFps / 60.0f) * 100.0f;
 
-    printf(
+    EMU_LOG(
         "[NES][BENCH] core=%.2f fps (%.1f%%) | drawn=%.2f fps | render=%.1f us | drop=%lu | heap=%u\n",
         coreFps,
         speedPct,
@@ -119,11 +118,11 @@ static void displayTask(void *arg)
     while (1) {
         if (xQueueReceive(vidQueue, &bmp, portMAX_DELAY) == pdTRUE) {
             if (!bmp || !bmp->line[0]) { nofrendo_log_printf("OSD: bad bmp\n"); continue; }
-#ifdef BENCHMARK_LOGS
+#ifdef NES_BENCHMARK_LOGS
             int64_t renderStart = esp_timer_get_time();
 #endif
             display_write_frame((const uint8_t **)bmp->line);
-#ifdef BENCHMARK_LOGS
+#ifdef NES_BENCHMARK_LOGS
             s_benchRenderUs += (uint64_t)(esp_timer_get_time() - renderStart);
             s_benchDrawnFrames++;
             nes_benchmark_log_if_due();
@@ -192,12 +191,12 @@ static void free_write(int num_dirties, rect_t *dirty_rects)
 static void custom_blit(bitmap_t *bmp, int num_dirties, rect_t *dirty_rects)
 {
     (void)num_dirties; (void)dirty_rects;
-#ifdef BENCHMARK_LOGS
+#ifdef NES_BENCHMARK_LOGS
     s_benchCoreFrames++;
 #endif
     if (xQueueSend(vidQueue, &bmp, 0) != pdPASS) {
         bitmap_t *tmp; xQueueReceive(vidQueue, &tmp, 0);
-#ifdef BENCHMARK_LOGS
+#ifdef NES_BENCHMARK_LOGS
         s_benchDroppedFrames++;
 #endif
         (void)xQueueSend(vidQueue, &bmp, 0);
@@ -256,19 +255,19 @@ void osd_getmouse(int *x, int *y, int *button)
 
 /* -------------------- Core init/shutdown -------------------- */
 
-static int logprint(const char *string) { return printf("%s", string); }
+static int logprint(const char *string) { EMU_LOG("%s", string); return 0; }
 
 int osd_init(void)
 {
     nofrendo_log_chain_logfunc(logprint);
-#ifdef BENCHMARK_LOGS
-    printf("[NES][BENCH] enabled\n");
+#ifdef NES_BENCHMARK_LOGS
+    EMU_LOG("[NES][BENCH] enabled\n");
 #endif
 #ifdef NES_DIAG_LOGS
-    printf("[NES][OSD] init heap=%u largest8=%u largestInternal=%u\n",
-           (unsigned)heap_caps_get_free_size(MALLOC_CAP_8BIT),
-           (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT),
-           (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
+    EMU_LOG("[NES][OSD] init heap=%u largest8=%u largestInternal=%u\n",
+            (unsigned)heap_caps_get_free_size(MALLOC_CAP_8BIT),
+            (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT),
+            (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
 #endif
 
     if (osd_init_sound()) return -1;
@@ -278,7 +277,7 @@ int osd_init(void)
     xTaskCreatePinnedToCore(&displayTask, "displayTask", 4096, NULL, 3, NULL, 0);
     osd_initinput();
 #ifdef NES_DIAG_LOGS
-    printf("[NES][OSD] ready queue=%p fb=%p bmp=%p heap=%u largest8=%u\n",
+    EMU_LOG("[NES][OSD] ready queue=%p fb=%p bmp=%p heap=%u largest8=%u\n",
            (void *)vidQueue,
            (void *)fb,
            (void *)myBitmap,
@@ -304,9 +303,9 @@ int osd_main(int argc, char *argv[])
     config.filename = configfilename;
     if (argc > 0 && argv && argv[0]) osd_set_rompath_for_saves(argv[0]);
 #ifdef NES_DIAG_LOGS
-    printf("[NES][OSD] main argc=%d rom=%s\n",
-           argc,
-           (argc > 0 && argv && argv[0]) ? argv[0] : "(null)");
+    EMU_LOG("[NES][OSD] main argc=%d rom=%s\n",
+            argc,
+            (argc > 0 && argv && argv[0]) ? argv[0] : "(null)");
 #endif
     return main_loop(argv[0], system_autodetect);
 }
@@ -319,10 +318,10 @@ int osd_installtimer(int frequency, void *func, int funcsize, void *counter, int
     nes_timer = xTimerCreate("nes", configTICK_RATE_HZ / frequency, pdTRUE, NULL, (TimerCallbackFunction_t)func);
     xTimerStart(nes_timer, 0);
 #ifdef NES_DIAG_LOGS
-    printf("[NES][OSD] timer freq=%d handle=%p periodTicks=%u\n",
-           frequency,
-           (void *)nes_timer,
-           (unsigned)(configTICK_RATE_HZ / frequency));
+    EMU_LOG("[NES][OSD] timer freq=%d handle=%p periodTicks=%u\n",
+            frequency,
+            (void *)nes_timer,
+            (unsigned)(configTICK_RATE_HZ / frequency));
 #endif
     return 0;
 }

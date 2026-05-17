@@ -240,7 +240,7 @@ extern "C" void SetColor(byte N, byte R, byte G, byte B)
 extern "C" int InitMachine(void)
 {
     if (!ensure_video_tables()) {
-        printf("[MSX][ERR] Video table allocation failed\n");
+        EMU_LOG("[MSX][ERR] Video table allocation failed\n");
         return 0;
     }
 
@@ -268,7 +268,7 @@ extern "C" int msx_host_prepare_runtime(void)
     using namespace msx;
 
     if (!ensure_video_tables()) {
-        printf("[MSX][ERR] Video table allocation failed\n");
+        EMU_LOG("[MSX][ERR] Video table allocation failed\n");
         return 0;
     }
 
@@ -291,7 +291,7 @@ extern "C" int msx_host_prepare_runtime(void)
     }
 
     if ((!g_lineRenderMode && !g_host.frame8) || !g_host.line565) {
-        printf("[MSX][ERR] Host video buffer allocation failed\n");
+        EMU_LOG("[MSX][ERR] Host video buffer allocation failed\n");
         return 0;
     }
 
@@ -303,7 +303,7 @@ extern "C" int msx_host_prepare_runtime(void)
     }
 
     if (!InitSound(kAudioRate, 120)) {
-        printf("[MSX][ERR] InitSound failed\n");
+        EMU_LOG("[MSX][ERR] InitSound failed\n");
         return 0;
     }
 

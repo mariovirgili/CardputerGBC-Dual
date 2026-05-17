@@ -25,5 +25,15 @@ endforeach()
 
 list(APPEND EXTRA_COMPONENT_DIRS "${M5GFX_COMPONENT_DIR}" "${M5UNIFIED_COMPONENT_DIR}")
 
+# Keep the native ESP-IDF build graph tight. Without this, ESP-IDF/PlatformIO
+# discovers and builds every bundled framework component, including WiFi,
+# provisioning, HTTP, and TLS pieces that the emulator never initializes.
+set(COMPONENTS
+    main
+    M5GFX
+    M5Unified
+    __pio_env
+)
+
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 project(CardputerGBCDual)

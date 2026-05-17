@@ -19,12 +19,12 @@
 #define RECT_COLOR_DARK  0x0841
 #define RECT_COLOR_LIGHT 0xD69A
 #define TEXT_COLOR       0xEF7D
-#define SMS_COLOR        0x3D7F  // bleu clair 
-#define SG1000_COLOR     0x459F  // bleu 
-#define GENESIS_COLOR    0x43BF  // bleu foncé
-#define COLECO_COLOR     0xEBA0  // ambre/orange
-#define NES_COLOR        0xFA68  // rouge/orange 
-#define SNES_COLOR       0xD920  // rouge
+#define SMS_COLOR        0x3D7F
+#define SG1000_COLOR     0x459F
+#define GENESIS_COLOR    0x43BF
+#define COLECO_COLOR     0xEBA0
+#define NES_COLOR        0xFA68
+#define SNES_COLOR       0xD920
 #define GAMEGEAR_COLOR   0xC29F
 #define NEOGEO_COLOR     0x05E8
 #define WS_COLOR         0x07FF
@@ -33,7 +33,7 @@
 #define LYNX_COLOR       0xD588
 #define GAMEBOY_COLOR    0xFCD3
 #define MSX1_COLOR       0x8E9F
-#define GX4000_COLOR     0xDDBF  // violet clair
+#define GX4000_COLOR     0xDDBF
 #define FOLDER_COLOR     0xFEC0
 
 // TEXT SIZE
