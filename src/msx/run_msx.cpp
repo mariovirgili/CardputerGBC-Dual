@@ -107,7 +107,11 @@ void run_msx(const uint8_t* rom, size_t len, const char* romName, const char* ro
            (mode & MSX_MODEL) == MSX_MSX2P ? "MSX2+" :
            (mode & MSX_MODEL) == MSX_MSX2  ? "MSX2"  : "MSX1");
 
+#if MSX_LOGS_ENABLED
     Verbose = 1;
+#else
+    Verbose = 0;
+#endif
     UPeriod = 100;
 
     if (!InitMachine()) {

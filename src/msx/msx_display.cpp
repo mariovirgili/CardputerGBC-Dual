@@ -7,6 +7,7 @@
 #include <cstring>
 
 #include "esp_heap_caps.h"
+#include "esp_timer.h"
 
 pixel* XPal = nullptr;
 pixel* BPal = nullptr;
@@ -72,6 +73,36 @@ static void free_video_tables()
     g_host.ymapZoom = nullptr;
     g_lineBuf = nullptr;
 }
+
+#if EMU_LOG_MASTER_ENABLED
+static void log_frame_diag()
+{
+    static int64_t lastUs = 0;
+    static uint32_t frames = 0;
+
+    const int64_t now = esp_timer_get_time();
+    if (lastUs == 0) {
+        lastUs = now;
+        frames = 0;
+        return;
+    }
+
+    ++frames;
+    const int64_t elapsed = now - lastUs;
+    if (elapsed < 2000000) return;
+
+    const float fps = (float)frames * 1000000.0f / (float)elapsed;
+    EMU_LOG("[MSX] FPS: %.2f | HEAP %u | largest %u\n",
+            (double)fps,
+            (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+            (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
+
+    frames = 0;
+    lastUs = now;
+}
+#else
+static inline void log_frame_diag() {}
+#endif
 
 static void rebuild_scalers()
 {
@@ -221,6 +252,7 @@ extern "C" void msx_line_end_frame(void)
     }
 
     g_prevSrcY = -1;
+    log_frame_diag();
 }
 
 } // namespace
@@ -331,4 +363,5 @@ extern "C" void PutImage(void)
     if (!src || !g_host.line565 || !g_host.rgb565) return;
 
     render_frame_from_src(src);
+    log_frame_diag();
 }

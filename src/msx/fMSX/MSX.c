@@ -33,6 +33,12 @@
 #include <unistd.h>
 #include <time.h>
 
+#if defined(MSX_LOGS_ENABLED) && MSX_LOGS_ENABLED
+#ifdef printf
+#undef printf
+#endif
+#endif
+
 #ifdef __BORLANDC__
 #include <dir.h>
 #endif
