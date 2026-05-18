@@ -159,17 +159,27 @@
 
 	extern unsigned char *ROM_DATA;
 	extern unsigned char *M68K_RAM;
+	extern unsigned int ROM_SIZE;
 #endif
 
-#define FETCH8ROM(A)    ( ROM_DATA[(A)] )
+static inline unsigned int gwenesis_rom_addr(unsigned int address)
+{
+	address &= 0x3FFFFF;
+	if (!ROM_SIZE) return address;
+	if (address < ROM_SIZE) return address;
+	if ((ROM_SIZE & (ROM_SIZE - 1)) == 0) return address & (ROM_SIZE - 1);
+	return address % ROM_SIZE;
+}
 
-#define FETCH16ROM(A)   ( ((uint16_t)ROM_DATA[(A)]     << 8) | \
-                          ((uint16_t)ROM_DATA[(A) + 1]     ) )
+#define FETCH8ROM(A)    ( ROM_DATA[gwenesis_rom_addr((unsigned int)(A))] )
 
-#define FETCH32ROM(A)   ( ((uint32_t)ROM_DATA[(A)]     << 24) | \
-                          ((uint32_t)ROM_DATA[(A) + 1] << 16) | \
-                          ((uint32_t)ROM_DATA[(A) + 2] <<  8) | \
-                          ((uint32_t)ROM_DATA[(A) + 3]      ) )
+#define FETCH16ROM(A)   ( ((uint16_t)FETCH8ROM((A))     << 8) | \
+                          ((uint16_t)FETCH8ROM((A) + 1)     ) )
+
+#define FETCH32ROM(A)   ( ((uint32_t)FETCH8ROM((A))     << 24) | \
+                          ((uint32_t)FETCH8ROM((A) + 1) << 16) | \
+                          ((uint32_t)FETCH8ROM((A) + 2) <<  8) | \
+                          ((uint32_t)FETCH8ROM((A) + 3)      ) )
                           
 #if GNW_TARGET_MARIO !=0 || GNW_TARGET_ZELDA!=0
 

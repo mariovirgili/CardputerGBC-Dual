@@ -71,6 +71,7 @@ unsigned char *M68K_RAM=(void *)(uint32_t)(0); // 68K RAM
 #else
 
 unsigned char *ROM_DATA; // 68K Main Program (uncompressed)
+unsigned int ROM_SIZE = 0;
 unsigned char* M68K_RAM = NULL;
 #endif
 
@@ -111,6 +112,7 @@ void load_cartridge()
 
 void load_cartridge(unsigned char *buffer, size_t size)
 {
+    ROM_SIZE = (unsigned int)size;
     (void)size; // pas nécessaire ici, gardé si tu veux l’utiliser plus tard
 
     // Clear RAMs volatiles
