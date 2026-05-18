@@ -208,8 +208,10 @@ void run_a2600(const uint8_t* romData, size_t romLen, const char* romName)
     const float targetFps = (s_console->getFramerate() > 0.0f) ? s_console->getFramerate() : 60.0f;
     const uint32_t frameUs = (uint32_t)lround(1000000.0 / targetFps);
     uint64_t nextFrameUs = esp_timer_get_time();
+#ifdef EMU_LOGS_ENABLED
     uint32_t frameCount = 0;
     uint32_t lastLogMs = millis();
+#endif
 
     EMU_LOG("[A2600] starting loop @ %.2f FPS\n", targetFps);
 
@@ -227,6 +229,7 @@ void run_a2600(const uint8_t* romData, size_t romLen, const char* romName)
             frameIsPal
         );
 
+#ifdef EMU_LOGS_ENABLED
         frameCount++;
         const uint32_t nowMs = millis();
         if (nowMs - lastLogMs >= 1000) {
@@ -235,6 +238,7 @@ void run_a2600(const uint8_t* romData, size_t romLen, const char* romName)
             frameCount = 0;
             lastLogMs = nowMs;
         }
+#endif
 
         nextFrameUs += frameUs;
         const int64_t nowUs = (int64_t)esp_timer_get_time();

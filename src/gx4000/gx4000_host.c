@@ -27,6 +27,7 @@ static GRAPHICS_BUFFER_COLOUR_FORMAT s_colourFmt = {
  * We store the pointer provided by Host_SetGraphicsBufferSurface (see below).
  */
 static GRAPHICS_BUFFER_INFO s_bufInfo = { 0 };
+#ifdef EMU_LOGS_ENABLED
 static unsigned long s_fpsWindowStartMs = 0;
 static unsigned int s_fpsFrameCount = 0;
 
@@ -54,6 +55,7 @@ static void gx4000_perf_tick(void)
         s_fpsFrameCount = 0;
     }
 }
+#endif
 
 void Host_SetGraphicsBufferSurface(unsigned char *pSurface,
                                     int width, int height, int pitch)
@@ -99,7 +101,9 @@ void Host_UnlockGraphicsBuffer(void)
 
 void Host_SwapGraphicsBuffers(void)
 {
+#ifdef EMU_LOGS_ENABLED
     gx4000_perf_tick();
+#endif
     gx4000_display_frame_done();
 }
 

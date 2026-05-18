@@ -327,10 +327,13 @@ void RunPCE(void)
 
     const uint64_t frameDurationUs = 1000000ULL / 60ULL; // 60 fps target
 
-    uint64_t lastFpsTime   = esp_timer_get_time();
+    uint64_t nowStart      = esp_timer_get_time();
+#ifdef EMU_LOGS_ENABLED
+    uint64_t lastFpsTime   = nowStart;
     uint32_t frameCounter  = 0;
-    uint64_t nextFrameTime = lastFpsTime;
-    uint64_t lastFrameEnd  = lastFpsTime;
+#endif
+    uint64_t nextFrameTime = nowStart;
+    uint64_t lastFrameEnd  = nowStart;
 
     bool skipNextFrame = false;
 
@@ -352,7 +355,9 @@ void RunPCE(void)
         }
 
         // Pacing
+#ifdef EMU_LOGS_ENABLED
         frameCounter++;
+#endif
         now = esp_timer_get_time();
         int64_t remain = (int64_t)nextFrameTime - (int64_t)now;
 
@@ -375,6 +380,7 @@ void RunPCE(void)
             skipNextFrame = true;
         }
 
+#ifdef EMU_LOGS_ENABLED
         // Fps logging
         now = esp_timer_get_time();
         if (now - lastFpsTime >= 1000000ULL) {
@@ -387,6 +393,7 @@ void RunPCE(void)
             frameCounter = 0;
             lastFpsTime  = now;
         }
+#endif
     }
 }
 

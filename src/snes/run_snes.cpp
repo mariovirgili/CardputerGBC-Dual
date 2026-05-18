@@ -63,9 +63,13 @@ static void snes_apply_common_settings()
 
 static void snes_log_runtime_config(int targetFps)
 {
+#ifdef EMU_LOGS_ENABLED
     EMU_LOG("[SNES] Core/Video only, no audio, %s, no tilecache, %d FPS target\n",
            snes_save_has_sram() ? "with SRAM" : "no SRAM",
            targetFps);
+#else
+    (void)targetFps;
+#endif
 }
 
 static inline bool snes_should_render_frame(uint32_t last_frame_exec_us,
@@ -94,10 +98,12 @@ static inline void snes_log_fps_and_heap(uint32_t &frameCount, uint32_t &lastFps
 
     snes_update_interlace_from_fps(fps);
 
+#ifdef EMU_LOGS_ENABLED
     EMU_LOG("[SNES] FPS: %.2f | HEAP: %u | INTERLACE: %s\n",
-           fps,
-           esp_get_free_heap_size(),
-           interlace_enabled ? "ON" : "OFF");
+            fps,
+            esp_get_free_heap_size(),
+            interlace_enabled ? "ON" : "OFF");
+#endif
 
     frameCount = 0;
     lastFpsMs  = nowMs;
@@ -214,11 +220,15 @@ extern "C" void S9xSetLineCallback(S9xLineCallback cb);
 
 static void snes_log_heap_step(const char* step)
 {
+#ifdef SNES_LOGS
     EMU_LOG("[SNES][INIT] %-14s heap=%u largestInternal=%u largest8=%u\n",
             step,
             esp_get_free_heap_size(),
             heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL),
             heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
+#else
+    (void)step;
+#endif
 }
 
 /* ---------------------------------------------------- */
@@ -386,8 +396,10 @@ void run_snes_default(const uint8_t* rom, size_t romSize, const char* romName)
     const uint32_t frame_us         = 1000000u / (uint32_t)targetFps;
     const uint32_t budget55_us      = 1000000u / 55u;
     uint64_t       next_frame_us    = esp_timer_get_time();
+#ifdef EMU_LOGS_ENABLED
     uint32_t       frameCount       = 0;
     uint32_t       lastFpsMs        = millis();
+#endif
     uint32_t       last_frame_exec_us = 0;
     bool           skipped_last_render = false;
     int64_t        now;
@@ -402,7 +414,9 @@ void run_snes_default(const uint8_t* rom, size_t romSize, const char* romName)
 
     snes_log_runtime_config(targetFps);
 
+#ifdef SNES_LOGS
     heap_caps_check_integrity_all(true);
+#endif
 
     while (true)
     {
@@ -441,8 +455,10 @@ void run_snes_default(const uint8_t* rom, size_t romSize, const char* romName)
         last_frame_exec_us = (uint32_t)(frame_end_us - frame_start_us);
         skipped_last_render = !IPPU.RenderThisFrame;
 
+#ifdef EMU_LOGS_ENABLED
         ++frameCount;
         snes_log_fps_and_heap(frameCount, lastFpsMs);
+#endif
 
         next_frame_us += frame_us;
         now      = (int64_t)esp_timer_get_time();
@@ -491,8 +507,10 @@ void run_snes_alt(const uint8_t* rom, size_t romSize, const char* romName)
     const uint32_t frame_us           = 1000000u / (uint32_t)targetFps;
     const uint32_t budget55_us        = 1000000u / 55u;
     uint64_t       next_frame_us      = esp_timer_get_time();
+#ifdef EMU_LOGS_ENABLED
     uint32_t       frameCount         = 0;
     uint32_t       lastFpsMs          = millis();
+#endif
     uint32_t       last_frame_exec_us = 0;
     bool           skipped_last_render = false;
     int64_t        now;
@@ -504,7 +522,9 @@ void run_snes_alt(const uint8_t* rom, size_t romSize, const char* romName)
 
     snes_log_runtime_config(targetFps);
 
+#ifdef SNES_LOGS
     heap_caps_check_integrity_all(true);
+#endif
 
     while (true)
     {
@@ -526,8 +546,10 @@ void run_snes_alt(const uint8_t* rom, size_t romSize, const char* romName)
         last_frame_exec_us = (uint32_t)(frame_end_us - frame_start_us);
         skipped_last_render = !IPPU.RenderThisFrame;
 
+#ifdef EMU_LOGS_ENABLED
         ++frameCount;
         snes_log_fps_and_heap(frameCount, lastFpsMs);
+#endif
 
         next_frame_us += frame_us;
         now      = (int64_t)esp_timer_get_time();

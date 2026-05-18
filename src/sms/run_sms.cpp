@@ -152,12 +152,17 @@ void run_sms(const uint8_t* romPtr, size_t romLen, SmsConsoleMode mode, const ch
 
   // Main loop
   bool lastToggle = fullscreen;
+#if defined(EMU_LOGS_ENABLED) || defined(COLECO_DEBUG_LOGS)
+  uint32_t lastStatusTime = millis();
+#endif
+#ifdef EMU_LOGS_ENABLED
   uint32_t frameCount = 0;
-  uint32_t totalFrames = 0;
-  uint32_t lastFpsTime = millis();
   float avgFrameTime = 0;
   float avgFrameTimeRT = 0;
-  float accFrameUs = 0.f;
+#endif
+#ifdef COLECO_DEBUG_LOGS
+  uint32_t totalFrames = 0;
+#endif
   const uint32_t TARGET_US = 16667; // 60 Hz
 
   for (;;) {
@@ -180,6 +185,7 @@ void run_sms(const uint8_t* romPtr, size_t romLen, SmsConsoleMode mode, const ch
       delayMicroseconds(remaining);
     }
     
+#ifdef EMU_LOGS_ENABLED
     // Realtime
     uint32_t frameUs = micros() - t0;
 
@@ -187,9 +193,15 @@ void run_sms(const uint8_t* romPtr, size_t romLen, SmsConsoleMode mode, const ch
     avgFrameTime += emuUs;      // perf brute
     avgFrameTimeRT += frameUs;  // FPS effectif
     frameCount++;
+#endif
+#ifdef COLECO_DEBUG_LOGS
     totalFrames++;
+#endif
 
-    if (millis() - lastFpsTime >= 1000) {
+#if defined(EMU_LOGS_ENABLED) || defined(COLECO_DEBUG_LOGS)
+    uint32_t nowMs = millis();
+    if (nowMs - lastStatusTime >= 1000) {
+#ifdef EMU_LOGS_ENABLED
       float avgRaw = avgFrameTime / frameCount;
       float fpsRaw = 1000000.0f / avgRaw;
       float speedPct = (fpsRaw / 60.0f) * 100.0f;
@@ -200,16 +212,17 @@ void run_sms(const uint8_t* romPtr, size_t romLen, SmsConsoleMode mode, const ch
       EMU_LOG("[Perf] raw=%.1f us (%.1f fps, %.1f%%) | realtime=%.1f us (%.2f fps)\n",
             avgRaw, fpsRaw, speedPct, avgRT, fpsRT);
 
-      if (isColeco) {
-#ifdef COLECO_DEBUG_LOGS
-        sms_debug_dump_state(totalFrames);
-#endif
-      }
-
       avgFrameTime = 0;
       avgFrameTimeRT = 0;
       frameCount = 0;
-      lastFpsTime = millis();
+#endif
+#ifdef COLECO_DEBUG_LOGS
+      if (isColeco) {
+        sms_debug_dump_state(totalFrames);
+      }
+#endif
+      lastStatusTime = nowMs;
     }
+#endif
   }
 }

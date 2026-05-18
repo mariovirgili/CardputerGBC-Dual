@@ -352,8 +352,10 @@ void setup() {
   // Initialize I2C M5Stack JoyV2 if any
   share::detectI2cPad();
   
+#ifdef EMU_LOGS_ENABLED
   EMU_LOG("HEAP BEFORE EMU: %u bytes\n", esp_get_free_heap_size());
   EMU_LOG("MAX BLOCK BEFORE EMU: %u bytes\n", heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
+#endif
 
   // Run the emulator
   if (ext == ROM_TYPE_NES) {

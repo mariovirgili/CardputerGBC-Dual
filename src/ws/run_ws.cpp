@@ -22,6 +22,10 @@ extern "C" {
 #define WS_LOG(...) ((void)0)
 #endif
 
+#ifdef EMU_LOGS_ENABLED
+#define WS_RUNTIME_STATS 1
+#endif
+
 #ifndef WS_AUDIO_PERIOD_MS
 #define WS_AUDIO_PERIOD_MS 8
 #endif
@@ -95,8 +99,10 @@ extern "C" void run_ws(const uint8_t* rom, size_t len, const char* rom_name, boo
   const uint32_t frame_us = 1000000u / 75u; // 13.3 ms
   uint64_t next = esp_timer_get_time();
   WS_LOG("[WS] Frame pacing: %uus/frame\n", frame_us);
+#ifdef WS_RUNTIME_STATS
   uint32_t frameCount = 0;
   uint32_t lastLog = millis();
+#endif
 #ifdef BENCHMARK_LOGS
   uint64_t benchCoreTotalUs = 0;
   uint32_t benchCoreMaxUs = 0;
@@ -119,12 +125,14 @@ extern "C" void run_ws(const uint8_t* rom, size_t len, const char* rom_name, boo
 #endif
     ws_state_tick();
     ws_save_tick();
+
+#ifdef WS_RUNTIME_STATS
     frameCount++;
 
     // Log framerate every 2 seconds
     uint32_t now = millis();
     if (now - lastLog >= 2000) {
-      WS_LOG("[WS] %lu frames rendered (%.2f FPS)\n",
+      EMU_LOG("[WS] %lu frames rendered (%.2f FPS)\n",
              (unsigned long)frameCount,
              (float)frameCount / ((now - lastLog) / 1000.0f));
 #ifdef BENCHMARK_LOGS
@@ -228,11 +236,12 @@ extern "C" void run_ws(const uint8_t* rom, size_t len, const char* rom_name, boo
       benchIdleDelayUs = 0;
       benchIdleSpinUs = 0;
 #else
-      WS_LOG("[WS] HEAP: %u bytes\n", esp_get_free_heap_size());
+      EMU_LOG("[WS] HEAP: %u bytes\n", esp_get_free_heap_size());
 #endif
       frameCount = 0;
       lastLog = now;
     }
+#endif
 
     // Frame pacing (75Hz)
     next += frame_us;

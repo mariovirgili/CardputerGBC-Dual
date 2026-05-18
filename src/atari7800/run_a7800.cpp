@@ -69,11 +69,13 @@ void run_a7800(const uint8_t* romData, size_t romLen, const char* romName)
 
     const uint32_t frameUs = (uint32_t)lround(1000000.0 / (targetFps > 0.0 ? targetFps : 60.0));
     uint64_t nextFrameUs = esp_timer_get_time();
+#ifdef EMU_LOGS_ENABLED
     uint32_t frameCount = 0;
     uint32_t renderCount = 0;
     uint32_t lastLogMs = millis();
-    bool quitRequested = false;
     int64_t s_frameUs = 0;
+#endif
+    bool quitRequested = false;
     bool skipNextVideo = false;
     int consecSkips = 0;
 
@@ -90,6 +92,7 @@ void run_a7800(const uint8_t* romData, size_t romLen, const char* romName)
         a7800_video_set_frame_skip(skipNextVideo);
         maria_skip_render = skipNextVideo;
 
+#ifdef EMU_LOGS_ENABLED
         if (!skipNextVideo) {
             renderCount++;
         }
@@ -99,7 +102,11 @@ void run_a7800(const uint8_t* romData, size_t romLen, const char* romName)
         s_frameUs += (esp_timer_get_time() - t0);
 
         frameCount++;
+#else
+        a7800_host_run_frame(&host, &input);
+#endif
 
+#ifdef EMU_LOGS_ENABLED
         const uint32_t nowMs = millis();
         if (nowMs - lastLogMs >= 1000) {
             const float elapsedMs = (float)(nowMs - lastLogMs);
@@ -127,6 +134,7 @@ void run_a7800(const uint8_t* romData, size_t romLen, const char* romName)
             s_frameUs = 0;
             lastLogMs = nowMs;
         }
+#endif
 
         nextFrameUs += frameUs;
         const int64_t nowUs = (int64_t)esp_timer_get_time();

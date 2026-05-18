@@ -94,8 +94,10 @@ void run_lynx(const uint8_t* romData, size_t romLen, const char* romName)
     const int targetFps     = 60;
     const uint32_t frame_us = 1000000u / (uint32_t)targetFps;
     uint64_t next_frame_us = esp_timer_get_time();
+#ifdef EMU_LOGS_ENABLED
     uint32_t frameCount    = 0;
     uint32_t lastLogMs     = millis();
+#endif
     bool skipNextDraw = false;
     int  skippedInARow = 0;
 
@@ -156,6 +158,7 @@ void run_lynx(const uint8_t* romData, size_t romLen, const char* romName)
         }
 
         // ── Logs FPS  ──────────────────────────────
+#ifdef EMU_LOGS_ENABLED
         frameCount++;
         uint32_t nowMs = millis();
         if (nowMs - lastLogMs >= 1000) {
@@ -165,6 +168,7 @@ void run_lynx(const uint8_t* romData, size_t romLen, const char* romName)
             frameCount = 0;
             lastLogMs  = nowMs;
         }
+#endif
 
         // ── Pacing 60 Hz ────────────────────────────
         next_frame_us += frame_us;

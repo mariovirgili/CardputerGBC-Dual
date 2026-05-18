@@ -99,9 +99,11 @@ void run_gbc(const uint8_t* romData, size_t romLen, const char* romPathOrName) {
     gbc_save_init(romPathOrName);
     gbc_save_load();
     
-    // FPS counter
-    uint32_t frameCount = 0;
+    uint32_t frameParity = 0;
+#ifdef EMU_LOGS_ENABLED
+    uint32_t fpsFrameCount = 0;
     uint32_t lastFpsMs  = millis();
+#endif
 
     // Pacing 60 Hz
     const int targetFps       = 60;
@@ -123,8 +125,9 @@ void run_gbc(const uint8_t* romData, size_t romLen, const char* romPathOrName) {
         }
 
         // 1/2 frame skip
-        bool doDraw = drawFrame && ((frameCount & 1) == 0);
+        bool doDraw = drawFrame && ((frameParity & 1) == 0);
         gnuboy_run(doDraw);   // trigger callbacks video/audio
+        frameParity++;
 
         int pad = gbc_input_poll();
         if (pad >= 0) {
@@ -133,15 +136,17 @@ void run_gbc(const uint8_t* romData, size_t romLen, const char* romPathOrName) {
 
         gbc_save_tick();
 
+#ifdef EMU_LOGS_ENABLED
         // FPS log
-        frameCount++;
+        fpsFrameCount++;
         uint32_t nowMs = millis();
         if (nowMs - lastFpsMs >= 1000) {
-            float fps = (frameCount * 1000.0f) / (nowMs - lastFpsMs);
+            float fps = (fpsFrameCount * 1000.0f) / (nowMs - lastFpsMs);
             EMU_LOG("[GBC] FPS: %.2f | HEAP %u\n", fps, esp_get_free_heap_size());
-            frameCount = 0;
+            fpsFrameCount = 0;
             lastFpsMs  = nowMs;
         }
+#endif
 
         // Pacing
         next_frame_us += frame_us;

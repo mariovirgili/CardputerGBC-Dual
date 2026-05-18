@@ -44,8 +44,10 @@ static bool s_lastFull = false;
 static int s_lastZoom = -1;
 static bool s_skipFrame = false;
 
+#ifdef EMU_LOGS_ENABLED
 static int64_t  s_videoTotalUs = 0;
 static uint32_t s_videoCount   = 0;
+#endif
 
 static QueueHandle_t s_frameQ = nullptr;
 static TaskHandle_t s_displayTask = nullptr;
@@ -231,10 +233,12 @@ static void a7800_display_task(void* arg)
             continue;
         }
 
-        const int64_t tVideoStart = esp_timer_get_time();
-
         A7800RenderPlan plan = {};
         a7800_compute_plan((int)msg.width, (int)msg.height, msg.isPal, plan);
+
+#ifdef EMU_LOGS_ENABLED
+        const int64_t tVideoStart = esp_timer_get_time();
+#endif
 
         if (!a7800_prepare_luts(plan)) {
             EMU_LOG("[A7800][DISP] buffer allocation failed\n");
@@ -273,8 +277,10 @@ static void a7800_display_task(void* arg)
             M5Cardputer.Display.writePixels(s_lineBuf, plan.dstW * batch);
         }
 
+#ifdef EMU_LOGS_ENABLED
         s_videoTotalUs += (esp_timer_get_time() - tVideoStart);
         s_videoCount++;
+#endif
     }
 
     M5Cardputer.Display.endWrite();
@@ -381,10 +387,15 @@ void a7800_video_set_frame_skip(bool skip)
 
 void a7800_video_get_and_reset_stats(int64_t* totalUs, uint32_t* count)
 {
+#ifdef EMU_LOGS_ENABLED
     *totalUs = s_videoTotalUs;
     *count   = s_videoCount;
     s_videoTotalUs = 0;
     s_videoCount   = 0;
+#else
+    if (totalUs) *totalUs = 0;
+    if (count) *count = 0;
+#endif
 }
 
 void a7800_video_submit_frame(const void* frame,
