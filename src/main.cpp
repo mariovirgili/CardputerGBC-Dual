@@ -29,6 +29,7 @@
 #include "ngp/race/retro_compat.h"
 #include "esp_task_wdt.h"
 #include "esp_heap_caps.h"
+#include "esp_system.h"
 #include "nvs_flash.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -113,6 +114,19 @@ static void logEmulatorCoreUsage(RomType type) {
           configuredMainTaskAffinityForLog(),
           emulatorHelperCoresForLog(type));
 }
+#endif
+
+#if EMU_HEAP_LOGS_ENABLED
+static void logStartupHeap(const char* label) {
+  EMU_LOG("[HEAP] %-24s free=%lu internal=%lu largest=%lu min_free=%lu\n",
+          label,
+          (unsigned long)esp_get_free_heap_size(),
+          (unsigned long)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+          (unsigned long)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL),
+          (unsigned long)esp_get_minimum_free_heap_size());
+}
+#else
+static inline void logStartupHeap(const char*) {}
 #endif
 
 enum class ColecoFlashStatus {
@@ -359,8 +373,10 @@ static void initialize_nvs()
 }
 extern "C" void app_main(void) {
   BOOT_LOG("BOOT", "app_main entered");
+  logStartupHeap("app_main entry");
   initialize_nvs();
   BOOT_LOG("BOOT", "NVS initialized");
+  logStartupHeap("after NVS");
 
   // Keep the emulator task below the audio/I2S service tasks. A very high
   // priority starves M5Unified's speaker task and causes broken, sporadic audio.
@@ -393,6 +409,7 @@ extern "C" void app_main(void) {
   BOOT_LOG("HW", "M5Cardputer.begin start");
   M5Cardputer.begin(cfg);
   BOOT_LOG("HW", "M5Cardputer.begin done");
+  logStartupHeap("after M5 begin");
   BOOT_LOG("INPUT", "creating CardputerInput");
   CardputerInput input;
   BOOT_LOG("SD", "creating SdService");
@@ -402,6 +419,7 @@ extern "C" void app_main(void) {
   BOOT_LOG("DISPLAY", "initialize start");
   display.initialize();
   BOOT_LOG("DISPLAY", "initialize done");
+  logStartupHeap("after display init");
 
   // SD
   BOOT_LOG("SD", "mount start");
@@ -413,6 +431,7 @@ extern "C" void app_main(void) {
     display.subMessage("Insert SD card", 0);
   }
   BOOT_LOG("SD", "mounted");
+  logStartupHeap("after SD mount");
 
   std::string romPath;
   auto romFolder = getRomFolderFromNvs(display, input, sd);
@@ -424,6 +443,7 @@ extern "C" void app_main(void) {
   } else {
     // Welcome
     display.welcome();
+    logStartupHeap("after welcome");
 
     // Try to get last game from NVS or select a new one
     romPath = getLastGameFromNvs(display, input, sd);
@@ -436,6 +456,7 @@ extern "C" void app_main(void) {
   }
   EMU_LOG("Selected ROM: %s\n", romPath.c_str());
   BOOT_LOG("MENU", "selected ROM='%s'", romPath.c_str());
+  logStartupHeap("after ROM selection");
 
   display.topBar("COPYING ROM TO FLASH", false, false);
   display.subMessage("Loading...", 0);
@@ -479,6 +500,7 @@ extern "C" void app_main(void) {
            (unsigned long)xipRomOffset,
            (unsigned long)xipRomSize,
            (int)colecoStatus);
+  logStartupHeap("after ROM copy");
 
   if (!copiedToFlash) {
     if (ext == ROM_TYPE_COLECO && colecoStatus != ColecoFlashStatus::TooLarge) {
@@ -529,6 +551,7 @@ extern "C" void app_main(void) {
   // Register the XIP VFS
   BOOT_LOG("XIP", "register VFS");
   vfs_xip_register();
+  logStartupHeap("after XIP map");
   const uint8_t* xipBase = get_rom_ptr();
   const uint8_t* xipRomPtr = xipBase ? xipBase + xipRomOffset : nullptr;
   const size_t xipRunSize = xipRomSize ? xipRomSize : get_rom_size();
@@ -583,6 +606,7 @@ extern "C" void app_main(void) {
   
   EMU_LOG("HEAP BEFORE EMU: %lu bytes\n", (unsigned long)esp_get_free_heap_size());
   EMU_LOG("MAX BLOCK BEFORE EMU: %lu bytes\n", (unsigned long)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
+  logStartupHeap("before emulator");
 #if EMU_LOG_MASTER_ENABLED
   logEmulatorCoreUsage(ext);
 #endif

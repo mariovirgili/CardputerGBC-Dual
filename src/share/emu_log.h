@@ -11,6 +11,7 @@
  *
  * Per-core/detail flags currently used:
  *   BOOT_DIAG_LOGS
+ *   HEAP_LOGS
  *   AUDIO_LOGS
  *   MD_LOGS, MD_AUDIO_LOGS, MD_RENDER_LOGS
  *   SNES_LOGS
@@ -35,6 +36,12 @@
 #define EMU_AUDIO_LOGS_ENABLED 1
 #else
 #define EMU_AUDIO_LOGS_ENABLED 0
+#endif
+
+#if EMU_LOG_MASTER_ENABLED && defined(HEAP_LOGS)
+#define EMU_HEAP_LOGS_ENABLED 1
+#else
+#define EMU_HEAP_LOGS_ENABLED 0
 #endif
 
 #if EMU_LOG_MASTER_ENABLED && defined(MD_LOGS)
@@ -66,6 +73,7 @@
 
 #if !EMU_LOG_MASTER_ENABLED
 #undef BOOT_DIAG_LOGS
+#undef HEAP_LOGS
 #undef AUDIO_LOGS
 #undef MD_LOGS
 #undef MD_AUDIO_LOGS
