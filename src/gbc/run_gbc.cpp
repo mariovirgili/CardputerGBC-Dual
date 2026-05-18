@@ -104,7 +104,9 @@ void run_gbc(const uint8_t* romData, size_t romLen, const char* romPathOrName) {
     
     // FPS counter
     uint32_t frameCount = 0;
+#if EMU_LOG_MASTER_ENABLED
     uint32_t lastFpsMs  = millis();
+#endif
 
     // Pacing 60 Hz
     const int targetFps       = 60;
@@ -138,6 +140,7 @@ void run_gbc(const uint8_t* romData, size_t romLen, const char* romPathOrName) {
 
         // FPS log
         frameCount++;
+#if EMU_LOG_MASTER_ENABLED
         uint32_t nowMs = millis();
         if (nowMs - lastFpsMs >= 1000) {
             float fps = (frameCount * 1000.0f) / (nowMs - lastFpsMs);
@@ -145,6 +148,7 @@ void run_gbc(const uint8_t* romData, size_t romLen, const char* romPathOrName) {
             frameCount = 0;
             lastFpsMs  = nowMs;
         }
+#endif
 
         // Pacing
         next_frame_us += frame_us;

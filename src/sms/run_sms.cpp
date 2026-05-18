@@ -153,12 +153,14 @@ void run_sms(const uint8_t* romPtr, size_t romLen, SmsConsoleMode mode, const ch
 
   // Main loop
   bool lastToggle = fullscreen;
+#if EMU_LOG_MASTER_ENABLED
   uint32_t frameCount = 0;
   uint32_t totalFrames = 0;
   uint32_t lastFpsTime = millis();
   float avgFrameTime = 0;
   float avgFrameTimeRT = 0;
   float accFrameUs = 0.f;
+#endif
   const uint32_t TARGET_US = 16667; // 60 Hz
 
   for (;;) {
@@ -181,6 +183,7 @@ void run_sms(const uint8_t* romPtr, size_t romLen, SmsConsoleMode mode, const ch
       delayMicroseconds(remaining);
     }
     
+#if EMU_LOG_MASTER_ENABLED
     // Realtime
     uint32_t frameUs = micros() - t0;
 
@@ -212,5 +215,6 @@ void run_sms(const uint8_t* romPtr, size_t romLen, SmsConsoleMode mode, const ch
       frameCount = 0;
       lastFpsTime = millis();
     }
+#endif
   }
 }

@@ -15,9 +15,11 @@ namespace cardputer_audio {
 static constexpr int kSpeakerBck = 41;
 static constexpr int kSpeakerWs = 43;
 static constexpr int kSpeakerData = 42;
-static constexpr size_t kRuntimeAudioBufferCount = 3;
+static constexpr size_t kRuntimeAudioBufferCount = 4;
+static constexpr size_t kRuntimeAudioQueueDepth = 3;
 static constexpr uint32_t kAudioDiagLogPeriodMs = 2000;
 
+#if EMU_LOG_MASTER_ENABLED
 struct AudioDiagStats {
     const char* reason = "?";
     uint32_t sampleRate = 0;
@@ -157,6 +159,18 @@ inline void recordQueueDiag(size_t samples,
     }
     maybeLogDiagStats();
 }
+#else
+inline void resetDiagStats(const char*, uint32_t, bool, int) {}
+inline void maybeLogDiagStats(bool = false) {}
+inline void recordQueueDiag(size_t,
+                            uint32_t,
+                            bool,
+                            int,
+                            size_t,
+                            bool,
+                            bool,
+                            bool) {}
+#endif
 
 inline bool isCardputerSpeakerBoard()
 {
@@ -183,6 +197,7 @@ inline void applySpeakerPins(m5::speaker_config_t& cfg)
 
 inline void logSpeakerConfig(const char* reason, const m5::speaker_config_t& cfg)
 {
+#if EMU_LOG_MASTER_ENABLED
     AUDIO_LOG("AUDIO",
               "speaker cfg reason=%s board=%d data=%d bck=%d ws=%d mck=%d port=%d rate=%lu stereo=%d dma=%u/%u task=%u/%u vol=%u enabled=%d running=%d",
               reason ? reason : "?",
@@ -201,6 +216,10 @@ inline void logSpeakerConfig(const char* reason, const m5::speaker_config_t& cfg
               (unsigned)M5Cardputer.Speaker.getVolume(),
               M5Cardputer.Speaker.isEnabled() ? 1 : 0,
               M5Cardputer.Speaker.isRunning() ? 1 : 0);
+#else
+    (void)reason;
+    (void)cfg;
+#endif
 }
 
 inline bool beginSpeaker(uint32_t sampleRate,
@@ -306,7 +325,7 @@ inline bool queueRuntimeAudioBuffer(int16_t* buffers[kRuntimeAudioBufferCount],
         return false;
     }
 
-    if (depth >= 2) {
+    if (depth >= kRuntimeAudioQueueDepth) {
         recordQueueDiag(samples, sampleRate, stereo, channel, depth, false, false, true);
         return false;
     }

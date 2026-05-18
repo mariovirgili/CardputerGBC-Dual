@@ -19,7 +19,7 @@ static constexpr int kChunk      = (kSampleRate + kFps/2) / kFps; // 368 smp/fra
 static constexpr int kChannel    = 0;
 
 // -------- Buffers --------
-static int16_t*  s_buf[cardputer_audio::kRuntimeAudioBufferCount] = {nullptr, nullptr, nullptr};
+static int16_t*  s_buf[cardputer_audio::kRuntimeAudioBufferCount] = {};
 static uint16_t* s_psg      = nullptr;
 static uint16_t* s_dac      = nullptr;
 static uint8_t   s_flip     = 0;
@@ -43,26 +43,20 @@ static inline void mix_build_block(int16_t* dst /*kChunk*/) {
   }
 }
 
-static inline void queue_block() {
-  cardputer_audio::queueRuntimeAudioBuffer(
+static inline bool queue_block() {
+  return cardputer_audio::queueRuntimeAudioBuffer(
     s_buf, s_flip, (size_t)kChunk, (uint32_t)kSampleRate, false, kChannel);
 }
 
 static bool ngc_sound_alloc_buffers() {
-  const size_t bytes_i16 = (size_t)kChunk * sizeof(int16_t);
   const size_t bytes_u16 = (size_t)kChunk * sizeof(uint16_t);
 
-  if (!s_buf[0]) s_buf[0] = (int16_t*) heap_caps_malloc(bytes_i16, MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA | MALLOC_CAP_8BIT);
-  if (!s_buf[1]) s_buf[1] = (int16_t*) heap_caps_malloc(bytes_i16, MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA | MALLOC_CAP_8BIT);
-  if (!s_buf[2]) s_buf[2] = (int16_t*) heap_caps_malloc(bytes_i16, MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA | MALLOC_CAP_8BIT);
+  if (!cardputer_audio::allocRuntimeAudioBuffers(s_buf, kChunk, "ngp")) return false;
   if (!s_psg)    s_psg    = (uint16_t*)heap_caps_malloc(bytes_u16, MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA | MALLOC_CAP_8BIT);
   if (!s_dac)    s_dac    = (uint16_t*)heap_caps_malloc(bytes_u16, MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA | MALLOC_CAP_8BIT);
 
-  if (!s_buf[0] || !s_buf[1] || !s_buf[2] || !s_psg || !s_dac) return false;
+  if (!s_psg || !s_dac) return false;
 
-  memset(s_buf[0], 0, bytes_i16);
-  memset(s_buf[1], 0, bytes_i16);
-  memset(s_buf[2], 0, bytes_i16);
   memset(s_psg,    0, bytes_u16);
   memset(s_dac,    0, bytes_u16);
   return true;
@@ -93,21 +87,24 @@ void ngc_sound_shutdown(void) {
 }
 
 void ngc_sound_frame(void) {
-  if (!s_buf[0] || !s_buf[1] || !s_buf[2]) return;
+  if (!s_buf[0] || !s_buf[1] || !s_buf[2] || !s_buf[3]) return;
   size_t queued = M5Cardputer.Speaker.isPlaying(kChannel);
 
   if (queued == 0) {
-    // Prime with 2 blocks
-    for (int i = 0; i < 2; ++i) {
+    // Prime up to the shared runtime queue depth.
+    while (queued < cardputer_audio::kRuntimeAudioQueueDepth) {
       mix_build_block(s_buf[s_flip]);
-      queue_block();
+      if (queue_block()) {
+        ++queued;
+      } else {
+        break;
+      }
     }
-  } else if (queued == 1) {
-    // Keep at 2 blocks depth
+  } else if (queued < cardputer_audio::kRuntimeAudioQueueDepth) {
     mix_build_block(s_buf[s_flip]);
     queue_block();
   } else {
-    // queued == 2 → nothing, we’re buffered
+    // queue already at target depth
   }
 }
 

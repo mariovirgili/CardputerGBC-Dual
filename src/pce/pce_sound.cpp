@@ -16,7 +16,7 @@ extern "C" {
 static constexpr int kChannel = 0;
 static constexpr size_t kNumFrames = 62;
 static constexpr size_t kNumSamples = kNumFrames;
-static int16_t* s_buf[cardputer_audio::kRuntimeAudioBufferCount] = { nullptr, nullptr, nullptr };
+static int16_t* s_buf[cardputer_audio::kRuntimeAudioBufferCount] = {};
 static uint8_t  s_flip   = 0;
 static TaskHandle_t s_audioTaskHandle = nullptr;
 static volatile bool s_paused  = false;
@@ -38,7 +38,8 @@ static void pce_audio_task(void* arg)
     if (!s_running) break;
 
     // too much sound queued
-    while (s_running && M5Cardputer.Speaker.isPlaying(kChannel) >= 2) {
+    while (s_running &&
+           M5Cardputer.Speaker.isPlaying(kChannel) >= cardputer_audio::kRuntimeAudioQueueDepth) {
       vTaskDelay(pdMS_TO_TICKS(1));
     }
     if (!s_running) break;

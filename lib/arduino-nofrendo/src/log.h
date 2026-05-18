@@ -27,6 +27,7 @@
 #define _LOG_H_
 
 #include <stdio.h>
+#include "share/emu_log.h"
 
 extern int nofrendo_log_init(void);
 extern void nofrendo_log_shutdown(void);
@@ -34,6 +35,11 @@ extern int nofrendo_log_print(const char *string);
 extern int nofrendo_log_printf(const char *format, ...);
 extern void nofrendo_log_chain_logfunc(int (*logfunc)(const char *string));
 extern void nofrendo_log_assert(int expr, int line, const char *file, char *msg);
+
+#if !defined(NOFRENDO_LOG_IMPLEMENTATION) && !(EMU_LOG_MASTER_ENABLED && defined(NES_DIAG_LOGS))
+#define nofrendo_log_print(string) ((void)0)
+#define nofrendo_log_printf(...) ((void)0)
+#endif
 
 #endif /* _LOG_H_ */
 

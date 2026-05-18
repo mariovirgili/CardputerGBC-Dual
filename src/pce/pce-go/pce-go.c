@@ -4,6 +4,7 @@
 #include <string.h>
 #include <stdio.h>
 #include "esp_timer.h"
+#include "share/emu_log.h"
 
 #include "pce-go.h"
 #include "gfx.h"
@@ -327,10 +328,13 @@ void RunPCE(void)
 
     const uint64_t frameDurationUs = 1000000ULL / 60ULL; // 60 fps target
 
-    uint64_t lastFpsTime   = esp_timer_get_time();
+    uint64_t startTime     = esp_timer_get_time();
+#if EMU_LOG_MASTER_ENABLED
+    uint64_t lastFpsTime   = startTime;
     uint32_t frameCounter  = 0;
-    uint64_t nextFrameTime = lastFpsTime;
-    uint64_t lastFrameEnd  = lastFpsTime;
+#endif
+    uint64_t nextFrameTime = startTime;
+    uint64_t lastFrameEnd  = startTime;
 
     bool skipNextFrame = false;
 
@@ -352,7 +356,9 @@ void RunPCE(void)
         }
 
         // Pacing
+#if EMU_LOG_MASTER_ENABLED
         frameCounter++;
+#endif
         now = esp_timer_get_time();
         int64_t remain = (int64_t)nextFrameTime - (int64_t)now;
 
@@ -376,6 +382,7 @@ void RunPCE(void)
         }
 
         // Fps logging
+#if EMU_LOG_MASTER_ENABLED
         now = esp_timer_get_time();
         if (now - lastFpsTime >= 1000000ULL) {
             float fps = (float)frameCounter * 1000000.0f
@@ -387,6 +394,7 @@ void RunPCE(void)
             frameCounter = 0;
             lastFpsTime  = now;
         }
+#endif
     }
 }
 

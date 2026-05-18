@@ -8,11 +8,14 @@
 #include "genesis_display.h"
 #include "genesis_save.h"
 #include "share/utils.h"
+#include "share/emu_log_cpp.h"
 #include "compat/arduino_compat.h"
 #include <M5Cardputer.h>
 
+#if EMU_LOG_MASTER_ENABLED
 static uint32_t frame_count = 0;
 static uint64_t last_fps_log_time = 0;
+#endif
 static volatile int g_target_fps = 60;
 static bool s_draw_toggle = false;  // for skipping frames
 static volatile bool s_skipZ80Next = false; // skip Z80 on next frame if true
@@ -22,7 +25,6 @@ extern "C" {
   #include "genesis/gwenesis/cpus/M68K/m68k.h"
   #include "genesis/gwenesis/sound/z80inst.h"
   #include "genesis/gwenesis/bus/gwenesis_bus.h"
-#include "share/emu_log_cpp.h"
 
   extern unsigned char  *M68K_RAM;
   extern uint8_t  *ZRAM;
@@ -175,6 +177,7 @@ static void run_one_frame() {
     s_skipZ80Next = true;  // we are late, skip Z80 next frame
   }
 
+#if EMU_LOG_MASTER_ENABLED
   // FPS logging every 2 seconds
   frame_count++;
   uint64_t now = millis();
@@ -185,6 +188,7 @@ static void run_one_frame() {
     // Log FPS + heap RAM 
     EMU_LOG("[FPS] ~%.1f fps | heap: %lu\n", fps, (unsigned long)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
   }
+#endif
 }
 
 /* Run genesis emulation with XIP mapped rom */

@@ -27,6 +27,7 @@
 #include <stdio.h>
 #include <stdarg.h>
 
+#define NOFRENDO_LOG_IMPLEMENTATION
 #include "noftypes.h"
 #include "log.h"
 

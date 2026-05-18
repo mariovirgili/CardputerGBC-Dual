@@ -27,7 +27,7 @@ static constexpr int kDefaultPeriodMs = WS_AUDIO_PERIOD_MS;
 static int           g_chunk       = 0; 
 static constexpr int kChannel      = 0;
 static constexpr int kMaxChunk     = 320;
-static int16_t* s_buf[cardputer_audio::kRuntimeAudioBufferCount] = { NULL, NULL, NULL };
+static int16_t* s_buf[cardputer_audio::kRuntimeAudioBufferCount] = {};
 static uint8_t  s_flip   = 0;
 static int16_t  s_lastSample = 0;
 #ifdef WS_BENCHMARK_LOGS
@@ -120,7 +120,7 @@ static inline void build_block_from_apu(int16_t* dst) {
 
 static inline bool queue_block(const int16_t* pcm) {
   const size_t depth = M5Cardputer.Speaker.isPlaying(kChannel);
-  if (depth >= 2) {
+  if (depth >= cardputer_audio::kRuntimeAudioQueueDepth) {
     cardputer_audio::recordQueueDiag((size_t)g_chunk,
                                      (uint32_t)g_sample_rate,
                                      false,
@@ -206,7 +206,7 @@ extern "C" void ws_sound_shutdown(void) {
 }
 
 extern "C" void ws_sound_frame(void) {
-  if (!s_buf[0] || !s_buf[1] || !s_buf[2]) return;
+  if (!s_buf[0] || !s_buf[1] || !s_buf[2] || !s_buf[3]) return;
 
   size_t queued = M5Cardputer.Speaker.isPlaying(kChannel);
   WS_SOUND_BENCH_MAX(s_statMaxQueueDepth, queued);
@@ -215,21 +215,23 @@ extern "C" void ws_sound_frame(void) {
 #endif
 
   if (queued == 0) {
-    // Amorcer 2 blocs
-    for (int i = 0; i < 2; ++i) {
+    // Prime up to the shared runtime queue depth.
+    while (queued < cardputer_audio::kRuntimeAudioQueueDepth) {
       build_block_from_apu(s_buf[s_flip]);
       if (queue_block(s_buf[s_flip])) {
         s_flip = (uint8_t)((s_flip + 1) % cardputer_audio::kRuntimeAudioBufferCount);
+        ++queued;
+      } else {
+        break;
       }
     }
-  } else if (queued == 1) {
-    // Maintenir 2 blocs
+  } else if (queued < cardputer_audio::kRuntimeAudioQueueDepth) {
     build_block_from_apu(s_buf[s_flip]);
     if (queue_block(s_buf[s_flip])) {
       s_flip = (uint8_t)((s_flip + 1) % cardputer_audio::kRuntimeAudioBufferCount);
     }
   } else {
-    // queued >= 2
+    // queue already at target depth
   }
 }
 

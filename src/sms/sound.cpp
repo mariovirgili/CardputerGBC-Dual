@@ -12,7 +12,7 @@ static constexpr int kSampleRate = 22050;   // Hz
 static constexpr int kChannel    = 0;
 static constexpr int   kChunk      = 128; 
 static constexpr int kBufSize = 888;
-static int16_t* s_buf[cardputer_audio::kRuntimeAudioBufferCount] = {nullptr, nullptr, nullptr};
+static int16_t* s_buf[cardputer_audio::kRuntimeAudioBufferCount] = {};
 static uint8_t s_flip = 0;
 
 static inline int clamp16(int x){ return x < -32768 ? -32768 : (x > 32767 ? 32767 : x); }
@@ -35,7 +35,7 @@ void sms_audio_stop(){
 
 void sms_audio_frame(){
   if (!snd.buffer[0] || !snd.buffer[1] || snd.bufsize <= 0) return;
-  if (!s_buf[0] || !s_buf[1] || !s_buf[2]) return;
+  if (!s_buf[0] || !s_buf[1] || !s_buf[2] || !s_buf[3]) return;
 
   int n = std::min((int)snd.bufsize, kBufSize);
   n &= ~1;

@@ -32,7 +32,7 @@ static TaskHandle_t s_audioTask = nullptr;
 static volatile bool s_audioRunning = false;
 static GX4000AudioMsg *s_msgPool = nullptr;
 static int16_t *s_batchBuf = nullptr;
-static int16_t *s_playBuf[cardputer_audio::kRuntimeAudioBufferCount] = { nullptr, nullptr, nullptr };
+static int16_t *s_playBuf[cardputer_audio::kRuntimeAudioBufferCount] = {};
 static uint8_t  s_playSlot = 0;
 static int      s_batchCount = 0;
 
@@ -69,7 +69,8 @@ static void gx4000_audio_task(void *arg)
             continue;
         }
 
-        while (s_audioRunning && (uint32_t)M5Cardputer.Speaker.isPlaying(kChannel) >= 2U) {
+        while (s_audioRunning &&
+               (uint32_t)M5Cardputer.Speaker.isPlaying(kChannel) >= cardputer_audio::kRuntimeAudioQueueDepth) {
             vTaskDelay(pdMS_TO_TICKS(1));
         }
 

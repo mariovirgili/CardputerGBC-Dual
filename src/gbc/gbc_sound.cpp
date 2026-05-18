@@ -22,7 +22,7 @@ static volatile bool s_running   = false;
 static constexpr int kRingSamples = 2048;
 static constexpr int kPlayChunk = 512;
 static int16_t* s_ring            = nullptr;
-static int16_t* s_playBuf[cardputer_audio::kRuntimeAudioBufferCount] = { nullptr, nullptr, nullptr };
+static int16_t* s_playBuf[cardputer_audio::kRuntimeAudioBufferCount] = {};
 static uint8_t  s_playSlot        = 0;
 static int      s_ringSize        = 0;
 static int      s_ringRead        = 0;
@@ -42,12 +42,12 @@ static void gbc_audio_task(void* arg)
             continue;
         }
 
-        if (M5Cardputer.Speaker.isPlaying(kChannel) >= 2) {
+        if (M5Cardputer.Speaker.isPlaying(kChannel) >= cardputer_audio::kRuntimeAudioQueueDepth) {
             vTaskDelay(pdMS_TO_TICKS(1));
             continue;
         }
 
-        if (!s_playBuf[0] || !s_playBuf[1] || !s_playBuf[2]) {
+        if (!s_playBuf[0] || !s_playBuf[1] || !s_playBuf[2] || !s_playBuf[3]) {
             vTaskDelay(pdMS_TO_TICKS(1));
             continue;
         }

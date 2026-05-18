@@ -22,7 +22,7 @@ static int s_sampleRate = 31400;
 
 static TaskHandle_t s_audioTask = nullptr;
 static int16_t* s_ring = nullptr;
-static int16_t* s_playBuf[cardputer_audio::kRuntimeAudioBufferCount] = { nullptr, nullptr, nullptr };
+static int16_t* s_playBuf[cardputer_audio::kRuntimeAudioBufferCount] = {};
 static uint8_t s_playSlot = 0;
 static int s_ringSize = 0;
 static volatile int s_ringRead = 0;
@@ -72,8 +72,8 @@ static void a2600_audio_task(void* arg)
             continue;
         }
 
-        if (M5Cardputer.Speaker.isPlaying(kChannel) >= 2 ||
-            !s_playBuf[0] || !s_playBuf[1] || !s_playBuf[2]) {
+        if (M5Cardputer.Speaker.isPlaying(kChannel) >= cardputer_audio::kRuntimeAudioQueueDepth ||
+            !s_playBuf[0] || !s_playBuf[1] || !s_playBuf[2] || !s_playBuf[3]) {
             vTaskDelay(pdMS_TO_TICKS(1));
             continue;
         }

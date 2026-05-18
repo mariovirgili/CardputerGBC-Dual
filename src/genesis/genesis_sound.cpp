@@ -44,7 +44,7 @@ static QueueHandle_t s_ymQ = nullptr;
 static uint8_t s_flip = 0;
 static bool s_primed = false;
 static portMUX_TYPE g_ymMux = portMUX_INITIALIZER_UNLOCKED;
-static int16_t* s_buf[cardputer_audio::kRuntimeAudioBufferCount] = { nullptr, nullptr, nullptr };
+static int16_t* s_buf[cardputer_audio::kRuntimeAudioBufferCount] = {};
 uint8_t genesis_audio_volume = 50;
 
 // Audio config
@@ -118,7 +118,8 @@ void genesis_sound_submit_frame(void) {
   if (ym_n > AUDIO_CORE_CHUNK) ym_n = AUDIO_CORE_CHUNK;
   if (psg_n > AUDIO_CORE_CHUNK) psg_n = AUDIO_CORE_CHUNK;
 
-  if (M5Cardputer.Speaker.isPlaying(kChannel) >= 2 || !s_buf[0] || !s_buf[1] || !s_buf[2]) {
+  if (M5Cardputer.Speaker.isPlaying(kChannel) >= cardputer_audio::kRuntimeAudioQueueDepth ||
+      !s_buf[0] || !s_buf[1] || !s_buf[2] || !s_buf[3]) {
     taskENTER_CRITICAL(&g_ymMux);
     ym2612_index  = 0;
     sn76489_index = 0;

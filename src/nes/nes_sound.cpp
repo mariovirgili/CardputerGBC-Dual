@@ -20,7 +20,7 @@ static constexpr int kChannel    = 0;
 static void (*s_audio_cb)(void *buffer, int length) = nullptr;
 
 // Double buffer mono (Nofrendo to HP)
-static int16_t* s_buf[cardputer_audio::kRuntimeAudioBufferCount] = { nullptr, nullptr, nullptr };
+static int16_t* s_buf[cardputer_audio::kRuntimeAudioBufferCount] = {};
 static uint8_t s_flip = 0;
 
 extern "C" {
@@ -53,7 +53,7 @@ void osd_getsoundinfo(sndinfo_t *info) {
 
 void do_audio_frame() {
   if (!s_audio_cb) return;
-  if (!s_buf[0] || !s_buf[1] || !s_buf[2]) return;
+  if (!s_buf[0] || !s_buf[1] || !s_buf[2] || !s_buf[3]) return;
 
   size_t st = M5Cardputer.Speaker.isPlaying(kChannel);
 

@@ -95,8 +95,10 @@ extern "C" void run_ws(const uint8_t* rom, size_t len, const char* rom_name, boo
   const uint32_t frame_us = 1000000u / 75u; // 13.3 ms
   uint64_t next = esp_timer_get_time();
   WS_LOG("[WS] Frame pacing: %uus/frame\n", frame_us);
+#if defined(WS_LOGS_ENABLED) || defined(WS_BENCHMARK_LOGS)
   uint32_t frameCount = 0;
   uint32_t lastLog = millis();
+#endif
 #ifdef WS_BENCHMARK_LOGS
   uint64_t benchCoreTotalUs = 0;
   uint32_t benchCoreMaxUs = 0;
@@ -119,6 +121,7 @@ extern "C" void run_ws(const uint8_t* rom, size_t len, const char* rom_name, boo
 #endif
     ws_state_tick();
     ws_save_tick();
+#if defined(WS_LOGS_ENABLED) || defined(WS_BENCHMARK_LOGS)
     frameCount++;
 
     // Log framerate every 2 seconds
@@ -237,6 +240,7 @@ extern "C" void run_ws(const uint8_t* rom, size_t len, const char* rom_name, boo
       frameCount = 0;
       lastLog = now;
     }
+#endif
 
     // Frame pacing (75Hz)
     next += frame_us;

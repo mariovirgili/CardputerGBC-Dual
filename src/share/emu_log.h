@@ -62,10 +62,5 @@
 #ifdef printf
 #undef printf
 #endif
-static inline int emu_suppressed_printf_(const char *fmt, ...)
-{
-    (void)fmt;
-    return 0;
-}
-#define printf(...) emu_suppressed_printf_(__VA_ARGS__)
+#define printf(...) ((void)0)
 #endif

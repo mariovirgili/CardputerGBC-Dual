@@ -3,6 +3,7 @@
 #include "gx4000_display.h"
 #include "gx4000_input.h"
 #include "gx4000_sound.h"
+#include "share/emu_log.h"
 
 #include <string.h>
 #include <stdio.h>
@@ -27,11 +28,14 @@ static GRAPHICS_BUFFER_COLOUR_FORMAT s_colourFmt = {
  * We store the pointer provided by Host_SetGraphicsBufferSurface (see below).
  */
 static GRAPHICS_BUFFER_INFO s_bufInfo = { 0 };
+#if EMU_LOG_MASTER_ENABLED
 static unsigned long s_fpsWindowStartMs = 0;
 static unsigned int s_fpsFrameCount = 0;
+#endif
 
 static void gx4000_perf_tick(void)
 {
+#if EMU_LOG_MASTER_ENABLED
     unsigned long now = Host_GetCurrentTimeInMilliseconds();
     if (s_fpsWindowStartMs == 0) {
         s_fpsWindowStartMs = now;
@@ -53,6 +57,7 @@ static void gx4000_perf_tick(void)
         s_fpsWindowStartMs = now;
         s_fpsFrameCount = 0;
     }
+#endif
 }
 
 void Host_SetGraphicsBufferSurface(unsigned char *pSurface,
