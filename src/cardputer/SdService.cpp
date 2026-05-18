@@ -25,6 +25,22 @@ static void trimLineEnd(std::string& line) {
     }
 }
 
+static bool readDirectoryIndex(const std::string& mountedDir, size_t limit, std::vector<std::string>& out) {
+    const std::string indexPath = mountedDir + "/.idx";
+    FILE* index = fopen(indexPath.c_str(), "rb");
+    if (!index) return false;
+
+    char lineBuf[256];
+    while (out.size() < limit && fgets(lineBuf, sizeof(lineBuf), index)) {
+        std::string line(lineBuf);
+        trimLineEnd(line);
+        if (line.empty() || line[0] == '.' || line[0] == '#') continue;
+        out.emplace_back(line);
+    }
+    fclose(index);
+    return true;
+}
+
 }
 
 std::string SdService::toMountedPath(const std::string& path) const {
@@ -118,17 +134,11 @@ std::vector<std::string> SdService::listElements(const std::string& dirPath, siz
     if (!sdCardMounted) return filesList;
 
     const std::string mountedDir = toMountedPath(dirPath);
-    const std::string indexPath = mountedDir + "/.idx";
-    FILE* index = fopen(indexPath.c_str(), "rb");
-    if (index) {
-        char lineBuf[256];
-        while (filesList.size() < limit && fgets(lineBuf, sizeof(lineBuf), index)) {
-            std::string line(lineBuf);
-            trimLineEnd(line);
-            if (line.empty() || line[0] == '.' || line[0] == '#') continue;
-            filesList.emplace_back(line);
-        }
-        fclose(index);
+    if (readDirectoryIndex(mountedDir, limit, filesList)) {
+        return filesList;
+    }
+
+    if (writeDirectoryIndex(dirPath, nullptr) && readDirectoryIndex(mountedDir, limit, filesList)) {
         return filesList;
     }
 
@@ -160,6 +170,77 @@ std::vector<std::string> SdService::listElements(const std::string& dirPath, siz
     std::sort(filesList.begin(), filesList.end());
     foldersList.insert(foldersList.end(), filesList.begin(), filesList.end());
     return foldersList;
+}
+
+bool SdService::writeDirectoryIndex(const std::string& dirPath, size_t* outCount) {
+    if (outCount) *outCount = 0;
+    if (!sdCardMounted) return false;
+
+    const std::string mountedDir = toMountedPath(dirPath);
+    DIR* dir = opendir(mountedDir.c_str());
+    if (!dir) return false;
+
+    std::vector<std::string> filesList;
+    std::vector<std::string> foldersList;
+    filesList.reserve(96);
+    foldersList.reserve(32);
+
+    while (true) {
+        dirent* entry = readdir(dir);
+        if (!entry) break;
+
+        const char* name = entry->d_name;
+        if (!name || name[0] == '\0' || name[0] == '.') continue;
+
+        const std::string fullPath = mountedDir + "/" + name;
+        struct stat st = {};
+        const bool isDir = (stat(fullPath.c_str(), &st) == 0) && S_ISDIR(st.st_mode);
+
+        if (isDir) foldersList.emplace_back(name);
+        else       filesList.emplace_back(name);
+    }
+
+    closedir(dir);
+
+    std::sort(foldersList.begin(), foldersList.end());
+    std::sort(filesList.begin(), filesList.end());
+
+    const std::string tempPath = mountedDir + "/.idx.tmp";
+    const std::string indexPath = mountedDir + "/.idx";
+    FILE* index = fopen(tempPath.c_str(), "wb");
+    if (!index) return false;
+
+    size_t count = 0;
+    for (const auto& name : foldersList) {
+        if (fprintf(index, "%s\n", name.c_str()) < 0) {
+            fclose(index);
+            unlink(tempPath.c_str());
+            return false;
+        }
+        ++count;
+    }
+    for (const auto& name : filesList) {
+        if (fprintf(index, "%s\n", name.c_str()) < 0) {
+            fclose(index);
+            unlink(tempPath.c_str());
+            return false;
+        }
+        ++count;
+    }
+
+    if (fclose(index) != 0) {
+        unlink(tempPath.c_str());
+        return false;
+    }
+
+    unlink(indexPath.c_str());
+    if (rename(tempPath.c_str(), indexPath.c_str()) != 0) {
+        unlink(tempPath.c_str());
+        return false;
+    }
+
+    if (outCount) *outCount = count;
+    return true;
 }
 
 std::vector<uint8_t> SdService::readBinaryFile(const std::string& filePath) {

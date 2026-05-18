@@ -1,16 +1,22 @@
 #include "CardputerInput.h"
 
 char CardputerInput::handler() {
+    static bool g0Latched = false;
 
     // Update keyboard state
     M5Cardputer.update();
 
     // Bouton GO
     if (M5Cardputer.BtnA.isPressed()) {
-        delay(150); // debounce
-        return KEY_ESC_CUSTOM;
+        if (!g0Latched) {
+            g0Latched = true;
+            return KEY_G0_CUSTOM;
+        }
+        delay(10);
+        return KEY_NONE;
     }
-    
+    g0Latched = false;
+
     if (M5Cardputer.Keyboard.isChange()) {
 
         if (M5Cardputer.Keyboard.isPressed()) {

@@ -39,6 +39,7 @@ public:
     bool appendToFile(const std::string& filePath, const std::string& data);
     bool deleteFile(const std::string& filePath);
     bool ensureDirectory(const std::string& directory);
+    bool writeDirectoryIndex(const std::string& dirPath, size_t* outCount = nullptr);
 
     std::string getFileExt(const std::string& path);
     std::string getParentDirectory(const std::string& path);

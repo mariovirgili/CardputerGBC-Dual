@@ -16,9 +16,11 @@ int VerticalSelector::select(
         const std::vector<std::string>& options2,
         const std::vector<std::string>& shortcuts, 
         bool visibleMention,
-        bool handleInactivity) 
+        bool handleInactivity,
+        int initialIndex) 
 {
-    int currentIndex = 0, lastIndex = -1, lastQuerySize = 0;
+    int currentIndex = options.empty() ? 0 : std::max(0, std::min(initialIndex, (int)options.size() - 1));
+    int lastIndex = -1, lastQuerySize = 0;
     char key = KEY_NONE;
     std::string searchQuery;
     std::vector<std::string> filteredOptions = options;
@@ -84,14 +86,20 @@ int VerticalSelector::select(
                 if (!filteredOptions.empty())
                     currentIndex = (currentIndex < (int)filteredOptions.size() - 1) ? currentIndex + 1 : 0;
                 break;
+            case KEY_ARROW_RIGHT:
+                if (!filteredOptions.empty())
+                    currentIndex = std::min(currentIndex + VISIBLE_ROWS, (int)filteredOptions.size() - 1);
+                break;
             case KEY_OK:
                 if (!filteredOptions.empty())
                     for (size_t i = 0; i < options.size(); ++i)
                         if (options[i] == filteredOptions[currentIndex]) return (int)i;
                 break;
+            case KEY_G0_CUSTOM:
+                return VERTICAL_SELECTOR_G0;
             case KEY_ESC_CUSTOM:
             case KEY_ARROW_LEFT:
-                return -1;
+                return VERTICAL_SELECTOR_BACK;
             case KEY_DEL:
                 if (searchBar && !searchQuery.empty()) {
                     searchQuery.pop_back();
