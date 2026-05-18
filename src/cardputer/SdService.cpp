@@ -17,6 +17,16 @@
 
 SdService::SdService() {}
 
+namespace {
+
+static void trimLineEnd(std::string& line) {
+    while (!line.empty() && (line.back() == '\n' || line.back() == '\r' || line.back() == ' ' || line.back() == '\t')) {
+        line.pop_back();
+    }
+}
+
+}
+
 std::string SdService::toMountedPath(const std::string& path) const {
     if (path.rfind("/sd", 0) == 0) {
         return path;
@@ -44,7 +54,7 @@ bool SdService::begin() {
     bus_cfg.sclk_io_num = SD_SCK;
     bus_cfg.quadwp_io_num = -1;
     bus_cfg.quadhd_io_num = -1;
-    bus_cfg.max_transfer_sz = 16 * 1024;
+    bus_cfg.max_transfer_sz = 8 * 1024;
 
     esp_err_t err = spi_bus_initialize((spi_host_device_t)host.slot, &bus_cfg, SDSPI_DEFAULT_DMA);
     if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) {
@@ -58,8 +68,8 @@ bool SdService::begin() {
 
     esp_vfs_fat_sdmmc_mount_config_t mount_config = {};
     mount_config.format_if_mount_failed = false;
-    mount_config.max_files = 8;
-    mount_config.allocation_unit_size = 16 * 1024;
+    mount_config.max_files = 4;
+    mount_config.allocation_unit_size = 4 * 1024;
 
     err = esp_vfs_fat_sdspi_mount("/sd", &host, &slot_config, &mount_config, &card);
     if (err == ESP_OK) {
@@ -102,12 +112,26 @@ std::vector<std::string> SdService::listElements(const std::string& dirPath, siz
 
     std::vector<std::string> filesList;
     std::vector<std::string> foldersList;
-    filesList.reserve(256);
-    foldersList.reserve(64);
+    filesList.reserve(96);
+    foldersList.reserve(32);
 
     if (!sdCardMounted) return filesList;
 
     const std::string mountedDir = toMountedPath(dirPath);
+    const std::string indexPath = mountedDir + "/.idx";
+    FILE* index = fopen(indexPath.c_str(), "rb");
+    if (index) {
+        char lineBuf[256];
+        while (filesList.size() < limit && fgets(lineBuf, sizeof(lineBuf), index)) {
+            std::string line(lineBuf);
+            trimLineEnd(line);
+            if (line.empty() || line[0] == '.' || line[0] == '#') continue;
+            filesList.emplace_back(line);
+        }
+        fclose(index);
+        return filesList;
+    }
+
     DIR* dir = opendir(mountedDir.c_str());
     if (!dir) return filesList;
 
