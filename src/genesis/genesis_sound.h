@@ -19,6 +19,28 @@ struct AudioMsg {
   size_t   n;    // samples
 };
 
+#ifdef MD_LOGS
+typedef struct {
+  uint32_t submitFrames;
+  uint32_t mixedSamples;
+  uint32_t silentFrames;
+  uint32_t queueSent;
+  uint32_t queueDropped;
+  uint32_t speakerPlays;
+  uint32_t speakerBusyAtPlay;
+  uint32_t ymRuns;
+  uint32_t maxYmSamples;
+  uint32_t maxPsgSamples;
+  uint32_t maxMixedSamples;
+  uint32_t maxQueueDepth;
+  uint32_t maxYmTargetClock;
+  uint32_t maxYmLagClocks;
+  int32_t minSample;
+  int32_t maxSample;
+  uint32_t clippedSamples;
+} GenesisAudioStats;
+#endif
+
 typedef struct {
   uint32_t mclk;   // horloge master
   uint8_t  port;   // 0,2: addr ; 1,3: data
@@ -53,6 +75,10 @@ void genesis_sound_ym_start(void);
 void genesis_sound_ym_stop(void);
 void genesis_sound_ym_set_target_clock(int target);
 int  genesis_sound_ym_get_target_clock(void);
+
+#ifdef MD_LOGS
+void genesis_sound_get_and_reset_stats(GenesisAudioStats* out);
+#endif
 
 #ifdef __cplusplus
 } // extern "C"

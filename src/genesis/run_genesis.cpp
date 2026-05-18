@@ -15,6 +15,24 @@
 static uint32_t frame_count = 0;
 static uint64_t last_fps_log_time = 0;
 #endif
+#ifdef MD_LOGS
+typedef struct {
+  uint32_t frames;
+  uint32_t drawnFrames;
+  uint32_t skippedDrawFrames;
+  uint32_t skipZ80Frames;
+  uint32_t scheduledZ80Skips;
+  uint32_t renderedLines;
+  uint32_t maxRenderedLines;
+  uint32_t frameTotalUs;
+  uint32_t frameMaxUs;
+  uint32_t budgetOverruns;
+  uint32_t pacingResets;
+  uint32_t pacingLateUsMax;
+} MdRunStats;
+
+static MdRunStats s_mdRunStats;
+#endif
 static volatile int g_target_fps = 60;
 static bool s_draw_toggle = false;  // for skipping frames
 static volatile bool s_skipZ80Next = false; // skip Z80 on next frame if true
@@ -92,8 +110,15 @@ static void run_one_frame() {
   // Notify start of frame to display task
   if (g_scanQ) {
     ScanMsg b = { MSG_BEGIN_FRAME, 0, (uint16_t)FB_W, (uint16_t)h, {0} };
-    xQueueSend(g_scanQ, &b, 0);
+    BaseType_t ok = xQueueSend(g_scanQ, &b, 0);
+#ifdef MD_LOGS
+    genesis_display_note_queue_event(MSG_BEGIN_FRAME, ok == pdTRUE);
+#endif
   }
+
+#ifdef MD_LOGS
+  uint32_t renderedLines = 0;
+#endif
 
   // Per line emulation loop
   while (scan_line < lines_per_frame) {
@@ -116,6 +141,9 @@ static void run_one_frame() {
     // VDP line rendering, if no frame skip and not the lines to skip
     if (drawFrame && (unsigned)scan_line < h && ((scan_line & 1) == g_field_ofs)) {
       gwenesis_vdp_render_line(scan_line);
+#ifdef MD_LOGS
+      renderedLines++;
+#endif
     }
 
     // On these lines, the line counter interrupt is reloaded
@@ -158,7 +186,10 @@ static void run_one_frame() {
   // Notify end of frame to display task
   if (g_scanQ) {
     ScanMsg e = { MSG_END_FRAME, 0, (uint16_t)FB_W, (uint16_t)h, {0} };
-    xQueueSend(g_scanQ, &e, 0);
+    BaseType_t ok = xQueueSend(g_scanQ, &e, 0);
+#ifdef MD_LOGS
+    genesis_display_note_queue_event(MSG_END_FRAME, ok == pdTRUE);
+#endif
   }
 
   // Run SN76489 and push sound samples for this frame
@@ -177,6 +208,25 @@ static void run_one_frame() {
     s_skipZ80Next = true;  // we are late, skip Z80 next frame
   }
 
+#ifdef MD_LOGS
+  s_mdRunStats.frames++;
+  if (drawFrame) s_mdRunStats.drawnFrames++;
+  else s_mdRunStats.skippedDrawFrames++;
+  if (skipZ80) s_mdRunStats.skipZ80Frames++;
+  if (elapsedUs > kFrameBudgetUs) {
+    s_mdRunStats.budgetOverruns++;
+    s_mdRunStats.scheduledZ80Skips++;
+  }
+  s_mdRunStats.renderedLines += renderedLines;
+  if (renderedLines > s_mdRunStats.maxRenderedLines) {
+    s_mdRunStats.maxRenderedLines = renderedLines;
+  }
+  s_mdRunStats.frameTotalUs += elapsedUs;
+  if (elapsedUs > s_mdRunStats.frameMaxUs) {
+    s_mdRunStats.frameMaxUs = elapsedUs;
+  }
+#endif
+
 #ifdef EMU_LOGS_ENABLED
   // FPS logging every 2 seconds
   frame_count++;
@@ -187,6 +237,46 @@ static void run_one_frame() {
     frame_count = 0;
     // Log FPS + heap RAM 
     EMU_LOG("[FPS] ~%.1f fps | heap: %u\n", fps, heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
+#ifdef MD_LOGS
+    GenesisAudioStats audioStats;
+    GenesisDisplayStats displayStats;
+    genesis_sound_get_and_reset_stats(&audioStats);
+    genesis_display_get_and_reset_stats(&displayStats);
+
+    const uint32_t frames = s_mdRunStats.frames ? s_mdRunStats.frames : 1;
+    const uint32_t avgFrameUs = s_mdRunStats.frameTotalUs / frames;
+    const uint32_t avgLines = s_mdRunStats.renderedLines / frames;
+    const uint32_t avgDisplayUs = displayStats.renderFrames
+        ? displayStats.renderFrameTotalUs / displayStats.renderFrames
+        : 0;
+
+    EMU_LOG("[MD][RUN] frames=%u draw=%u skipDraw=%u skipZ80=%u schedZ80=%u frame_us avg/max=%u/%u budgetOver=%u pacingReset=%u lateMax=%u lines avg/max=%u/%u\n",
+            s_mdRunStats.frames, s_mdRunStats.drawnFrames, s_mdRunStats.skippedDrawFrames,
+            s_mdRunStats.skipZ80Frames, s_mdRunStats.scheduledZ80Skips,
+            avgFrameUs, s_mdRunStats.frameMaxUs, s_mdRunStats.budgetOverruns,
+            s_mdRunStats.pacingResets, s_mdRunStats.pacingLateUsMax,
+            avgLines, s_mdRunStats.maxRenderedLines);
+    EMU_LOG("[MD][AUD] submit=%u silent=%u sent/drop=%u/%u speaker=%u busy=%u qMax=%u samples mix=%u max ym/psg/mix=%u/%u/%u clip=%u range=%ld/%ld ymRuns=%u targetMax=%u lagMax=%u\n",
+            audioStats.submitFrames, audioStats.silentFrames,
+            audioStats.queueSent, audioStats.queueDropped,
+            audioStats.speakerPlays, audioStats.speakerBusyAtPlay,
+            audioStats.maxQueueDepth, audioStats.mixedSamples,
+            audioStats.maxYmSamples, audioStats.maxPsgSamples,
+            audioStats.maxMixedSamples, audioStats.clippedSamples,
+            (long)audioStats.minSample, (long)audioStats.maxSample,
+            audioStats.ymRuns, audioStats.maxYmTargetClock, audioStats.maxYmLagClocks);
+    EMU_LOG("[MD][VID] q begin/end/line=%u/%u/%u drop=%u/%u/%u used begin/end/line=%u/%u/%u qMax=%u rows=%u rowBurst=%u roi/xmap=%u/%u dispFrames=%u disp_us avg/max=%u/%u\n",
+            displayStats.beginFramesQueued, displayStats.endFramesQueued,
+            displayStats.scanlinesQueued, displayStats.beginQueueDrops,
+            displayStats.endQueueDrops, displayStats.scanlineQueueDrops,
+            displayStats.beginFramesConsumed, displayStats.endFramesConsumed,
+            displayStats.scanlinesConsumed, displayStats.maxQueueDepth,
+            displayStats.outputRows, displayStats.maxRowsPerScanline,
+            displayStats.roiRecomputes, displayStats.xmapRecomputes,
+            displayStats.renderFrames, avgDisplayUs, displayStats.renderFrameMaxUs);
+
+    memset(&s_mdRunStats, 0, sizeof(s_mdRunStats));
+#endif
   }
 #endif
 }
@@ -252,6 +342,13 @@ extern "C" void run_genesis(const uint8_t* rom, size_t len, const char* rom_name
       // If we are late, adjust next_frame_us to now + frame_us
       int64_t now = (int64_t)esp_timer_get_time();
       if (now - (int64_t)next_frame_us > (int64_t)frame_us) {
+#ifdef MD_LOGS
+        const uint32_t lateUs = (uint32_t)(now - (int64_t)next_frame_us);
+        s_mdRunStats.pacingResets++;
+        if (lateUs > s_mdRunStats.pacingLateUsMax) {
+          s_mdRunStats.pacingLateUsMax = lateUs;
+        }
+#endif
         next_frame_us = (uint64_t)now + frame_us;
       }
 

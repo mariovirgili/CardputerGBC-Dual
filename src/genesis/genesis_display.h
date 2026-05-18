@@ -27,6 +27,28 @@ typedef struct {
     uint16_t    data[FB_W]; // payload ligne 
 } ScanMsg;
 
+#ifdef MD_LOGS
+typedef struct {
+    uint32_t beginFramesQueued;
+    uint32_t endFramesQueued;
+    uint32_t scanlinesQueued;
+    uint32_t beginQueueDrops;
+    uint32_t endQueueDrops;
+    uint32_t scanlineQueueDrops;
+    uint32_t beginFramesConsumed;
+    uint32_t endFramesConsumed;
+    uint32_t scanlinesConsumed;
+    uint32_t outputRows;
+    uint32_t maxQueueDepth;
+    uint32_t maxRowsPerScanline;
+    uint32_t roiRecomputes;
+    uint32_t xmapRecomputes;
+    uint32_t renderFrames;
+    uint32_t renderFrameTotalUs;
+    uint32_t renderFrameMaxUs;
+} GenesisDisplayStats;
+#endif
+
 // Shared globals
 extern QueueHandle_t g_scanQ;
 extern TaskHandle_t  g_displayTaskHandle;
@@ -57,6 +79,11 @@ void GWENESIS_PUSH_SCANLINE(int line, const uint16_t* src16, int w);
 
 // End the current frame
 void genesis_display_end_frame(void);
+
+#ifdef MD_LOGS
+void genesis_display_get_and_reset_stats(GenesisDisplayStats* out);
+void genesis_display_note_queue_event(ScanMsgType type, int sent);
+#endif
 
 // Display task
 void display_task(void* arg);

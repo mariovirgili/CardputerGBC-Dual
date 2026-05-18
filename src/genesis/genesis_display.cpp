@@ -32,6 +32,38 @@ static int s_roiX0 = 0, s_roiY0 = 0, s_roiW = 0, s_roiH = 0;
 
 int genesisZoomPercent = 110;
 
+#ifdef MD_LOGS
+static GenesisDisplayStats s_displayStats;
+
+static inline void md_display_note_queue_depth(void)
+{
+  if (!g_scanQ) return;
+  const UBaseType_t depth = uxQueueMessagesWaiting(g_scanQ);
+  if ((uint32_t)depth > s_displayStats.maxQueueDepth) {
+    s_displayStats.maxQueueDepth = (uint32_t)depth;
+  }
+}
+
+extern "C" void genesis_display_note_queue_event(ScanMsgType type, int sent)
+{
+  switch (type) {
+    case MSG_BEGIN_FRAME:
+      if (sent) s_displayStats.beginFramesQueued++;
+      else s_displayStats.beginQueueDrops++;
+      break;
+    case MSG_END_FRAME:
+      if (sent) s_displayStats.endFramesQueued++;
+      else s_displayStats.endQueueDrops++;
+      break;
+    case MSG_SCANLINE:
+      if (sent) s_displayStats.scanlinesQueued++;
+      else s_displayStats.scanlineQueueDrops++;
+      break;
+  }
+  if (sent) md_display_note_queue_depth();
+}
+#endif
+
 /* Memory set and copy helpers */
 static inline void memset16(uint16_t *dst, uint16_t v, int count) {
   for (int i = 0; i < count; ++i) dst[i] = v;
@@ -130,14 +162,24 @@ void display_task(void* arg) {
   bool inFrame = false;
   int cachedSrcH = -1;
   int roiInitForSrcW = -1;
+#ifdef MD_LOGS
+  uint32_t frameStartUs = 0;
+#endif
 
   for (;;) {
     ScanMsg m;
     if (xQueueReceive(g_scanQ, &m, portMAX_DELAY) != pdTRUE) continue;
 
     if (m.type == MSG_BEGIN_FRAME) {
+#ifdef MD_LOGS
+      s_displayStats.beginFramesConsumed++;
+      frameStartUs = micros();
+#endif
       cachedSrcH = m.srcH;
       compute_centered_roi(/*srcW=*/FB_W, /*srcH=*/cachedSrcH); 
+#ifdef MD_LOGS
+      s_displayStats.roiRecomputes++;
+#endif
       roiInitForSrcW = -1;
 
       M5.Lcd.startWrite();
@@ -150,14 +192,31 @@ void display_task(void* arg) {
       if (inFrame) {
         M5.Lcd.endWrite();
         inFrame = false;
+#ifdef MD_LOGS
+        s_displayStats.endFramesConsumed++;
+        s_displayStats.renderFrames++;
+        const uint32_t frameUs = (uint32_t)(micros() - frameStartUs);
+        s_displayStats.renderFrameTotalUs += frameUs;
+        if (frameUs > s_displayStats.renderFrameMaxUs) {
+          s_displayStats.renderFrameMaxUs = frameUs;
+        }
+#endif
       }
       continue;
     }
+
+#ifdef MD_LOGS
+    s_displayStats.scanlinesConsumed++;
+#endif
 
     if (roiInitForSrcW != (int)m.w) {
       compute_centered_roi((int)m.w, (int)m.srcH);
       ensure_xmap_roi(/*srcW*/ m.w, /*dstW*/ g_viewW, /*roiX0*/ s_roiX0, /*roiW*/ s_roiW);
       roiInitForSrcW = (int)m.w;
+#ifdef MD_LOGS
+      s_displayStats.roiRecomputes++;
+      s_displayStats.xmapRecomputes++;
+#endif
     } else {
       ensure_xmap_roi(/*srcW*/ m.w, /*dstW*/ g_viewW, /*roiX0*/ s_roiX0, /*roiW*/ s_roiW);
     }
@@ -184,6 +243,14 @@ void display_task(void* arg) {
     int dstY_end  = g_viewY0 + (int)((int64_t)relP1 * g_viewH / s_roiH);
 
     int linesToPush = dstY_end - prevDstY;
+#ifdef MD_LOGS
+    if (linesToPush > 0) {
+      s_displayStats.outputRows += (uint32_t)linesToPush;
+      if ((uint32_t)linesToPush > s_displayStats.maxRowsPerScanline) {
+        s_displayStats.maxRowsPerScanline = (uint32_t)linesToPush;
+      }
+    }
+#endif
 
     while (linesToPush > 0) {
       int chunk = (linesToPush > 16) ? 16 : linesToPush;
@@ -241,7 +308,10 @@ extern "C" void genesis_display_begin_frame(uint16_t srcH) {
   // Reset cached ROI 
   s_roiX0 = 0; s_roiY0 = 0; s_roiW = FB_W; s_roiH = srcH;
   ScanMsg b = { MSG_BEGIN_FRAME, 0, (uint16_t)FB_W, srcH, {0} };
-  xQueueSend(g_scanQ, &b, portMAX_DELAY);
+  BaseType_t ok = xQueueSend(g_scanQ, &b, portMAX_DELAY);
+#ifdef MD_LOGS
+  genesis_display_note_queue_event(MSG_BEGIN_FRAME, ok == pdTRUE);
+#endif
 }
 
 /* Gwenesis push scanline */
@@ -262,7 +332,10 @@ extern "C" void IRAM_ATTR GWENESIS_PUSH_SCANLINE(int line, const uint16_t* src16
   memcpy(m.data, src16, copyW * sizeof(uint16_t));
   if (copyW < FB_W) memset(m.data + copyW, 0, (FB_W - copyW) * sizeof(uint16_t));
 
-  xQueueSend(g_scanQ, &m, portMAX_DELAY);
+  BaseType_t ok = xQueueSend(g_scanQ, &m, portMAX_DELAY);
+#ifdef MD_LOGS
+  genesis_display_note_queue_event(MSG_SCANLINE, ok == pdTRUE);
+#endif
 }
 
 /* End the current frame */
@@ -270,5 +343,18 @@ extern "C" void genesis_display_end_frame(void) {
   if (!g_scanQ) return;
   uint16_t h = (uint16_t)(screen_height ? screen_height : 224u);
   ScanMsg e = { MSG_END_FRAME, 0, (uint16_t)FB_W, h, {0} };
-  xQueueSend(g_scanQ, &e, portMAX_DELAY);
+  BaseType_t ok = xQueueSend(g_scanQ, &e, portMAX_DELAY);
+#ifdef MD_LOGS
+  genesis_display_note_queue_event(MSG_END_FRAME, ok == pdTRUE);
+#endif
 }
+
+#ifdef MD_LOGS
+extern "C" void genesis_display_get_and_reset_stats(GenesisDisplayStats* out)
+{
+  if (out) {
+    *out = s_displayStats;
+  }
+  memset(&s_displayStats, 0, sizeof(s_displayStats));
+}
+#endif

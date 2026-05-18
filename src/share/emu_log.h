@@ -33,6 +33,9 @@
   #ifdef SNES_LOGS
     #undef SNES_LOGS
   #endif
+  #ifdef MD_LOGS
+    #undef MD_LOGS
+  #endif
 #endif
 
 #if defined(EMU_LOGS_ENABLED)

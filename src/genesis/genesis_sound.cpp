@@ -53,6 +53,30 @@ static constexpr uint8_t kChannel= 0;
 static uint16_t s_psgGainQ15 = 32768;  // x1.0
 static uint16_t s_fmGainQ15  = 32768;  // x1.0
 
+#ifdef MD_LOGS
+static GenesisAudioStats s_audioStats;
+
+static inline void md_audio_note_queue_depth(void)
+{
+  if (!s_audioQ) return;
+  const UBaseType_t depth = uxQueueMessagesWaiting(s_audioQ);
+  if ((uint32_t)depth > s_audioStats.maxQueueDepth) {
+    s_audioStats.maxQueueDepth = (uint32_t)depth;
+  }
+}
+
+static inline void md_audio_note_ym_target(int target)
+{
+  if (target > 0 && (uint32_t)target > s_audioStats.maxYmTargetClock) {
+    s_audioStats.maxYmTargetClock = (uint32_t)target;
+  }
+  const int lag = target - ym2612_clock;
+  if (lag > 0 && (uint32_t)lag > s_audioStats.maxYmLagClocks) {
+    s_audioStats.maxYmLagClocks = (uint32_t)lag;
+  }
+}
+#endif
+
 /* Allocate SN76489, YM2612 buffers and audio pool */
 void genesis_alloc_audio_buffers(void) {
   // FM / PSG
@@ -81,6 +105,11 @@ void genesis_alloc_audio_buffers(void) {
   gwenesis_ym2612_tables_alloc();
   sn76489_index = sn76489_clock = 0;
   ym2612_index  = ym2612_clock  = 0;
+#ifdef MD_LOGS
+  memset(&s_audioStats, 0, sizeof(s_audioStats));
+  s_audioStats.minSample = 32767;
+  s_audioStats.maxSample = -32768;
+#endif
 }
 
 /* Push mixed audio to cardputer speaker */
@@ -89,6 +118,13 @@ static void audio_task(void*){
     taskYIELD();
     AudioMsg m;
     if (xQueueReceive(s_audioQ, &m, portMAX_DELAY) != pdTRUE) continue;
+#ifdef MD_LOGS
+    s_audioStats.speakerPlays++;
+    if (M5Cardputer.Speaker.isPlaying(kChannel)) {
+      s_audioStats.speakerBusyAtPlay++;
+    }
+    md_audio_note_queue_depth();
+#endif
     M5.Speaker.playRaw(m.buf, m.n, AUDIO_SR, AUDIO_STEREO, 1, /*channel*/0, /*stop_current*/false);
   }
 }
@@ -126,9 +162,24 @@ void genesis_sound_submit_frame(void) {
   psg_n = sn76489_index;
   taskEXIT_CRITICAL(&g_ymMux);
 
+#ifdef MD_LOGS
+  s_audioStats.submitFrames++;
+  if ((uint32_t)ym_n > s_audioStats.maxYmSamples) s_audioStats.maxYmSamples = (uint32_t)ym_n;
+  if ((uint32_t)psg_n > s_audioStats.maxPsgSamples) s_audioStats.maxPsgSamples = (uint32_t)psg_n;
+#endif
+
   int n = ym_n > psg_n ? ym_n : psg_n;
-  if (n <= 0) return;
+  if (n <= 0) {
+#ifdef MD_LOGS
+    s_audioStats.silentFrames++;
+#endif
+    return;
+  }
   if (n > AUDIO_CHUNK) n = AUDIO_CHUNK;
+#ifdef MD_LOGS
+  if ((uint32_t)n > s_audioStats.maxMixedSamples) s_audioStats.maxMixedSamples = (uint32_t)n;
+  s_audioStats.mixedSamples += (uint32_t)n;
+#endif
 
   // Mix dans current buffer
   int16_t *dst = s_buf[s_flip];
@@ -136,8 +187,15 @@ void genesis_sound_submit_frame(void) {
     int32_t s = 0;
     if (i < ym_n)  s += (int32_t)gwenesis_ym2612_buffer[i];
     if (i < psg_n) s += (int32_t)gwenesis_sn76489_buffer[i];
+#ifdef MD_LOGS
+    if (s > 32767 || s < -32768) s_audioStats.clippedSamples++;
+#endif
     if (s >  32767) s =  32767;
     if (s < -32768) s = -32768;
+#ifdef MD_LOGS
+    if (s < s_audioStats.minSample) s_audioStats.minSample = s;
+    if (s > s_audioStats.maxSample) s_audioStats.maxSample = s;
+#endif
     dst[i] = (int16_t)s;
   }
   for (int i = n; i < AUDIO_CHUNK; ++i) dst[i] = 0;
@@ -151,9 +209,15 @@ void genesis_sound_submit_frame(void) {
   // Send
   AudioMsg m{ dst, AUDIO_CHUNK };
   if (s_audioQ && xQueueSend(s_audioQ, &m, 0) == pdPASS) {
+#ifdef MD_LOGS
+    s_audioStats.queueSent++;
+    md_audio_note_queue_depth();
+#endif
     s_flip ^= 1; // switch buffer
   } else {
-    // drop
+#ifdef MD_LOGS
+    s_audioStats.queueDropped++;
+#endif
   }
 }
 
@@ -183,6 +247,10 @@ extern "C" void genesis_sound_ym_init(void) {
 static void ym_task(void*){
   for(;;){
     int target = s_ym_target_clock;      // snapshot
+#ifdef MD_LOGS
+    s_audioStats.ymRuns++;
+    md_audio_note_ym_target(target);
+#endif
     ym2612_run(target);                  // avance core
     vTaskDelay(1);
   }
@@ -211,6 +279,9 @@ extern "C" void genesis_sound_ym_stop(void) {
 
 /* Set the target clock for YM2612 */
 extern "C" void genesis_sound_ym_set_target_clock(int target) {
+#ifdef MD_LOGS
+  md_audio_note_ym_target(target);
+#endif
   s_ym_target_clock = target;
 }
 
@@ -218,3 +289,19 @@ extern "C" void genesis_sound_ym_set_target_clock(int target) {
 extern "C" int  genesis_sound_ym_get_target_clock(void) {
   return s_ym_target_clock;
 }
+
+#ifdef MD_LOGS
+extern "C" void genesis_sound_get_and_reset_stats(GenesisAudioStats* out)
+{
+  if (out) {
+    *out = s_audioStats;
+    if (out->minSample == 32767 && out->maxSample == -32768) {
+      out->minSample = 0;
+      out->maxSample = 0;
+    }
+  }
+  memset(&s_audioStats, 0, sizeof(s_audioStats));
+  s_audioStats.minSample = 32767;
+  s_audioStats.maxSample = -32768;
+}
+#endif
