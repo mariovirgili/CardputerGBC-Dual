@@ -124,15 +124,14 @@ extern "C" void lynx_sound_init(int sample_rate)
             0      // core
         );
         if (ok != pdPASS) {
-            EMU_LOG("[LYNX][AUDIO] task create failed\n");
+            AUDIO_LOG("LYNX", "audio task create failed");
             s_audioTask = nullptr;
             s_running   = false;
         }
     }
 
     s_inited = (s_ring != nullptr);
-    EMU_LOG("[LYNX][AUDIO] init: rate=%d mono, ring=%d\n",
-           lynx_sampleRate, s_ringSize);
+    AUDIO_LOG("LYNX", "audio init rate=%d mono ring=%d", lynx_sampleRate, s_ringSize);
 }
 
 extern "C" void lynx_sound_set_volume(uint8_t vol)

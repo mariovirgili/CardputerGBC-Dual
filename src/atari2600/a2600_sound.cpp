@@ -112,7 +112,7 @@ void a2600_sound_init(int sampleRate)
     s_ringSize = kRingSamples;
     s_ring = (int16_t*)malloc((size_t)s_ringSize * sizeof(int16_t));
     if (!s_ring) {
-        EMU_LOG("[A2600][AUDIO] ring alloc failed\n");
+        AUDIO_LOG("A2600", "audio ring alloc failed");
         return;
     }
 
@@ -134,7 +134,7 @@ void a2600_sound_init(int sampleRate)
     );
 
     if (ok != pdPASS) {
-        EMU_LOG("[A2600][AUDIO] task create failed\n");
+        AUDIO_LOG("A2600", "audio task create failed");
         s_audioTask = nullptr;
         s_running = false;
         free(s_ring);
@@ -144,7 +144,7 @@ void a2600_sound_init(int sampleRate)
     }
 
     s_inited = true;
-    EMU_LOG("[A2600][AUDIO] init ok, rate=%d, ring=%d\n", s_sampleRate, s_ringSize);
+    AUDIO_LOG("A2600", "audio init ok rate=%d ring=%d", s_sampleRate, s_ringSize);
 }
 
 void a2600_sound_shutdown(void)

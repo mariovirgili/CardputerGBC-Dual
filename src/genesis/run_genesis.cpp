@@ -19,6 +19,108 @@ static uint64_t last_fps_log_time = 0;
 static volatile int g_target_fps = 60;
 static bool s_draw_toggle = false;  // for skipping frames
 static volatile bool s_skipZ80Next = false; // skip Z80 on next frame if true
+extern int genesisZoomPercent;
+
+#if MD_RENDER_LOGS_ENABLED
+struct MdFrameDiagStats {
+  uint64_t lastLogMs = 0;
+  uint32_t frames = 0;
+  uint32_t drawFrames = 0;
+  uint32_t noDrawFrames = 0;
+  uint32_t z80Skipped = 0;
+  uint32_t lateSkipRequested = 0;
+  uint32_t beginSendFail = 0;
+  uint32_t endSendFail = 0;
+  uint32_t renderedLinesMin = UINT32_MAX;
+  uint32_t renderedLinesMax = 0;
+  uint64_t renderedLinesTotal = 0;
+  uint32_t frameUsMin = UINT32_MAX;
+  uint32_t frameUsMax = 0;
+  uint64_t frameUsTotal = 0;
+  uint32_t overBudget = 0;
+  uint32_t hLast = 0;
+  uint32_t linesLast = 0;
+};
+
+static MdFrameDiagStats s_mdFrameDiag;
+
+static inline uint64_t md_render_now_ms()
+{
+  return (uint64_t)(esp_timer_get_time() / 1000ULL);
+}
+
+static inline void md_render_diag_reset()
+{
+  s_mdFrameDiag = MdFrameDiagStats{};
+  s_mdFrameDiag.lastLogMs = md_render_now_ms();
+}
+
+static inline void md_render_diag_record(bool drawFrame,
+                                         bool skipZ80,
+                                         bool lateSkip,
+                                         uint32_t renderedLines,
+                                         uint32_t frameUs,
+                                         uint32_t budgetUs,
+                                         uint32_t h,
+                                         uint32_t linesPerFrame)
+{
+  MdFrameDiagStats& d = s_mdFrameDiag;
+  ++d.frames;
+  if (drawFrame) ++d.drawFrames; else ++d.noDrawFrames;
+  if (skipZ80) ++d.z80Skipped;
+  if (lateSkip) ++d.lateSkipRequested;
+  if (renderedLines < d.renderedLinesMin) d.renderedLinesMin = renderedLines;
+  if (renderedLines > d.renderedLinesMax) d.renderedLinesMax = renderedLines;
+  d.renderedLinesTotal += renderedLines;
+  if (frameUs < d.frameUsMin) d.frameUsMin = frameUs;
+  if (frameUs > d.frameUsMax) d.frameUsMax = frameUs;
+  d.frameUsTotal += frameUs;
+  if (frameUs > budgetUs) ++d.overBudget;
+  d.hLast = h;
+  d.linesLast = linesPerFrame;
+}
+
+static inline void md_render_diag_log_if_due(bool force = false)
+{
+  MdFrameDiagStats& d = s_mdFrameDiag;
+  const uint64_t now = md_render_now_ms();
+  if (!force && (now - d.lastLogMs) < 2000ULL) return;
+  if (d.frames == 0) {
+    d.lastLogMs = now;
+    return;
+  }
+
+  const uint32_t renderedMin = (d.renderedLinesMin == UINT32_MAX) ? 0 : d.renderedLinesMin;
+  const uint32_t frameMin = (d.frameUsMin == UINT32_MAX) ? 0 : d.frameUsMin;
+  const uint32_t renderedAvg = (uint32_t)(d.renderedLinesTotal / d.frames);
+  const uint32_t frameAvg = (uint32_t)(d.frameUsTotal / d.frames);
+  MD_RENDER_LOG("frames=%lu draw=%lu nodraw=%lu z80Skip=%lu lateSkip=%lu overBudget=%lu frameUs min/avg/max=%lu/%lu/%lu renderedLines min/avg/max=%lu/%lu/%lu beginFail=%lu endFail=%lu srcH=%lu lines=%lu zoom=%d field=%d",
+                (unsigned long)d.frames,
+                (unsigned long)d.drawFrames,
+                (unsigned long)d.noDrawFrames,
+                (unsigned long)d.z80Skipped,
+                (unsigned long)d.lateSkipRequested,
+                (unsigned long)d.overBudget,
+                (unsigned long)frameMin,
+                (unsigned long)frameAvg,
+                (unsigned long)d.frameUsMax,
+                (unsigned long)renderedMin,
+                (unsigned long)renderedAvg,
+                (unsigned long)d.renderedLinesMax,
+                (unsigned long)d.beginSendFail,
+                (unsigned long)d.endSendFail,
+                (unsigned long)d.hLast,
+                (unsigned long)d.linesLast,
+                genesisZoomPercent,
+                g_field_ofs);
+  d = MdFrameDiagStats{};
+  d.lastLogMs = now;
+}
+#else
+static inline void md_render_diag_reset() {}
+static inline void md_render_diag_record(bool, bool, bool, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t) {}
+static inline void md_render_diag_log_if_due(bool = false) {}
+#endif
 
 extern "C" {
   #include "genesis/gwenesis/vdp/gwenesis_vdp.h"
@@ -92,10 +194,18 @@ static void run_one_frame() {
   // Notify start of frame to display task
   if (g_scanQ) {
     ScanMsg b = { MSG_BEGIN_FRAME, 0, (uint16_t)FB_W, (uint16_t)h, {0} };
+#if MD_RENDER_LOGS_ENABLED
+    const BaseType_t ok = xQueueSend(g_scanQ, &b, 0);
+    if (ok != pdTRUE) ++s_mdFrameDiag.beginSendFail;
+#else
     xQueueSend(g_scanQ, &b, 0);
+#endif
   }
 
   // Per line emulation loop
+#if MD_RENDER_LOGS_ENABLED
+  uint32_t renderedLines = 0;
+#endif
   while (scan_line < lines_per_frame) {
     cpu_deadline += VDP_CYCLES_PER_LINE;
 
@@ -116,6 +226,9 @@ static void run_one_frame() {
     // VDP line rendering, if no frame skip and not the lines to skip
     if (drawFrame && (unsigned)scan_line < h && ((scan_line & 1) == g_field_ofs)) {
       gwenesis_vdp_render_line(scan_line);
+#if MD_RENDER_LOGS_ENABLED
+      ++renderedLines;
+#endif
     }
 
     // On these lines, the line counter interrupt is reloaded
@@ -158,7 +271,12 @@ static void run_one_frame() {
   // Notify end of frame to display task
   if (g_scanQ) {
     ScanMsg e = { MSG_END_FRAME, 0, (uint16_t)FB_W, (uint16_t)h, {0} };
+#if MD_RENDER_LOGS_ENABLED
+    const BaseType_t ok = xQueueSend(g_scanQ, &e, 0);
+    if (ok != pdTRUE) ++s_mdFrameDiag.endSendFail;
+#else
     xQueueSend(g_scanQ, &e, 0);
+#endif
   }
 
   // Run SN76489 and push sound samples for this frame
@@ -173,9 +291,14 @@ static void run_one_frame() {
   //  Frame time budget check for the next frame
   const uint32_t kFrameBudgetUs = 1000000u / (g_target_fps - 8); // 52FPS target
   const uint32_t elapsedUs = (uint32_t)(micros() - t_start);
-  if (elapsedUs > kFrameBudgetUs) {
+  const bool lateSkip = elapsedUs > kFrameBudgetUs;
+  if (lateSkip) {
     s_skipZ80Next = true;  // we are late, skip Z80 next frame
   }
+#if MD_RENDER_LOGS_ENABLED
+  md_render_diag_record(drawFrame, skipZ80, lateSkip, renderedLines, elapsedUs, kFrameBudgetUs, h, (uint32_t)lines_per_frame);
+  md_render_diag_log_if_due();
+#endif
 
 #if EMU_LOG_MASTER_ENABLED
   // FPS logging every 2 seconds
@@ -194,6 +317,7 @@ static void run_one_frame() {
 /* Run genesis emulation with XIP mapped rom */
 extern "C" void run_genesis(const uint8_t* rom, size_t len, const char* rom_name) {
   M5Cardputer.Display.setSwapBytes(true);
+  md_render_diag_reset();
 
   // Allocate buffers
   genesis_alloc_core_buffers();

@@ -17,7 +17,7 @@
 #define BOOT_LOG(tag, fmt, ...) ((void)0)
 #endif
 
-#if EMU_LOG_MASTER_ENABLED
+#if EMU_AUDIO_LOGS_ENABLED
 #define AUDIO_LOG(tag, fmt, ...)                                               \
   do {                                                                         \
     (printf)("[%s][%llu ms] " fmt "\n",                                      \

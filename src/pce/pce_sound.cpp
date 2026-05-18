@@ -27,8 +27,8 @@ static int s_sampleRate        = 22050;
 
 static void pce_audio_task(void* arg)
 {
-  EMU_LOG("[PCE][AUDIO] task started. frames=%d, samples=%d, rate=%d\n",
-         (int)kNumFrames, (int)kNumSamples, s_sampleRate);
+  AUDIO_LOG("PCE", "audio task started frames=%d samples=%d rate=%d",
+            (int)kNumFrames, (int)kNumSamples, s_sampleRate);
 
   while (s_running) {
     // Pause
@@ -51,7 +51,7 @@ static void pce_audio_task(void* arg)
       s_buf, s_flip, kNumSamples, (uint32_t)s_sampleRate, false, kChannel);
   }
 
-  EMU_LOG("[PCE][AUDIO] task exit\n");
+  AUDIO_LOG("PCE", "audio task exit");
   vTaskDelete(nullptr);
 }
 
@@ -67,7 +67,7 @@ extern "C" bool pce_sound_init(int sample_rate)
 
   cardputer_audio::freeRuntimeAudioBuffers(s_buf);
   if (!cardputer_audio::allocRuntimeAudioBuffers(s_buf, kNumSamples, "pce")) {
-    EMU_LOG("[PCE][AUDIO] buffer alloc failed\n");
+    AUDIO_LOG("PCE", "audio buffer alloc failed");
     return false;
   }
 
@@ -90,7 +90,7 @@ extern "C" bool pce_sound_init(int sample_rate)
   );
 
   if (ok != pdPASS) {
-    EMU_LOG("[PCE][AUDIO] xTaskCreate failed\n");
+    AUDIO_LOG("PCE", "audio xTaskCreate failed");
     s_audioTaskHandle = nullptr;
     s_running = false;
     return false;

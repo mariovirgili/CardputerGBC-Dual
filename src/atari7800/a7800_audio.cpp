@@ -106,7 +106,7 @@ void a7800_audio_init(unsigned sampleRate)
     s_ringSize = kRingSamples;
     s_ring = (int16_t*)malloc((size_t)s_ringSize * sizeof(int16_t));
     if (!s_ring) {
-        EMU_LOG("[A7800][AUDIO] ring alloc failed\n");
+        AUDIO_LOG("A7800", "audio ring alloc failed");
         return;
     }
 
@@ -127,7 +127,7 @@ void a7800_audio_init(unsigned sampleRate)
     );
 
     if (ok != pdPASS) {
-        EMU_LOG("[A7800][AUDIO] task create failed\n");
+        AUDIO_LOG("A7800", "audio task create failed");
         s_audioTask = nullptr;
         s_running = false;
         free(s_ring);
@@ -137,7 +137,7 @@ void a7800_audio_init(unsigned sampleRate)
     }
 
     s_inited = true;
-    EMU_LOG("[A7800][AUDIO] init ok, rate=%u, ring=%d\n", s_sampleRate, s_ringSize);
+    AUDIO_LOG("A7800", "audio init ok rate=%u ring=%d", s_sampleRate, s_ringSize);
 }
 
 void a7800_audio_shutdown(void)

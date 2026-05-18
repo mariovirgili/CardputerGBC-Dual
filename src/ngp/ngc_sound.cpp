@@ -71,7 +71,7 @@ void ngc_sound_init(void) {
   cardputer_audio::beginSpeaker(kSampleRate, false, 512, 8, 80, "ngp", 4, 0);
 
   if (!ngc_sound_alloc_buffers()) {
-    EMU_LOG("[AUDIO] buffer alloc failed (kChunk=%d)\n", kChunk);
+    AUDIO_LOG("NGP", "audio buffer alloc failed kChunk=%d", kChunk);
   }
 
   s_flip = 0;

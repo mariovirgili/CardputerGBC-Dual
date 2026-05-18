@@ -19,7 +19,7 @@ static constexpr size_t kRuntimeAudioBufferCount = 4;
 static constexpr size_t kRuntimeAudioQueueDepth = 3;
 static constexpr uint32_t kAudioDiagLogPeriodMs = 2000;
 
-#if EMU_LOG_MASTER_ENABLED
+#if EMU_AUDIO_LOGS_ENABLED
 struct AudioDiagStats {
     const char* reason = "?";
     uint32_t sampleRate = 0;
@@ -197,7 +197,7 @@ inline void applySpeakerPins(m5::speaker_config_t& cfg)
 
 inline void logSpeakerConfig(const char* reason, const m5::speaker_config_t& cfg)
 {
-#if EMU_LOG_MASTER_ENABLED
+#if EMU_AUDIO_LOGS_ENABLED
     AUDIO_LOG("AUDIO",
               "speaker cfg reason=%s board=%d data=%d bck=%d ws=%d mck=%d port=%d rate=%lu stereo=%d dma=%u/%u task=%u/%u vol=%u enabled=%d running=%d",
               reason ? reason : "?",

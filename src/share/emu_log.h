@@ -6,10 +6,13 @@
  * compile out. Direct C printf calls are always compiled out by default; C code
  * should use EMU_LOG so old core printf noise cannot bypass this layer.
  *
- * Generic/base logs include FPS, heap, core usage and audio pipeline diagnostics.
+ * Generic/base logs include FPS, heap and core usage.
+ * Audio pipeline diagnostics are separated behind AUDIO_LOGS.
  *
  * Per-core/detail flags currently used:
  *   BOOT_DIAG_LOGS
+ *   AUDIO_LOGS
+ *   MD_LOGS, MD_AUDIO_LOGS, MD_RENDER_LOGS
  *   SNES_LOGS
  *   NES_DIAG_LOGS, NES_BENCHMARK_LOGS
  *   WS_LOGS_ENABLED, WS_BENCHMARK_LOGS, WS_RENDER_PROFILE
@@ -28,6 +31,30 @@
 #define EMU_LOG_MASTER_ENABLED 0
 #endif
 
+#if EMU_LOG_MASTER_ENABLED && defined(AUDIO_LOGS)
+#define EMU_AUDIO_LOGS_ENABLED 1
+#else
+#define EMU_AUDIO_LOGS_ENABLED 0
+#endif
+
+#if EMU_LOG_MASTER_ENABLED && defined(MD_LOGS)
+#define MD_LOGS_ENABLED 1
+#else
+#define MD_LOGS_ENABLED 0
+#endif
+
+#if EMU_LOG_MASTER_ENABLED && (defined(MD_AUDIO_LOGS) || defined(MD_LOGS))
+#define MD_AUDIO_LOGS_ENABLED 1
+#else
+#define MD_AUDIO_LOGS_ENABLED 0
+#endif
+
+#if EMU_LOG_MASTER_ENABLED && (defined(MD_RENDER_LOGS) || defined(MD_LOGS))
+#define MD_RENDER_LOGS_ENABLED 1
+#else
+#define MD_RENDER_LOGS_ENABLED 0
+#endif
+
 #if EMU_LOG_MASTER_ENABLED && defined(BENCHMARK_LOGS)
 #ifndef NES_BENCHMARK_LOGS
 #define NES_BENCHMARK_LOGS 1
@@ -39,6 +66,10 @@
 
 #if !EMU_LOG_MASTER_ENABLED
 #undef BOOT_DIAG_LOGS
+#undef AUDIO_LOGS
+#undef MD_LOGS
+#undef MD_AUDIO_LOGS
+#undef MD_RENDER_LOGS
 #undef BENCHMARK_LOGS
 #undef NES_BENCHMARK_LOGS
 #undef WS_BENCHMARK_LOGS
@@ -56,6 +87,18 @@
 #define EMU_LOG(...) (printf)(__VA_ARGS__)
 #else
 #define EMU_LOG(...) do { } while (0)
+#endif
+
+#if MD_AUDIO_LOGS_ENABLED
+#define MD_AUDIO_LOG(fmt, ...) EMU_LOG("[MD][AUDIO] " fmt "\n", ##__VA_ARGS__)
+#else
+#define MD_AUDIO_LOG(fmt, ...) ((void)0)
+#endif
+
+#if MD_RENDER_LOGS_ENABLED
+#define MD_RENDER_LOG(fmt, ...) EMU_LOG("[MD][RENDER] " fmt "\n", ##__VA_ARGS__)
+#else
+#define MD_RENDER_LOG(fmt, ...) ((void)0)
 #endif
 
 #if !defined(__cplusplus) && !defined(EMU_ALLOW_RAW_PRINTF)

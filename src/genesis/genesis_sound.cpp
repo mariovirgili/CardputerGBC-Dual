@@ -52,12 +52,148 @@ static constexpr uint8_t kChannel= 0;
 static uint16_t s_psgGainQ15 = 32768;  // x1.0
 static uint16_t s_fmGainQ15  = 32768;  // x1.0
 
+#if MD_AUDIO_LOGS_ENABLED
+struct MdAudioDiagStats {
+  uint64_t lastLogMs = 0;
+  uint32_t frames = 0;
+  uint32_t queued = 0;
+  uint32_t droppedDepth = 0;
+  uint32_t droppedBuffer = 0;
+  uint32_t clippedSamples = 0;
+  uint32_t depthMax = 0;
+  uint32_t emptyDepth = 0;
+  uint32_t coreMin = UINT32_MAX;
+  uint32_t coreMax = 0;
+  uint64_t coreTotal = 0;
+  uint32_t ymMin = UINT32_MAX;
+  uint32_t ymMax = 0;
+  uint64_t ymTotal = 0;
+  uint32_t psgMin = UINT32_MAX;
+  uint32_t psgMax = 0;
+  uint64_t psgTotal = 0;
+  int targetMin = INT32_MAX;
+  int targetMax = INT32_MIN;
+  int targetLast = 0;
+  uint64_t targetTotal = 0;
+  uint32_t targetCount = 0;
+};
+
+static MdAudioDiagStats s_mdAudioDiag;
+
+static inline uint64_t md_audio_now_ms()
+{
+  return (uint64_t)(esp_timer_get_time() / 1000ULL);
+}
+
+static inline void md_audio_diag_reset()
+{
+  s_mdAudioDiag = MdAudioDiagStats{};
+  s_mdAudioDiag.lastLogMs = md_audio_now_ms();
+}
+
+static inline void md_audio_diag_samples(int core_n, int ym_n, int psg_n, size_t depth)
+{
+  MdAudioDiagStats& d = s_mdAudioDiag;
+  ++d.frames;
+  if (depth == 0) ++d.emptyDepth;
+  if (depth > d.depthMax) d.depthMax = (uint32_t)depth;
+
+  const uint32_t cn = core_n > 0 ? (uint32_t)core_n : 0;
+  const uint32_t yn = ym_n > 0 ? (uint32_t)ym_n : 0;
+  const uint32_t pn = psg_n > 0 ? (uint32_t)psg_n : 0;
+
+  if (cn < d.coreMin) d.coreMin = cn;
+  if (cn > d.coreMax) d.coreMax = cn;
+  d.coreTotal += cn;
+  if (yn < d.ymMin) d.ymMin = yn;
+  if (yn > d.ymMax) d.ymMax = yn;
+  d.ymTotal += yn;
+  if (pn < d.psgMin) d.psgMin = pn;
+  if (pn > d.psgMax) d.psgMax = pn;
+  d.psgTotal += pn;
+}
+
+static inline void md_audio_diag_target(int target)
+{
+  MdAudioDiagStats& d = s_mdAudioDiag;
+  d.targetLast = target;
+  if (target < d.targetMin) d.targetMin = target;
+  if (target > d.targetMax) d.targetMax = target;
+  d.targetTotal += (uint32_t)(target > 0 ? target : 0);
+  ++d.targetCount;
+}
+
+static inline void md_audio_diag_log_if_due(bool force = false)
+{
+  MdAudioDiagStats& d = s_mdAudioDiag;
+  const uint64_t now = md_audio_now_ms();
+  if (!force && (now - d.lastLogMs) < 2000ULL) return;
+  if (d.frames == 0 && d.targetCount == 0) {
+    d.lastLogMs = now;
+    return;
+  }
+
+  const uint32_t coreMin = (d.coreMin == UINT32_MAX) ? 0 : d.coreMin;
+  const uint32_t ymMin = (d.ymMin == UINT32_MAX) ? 0 : d.ymMin;
+  const uint32_t psgMin = (d.psgMin == UINT32_MAX) ? 0 : d.psgMin;
+  const uint32_t coreAvg = d.frames ? (uint32_t)(d.coreTotal / d.frames) : 0;
+  const uint32_t ymAvg = d.frames ? (uint32_t)(d.ymTotal / d.frames) : 0;
+  const uint32_t psgAvg = d.frames ? (uint32_t)(d.psgTotal / d.frames) : 0;
+  const int targetMin = (d.targetMin == INT32_MAX) ? 0 : d.targetMin;
+  const int targetMax = (d.targetMax == INT32_MIN) ? 0 : d.targetMax;
+  const uint32_t targetAvg = d.targetCount ? (uint32_t)(d.targetTotal / d.targetCount) : 0;
+
+  MD_AUDIO_LOG("frames=%lu queued=%lu dropDepth=%lu dropBuf=%lu depthMax=%lu emptyDepth=%lu coreRate=%d outRate=%d coreSamples min/avg/max=%lu/%lu/%lu outSamples=%d ym=%lu/%lu/%lu psg=%lu/%lu/%lu target min/avg/max/last=%d/%lu/%d/%d clipped=%lu",
+               (unsigned long)d.frames,
+               (unsigned long)d.queued,
+               (unsigned long)d.droppedDepth,
+               (unsigned long)d.droppedBuffer,
+               (unsigned long)d.depthMax,
+               (unsigned long)d.emptyDepth,
+               AUDIO_CORE_SR,
+               AUDIO_SR,
+               (unsigned long)coreMin,
+               (unsigned long)coreAvg,
+               (unsigned long)d.coreMax,
+               AUDIO_CHUNK,
+               (unsigned long)ymMin,
+               (unsigned long)ymAvg,
+               (unsigned long)d.ymMax,
+               (unsigned long)psgMin,
+               (unsigned long)psgAvg,
+               (unsigned long)d.psgMax,
+               targetMin,
+               (unsigned long)targetAvg,
+               targetMax,
+               d.targetLast,
+               (unsigned long)d.clippedSamples);
+
+  d = MdAudioDiagStats{};
+  d.lastLogMs = now;
+}
+#else
+static inline void md_audio_diag_reset() {}
+static inline void md_audio_diag_samples(int, int, int, size_t) {}
+static inline void md_audio_diag_target(int) {}
+static inline void md_audio_diag_log_if_due(bool = false) {}
+#endif
+
 static inline int16_t mix_sample_at(int idx, int ym_n, int psg_n) {
   int32_t s = 0;
   if (idx < ym_n)  s += (int32_t)gwenesis_ym2612_buffer[idx];
   if (idx < psg_n) s += (int32_t)gwenesis_sn76489_buffer[idx];
-  if (s >  32767) s =  32767;
-  if (s < -32768) s = -32768;
+  if (s >  32767) {
+#if MD_AUDIO_LOGS_ENABLED
+    ++s_mdAudioDiag.clippedSamples;
+#endif
+    s =  32767;
+  }
+  if (s < -32768) {
+#if MD_AUDIO_LOGS_ENABLED
+    ++s_mdAudioDiag.clippedSamples;
+#endif
+    s = -32768;
+  }
   return (int16_t)s;
 }
 
@@ -101,6 +237,7 @@ void genesis_sound_init() {
   M5Cardputer.Speaker.setVolume(genesis_audio_volume);
 
   s_flip = 0;
+  md_audio_diag_reset();
 }
 
 /* Submit a frame of audio to the cardputer speaker */
@@ -118,8 +255,19 @@ void genesis_sound_submit_frame(void) {
   if (ym_n > AUDIO_CORE_CHUNK) ym_n = AUDIO_CORE_CHUNK;
   if (psg_n > AUDIO_CORE_CHUNK) psg_n = AUDIO_CORE_CHUNK;
 
-  if (M5Cardputer.Speaker.isPlaying(kChannel) >= cardputer_audio::kRuntimeAudioQueueDepth ||
+  const size_t depth = M5Cardputer.Speaker.isPlaying(kChannel);
+  md_audio_diag_samples(n, ym_n, psg_n, depth);
+
+  if (depth >= cardputer_audio::kRuntimeAudioQueueDepth ||
       !s_buf[0] || !s_buf[1] || !s_buf[2] || !s_buf[3]) {
+#if MD_AUDIO_LOGS_ENABLED
+    if (depth >= cardputer_audio::kRuntimeAudioQueueDepth) {
+      ++s_mdAudioDiag.droppedDepth;
+    } else {
+      ++s_mdAudioDiag.droppedBuffer;
+    }
+    md_audio_diag_log_if_due();
+#endif
     taskENTER_CRITICAL(&g_ymMux);
     ym2612_index  = 0;
     sn76489_index = 0;
@@ -151,7 +299,12 @@ void genesis_sound_submit_frame(void) {
   sn76489_index = 0;
   taskEXIT_CRITICAL(&g_ymMux);
 
-  cardputer_audio::queueRuntimeAudioBuffer(s_buf, s_flip, AUDIO_CHUNK, AUDIO_SR, AUDIO_STEREO, kChannel);
+  if (cardputer_audio::queueRuntimeAudioBuffer(s_buf, s_flip, AUDIO_CHUNK, AUDIO_SR, AUDIO_STEREO, kChannel)) {
+#if MD_AUDIO_LOGS_ENABLED
+    ++s_mdAudioDiag.queued;
+#endif
+  }
+  md_audio_diag_log_if_due();
 }
 
 
@@ -208,6 +361,7 @@ extern "C" void genesis_sound_ym_stop(void) {
 
 /* Set the target clock for YM2612 */
 extern "C" void genesis_sound_ym_set_target_clock(int target) {
+  md_audio_diag_target(target);
   s_ym_target_clock = target;
 }
 

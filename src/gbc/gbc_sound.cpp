@@ -123,15 +123,14 @@ extern "C" void gbc_sound_init(int sample_rate)
             0      // core 
         );
         if (ok != pdPASS) {
-            EMU_LOG("[GBC][AUDIO] task create failed\n");
+            AUDIO_LOG("GBC", "audio task create failed");
             s_audioTask = nullptr;
             s_running   = false;
         }
     }
 
     s_inited = (s_ring != nullptr);
-    EMU_LOG("[GBC][AUDIO] init: rate=%d mono, ring=%d\n",
-           gbc_sampleRate, s_ringSize);
+    AUDIO_LOG("GBC", "audio init rate=%d mono ring=%d", gbc_sampleRate, s_ringSize);
 }
 
 extern "C" void gbc_sound_set_volume(uint8_t vol)

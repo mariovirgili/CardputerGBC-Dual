@@ -2,6 +2,7 @@
 #include <string.h>
 #include <stdio.h>
 #include "esp_heap_caps.h"
+#include "esp_timer.h"
 #include "compat/arduino_compat.h"
 #include <M5Cardputer.h>
 #include "share/emu_log_cpp.h"
@@ -31,6 +32,88 @@ static int s_xmap_roiX0 = -1, s_xmap_roiW = -1;
 static int s_roiX0 = 0, s_roiY0 = 0, s_roiW = 0, s_roiH = 0;
 
 int genesisZoomPercent = 110;
+
+#if MD_RENDER_LOGS_ENABLED
+struct MdDisplayDiagStats {
+  uint64_t lastLogMs = 0;
+  uint32_t beginRecv = 0;
+  uint32_t endRecv = 0;
+  uint32_t scanSent = 0;
+  uint32_t scanRecv = 0;
+  uint32_t queueFullBefore = 0;
+  uint32_t sendFail = 0;
+  uint32_t sendWaitOver1ms = 0;
+  uint32_t sendWaitMaxUs = 0;
+  uint64_t sendWaitTotalUs = 0;
+  uint32_t lcdRows = 0;
+  uint32_t maxLinesToPush = 0;
+  uint32_t roiChanges = 0;
+};
+
+static MdDisplayDiagStats s_mdDisplayDiag;
+
+static inline uint64_t md_display_now_ms()
+{
+  return (uint64_t)(esp_timer_get_time() / 1000ULL);
+}
+
+static inline void md_display_diag_init_once()
+{
+  if (s_mdDisplayDiag.lastLogMs == 0) {
+    s_mdDisplayDiag.lastLogMs = md_display_now_ms();
+  }
+}
+
+static inline void md_display_diag_log_if_due(bool force = false)
+{
+  md_display_diag_init_once();
+  MdDisplayDiagStats& d = s_mdDisplayDiag;
+  const uint64_t now = md_display_now_ms();
+  if (!force && (now - d.lastLogMs) < 2000ULL) return;
+  if (d.beginRecv == 0 && d.endRecv == 0 && d.scanSent == 0 && d.scanRecv == 0) {
+    d.lastLogMs = now;
+    return;
+  }
+  const uint32_t sendAvgUs = d.scanSent ? (uint32_t)(d.sendWaitTotalUs / d.scanSent) : 0;
+  MD_RENDER_LOG("display begin=%lu end=%lu scan sent/recv=%lu/%lu qFullBefore=%lu sendFail=%lu waitUs avg/max=%lu/%lu waitOver1ms=%lu lcdRows=%lu maxLinesToPush=%lu roiChanges=%lu dst=%dx%d view=%dx%d",
+                (unsigned long)d.beginRecv,
+                (unsigned long)d.endRecv,
+                (unsigned long)d.scanSent,
+                (unsigned long)d.scanRecv,
+                (unsigned long)d.queueFullBefore,
+                (unsigned long)d.sendFail,
+                (unsigned long)sendAvgUs,
+                (unsigned long)d.sendWaitMaxUs,
+                (unsigned long)d.sendWaitOver1ms,
+                (unsigned long)d.lcdRows,
+                (unsigned long)d.maxLinesToPush,
+                (unsigned long)d.roiChanges,
+                g_dstW,
+                g_dstH,
+                g_viewW,
+                g_viewH);
+  d = MdDisplayDiagStats{};
+  d.lastLogMs = now;
+}
+
+static inline BaseType_t md_display_send_scan_msg(QueueHandle_t q, const ScanMsg* msg, TickType_t ticks)
+{
+  md_display_diag_init_once();
+  if (uxQueueSpacesAvailable(q) == 0) {
+    ++s_mdDisplayDiag.queueFullBefore;
+  }
+  const uint64_t t0 = esp_timer_get_time();
+  const BaseType_t ok = xQueueSend(q, msg, ticks);
+  const uint32_t elapsed = (uint32_t)(esp_timer_get_time() - t0);
+  ++s_mdDisplayDiag.scanSent;
+  s_mdDisplayDiag.sendWaitTotalUs += elapsed;
+  if (elapsed > s_mdDisplayDiag.sendWaitMaxUs) s_mdDisplayDiag.sendWaitMaxUs = elapsed;
+  if (elapsed > 1000) ++s_mdDisplayDiag.sendWaitOver1ms;
+  if (ok != pdTRUE) ++s_mdDisplayDiag.sendFail;
+  md_display_diag_log_if_due();
+  return ok;
+}
+#endif
 
 /* Memory set and copy helpers */
 static inline void memset16(uint16_t *dst, uint16_t v, int count) {
@@ -136,6 +219,9 @@ void display_task(void* arg) {
     if (xQueueReceive(g_scanQ, &m, portMAX_DELAY) != pdTRUE) continue;
 
     if (m.type == MSG_BEGIN_FRAME) {
+#if MD_RENDER_LOGS_ENABLED
+      ++s_mdDisplayDiag.beginRecv;
+#endif
       cachedSrcH = m.srcH;
       compute_centered_roi(/*srcW=*/FB_W, /*srcH=*/cachedSrcH); 
       roiInitForSrcW = -1;
@@ -147,6 +233,10 @@ void display_task(void* arg) {
     }
 
     if (m.type == MSG_END_FRAME) {
+#if MD_RENDER_LOGS_ENABLED
+      ++s_mdDisplayDiag.endRecv;
+      md_display_diag_log_if_due();
+#endif
       if (inFrame) {
         M5.Lcd.endWrite();
         inFrame = false;
@@ -158,9 +248,16 @@ void display_task(void* arg) {
       compute_centered_roi((int)m.w, (int)m.srcH);
       ensure_xmap_roi(/*srcW*/ m.w, /*dstW*/ g_viewW, /*roiX0*/ s_roiX0, /*roiW*/ s_roiW);
       roiInitForSrcW = (int)m.w;
+#if MD_RENDER_LOGS_ENABLED
+      ++s_mdDisplayDiag.roiChanges;
+#endif
     } else {
       ensure_xmap_roi(/*srcW*/ m.w, /*dstW*/ g_viewW, /*roiX0*/ s_roiX0, /*roiW*/ s_roiW);
     }
+
+#if MD_RENDER_LOGS_ENABLED
+    ++s_mdDisplayDiag.scanRecv;
+#endif
 
     if (m.w == g_viewW && s_roiX0 == 0 && s_roiW == m.w) {
       memcpy16(s_lineImg, m.data, g_viewW);
@@ -184,6 +281,11 @@ void display_task(void* arg) {
     int dstY_end  = g_viewY0 + (int)((int64_t)relP1 * g_viewH / s_roiH);
 
     int linesToPush = dstY_end - prevDstY;
+#if MD_RENDER_LOGS_ENABLED
+    if (linesToPush > s_mdDisplayDiag.maxLinesToPush) {
+      s_mdDisplayDiag.maxLinesToPush = (uint32_t)linesToPush;
+    }
+#endif
 
     while (linesToPush > 0) {
       int chunk = (linesToPush > 16) ? 16 : linesToPush;
@@ -193,6 +295,9 @@ void display_task(void* arg) {
       }
       prevDstY    += chunk;
       linesToPush -= chunk;
+#if MD_RENDER_LOGS_ENABLED
+      s_mdDisplayDiag.lcdRows += (uint32_t)chunk;
+#endif
       if ((prevDstY & 31) == 0) vTaskDelay(0);
     }
 
@@ -262,7 +367,11 @@ extern "C" void IRAM_ATTR GWENESIS_PUSH_SCANLINE(int line, const uint16_t* src16
   memcpy(m.data, src16, copyW * sizeof(uint16_t));
   if (copyW < FB_W) memset(m.data + copyW, 0, (FB_W - copyW) * sizeof(uint16_t));
 
+#if MD_RENDER_LOGS_ENABLED
+  md_display_send_scan_msg(g_scanQ, &m, portMAX_DELAY);
+#else
   xQueueSend(g_scanQ, &m, portMAX_DELAY);
+#endif
 }
 
 /* End the current frame */
