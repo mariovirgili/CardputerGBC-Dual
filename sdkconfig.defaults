@@ -6,7 +6,10 @@ CONFIG_PARTITION_TABLE_FILENAME="partitions_5m_spiffs_8mb.csv"
 CONFIG_COMPILER_OPTIMIZATION_PERF=y
 CONFIG_COMPILER_CXX_EXCEPTIONS=n
 CONFIG_FREERTOS_HZ=1000
-CONFIG_ESP_MAIN_TASK_STACK_SIZE=16384
+# Main task stack. ESP-IDF default/project baseline before heap slimming was
+# 16384 bytes. Current test value is 12288; restore/increase this here if any
+# foreground emulator core shows stack instability.
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=12288
 # Run app_main/emulator foreground work on CPU1. The display/audio/save helper
 # tasks are explicitly pinned to CPU0 in the emulator backends.
 # CONFIG_ESP_MAIN_TASK_AFFINITY_CPU0 is not set

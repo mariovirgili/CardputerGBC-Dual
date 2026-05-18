@@ -143,6 +143,9 @@ static void logStartupHeapLayoutOnce() {
           &_bss_start, &_bss_end, (unsigned long)(bssEnd - bssStart));
   EMU_LOG("[HEAP][DRAM] heap  %p-%p span=%lu\n",
           &_heap_start, &_heap_end, (unsigned long)(heapEnd - heapStart));
+  EMU_LOG("[HEAP][CONFIG] main_task_stack=%u main_task_affinity=%s\n",
+          (unsigned)CONFIG_ESP_MAIN_TASK_STACK_SIZE,
+          configuredMainTaskAffinityForLog());
   EMU_LOG("[HEAP][REGIONS] internal heap regions follow:\n");
   heap_caps_print_heap_info(MALLOC_CAP_INTERNAL);
 }
