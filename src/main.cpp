@@ -117,7 +117,38 @@ static void logEmulatorCoreUsage(RomType type) {
 #endif
 
 #if EMU_HEAP_LOGS_ENABLED
+extern "C" uint8_t _data_start;
+extern "C" uint8_t _data_end;
+extern "C" uint8_t _bss_start;
+extern "C" uint8_t _bss_end;
+extern "C" uint8_t _heap_start;
+extern "C" uint8_t _heap_end;
+
+static void logStartupHeapLayoutOnce() {
+  static bool printed = false;
+  if (printed) return;
+  printed = true;
+
+  const uintptr_t dataStart = (uintptr_t)&_data_start;
+  const uintptr_t dataEnd = (uintptr_t)&_data_end;
+  const uintptr_t bssStart = (uintptr_t)&_bss_start;
+  const uintptr_t bssEnd = (uintptr_t)&_bss_end;
+  const uintptr_t heapStart = (uintptr_t)&_heap_start;
+  const uintptr_t heapEnd = (uintptr_t)&_heap_end;
+
+  EMU_LOG("[HEAP][DRAM] static sections in 0x3fc... reduce/shape the initial contiguous heap\n");
+  EMU_LOG("[HEAP][DRAM] .data %p-%p size=%lu\n",
+          &_data_start, &_data_end, (unsigned long)(dataEnd - dataStart));
+  EMU_LOG("[HEAP][DRAM] .bss  %p-%p size=%lu\n",
+          &_bss_start, &_bss_end, (unsigned long)(bssEnd - bssStart));
+  EMU_LOG("[HEAP][DRAM] heap  %p-%p span=%lu\n",
+          &_heap_start, &_heap_end, (unsigned long)(heapEnd - heapStart));
+  EMU_LOG("[HEAP][REGIONS] internal heap regions follow:\n");
+  heap_caps_print_heap_info(MALLOC_CAP_INTERNAL);
+}
+
 static void logStartupHeap(const char* label) {
+  logStartupHeapLayoutOnce();
   EMU_LOG("[HEAP] %-24s free=%lu internal=%lu largest=%lu min_free=%lu\n",
           label,
           (unsigned long)esp_get_free_heap_size(),
