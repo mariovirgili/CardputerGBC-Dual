@@ -318,12 +318,14 @@ void run_ngp(const uint8_t* rom_base, size_t rom_size, const char* rom_name, int
   #endif
 
   unsigned long status_last = millis();
-#ifdef NGP_TRACE_LOGS
+#ifdef EMU_LOGS_ENABLED
   unsigned long frames = 0;
-  unsigned long total_frames = 0;
   unsigned long frame_time_total = 0;
   unsigned long frame_time_min = ULONG_MAX;
   unsigned long frame_time_max = 0;
+#endif
+#ifdef NGP_TRACE_LOGS
+  unsigned long total_frames = 0;
 #endif
   const uint32_t TARGET_US = 16667; // 60 Hz
   const uint32_t CPU_CLOCK_HZ = 5700000; // 6 MHz downclocked by 5% (smooth perfs)
@@ -350,7 +352,7 @@ void run_ngp(const uint8_t* rom_base, size_t rom_size, const char* rom_name, int
       
       // Pacing 60 Hz
       uint32_t emuUs = micros() - t0;
-#ifdef NGP_TRACE_LOGS
+#ifdef EMU_LOGS_ENABLED
       frame_time_total += emuUs;
       if (emuUs < frame_time_min) frame_time_min = emuUs;
       if (emuUs > frame_time_max) frame_time_max = emuUs;
@@ -362,19 +364,20 @@ void run_ngp(const uint8_t* rom_base, size_t rom_size, const char* rom_name, int
       }
       
       // Log framerate and do save tick
-#ifdef NGP_TRACE_LOGS
+#ifdef EMU_LOGS_ENABLED
       frames++;
+#endif
+#ifdef NGP_TRACE_LOGS
       total_frames++;
       if (total_frames <= 5 || (total_frames % 60) == 0) {
         ngp_trace_frame(total_frames, emuUs);
       }
 #endif
       if (millis() - status_last >= 2000)
-      if (millis() - status_last >= 2000)
       {
           ngc_save_tick();
 
-#ifdef NGP_TRACE_LOGS
+#ifdef EMU_LOGS_ENABLED
           size_t heap_free = heap_caps_get_free_size(MALLOC_CAP_DEFAULT);
           float avg_ms = frame_time_total / (float)frames / 1000.0f;
           float min_ms = frame_time_min / 1000.0f;

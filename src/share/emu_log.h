@@ -6,6 +6,9 @@
 #include <stdio.h>
 
 #if !defined(EMU_LOGS_ENABLED)
+  #ifdef HEAP_LOGS
+    #undef HEAP_LOGS
+  #endif
   #ifdef BENCHMARK_LOGS
     #undef BENCHMARK_LOGS
   #endif

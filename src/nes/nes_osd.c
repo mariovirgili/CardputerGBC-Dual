@@ -68,7 +68,7 @@ extern void osd_set_rompath_for_saves(const char *p);
 /* This runs on core 0 */
 QueueHandle_t vidQueue;
 
-#ifdef BENCHMARK_LOGS
+#ifdef EMU_LOGS_ENABLED
 static uint32_t s_benchCoreFrames = 0;
 static uint32_t s_benchDrawnFrames = 0;
 static uint32_t s_benchDroppedFrames = 0;
@@ -94,7 +94,7 @@ static void nes_benchmark_log_if_due(void)
         : 0.0f;
     float speedPct = (coreFps / 60.0f) * 100.0f;
 
-    printf(
+    EMU_LOG(
         "[NES][BENCH] core=%.2f fps (%.1f%%) | drawn=%.2f fps | render=%.1f us | drop=%lu | heap=%u\n",
         coreFps,
         speedPct,
@@ -119,11 +119,11 @@ static void displayTask(void *arg)
     while (1) {
         if (xQueueReceive(vidQueue, &bmp, portMAX_DELAY) == pdTRUE) {
             if (!bmp || !bmp->line[0]) { nofrendo_log_printf("OSD: bad bmp\n"); continue; }
-#ifdef BENCHMARK_LOGS
+#ifdef EMU_LOGS_ENABLED
             int64_t renderStart = esp_timer_get_time();
 #endif
             display_write_frame((const uint8_t **)bmp->line);
-#ifdef BENCHMARK_LOGS
+#ifdef EMU_LOGS_ENABLED
             s_benchRenderUs += (uint64_t)(esp_timer_get_time() - renderStart);
             s_benchDrawnFrames++;
             nes_benchmark_log_if_due();
@@ -192,12 +192,12 @@ static void free_write(int num_dirties, rect_t *dirty_rects)
 static void custom_blit(bitmap_t *bmp, int num_dirties, rect_t *dirty_rects)
 {
     (void)num_dirties; (void)dirty_rects;
-#ifdef BENCHMARK_LOGS
+#ifdef EMU_LOGS_ENABLED
     s_benchCoreFrames++;
 #endif
     if (xQueueSend(vidQueue, &bmp, 0) != pdPASS) {
         bitmap_t *tmp; xQueueReceive(vidQueue, &tmp, 0);
-#ifdef BENCHMARK_LOGS
+#ifdef EMU_LOGS_ENABLED
         s_benchDroppedFrames++;
 #endif
         (void)xQueueSend(vidQueue, &bmp, 0);

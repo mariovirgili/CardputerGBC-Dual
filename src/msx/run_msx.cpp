@@ -127,6 +127,10 @@ void run_msx(const uint8_t* rom, size_t len, const char* romName, const char* ro
         for (;;) delay(1000);
     }
 
+#ifdef EMU_LOGS_ENABLED
+    msx_host_perf_reset();
+#endif
+
     if (!StartMSX(mode, 4, 2)) {
         EMU_LOG("[MSX][ERR] StartMSX failed\n");
         for (;;) delay(1000);

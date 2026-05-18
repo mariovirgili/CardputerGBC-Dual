@@ -47,9 +47,9 @@ static void gx4000_perf_tick(void)
 
         unsigned long audioDrop = gx4000_sound_take_drop_count();
         unsigned long displayDrop = gx4000_display_take_drop_count();
-        printf("[GX4-PERF] fps=%lu.%lu audio_drop=%lu display_drop=%lu\n",
-               fps10 / 10UL, fps10 % 10UL,
-               audioDrop, displayDrop);
+        EMU_LOG("[GX4-PERF] fps=%lu.%lu audio_drop=%lu display_drop=%lu\n",
+                fps10 / 10UL, fps10 % 10UL,
+                audioDrop, displayDrop);
 
         s_fpsWindowStartMs = now;
         s_fpsFrameCount = 0;

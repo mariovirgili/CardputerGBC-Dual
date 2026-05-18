@@ -27,6 +27,8 @@
 #include "last_game.h"
 #define RETRO_COMPAT_IMPLEMENTATION
 #include "ngp/race/retro_compat.h"
+#include "esp_heap_caps.h"
+#include "esp_system.h"
 #include "esp_task_wdt.h"
 #include "share/input.h"
 #include "share/emu_log_cpp.h"
@@ -172,6 +174,20 @@ static const char* colecoFlashStatusText(ColecoFlashStatus st) {
   }
 }
 
+#ifdef HEAP_LOGS
+static void heapLogCheckpoint(const char* label) {
+  const uint32_t freeHeap = esp_get_free_heap_size();
+  const uint32_t internalFree = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
+  const uint32_t largestBlock = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL);
+  const uint32_t minHeap = heap_caps_get_minimum_free_size(MALLOC_CAP_8BIT);
+  EMU_LOG("[HEAP] %-22s free=%u internal=%u largest=%u min=%u\n",
+          label, freeHeap, internalFree, largestBlock, minHeap);
+}
+#define HEAP_LOG_POINT(label) heapLogCheckpoint(label)
+#else
+#define HEAP_LOG_POINT(label) ((void)0)
+#endif
+
 #if defined(CONFIG_BT_ENABLED)
 extern "C" bool btInUse(void) {
   return false;
@@ -179,6 +195,8 @@ extern "C" bool btInUse(void) {
 #endif
 
 void setup() {
+  HEAP_LOG_POINT("app_main entry");
+
   // Set high priority for the current task (where the emulator will run)
   vTaskPrioritySet(NULL, 19);
 
@@ -194,10 +212,12 @@ void setup() {
   auto cfg = M5.config();
   cfg.output_power = true;
   M5Cardputer.begin(cfg);
+  HEAP_LOG_POINT("after M5Cardputer.begin");
   CardputerInput input;
   SdService sd;
   CardputerView display;
   display.initialize();
+  HEAP_LOG_POINT("after display.initialize");
 
   // SD
   while (!sd.begin()) {
@@ -205,16 +225,20 @@ void setup() {
     display.subMessage("No SD card found", 1000);
     display.subMessage("Insert SD card", 0);
   }
+  HEAP_LOG_POINT("after SD mount");
 
   std::string romPath;
   auto romFolder = getRomFolderFromNvs(display, input, sd);
+  const bool quittingGame = isQuittingGame();
+  HEAP_LOG_POINT("after NVS");
   romFolder = romFolder.empty() ? "/" : romFolder;
 
-  if (isQuittingGame()) {
+  if (quittingGame) {
     romPath = getRomPath(sd, display, input, romFolder, true);
   } else {
     // Welcome
     display.welcome();
+    HEAP_LOG_POINT("after welcome");
 
     // Try to get last game from NVS or select a new one
     romPath = getLastGameFromNvs(display, input, sd);
@@ -225,6 +249,7 @@ void setup() {
       romPath = "/sd" + romPath; // ensure sd prefix
     }
   }
+  HEAP_LOG_POINT("after ROM selection");
   EMU_LOG("Selected ROM: %s\n", romPath.c_str());
 
   display.topBar("COPYING ROM TO FLASH", false, false);
@@ -257,6 +282,7 @@ void setup() {
         romPath.c_str(), romPart, &mappedSize, CardputerView::copyProgress, &display);
     xipRomSize = mappedSize;
   }
+  HEAP_LOG_POINT("after ROM copy");
 
   if (!copiedToFlash) {
     if (ext == ROM_TYPE_COLECO && colecoStatus != ColecoFlashStatus::TooLarge) {
@@ -306,6 +332,7 @@ void setup() {
   }
   // Register the XIP VFS
   vfs_xip_register();
+  HEAP_LOG_POINT("after XIP map");
   const uint8_t* xipBase = get_rom_ptr();
   const uint8_t* xipRomPtr = xipBase ? xipBase + xipRomOffset : nullptr;
   const size_t xipRunSize = xipRomSize ? xipRomSize : get_rom_size();
@@ -351,11 +378,7 @@ void setup() {
 
   // Initialize I2C M5Stack JoyV2 if any
   share::detectI2cPad();
-  
-#ifdef EMU_LOGS_ENABLED
-  EMU_LOG("HEAP BEFORE EMU: %u bytes\n", esp_get_free_heap_size());
-  EMU_LOG("MAX BLOCK BEFORE EMU: %u bytes\n", heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
-#endif
+  HEAP_LOG_POINT("before emulator");
 
   // Run the emulator
   if (ext == ROM_TYPE_NES) {
@@ -426,6 +449,7 @@ void setup() {
       display.subMessage("Unsupported ROM type", 0);
       while (1) delay(1000);
   }
+  HEAP_LOG_POINT("after emulator");
 }
 
 void loop() {

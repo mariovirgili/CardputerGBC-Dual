@@ -28,6 +28,14 @@ msx_host_view_mode_t msx_host_get_view_mode(void);
 
 int msx_host_prepare_runtime(void);
 
+#ifdef EMU_LOGS_ENABLED
+void msx_host_perf_reset(void);
+void msx_host_perf_note_frame(int renderedFrame, int palVideo, unsigned int uPeriod);
+void msx_host_audio_note_init(unsigned int rate);
+void msx_host_audio_note_render(unsigned int requestedSamples, unsigned int playedSamples, unsigned int freeSamplesBefore);
+void msx_host_audio_note_write(unsigned int requestedSamples, unsigned int writtenSamples, unsigned int queuedBefore);
+#endif
+
 #ifdef __cplusplus
 }
 #endif

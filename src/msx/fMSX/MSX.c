@@ -2210,8 +2210,12 @@ word LoopZ80(Z80 *R)
       VDPStatus[2]&=0xBF;
 
       /* Refresh display */
-      if(UCount>=100) { UCount-=100;RefreshScreen(); }
+      J=UCount>=100;
+      if(J) { UCount-=100;RefreshScreen(); }
       UCount+=UPeriod;
+#ifdef EMU_LOGS_ENABLED
+      msx_host_perf_note_frame(J,PALVideo,UPeriod);
+#endif
 
       /* Blinking for TEXT80 */
       if(BCount) BCount--;
