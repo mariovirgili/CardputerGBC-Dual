@@ -308,6 +308,7 @@ void CardputerView::welcome() {
     Display->setTextSize(TEXT_LARGE);
     drawSplashPulseText(Display, subtitle, subtitleX, subtitleY, kSplashDurationMs);
     M5Cardputer.Speaker.stop(kSplashToneChannel);
+    M5Cardputer.Speaker.end();
 
     Display->setSwapBytes(false);
 }
