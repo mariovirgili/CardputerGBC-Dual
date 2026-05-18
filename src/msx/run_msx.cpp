@@ -21,6 +21,45 @@ extern "C" {
 
 namespace {
 
+static const char* const kMsxBiosPaths[] = {
+    "/sd/msx/MSX.ROM",
+    "/sd/roms/MSX.ROM",
+    "/sd/bios/MSX.ROM",
+    "/sd/MSX.ROM",
+};
+
+static const char* const kMsxBiosDisplayPaths[] = {
+    "/msx/MSX.ROM",
+    "/roms/MSX.ROM",
+    "/bios/MSX.ROM",
+    "/MSX.ROM",
+};
+
+static void show_missing_bios_screen()
+{
+    auto& display = M5Cardputer.Display;
+    display.setRotation(1);
+    display.setSwapBytes(false);
+    display.fillScreen(TFT_BLACK);
+    display.setTextColor(TFT_RED, TFT_BLACK);
+    display.setTextSize(1);
+    display.setCursor(8, 10);
+    display.print("MSX BIOS MISSING");
+
+    display.setTextColor(TFT_WHITE, TFT_BLACK);
+    display.setCursor(8, 30);
+    display.print("Copy MSX.ROM to one of:");
+
+    for (unsigned i = 0; i < sizeof(kMsxBiosDisplayPaths) / sizeof(kMsxBiosDisplayPaths[0]); ++i) {
+        display.setCursor(12, 48 + (int)i * 14);
+        display.print(kMsxBiosDisplayPaths[i]);
+    }
+
+    display.setTextColor(TFT_YELLOW, TFT_BLACK);
+    display.setCursor(8, 116);
+    display.print("Then restart the emulator");
+}
+
 int choose_mode_from_extension(const char* romName)
 {
     const char* dot = romName ? std::strrchr(romName, '.') : nullptr;
@@ -67,7 +106,11 @@ void run_msx(const uint8_t* rom, size_t len, const char* romName, const char* ro
     const int preferred = choose_mode_from_extension(romName);
     const int mode = choose_best_available_mode(preferred);
     if (mode < 0) {
-        EMU_LOG("[MSX][ERR] Missing BIOS. Expected MSX.ROM or full MSX2/MSX2+ sets in /sd/msx, /sd/msx_bios, or /sd/bios/msx\n");
+        EMU_LOG("[MSX][ERR] Missing BIOS. Expected MSX.ROM in:\n");
+        for (unsigned i = 0; i < sizeof(kMsxBiosPaths) / sizeof(kMsxBiosPaths[0]); ++i) {
+            EMU_LOG("[MSX][ERR]   %s\n", kMsxBiosPaths[i]);
+        }
+        show_missing_bios_screen();
         for (;;) delay(1000);
     }
 

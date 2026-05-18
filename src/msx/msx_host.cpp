@@ -7,7 +7,6 @@
 #include <string.h>
 #include <strings.h>
 
-#include "msx_cbios_msx1.h"
 #include "msx_save.h"
 
 namespace msx {
@@ -28,7 +27,6 @@ static void free_bios(void)
         msx::g_host.bios[i].name[0] = '\0';
     }
     msx::g_host.biosCount = 0;
-    msx::g_host.cbiosFallbackActive = false;
 }
 
 static void free_game_names(void)
@@ -68,23 +66,6 @@ static bool bios_loaded(const char* fileName)
     return false;
 }
 
-static bool add_bios_builtin(const char* fileName, const uint8_t* data, unsigned int size)
-{
-    if (!fileName || !*fileName || !data || !size) return false;
-    if (bios_loaded(fileName)) return true;
-    if (msx::g_host.biosCount >= (int)(sizeof(msx::g_host.bios) / sizeof(msx::g_host.bios[0]))) return false;
-
-    msx::BiosBlob& blob = msx::g_host.bios[msx::g_host.biosCount++];
-    strncpy(blob.name, fileName, sizeof(blob.name) - 1);
-    blob.name[sizeof(blob.name) - 1] = '\0';
-    blob.data = data;
-    blob.size = size;
-    blob.ownedHeap = false;
-
-    printf("[MSX] BIOS fallback loaded from built-in C-BIOS: %s\n", fileName);
-    return true;
-}
-
 static bool add_bios_from_sd(const char* fileName)
 {
     if (!fileName || !*fileName) return false;
@@ -93,41 +74,15 @@ static bool add_bios_from_sd(const char* fileName)
 
     static const char* const kBiosDirs[] = {
         "/sd/msx",
-        "/sd/msx_bios",
-        "/sd/bios/msx",
+        "/sd/roms",
         "/sd/bios",
-        "/sd",
-        "/sd/roms/msx",
-        "/sd/roms"
+        "/sd"
     };
 
     char path[128];
     FILE* f = nullptr;
 
-    // First try the current ROM directory.
-    if (msx::g_host.romPath && *msx::g_host.romPath) {
-        const char* slash = strrchr(msx::g_host.romPath, '/');
-        const char* bslash = strrchr(msx::g_host.romPath, '\\');
-        const char* cut = slash > bslash ? slash : bslash;
-        if (cut && cut > msx::g_host.romPath) {
-            const size_t dirLen = (size_t)(cut - msx::g_host.romPath);
-            if (dirLen < sizeof(path) - 16) {
-                memcpy(path, msx::g_host.romPath, dirLen);
-                path[dirLen] = '\0';
-
-                char romDirPath[128];
-                snprintf(romDirPath, sizeof(romDirPath), "%s/%s", path, fileName);
-                f = fopen(romDirPath, "rb");
-                if (f) {
-                    strncpy(path, romDirPath, sizeof(path) - 1);
-                    path[sizeof(path) - 1] = '\0';
-                }
-            }
-        }
-    }
-
     for (unsigned i = 0; i < sizeof(kBiosDirs) / sizeof(kBiosDirs[0]); ++i) {
-        if (f) break;
         snprintf(path, sizeof(path), "%s/%s", kBiosDirs[i], fileName);
         f = fopen(path, "rb");
         if (f) break;
@@ -159,17 +114,7 @@ static bool ensure_bios(const char* fileName)
 {
     if (bios_loaded(fileName)) return true;
 
-    if (add_bios_from_sd(fileName)) {
-        msx::g_host.cbiosFallbackActive = false;
-        return true;
-    }
-
-    if (!strcasecmp(fileName, "MSX.ROM")) {
-        if (add_bios_builtin(fileName, kMsxCbiosMainMsx1Rom, kMsxCbiosMainMsx1RomLen)) {
-            msx::g_host.cbiosFallbackActive = true;
-            return true;
-        }
-    }
+    if (add_bios_from_sd(fileName)) return true;
 
     printf("[MSX] BIOS missing: %s\n", fileName);
     return false;
@@ -255,21 +200,16 @@ extern "C" void msx_host_unload_bios(void)
     free_bios();
 }
 
-extern "C" int msx_host_is_cbios_fallback_active(void)
-{
-    return msx::g_host.cbiosFallbackActive ? 1 : 0;
-}
-
 extern "C" int msx_host_load_bios_for_mode(int mode)
 {
     free_bios();
 
     switch (mode & MSX_MODEL) {
         case MSX_MSX2P:
-            printf("[MSX] MSX2+ BIOS disabled in C-BIOS-only mode\n");
+            printf("[MSX] MSX2+ BIOS disabled\n");
             return 0;
         case MSX_MSX2:
-            printf("[MSX] MSX2 BIOS disabled in C-BIOS-only mode\n");
+            printf("[MSX] MSX2 BIOS disabled\n");
             return 0;
         case MSX_MSX1:
         default:

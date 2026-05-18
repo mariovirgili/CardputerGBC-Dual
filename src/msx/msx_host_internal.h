@@ -63,7 +63,6 @@ struct HostState {
     uint64_t pendingUsec = 0;
     BiosBlob bios[4];
     int biosCount = 0;
-    bool cbiosFallbackActive = false;
 };
 
 extern HostState g_host;
