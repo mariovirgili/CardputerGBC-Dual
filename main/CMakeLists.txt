@@ -30,22 +30,22 @@ set(ENABLE_BENCHMARK_LOGS OFF)
 set(ENABLE_EMU_ALLOW_RAW_PRINTF OFF)
 
 # GWENESIS: Mega Drive render/audio detail logs, requires ENABLE_EMU_LOGS.
-set(ENABLE_MD_LOGS OFF)
+set(ENABLE_MD_LOGS ON)
 set(ENABLE_MD_AUDIO_LOGS OFF)
 set(ENABLE_MD_RENDER_LOGS OFF)
 
 # FMSX: fMSX detail logs, requires ENABLE_EMU_LOGS.
-set(ENABLE_MSX_LOGS OFF)
+set(ENABLE_MSX_LOGS ON)
 
 # SNES: SNES detail logs, requires ENABLE_EMU_LOGS.
 set(ENABLE_SNES_LOGS OFF)
 
 # NES: diagnostic logs, requires ENABLE_EMU_LOGS.
-set(ENABLE_NES_DIAG_LOGS OFF)
+set(ENABLE_NES_DIAG_LOGS ON)
 set(ENABLE_NES_BENCHMARK_LOGS OFF)
 
 # Oswan: WonderSwan detail logs, requires ENABLE_EMU_LOGS.
-set(ENABLE_WS_LOGS OFF)
+set(ENABLE_WS_LOGS ON)
 set(ENABLE_WS_BENCHMARK_LOGS OFF)
 # Oswan: temporary lightweight WS renderer section profiling.
 set(ENABLE_WS_RENDER_PROFILE OFF)
@@ -56,10 +56,10 @@ set(ENABLE_WS_CPU_BRANCH_PROFILE OFF)
 # Oswan: experimental; reduced decode calls but hurt frame time/heap.
 
 # Race (NGP): Neo Geo Pocket trace logs, requires ENABLE_EMU_LOGS.
-set(ENABLE_NGP_TRACE_LOGS OFF)
+set(ENABLE_NGP_TRACE_LOGS ON)
 
 # GX4000/Coleco-SMS: Coleco/SMS detail logs, requires ENABLE_EMU_LOGS.
-set(ENABLE_COLECO_DEBUG_LOGS OFF)
+set(ENABLE_COLECO_DEBUG_LOGS ON)
 
 # ---==  CORE COMPILE OPTIONS SECTION:  ==---
 # Core compile-definition switches. Defaults mirror the current firmware build;
@@ -149,6 +149,17 @@ set(ENABLE_GX4000_CPC_NODEBUGGER ON)
 set(ENABLE_GX4000_TRIM_NONPLUS ON)
 # Strip cassette/floppy/printer paths for cart-only GX4000.
 set(ENABLE_GX4000_CART_ONLY ON)
+
+# Selective LTO. Start with isolated/stable cores so benchmarks can compare
+# flash size, FPS, and audio before extending this to more fragile cores.
+# Use fat LTO objects here: pure slim LTO currently leaves the ESP-IDF/PlatformIO
+# Windows linker asking for the LTO plugin and drops the core symbols at link.
+set(ENABLE_GX4000_LTO ON)
+set(ENABLE_SMS_LTO ON)
+set(ENABLE_NES_LTO ON)
+set(ENABLE_A2600_LTO ON)
+set(ENABLE_A7800_LTO ON)
+set(ENABLE_EXPLICIT_LTO_PLUGIN OFF)
 
 file(GLOB_RECURSE APP_HEADERS
     "${SRC_ROOT}/*.h"
@@ -312,6 +323,19 @@ function(add_source_compile_defs)
     endforeach()
 endfunction()
 
+function(add_source_compile_opts)
+    set(options)
+    set(one_value_args)
+    set(multi_value_args OPTIONS SOURCES)
+    cmake_parse_arguments(SRCOPT "${options}" "${one_value_args}" "${multi_value_args}" ${ARGN})
+
+    foreach(src ${SRCOPT_SOURCES})
+        if(EXISTS "${src}")
+            set_property(SOURCE "${src}" APPEND PROPERTY COMPILE_OPTIONS ${SRCOPT_OPTIONS})
+        endif()
+    endforeach()
+endfunction()
+
 set(GENERAL_LOG_SRCS
     "${SRC_ROOT}/main.cpp"
     "${SRC_ROOT}/share/input.cpp"
@@ -435,6 +459,67 @@ set(COLECO_DEBUG_LOG_SRCS
     "${SRC_ROOT}/sms/run_sms.cpp"
     "${SRC_ROOT}/sms/smsplus/sms.c"
 )
+
+file(GLOB_RECURSE GX4000_LTO_SRCS
+    "${SRC_ROOT}/gx4000/*.c"
+    "${SRC_ROOT}/gx4000/*.cpp"
+)
+
+file(GLOB_RECURSE SMS_LTO_SRCS
+    "${SRC_ROOT}/sms/*.c"
+    "${SRC_ROOT}/sms/*.cpp"
+)
+
+file(GLOB_RECURSE NES_LTO_SRCS
+    "${SRC_ROOT}/nes/*.c"
+    "${SRC_ROOT}/nes/*.cpp"
+    "${LIB_ROOT}/arduino-nofrendo/src/*.c"
+)
+
+file(GLOB_RECURSE A2600_LTO_SRCS
+    "${SRC_ROOT}/atari2600/*.c"
+    "${SRC_ROOT}/atari2600/*.cpp"
+)
+
+file(GLOB_RECURSE A7800_LTO_SRCS
+    "${SRC_ROOT}/atari7800/*.c"
+    "${SRC_ROOT}/atari7800/*.cpp"
+)
+
+if(ENABLE_GX4000_LTO)
+    add_source_compile_opts(OPTIONS -flto -ffat-lto-objects SOURCES ${GX4000_LTO_SRCS})
+endif()
+
+if(ENABLE_SMS_LTO)
+    add_source_compile_opts(OPTIONS -flto -ffat-lto-objects SOURCES ${SMS_LTO_SRCS})
+endif()
+
+if(ENABLE_NES_LTO)
+    add_source_compile_opts(OPTIONS -flto -ffat-lto-objects SOURCES ${NES_LTO_SRCS})
+endif()
+
+if(ENABLE_A2600_LTO)
+    add_source_compile_opts(OPTIONS -flto -ffat-lto-objects SOURCES ${A2600_LTO_SRCS})
+endif()
+
+if(ENABLE_A7800_LTO)
+    add_source_compile_opts(OPTIONS -flto -ffat-lto-objects SOURCES ${A7800_LTO_SRCS})
+endif()
+
+if(ENABLE_GX4000_LTO OR ENABLE_SMS_LTO OR ENABLE_NES_LTO OR ENABLE_A2600_LTO OR ENABLE_A7800_LTO)
+    idf_build_set_property(LINK_OPTIONS "-flto" APPEND)
+    idf_build_set_property(LINK_OPTIONS "-fuse-linker-plugin" APPEND)
+    if(ENABLE_EXPLICIT_LTO_PLUGIN)
+        execute_process(
+            COMMAND ${CMAKE_C_COMPILER} -print-file-name=liblto_plugin.dll
+            OUTPUT_VARIABLE LTO_PLUGIN_PATH
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+        )
+        if(EXISTS "${LTO_PLUGIN_PATH}")
+            idf_build_set_property(LINK_OPTIONS "-Wl,-plugin,${LTO_PLUGIN_PATH}" APPEND)
+        endif()
+    endif()
+endif()
 
 if(ENABLE_EMU_LOGS)
     add_source_compile_defs(DEFINITIONS EMU_LOGS_ENABLED SOURCES ${GENERAL_LOG_SRCS})
