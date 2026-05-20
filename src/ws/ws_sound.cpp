@@ -42,7 +42,11 @@ static volatile uint32_t s_statMissingMax = 0;
 static volatile uint32_t s_statQueueDepth[3] = { 0, 0, 0 };
 static volatile uint32_t s_statPostQueueDepth[3] = { 0, 0, 0 };
 static volatile uint32_t s_statPlayFails = 0;
-#define WS_SOUND_BENCH_INC(field)       (field++)
+static inline void ws_sound_bench_inc(volatile uint32_t& field)
+{
+  field = (uint32_t)(field + 1u);
+}
+#define WS_SOUND_BENCH_INC(field)       ws_sound_bench_inc(field)
 #define WS_SOUND_BENCH_ADD(field, val)  (field += (uint32_t)(val))
 #define WS_SOUND_BENCH_MAX(field, val)  do { uint32_t _v = (uint32_t)(val); if (_v > field) field = _v; } while (0)
 #define WS_SOUND_BENCH_MIN(field, val)  do { uint32_t _v = (uint32_t)(val); if (_v < field) field = _v; } while (0)
@@ -152,7 +156,7 @@ static inline bool queue_block(const int16_t* pcm) {
   if (!ok) WS_SOUND_BENCH_INC(s_statPlayFails);
 #ifdef WS_BENCHMARK_LOGS
   size_t queued = M5Cardputer.Speaker.isPlaying(kChannel);
-  s_statPostQueueDepth[queued < 2 ? queued : 2]++;
+  WS_SOUND_BENCH_INC(s_statPostQueueDepth[queued < 2 ? queued : 2]);
 #endif
   return ok;
 }
@@ -211,7 +215,7 @@ extern "C" void ws_sound_frame(void) {
   size_t queued = M5Cardputer.Speaker.isPlaying(kChannel);
   WS_SOUND_BENCH_MAX(s_statMaxQueueDepth, queued);
 #ifdef WS_BENCHMARK_LOGS
-  s_statQueueDepth[queued < 2 ? queued : 2]++;
+  WS_SOUND_BENCH_INC(s_statQueueDepth[queued < 2 ? queued : 2]);
 #endif
 
   if (queued == 0) {

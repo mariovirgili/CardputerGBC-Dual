@@ -56,6 +56,10 @@ static volatile uint32_t s_statFrames = 0;
 static volatile uint32_t s_statTotalUs = 0;
 static volatile uint32_t s_statMaxUs = 0;
 static volatile uint32_t s_statPendingNotifications = 0;
+static inline void ws_stat_inc(volatile uint32_t& field)
+{
+  field = (uint32_t)(field + 1u);
+}
 #endif
 
 // -----------------------------------------------------------------------------
@@ -191,7 +195,7 @@ static void ws_display_task(void* arg)
     ws_render_one_frame();
 #ifdef WS_BENCHMARK_LOGS
     uint32_t us = (uint32_t)(esp_timer_get_time() - t0);
-    s_statFrames++;
+    ws_stat_inc(s_statFrames);
     s_statTotalUs += us;
     if (us > s_statMaxUs) s_statMaxUs = us;
 #endif
