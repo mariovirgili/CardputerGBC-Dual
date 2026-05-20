@@ -392,6 +392,16 @@ static void showColecoFlashError(CardputerView& display, ColecoFlashStatus st) {
   }
 }
 
+static void showRomLimitThenReturn(CardputerView& display) {
+  for (int i = 0; i < 2; ++i) {
+    display.topBar("ROM IS TOO HEAVY", false, false);
+    display.subMessage("Copy ROM to flash failed", 1500);
+    display.subMessage("ROM limit is reached", 1500);
+  }
+  display.topBar("LOAD ROM CARTRIDGE", false, false);
+  display.subMessage("Returning to selector", 1000);
+}
+
 #if defined(CONFIG_BT_ENABLED)
 extern "C" bool btInUse(void) {
   return false;
@@ -469,111 +479,127 @@ extern "C" void app_main(void) {
   BOOT_LOG("SD", "mounted");
   logStartupHeap("after SD mount");
 
-  std::string romPath;
   auto romFolder = getRomFolderFromNvs(display, input, sd);
   romFolder = romFolder.empty() ? "/" : romFolder;
   BOOT_LOG("MENU", "ROM folder='%s'", romFolder.c_str());
 
-  if (isQuittingGame()) {
-    romPath = getRomPath(sd, display, input, romFolder, true);
-  } else {
-    // Welcome
-    display.welcome();
-    logStartupHeap("after welcome");
-
-    // Try to get last game from NVS or select a new one
-    romPath = getLastGameFromNvs(display, input, sd);
-    if (romPath.empty()) {
-      auto skipWelcome = romFolder == "/" ? false : true;
-      romPath = getRomPath(sd, display, input, romFolder, skipWelcome);
-    } else {
-      romPath = "/sd" + romPath; // ensure sd prefix
-    }
-  }
-  EMU_LOG("Selected ROM: %s\n", romPath.c_str());
-  BOOT_LOG("MENU", "selected ROM='%s'", romPath.c_str());
-  logStartupHeap("after ROM selection");
-
-  display.topBar("COPYING ROM TO FLASH", false, false);
-  display.subMessage("Loading...", 0);
-  auto ext = getRomType(romPath);
-  BOOT_LOG("ROM", "type=%d", (int)ext);
-  if (ext == ROM_TYPE_UNKNOWN) {
-    while (1) {
-      display.topBar("UNSUPPORTED ROM", false, false);
-      display.subMessage("Select a supported file", 1500);
-    }
-  }
-  
-  // Find the rom partition (SPIFFS)
-  BOOT_LOG("FLASH", "finding ROM partition");
-  const esp_partition_t* romPart = findRomPartition("spiffs");
-  if (!romPart) {
-    BOOT_LOG("FLASH", "ROM partition not found");
-    while (1) {
-      display.topBar("ERROR", false, false);
-      display.subMessage("No ROM partition", 0);
-      delay(1500);
-    }
-  }
-  BOOT_LOG("FLASH", "ROM partition offset=0x%08lx size=%lu",
-           (unsigned long)romPart->address, (unsigned long)romPart->size);
-
-  // Copy the ROM file to the partition
+  std::string romPath;
+  RomType ext = ROM_TYPE_UNKNOWN;
+  const esp_partition_t* romPart = nullptr;
   size_t mappedSize = 0;
   size_t xipRomOffset = 0;
   size_t xipRomSize = 0;
   ColecoFlashStatus colecoStatus = ColecoFlashStatus::Ok;
   bool copiedToFlash = false;
-  BOOT_LOG("FLASH", "copy to partition start");
-  if (ext == ROM_TYPE_COLECO) {
-    colecoStatus = copyColecoBundleToPartition(
-        romPath, romPart, &mappedSize, &xipRomOffset, &xipRomSize,
-        CardputerView::copyProgress, &display);
-    copiedToFlash = (colecoStatus == ColecoFlashStatus::Ok);
-  } else {
-    copiedToFlash = copyFileToPartition(
-        romPath.c_str(), romPart, &mappedSize, CardputerView::copyProgress, &display);
-    xipRomSize = mappedSize;
-  }
-  BOOT_LOG("FLASH", "copy done ok=%d mapped=%lu rom_offset=%lu rom_size=%lu status=%d",
-           copiedToFlash ? 1 : 0,
-           (unsigned long)mappedSize,
-           (unsigned long)xipRomOffset,
-           (unsigned long)xipRomSize,
-           (int)colecoStatus);
-  logStartupHeap("after ROM copy");
+  bool forceRomSelector = false;
 
-  if (!copiedToFlash) {
-    if (ext == ROM_TYPE_COLECO && colecoStatus != ColecoFlashStatus::TooLarge) {
-      showColecoFlashError(display, colecoStatus);
-    }
-    // User is using the launcher
-    if (isLauncherLayout()) {
-      // Ask to flash the launcher Game Station partition to unlock full size
-      ConfirmationSelector confirm(display, input);
-      bool confirmed = confirm.select("ROM IS TOO HEAVY", "Change to 4MB layout?");
-      
-      if (confirmed) {
-        display.topBar("FLASHING PARTITIONS", false, false);
-        display.subMessage("Allow up to 4MB roms", 3000);
-        auto ok = flashGameStationPartition();
-        if (ok) {
-          display.subMessage("Success, rebooting...", 3000);
-          saveLastGameToNvs(romPath);
-          esp_restart();
-        } else {
-          display.subMessage("Partition flashing failed", 3000);
-        }
+  for (;;) {
+    if (forceRomSelector) {
+      romPath = getRomPath(sd, display, input, romFolder, true);
+      forceRomSelector = false;
+    } else if (isQuittingGame()) {
+      romPath = getRomPath(sd, display, input, romFolder, true);
+    } else {
+      // Welcome
+      display.welcome();
+      logStartupHeap("after welcome");
+
+      // Try to get last game from NVS or select a new one
+      romPath = getLastGameFromNvs(display, input, sd);
+      if (romPath.empty()) {
+        auto skipWelcome = romFolder == "/" ? false : true;
+        romPath = getRomPath(sd, display, input, romFolder, skipWelcome);
+      } else {
+        romPath = "/sd" + romPath; // ensure sd prefix
       }
     }
-    // Rom limit is reached (either launcher default 1MB/4MB or normal 5.5MB)
-    while (1) {
-        display.topBar("ROM IS TOO HEAVY", false, false);
-        display.subMessage("Copy ROM to flash failed", 1500);
-        display.subMessage("ROM limit is reached", 1500);
-        delay(1500);
+
+    EMU_LOG("Selected ROM: %s\n", romPath.c_str());
+    BOOT_LOG("MENU", "selected ROM='%s'", romPath.c_str());
+    logStartupHeap("after ROM selection");
+
+    display.topBar("COPYING ROM TO FLASH", false, false);
+    display.subMessage("Loading...", 0);
+    ext = getRomType(romPath);
+    BOOT_LOG("ROM", "type=%d", (int)ext);
+    if (ext == ROM_TYPE_UNKNOWN) {
+      while (1) {
+        display.topBar("UNSUPPORTED ROM", false, false);
+        display.subMessage("Select a supported file", 1500);
+      }
     }
+  
+    // Find the rom partition (SPIFFS)
+    BOOT_LOG("FLASH", "finding ROM partition");
+    romPart = findRomPartition("spiffs");
+    if (!romPart) {
+      BOOT_LOG("FLASH", "ROM partition not found");
+      while (1) {
+        display.topBar("ERROR", false, false);
+        display.subMessage("No ROM partition", 0);
+        delay(1500);
+      }
+    }
+    BOOT_LOG("FLASH", "ROM partition offset=0x%08lx size=%lu",
+             (unsigned long)romPart->address, (unsigned long)romPart->size);
+
+    // Copy the ROM file to the partition
+    mappedSize = 0;
+    xipRomOffset = 0;
+    xipRomSize = 0;
+    colecoStatus = ColecoFlashStatus::Ok;
+    copiedToFlash = false;
+    BOOT_LOG("FLASH", "copy to partition start");
+    if (ext == ROM_TYPE_COLECO) {
+      colecoStatus = copyColecoBundleToPartition(
+          romPath, romPart, &mappedSize, &xipRomOffset, &xipRomSize,
+          CardputerView::copyProgress, &display);
+      copiedToFlash = (colecoStatus == ColecoFlashStatus::Ok);
+    } else {
+      copiedToFlash = copyFileToPartition(
+          romPath.c_str(), romPart, &mappedSize, CardputerView::copyProgress, &display);
+      xipRomSize = mappedSize;
+    }
+    BOOT_LOG("FLASH", "copy done ok=%d mapped=%lu rom_offset=%lu rom_size=%lu status=%d",
+             copiedToFlash ? 1 : 0,
+             (unsigned long)mappedSize,
+             (unsigned long)xipRomOffset,
+             (unsigned long)xipRomSize,
+             (int)colecoStatus);
+    logStartupHeap("after ROM copy");
+
+    if (!copiedToFlash) {
+      if (ext == ROM_TYPE_COLECO && colecoStatus != ColecoFlashStatus::TooLarge) {
+        showColecoFlashError(display, colecoStatus);
+      }
+      // User is using the launcher
+      if (isLauncherLayout()) {
+        // Ask to flash the launcher Game Station partition to unlock full size
+        ConfirmationSelector confirm(display, input);
+        bool confirmed = confirm.select("ROM IS TOO HEAVY", "Change to 4MB layout?");
+        
+        if (confirmed) {
+          display.topBar("FLASHING PARTITIONS", false, false);
+          display.subMessage("Allow up to 4MB roms", 3000);
+          auto ok = flashGameStationPartition();
+          if (ok) {
+            display.subMessage("Success, rebooting...", 3000);
+            saveLastGameToNvs(romPath);
+            esp_restart();
+          } else {
+            display.subMessage("Partition flashing failed", 3000);
+          }
+        }
+      }
+      // ROM limit reached (launcher default 1MB/4MB or normal 5.5MB): show
+      // the error twice and return to the selector instead of trapping boot.
+      showRomLimitThenReturn(display);
+      input.flushInput(10);
+      forceRomSelector = true;
+      continue;
+    }
+
+    break;
   }
 
   BOOT_LOG("INPUT", "flush input before XIP");
