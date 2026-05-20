@@ -79,7 +79,7 @@ static void nes_diag_log_frame(bool draw)
    if (nes_diag_frames > 5 && (nes_diag_frames % 60UL) != 0)
       return;
 
-   EMU_LOG("[NES][FRAME %lu] draw=%u PC=%04lX A=%02X X=%02X Y=%02X S=%02X P=%02X scan=%d jam=%u irq=%u fiq=%u ticks=%d heap=%u largest8=%u\n",
+   EMU_LOG("[NES][FRAME %lu] draw=%u PC=%04lX A=%02X X=%02X Y=%02X S=%02X P=%02X scan=%d jam=%u irq=%u fiq=%u ticks=%d\n",
            nes_diag_frames,
            (unsigned)draw,
            (unsigned long)(cpu_ctx.pc_reg & 0xFFFFU),
@@ -92,9 +92,7 @@ static void nes_diag_log_frame(bool draw)
            (unsigned)cpu_ctx.jammed,
            (unsigned)cpu_ctx.int_pending,
            (unsigned)nes.fiq_state,
-           nofrendo_ticks,
-           (unsigned)heap_caps_get_free_size(MALLOC_CAP_8BIT),
-           (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
+           nofrendo_ticks);
 }
 #endif
 
