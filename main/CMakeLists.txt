@@ -166,6 +166,11 @@ set(ENABLE_SMS_LTO ON)
 set(ENABLE_NES_LTO ON)
 set(ENABLE_A2600_LTO ON)
 set(ENABLE_A7800_LTO ON)
+set(ENABLE_PCE_LTO ON)
+set(ENABLE_GBC_LTO ON)
+set(ENABLE_LYNX_LTO ON)
+set(ENABLE_MSX_LTO ON)
+set(ENABLE_WS_LTO ON)
 set(ENABLE_EXPLICIT_LTO_PLUGIN OFF)
 
 file(GLOB_RECURSE APP_HEADERS
@@ -500,6 +505,31 @@ file(GLOB_RECURSE A7800_LTO_SRCS
     "${SRC_ROOT}/atari7800/*.cpp"
 )
 
+file(GLOB_RECURSE PCE_LTO_SRCS
+    "${SRC_ROOT}/pce/*.c"
+    "${SRC_ROOT}/pce/*.cpp"
+)
+
+file(GLOB_RECURSE GBC_LTO_SRCS
+    "${SRC_ROOT}/gbc/*.c"
+    "${SRC_ROOT}/gbc/*.cpp"
+)
+
+file(GLOB_RECURSE LYNX_LTO_SRCS
+    "${SRC_ROOT}/lynx/*.c"
+    "${SRC_ROOT}/lynx/*.cpp"
+)
+
+file(GLOB_RECURSE MSX_LTO_SRCS
+    "${SRC_ROOT}/msx/*.c"
+    "${SRC_ROOT}/msx/*.cpp"
+)
+
+file(GLOB_RECURSE WS_LTO_SRCS
+    "${SRC_ROOT}/ws/*.c"
+    "${SRC_ROOT}/ws/*.cpp"
+)
+
 if(ENABLE_GX4000_LTO)
     add_source_compile_opts(OPTIONS -flto -ffat-lto-objects SOURCES ${GX4000_LTO_SRCS})
 endif()
@@ -520,7 +550,27 @@ if(ENABLE_A7800_LTO)
     add_source_compile_opts(OPTIONS -flto -ffat-lto-objects SOURCES ${A7800_LTO_SRCS})
 endif()
 
-if(ENABLE_GX4000_LTO OR ENABLE_SMS_LTO OR ENABLE_NES_LTO OR ENABLE_A2600_LTO OR ENABLE_A7800_LTO)
+if(ENABLE_PCE_LTO)
+    add_source_compile_opts(OPTIONS -flto -ffat-lto-objects SOURCES ${PCE_LTO_SRCS})
+endif()
+
+if(ENABLE_GBC_LTO)
+    add_source_compile_opts(OPTIONS -flto -ffat-lto-objects SOURCES ${GBC_LTO_SRCS})
+endif()
+
+if(ENABLE_LYNX_LTO)
+    add_source_compile_opts(OPTIONS -flto -ffat-lto-objects SOURCES ${LYNX_LTO_SRCS})
+endif()
+
+if(ENABLE_MSX_LTO)
+    add_source_compile_opts(OPTIONS -flto -ffat-lto-objects SOURCES ${MSX_LTO_SRCS})
+endif()
+
+if(ENABLE_WS_LTO)
+    add_source_compile_opts(OPTIONS -flto -ffat-lto-objects SOURCES ${WS_LTO_SRCS})
+endif()
+
+if(ENABLE_GX4000_LTO OR ENABLE_SMS_LTO OR ENABLE_NES_LTO OR ENABLE_A2600_LTO OR ENABLE_A7800_LTO OR ENABLE_PCE_LTO OR ENABLE_GBC_LTO OR ENABLE_LYNX_LTO OR ENABLE_MSX_LTO OR ENABLE_WS_LTO)
     idf_build_set_property(LINK_OPTIONS "-flto" APPEND)
     idf_build_set_property(LINK_OPTIONS "-fuse-linker-plugin" APPEND)
     if(ENABLE_EXPLICIT_LTO_PLUGIN)
