@@ -20,7 +20,9 @@
 #include "genesis/run_genesis.h"
 #include "gbc/run_gbc.h"
 #include "msx/run_msx.h"
+#ifdef SNES_CORE_ENABLED
 #include "snes/run_snes.h"
+#endif
 #include "atari7800/run_a7800.h"
 #include "atari2600/run_a2600.h"
 #include "gx4000/run_gx4000.h"
@@ -496,6 +498,12 @@ extern "C" void app_main(void) {
   display.subMessage("Loading...", 0);
   auto ext = getRomType(romPath);
   BOOT_LOG("ROM", "type=%d", (int)ext);
+  if (ext == ROM_TYPE_UNKNOWN) {
+    while (1) {
+      display.topBar("UNSUPPORTED ROM", false, false);
+      display.subMessage("Select a supported file", 1500);
+    }
+  }
   
   // Find the rom partition (SPIFFS)
   BOOT_LOG("FLASH", "finding ROM partition");
@@ -594,7 +602,9 @@ extern "C" void app_main(void) {
   // Show keymapping
   display.topBar("- + SOUND [ ] BRIGHT", false, false);
   int numButtons = (ext == ROM_TYPE_GENESIS) ? 3 : 2;
+#ifdef SNES_CORE_ENABLED
   numButtons = (ext == ROM_TYPE_SNES) ? 6 : numButtons;
+#endif
   display.showKeymapping(numButtons);
 
   // Wait for key press or show tips
@@ -686,12 +696,14 @@ extern "C" void app_main(void) {
       // --- Lynx ---
       run_lynx(get_rom_ptr(), get_rom_size(), romName.c_str());
   }
+#ifdef SNES_CORE_ENABLED
   else if (ext == ROM_TYPE_SNES) {
       // --- SNES / Super Famicom ---
       display.displaySnesInfo();
       input.waitPress();
       run_snes(get_rom_ptr(), get_rom_size(), romName.c_str());
   }
+#endif
   else if (ext == ROM_TYPE_MSX) {
       // --- MSX ---
       display.displayMsxInfo();

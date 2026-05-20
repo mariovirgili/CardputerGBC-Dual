@@ -1082,7 +1082,9 @@ uint16_t CardputerView::colorForExt(const std::string& extRaw) const {
     if (ext == ".pce") return PCE_COLOR;
     if (ext == ".gb" || ext == ".gbc") return GAMEBOY_COLOR;
     if (ext == ".lnx") return LYNX_COLOR;
+#ifdef SNES_CORE_ENABLED
     if (ext == ".sfc" || ext == ".smc") return SNES_COLOR;
+#endif
     if (ext == ".mx1" || ext == ".rom") return MSX1_COLOR;
     if (ext == ".a78") return ATARI_COLOR;
     if (ext == ".a26") return ATARI_COLOR;

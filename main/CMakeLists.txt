@@ -2,6 +2,10 @@ get_filename_component(APP_ROOT "${CMAKE_CURRENT_LIST_DIR}/.." REALPATH)
 set(SRC_ROOT "${APP_ROOT}/src")
 set(LIB_ROOT "${APP_ROOT}/lib")
 
+# Core inclusion switches. Disabled cores keep their source code in the tree,
+# but are not compiled, advertised, or launchable.
+set(ENABLE_SNES_CORE OFF)
+
 file(GLOB_RECURSE APP_SRCS
     "${SRC_ROOT}/*.c"
     "${SRC_ROOT}/*.cpp"
@@ -12,6 +16,9 @@ file(GLOB_RECURSE APP_SRCS
 list(FILTER APP_SRCS EXCLUDE REGEX ".*/examples/.*")
 list(FILTER APP_SRCS EXCLUDE REGEX ".*/tests/.*")
 list(FILTER APP_SRCS EXCLUDE REGEX ".*/docs/.*")
+if(NOT ENABLE_SNES_CORE)
+    list(FILTER APP_SRCS EXCLUDE REGEX ".*/src/snes/.*")
+endif()
 
 # Local logging switches. Keep these here, not in platformio.ini, so toggling
 # a diagnostic path only rebuilds the source files that actually use it.
@@ -41,12 +48,12 @@ set(ENABLE_MSX_LOGS ON)
 set(ENABLE_SNES_LOGS OFF)
 
 # NES: diagnostic logs, requires ENABLE_EMU_LOGS.
-set(ENABLE_NES_DIAG_LOGS ON)
-set(ENABLE_NES_BENCHMARK_LOGS OFF)
+set(ENABLE_NES_DIAG_LOGS OFF)
+set(ENABLE_NES_BENCHMARK_LOGS ON)
 
 # Oswan: WonderSwan detail logs, requires ENABLE_EMU_LOGS.
 set(ENABLE_WS_LOGS ON)
-set(ENABLE_WS_BENCHMARK_LOGS OFF)
+set(ENABLE_WS_BENCHMARK_LOGS ON)
 # Oswan: temporary lightweight WS renderer section profiling.
 set(ENABLE_WS_RENDER_PROFILE OFF)
 # Oswan: temporary log hot NEC opcodes for IRAM slimming.
@@ -56,10 +63,10 @@ set(ENABLE_WS_CPU_BRANCH_PROFILE OFF)
 # Oswan: experimental; reduced decode calls but hurt frame time/heap.
 
 # Race (NGP): Neo Geo Pocket trace logs, requires ENABLE_EMU_LOGS.
-set(ENABLE_NGP_TRACE_LOGS ON)
+set(ENABLE_NGP_TRACE_LOGS OFF)
 
 # GX4000/Coleco-SMS: Coleco/SMS detail logs, requires ENABLE_EMU_LOGS.
-set(ENABLE_COLECO_DEBUG_LOGS ON)
+set(ENABLE_COLECO_DEBUG_LOGS OFF)
 
 # ---==  CORE COMPILE OPTIONS SECTION:  ==---
 # Core compile-definition switches. Defaults mirror the current firmware build;
@@ -177,6 +184,9 @@ foreach(header ${APP_HEADERS})
 endforeach()
 list(REMOVE_DUPLICATES APP_INCLUDE_DIRS)
 list(FILTER APP_INCLUDE_DIRS EXCLUDE REGEX ".*/compat/msvc$")
+if(NOT ENABLE_SNES_CORE)
+    list(FILTER APP_INCLUDE_DIRS EXCLUDE REGEX ".*/src/snes($|/.*)")
+endif()
 
 idf_component_register(
     SRCS ${APP_SRCS}
@@ -208,6 +218,8 @@ function(add_private_define_if enable_var definition)
     endif()
 endfunction()
 
+add_private_define_if(ENABLE_SNES_CORE SNES_CORE_ENABLED=1)
+
 # Race (NGP)
 add_private_define_if(ENABLE_NGP_USE_CZ80 USE_CZ80=1)
 add_private_define_if(ENABLE_NGP_CZ80 CZ80=1)
@@ -233,14 +245,16 @@ add_private_define_if(ENABLE_WS_CPU_SAFE_POLL_WAIT_FASTPATH WS_CPU_SAFE_POLL_WAI
 # Oswan: test only; keep 8 ms blocks, refill/check speaker queue twice as often.
 add_private_define_if(ENABLE_WS_AUDIO_POLL_MS WS_AUDIO_POLL_MS=4)
 
-# SNES
-add_private_define_if(ENABLE_SNES_NO_ZERO_LUT NO_ZERO_LUT)
-# SNES: Disable sound support.
-add_private_define_if(ENABLE_SNES_NO_SOUND SNES_NO_SOUND)
-add_private_define_if(ENABLE_SNES_NO_APU SNES_NO_APU)
-add_private_define_if(ENABLE_SNES_NO_BYTE2000 SNES_NO_BYTE2000)
-add_private_define_if(ENABLE_SNES_NO_THREADED_INPUT SNES_NO_THREADED_INPUT)
-add_private_define_if(ENABLE_SNES_NO_THREADED_SAVE SNES_NO_THREADED_SAVE)
+if(ENABLE_SNES_CORE)
+    # SNES
+    add_private_define_if(ENABLE_SNES_NO_ZERO_LUT NO_ZERO_LUT)
+    # SNES: Disable sound support.
+    add_private_define_if(ENABLE_SNES_NO_SOUND SNES_NO_SOUND)
+    add_private_define_if(ENABLE_SNES_NO_APU SNES_NO_APU)
+    add_private_define_if(ENABLE_SNES_NO_BYTE2000 SNES_NO_BYTE2000)
+    add_private_define_if(ENABLE_SNES_NO_THREADED_INPUT SNES_NO_THREADED_INPUT)
+    add_private_define_if(ENABLE_SNES_NO_THREADED_SAVE SNES_NO_THREADED_SAVE)
+endif()
 
 # Global
 add_private_define_if(ENABLE_CORE_DEBUG_LEVEL_DEFINE CORE_DEBUG_LEVEL=0)
@@ -556,7 +570,7 @@ if(ENABLE_MSX_LOGS)
     add_source_compile_defs(DEFINITIONS EMU_LOGS_ENABLED MSX_LOGS SOURCES ${MSX_LOG_SRCS})
 endif()
 
-if(ENABLE_SNES_LOGS)
+if(ENABLE_SNES_CORE AND ENABLE_SNES_LOGS)
     add_source_compile_defs(DEFINITIONS EMU_LOGS_ENABLED SNES_LOGS SOURCES "${SRC_ROOT}/snes/run_snes.cpp")
 endif()
 

@@ -142,7 +142,11 @@ static inline bool hasRomExt(const std::string& path) {
     for (auto &ch : ext)
         ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
 
-    return (ext == "nes" || ext == "gg" || ext == "sms" || ext == "sg" || ext == "sc" || ext == "col" || ext == "ngc" || ext == "ngp" || ext == "md" || ext == "ws" || ext == "wsc" || ext == "pce" || ext == "gb" || ext == "gbc" || ext == "lnx" || ext == "sfc" || ext == "smc" || ext == "rom" || ext == "mx1" || ext == "a78" || ext == "a26" || ext == "cpr");
+    return (ext == "nes" || ext == "gg" || ext == "sms" || ext == "sg" || ext == "sc" || ext == "col" || ext == "ngc" || ext == "ngp" || ext == "md" || ext == "ws" || ext == "wsc" || ext == "pce" || ext == "gb" || ext == "gbc" || ext == "lnx"
+#ifdef SNES_CORE_ENABLED
+            || ext == "sfc" || ext == "smc"
+#endif
+            || ext == "rom" || ext == "mx1" || ext == "a78" || ext == "a26" || ext == "cpr");
 }
 
 static inline int detectNeoGeoPocketFromRom(const uint8_t* rom, size_t size, const std::string& filepath)
@@ -202,8 +206,10 @@ RomType getRomType(const std::string& path) {
     if (ext == "pce")  return ROM_TYPE_PCE;
     if (ext == "gb" || ext == "gbc") return ROM_TYPE_GB;
     if (ext == "lnx") return ROM_TYPE_LYNX;
+#ifdef SNES_CORE_ENABLED
     if (ext == "sfc") return ROM_TYPE_SNES;
     if (ext == "smc") return ROM_TYPE_SNES;
+#endif
     if (ext == "rom" || ext == "mx1") return ROM_TYPE_MSX;
     if (ext == "a78") return ROM_TYPE_ATARI7800;
     if (ext == "a26") return ROM_TYPE_ATARI2600;
@@ -214,7 +220,11 @@ RomType getRomType(const std::string& path) {
 
 static inline std::string getRomPath(SdService& sdService, CardputerView& display, CardputerInput& input, const std::string& initialFolder = "/", bool skipWelcome = false) {
     VerticalSelector verticalSelector(display, input);
-    std::vector<std::string> supportedExts = {".nes", ".gb", ".gbc", ".sfc", ".sms", ".gg", ".sg", ".md", ".col", ".ngp", ".ngc", ".ws", ".wsc", ".pce", ".lnx", ".mx1", ".a26", ".a78", ".cpr"};
+    std::vector<std::string> supportedExts = {".nes", ".gb", ".gbc",
+#ifdef SNES_CORE_ENABLED
+        ".sfc", ".smc",
+#endif
+        ".sms", ".gg", ".sg", ".md", ".col", ".ngp", ".ngc", ".ws", ".wsc", ".pce", ".lnx", ".mx1", ".a26", ".a78", ".cpr"};
 
     display.initialize();
 
