@@ -88,7 +88,11 @@ static const char* emulatorHelperCoresForLog(RomType type) {
     case ROM_TYPE_GB:
       return "display/audio/save=CPU0";
     case ROM_TYPE_SNES:
+#if defined(SNES_DISPLAY_ON_MAIN)
+      return "display/input/save=main";
+#else
       return "display=CPU0,input/save=main";
+#endif
     case ROM_TYPE_MSX:
       return "none";
     case ROM_TYPE_UNKNOWN:

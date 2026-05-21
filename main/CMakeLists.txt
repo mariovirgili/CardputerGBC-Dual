@@ -4,7 +4,7 @@ set(LIB_ROOT "${APP_ROOT}/lib")
 
 # Core inclusion switches. Disabled cores keep their source code in the tree,
 # but are not compiled, advertised, or launchable.
-set(ENABLE_SNES_CORE OFF)
+set(ENABLE_SNES_CORE ON)
 
 file(GLOB_RECURSE APP_SRCS
     "${SRC_ROOT}/*.c"
@@ -45,7 +45,7 @@ set(ENABLE_MD_RENDER_LOGS OFF)
 set(ENABLE_MSX_LOGS ON)
 
 # SNES: SNES detail logs, requires ENABLE_EMU_LOGS.
-set(ENABLE_SNES_LOGS OFF)
+set(ENABLE_SNES_LOGS ON)
 
 # NES: diagnostic logs, requires ENABLE_EMU_LOGS.
 set(ENABLE_NES_DIAG_LOGS OFF)
@@ -102,7 +102,7 @@ set(ENABLE_WS_CPU_SAFE_POLL_WAIT_FASTPATH ON)
 set(ENABLE_WS_AUDIO_POLL_MS ON)
 set(ENABLE_WS_TILE_ROW_CACHE OFF)
 set(WS_TILE_ROW_CACHE_ENTRIES 2048)
-set(ENABLE_WS_PPU_IRAM ON)
+set(ENABLE_WS_PPU_IRAM OFF)
 set(ENABLE_WS_APU_IRAM OFF)
 set(ENABLE_WS_CORE_IRAM OFF)
 # test only; default period is 8 ms. Leave empty to use the core default.
@@ -118,6 +118,7 @@ set(ENABLE_SNES_NO_ZERO_LUT ON)
 set(ENABLE_SNES_NO_SOUND ON)
 set(ENABLE_SNES_NO_APU ON)
 set(ENABLE_SNES_NO_BYTE2000 ON)
+set(ENABLE_SNES_NO_THREADED_DISPLAY ON)
 set(ENABLE_SNES_NO_THREADED_INPUT ON)
 set(ENABLE_SNES_NO_THREADED_SAVE ON)
 
@@ -173,6 +174,7 @@ set(ENABLE_MSX_LTO ON)
 set(ENABLE_WS_LTO OFF)
 set(ENABLE_MD_LTO ON)
 set(ENABLE_NGP_LTO ON)
+set(ENABLE_SNES_LTO ON)
 set(ENABLE_EXPLICIT_LTO_PLUGIN OFF)
 
 file(GLOB_RECURSE APP_HEADERS
@@ -259,6 +261,8 @@ if(ENABLE_SNES_CORE)
     add_private_define_if(ENABLE_SNES_NO_SOUND SNES_NO_SOUND)
     add_private_define_if(ENABLE_SNES_NO_APU SNES_NO_APU)
     add_private_define_if(ENABLE_SNES_NO_BYTE2000 SNES_NO_BYTE2000)
+    add_private_define_if(ENABLE_SNES_NO_THREADED_DISPLAY SNES_NO_THREADED_DISPLAY)
+    add_private_define_if(ENABLE_SNES_NO_THREADED_DISPLAY SNES_DISPLAY_ON_MAIN)
     add_private_define_if(ENABLE_SNES_NO_THREADED_INPUT SNES_NO_THREADED_INPUT)
     add_private_define_if(ENABLE_SNES_NO_THREADED_SAVE SNES_NO_THREADED_SAVE)
 endif()
@@ -395,10 +399,6 @@ set(GENERAL_LOG_SRCS
     "${SRC_ROOT}/sms/run_sms.cpp"
     "${SRC_ROOT}/sms/save.cpp"
     "${SRC_ROOT}/sms/smsplus/sms.c"
-    "${SRC_ROOT}/snes/run_snes.cpp"
-    "${SRC_ROOT}/snes/snes_display.cpp"
-    "${SRC_ROOT}/snes/snes_save.cpp"
-    "${SRC_ROOT}/snes/snes_stubs.cpp"
     "${SRC_ROOT}/ws/oswan/WSApu.c"
     "${SRC_ROOT}/ws/oswan/WSFileio.c"
     "${SRC_ROOT}/ws/oswan/cpu/nec.c"
@@ -481,6 +481,16 @@ set(COLECO_DEBUG_LOG_SRCS
     "${SRC_ROOT}/sms/smsplus/sms.c"
 )
 
+set(SNES_LOG_SRCS
+    "${SRC_ROOT}/snes/run_snes.cpp"
+    "${SRC_ROOT}/snes/snes_display.cpp"
+    "${SRC_ROOT}/snes/snes_input.cpp"
+    "${SRC_ROOT}/snes/snes_save.cpp"
+    "${SRC_ROOT}/snes/snes_stubs.cpp"
+    "${SRC_ROOT}/snes/snes9x/src/gfx.c"
+    "${SRC_ROOT}/snes/snes9x/src/memmap.c"
+)
+
 file(GLOB_RECURSE GX4000_LTO_SRCS
     "${SRC_ROOT}/gx4000/*.c"
     "${SRC_ROOT}/gx4000/*.cpp"
@@ -542,6 +552,11 @@ file(GLOB_RECURSE NGP_LTO_SRCS
     "${SRC_ROOT}/ngp/*.cpp"
 )
 
+file(GLOB_RECURSE SNES_LTO_SRCS
+    "${SRC_ROOT}/snes/*.c"
+    "${SRC_ROOT}/snes/*.cpp"
+)
+
 if(ENABLE_GX4000_LTO)
     add_source_compile_opts(OPTIONS -flto -ffat-lto-objects SOURCES ${GX4000_LTO_SRCS})
 endif()
@@ -590,7 +605,11 @@ if(ENABLE_NGP_LTO)
     add_source_compile_opts(OPTIONS -flto -ffat-lto-objects SOURCES ${NGP_LTO_SRCS})
 endif()
 
-if(ENABLE_GX4000_LTO OR ENABLE_SMS_LTO OR ENABLE_NES_LTO OR ENABLE_A2600_LTO OR ENABLE_A7800_LTO OR ENABLE_PCE_LTO OR ENABLE_GBC_LTO OR ENABLE_LYNX_LTO OR ENABLE_MSX_LTO OR ENABLE_WS_LTO OR ENABLE_MD_LTO OR ENABLE_NGP_LTO)
+if(ENABLE_SNES_CORE AND ENABLE_SNES_LTO)
+    add_source_compile_opts(OPTIONS -flto -ffat-lto-objects SOURCES ${SNES_LTO_SRCS})
+endif()
+
+if(ENABLE_GX4000_LTO OR ENABLE_SMS_LTO OR ENABLE_NES_LTO OR ENABLE_A2600_LTO OR ENABLE_A7800_LTO OR ENABLE_PCE_LTO OR ENABLE_GBC_LTO OR ENABLE_LYNX_LTO OR ENABLE_MSX_LTO OR ENABLE_WS_LTO OR ENABLE_MD_LTO OR ENABLE_NGP_LTO OR (ENABLE_SNES_CORE AND ENABLE_SNES_LTO))
     idf_build_set_property(LINK_OPTIONS "-flto" APPEND)
     idf_build_set_property(LINK_OPTIONS "-fuse-linker-plugin" APPEND)
     if(ENABLE_EXPLICIT_LTO_PLUGIN)
@@ -641,7 +660,7 @@ if(ENABLE_MSX_LOGS)
 endif()
 
 if(ENABLE_SNES_CORE AND ENABLE_SNES_LOGS)
-    add_source_compile_defs(DEFINITIONS EMU_LOGS_ENABLED SNES_LOGS SOURCES "${SRC_ROOT}/snes/run_snes.cpp")
+    add_source_compile_defs(DEFINITIONS EMU_LOGS_ENABLED SNES_LOGS SOURCES ${SNES_LOG_SRCS})
 endif()
 
 if(ENABLE_NES_DIAG_LOGS)

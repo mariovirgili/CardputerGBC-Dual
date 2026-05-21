@@ -14,6 +14,30 @@
 
 extern bool S9xIsSourceLineNeeded(uint32_t srcY);
 
+#ifdef SNES_LOGS
+static void snes_gfx_log_alloc_fail(const char* what, size_t requested)
+{
+   const size_t free8 = heap_caps_get_free_size(MALLOC_CAP_8BIT);
+   const size_t freeInternal = heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+   const size_t largest8 = heap_caps_get_largest_free_block(MALLOC_CAP_8BIT);
+   const size_t largestInternal = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+   const size_t missingLargest = requested > largestInternal ? requested - largestInternal : 0;
+   const size_t missingTotal = requested > freeInternal ? requested - freeInternal : 0;
+
+   EMU_LOG("[SNES][GFX][FAIL] %s requested=%lu freeInternal=%lu largestInternal=%lu free8=%lu largest8=%lu missingLargest=%lu missingTotal=%lu\n",
+           what,
+           (unsigned long)requested,
+           (unsigned long)freeInternal,
+           (unsigned long)largestInternal,
+           (unsigned long)free8,
+           (unsigned long)largest8,
+           (unsigned long)missingLargest,
+           (unsigned long)missingTotal);
+}
+#else
+#define snes_gfx_log_alloc_fail(what, requested) ((void)0)
+#endif
+
 typedef struct
 {
     uint16_t *main;
@@ -198,11 +222,7 @@ bool S9xInitGFX(void)
    LocalState = calloc(1, sizeof(*LocalState));
    if (!LocalState)
    {
-      printf("[SNES][GFX] LocalState alloc failed: size=%u heap=%u largestInternal=%u largest8=%u\n",
-             (unsigned)sizeof(*LocalState),
-             (unsigned)heap_caps_get_free_size(MALLOC_CAP_8BIT),
-             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL),
-             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
+      snes_gfx_log_alloc_fail("LocalState", sizeof(*LocalState));
       return false;
    }
 
@@ -228,11 +248,7 @@ bool S9xInitGFX(void)
    GFX.OBJVisibleTiles = malloc(128);
    if (!GFX.OBJWidths || !GFX.OBJVisibleTiles)
    {
-      printf("[SNES][GFX] OBJ alloc failed: widths=%p visible=%p heap=%u largestInternal=%u largest8=%u\n",
-             GFX.OBJWidths, GFX.OBJVisibleTiles,
-             (unsigned)heap_caps_get_free_size(MALLOC_CAP_8BIT),
-             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL),
-             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
+      snes_gfx_log_alloc_fail("OBJ tables", 256u);
       return false;
    }
    memset(GFX.OBJWidths, 0, 128);
@@ -241,11 +257,7 @@ bool S9xInitGFX(void)
 #ifndef NO_ZERO_LUT
    if (!(GFX.ZERO = (uint16_t*) malloc(sizeof(uint16_t) * 0x10000)))
    {
-      printf("[SNES][GFX] ZERO LUT alloc failed: size=%u heap=%u largestInternal=%u largest8=%u\n",
-             (unsigned)(sizeof(uint16_t) * 0x10000),
-             (unsigned)heap_caps_get_free_size(MALLOC_CAP_8BIT),
-             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL),
-             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
+      snes_gfx_log_alloc_fail("ZERO LUT", sizeof(uint16_t) * 0x10000u);
       return false;
    }
 
@@ -293,7 +305,12 @@ bool S9xInitLineBuffers(void)
    s_line.subz  = heap_caps_malloc(sizeof(uint8_t)  * SNES_WIDTH * 2, caps);
 
    if (!s_line.main || !s_line.sub || !s_line.z || !s_line.subz)
+   {
+      snes_gfx_log_alloc_fail("line buffers",
+         (sizeof(uint16_t) * SNES_WIDTH * 2u * 2u) +
+         (sizeof(uint8_t) * SNES_WIDTH * 2u * 2u));
       return false;
+   }
 
    memset(s_line.main, 0, sizeof(uint16_t) * SNES_WIDTH * 2);
    memset(s_line.sub,  0, sizeof(uint16_t) * SNES_WIDTH * 2);

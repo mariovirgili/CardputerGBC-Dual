@@ -29,6 +29,12 @@
 #define MAP_LOROM_SRAM_OR_NONE (Memory.SRAMSize == 0 ? (uint8_t*) MAP_NONE : (uint8_t*) MAP_LOROM_SRAM)
 #define MAP_RONLY_SRAM_OR_NONE (Memory.SRAMSize == 0 ? (uint8_t*) MAP_NONE : (uint8_t*) MAP_RONLY_SRAM)
 
+#ifdef SNES_LOGS
+#define SNES_PRINTF(...) EMU_LOG(__VA_ARGS__)
+#else
+#define SNES_PRINTF(...) ((void)0)
+#endif
+
 #ifndef SNES_NO_BYTE2000
 static uint8_t *bytes0x2000;
 #else
@@ -248,7 +254,7 @@ bool LoadROM(const char* filename)
    size_t TotalFileSize = 0;
    FILE *fp;
 
-   printf("Loading ROM: '%s'\n", filename ?: "(Memory.ROM)");
+   SNES_PRINTF("Loading ROM: '%s'\n", filename ?: "(Memory.ROM)");
 
    if (Memory.ROM_Offset)
    {
@@ -270,13 +276,13 @@ bool LoadROM(const char* filename)
    }
    else
    {
-      printf("Failed to open %s\n", filename);
+      SNES_PRINTF("Failed to open %s\n", filename);
       return false;
    }
 
    if (TotalFileSize > Memory.ROM_AllocSize)
    {
-      printf("WARNING: ROM TOO BIG (%u)!\n", (unsigned)TotalFileSize);
+      SNES_PRINTF("WARNING: ROM TOO BIG (%u)!\n", (unsigned)TotalFileSize);
       TotalFileSize = Memory.ROM_AllocSize;
       return false; // comment to try to run it anyway
    }
@@ -287,7 +293,7 @@ bool LoadROM(const char* filename)
 
    if ((TotalFileSize & 0x7FF) == 512)
    {
-      printf("Skipping header\n");
+      SNES_PRINTF("Skipping header\n");
       Memory.ROM += 512;
       Memory.ROM_Offset += 512;
       TotalFileSize -= 512;
@@ -563,7 +569,7 @@ void InitROM(bool Interleaved)
 
    if (Memory.SRAMSize > 5)
    {
-      printf("WARNING: SRAM was reduced to 64K by me. If you see this message, tell me about it.\n");
+      SNES_PRINTF("WARNING: SRAM was reduced to 64K by me. If you see this message, tell me about it.\n");
       Memory.SRAMSize = 5;
    }
 
@@ -652,7 +658,7 @@ void InitROM(bool Interleaved)
    Settings.ForceNotInterleaved = false;
    Settings.ForceInterleaved2 = false;
 
-   printf("Rom loaded: name: %s, id: %s, company: %s, size: %dKB\n",
+   SNES_PRINTF("Rom loaded: name: %s, id: %s, company: %s, size: %dKB\n",
       Memory.ROMName, Memory.ROMId, Memory.CompanyId, (int)(Memory.CalculatedSize / 1024));
 }
 

@@ -14,6 +14,8 @@
 
 extern "C" {
     #include "snes9x/snes9x.h"
+    #include "snes9x/src/memmap.h"
+    #include "snes9x/src/ppu.h"
 #include "share/emu_log_cpp.h"
 }
 
@@ -61,12 +63,147 @@ static void snes_apply_common_settings()
     Settings.DisableSoundEcho  = false;
 }
 
+#ifdef SNES_LOGS
+#define SNES_LOG(...) EMU_LOG(__VA_ARGS__)
+
+struct SnesHeapState
+{
+    uint32_t free8;
+    uint32_t freeInternal;
+    uint32_t largest8;
+    uint32_t largestInternal;
+};
+
+static inline SnesHeapState snes_heap_state()
+{
+    return {
+        (uint32_t)heap_caps_get_free_size(MALLOC_CAP_8BIT),
+        (uint32_t)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+        (uint32_t)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT),
+        (uint32_t)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+    };
+}
+
+static size_t snes_estimated_memory_alloc_bytes()
+{
+    size_t bytes = 0;
+    bytes += RAM_SIZE;
+    bytes += VRAM_SIZE;
+    bytes += FILLRAM_SIZE;
+#ifndef SNES_NO_BYTE2000
+    bytes += 0x2000u;
+#endif
+    return bytes;
+}
+
+static size_t snes_estimated_map_alloc_bytes()
+{
+    size_t bytes = 0;
+    bytes += MEMMAP_NUM_BLOCKS * sizeof(uint8_t*);
+    bytes += MEMMAP_NUM_BLOCKS * sizeof(SMapInfo);
+    return bytes;
+}
+
+static size_t snes_estimated_ppu_alloc_bytes()
+{
+    size_t bytes = 0;
+    bytes += 256u * 9u * sizeof(uint16_t);
+    bytes += MAX_2BIT_TILES;
+    bytes += 3u * 256u;
+    bytes += 256u * sizeof(uint16_t);
+    bytes += 128u * sizeof(SOBJ);
+    bytes += 512u + 32u;
+    return bytes;
+}
+
+static size_t snes_estimated_core_alloc_bytes()
+{
+    return snes_estimated_memory_alloc_bytes() +
+           snes_estimated_map_alloc_bytes() +
+           snes_estimated_ppu_alloc_bytes();
+}
+
+static size_t snes_estimated_linebuf_bytes()
+{
+    return (sizeof(uint16_t) * SNES_WIDTH * 2u * 2u) +
+           (sizeof(uint8_t) * SNES_WIDTH * 2u * 2u);
+}
+
+static size_t snes_estimated_alt_alloc_bytes()
+{
+    return sizeof(uint16_t) * SNES_HEIGHT_EXTENDED * 2u +
+           sizeof(uint8_t) * SNES_HEIGHT_EXTENDED +
+           sizeof(uint16_t) * LCD_H;
+}
+
+static void snes_log_heap_step(const char* step)
+{
+    const SnesHeapState h = snes_heap_state();
+    SNES_LOG("[SNES][HEAP] %-14s free8=%lu freeInternal=%lu largest8=%lu largestInternal=%lu coreReq=%lu lineReq=%lu altReq=%lu\n",
+             step,
+             (unsigned long)h.free8,
+             (unsigned long)h.freeInternal,
+             (unsigned long)h.largest8,
+             (unsigned long)h.largestInternal,
+             (unsigned long)snes_estimated_core_alloc_bytes(),
+             (unsigned long)snes_estimated_linebuf_bytes(),
+             (unsigned long)snes_estimated_alt_alloc_bytes());
+}
+
+static void snes_log_heap_runtime(const char* step, uint32_t frame)
+{
+    const SnesHeapState h = snes_heap_state();
+    SNES_LOG("[SNES][RUNTIME] %-14s frame=%lu free8=%lu freeInternal=%lu largest8=%lu largestInternal=%lu\n",
+             step,
+             (unsigned long)frame,
+             (unsigned long)h.free8,
+             (unsigned long)h.freeInternal,
+             (unsigned long)h.largest8,
+             (unsigned long)h.largestInternal);
+}
+
+static void snes_log_init_failure(const char* step, size_t requestedBytes)
+{
+    const SnesHeapState h = snes_heap_state();
+    const uint32_t missingLargest = requestedBytes > h.largestInternal
+        ? (uint32_t)(requestedBytes - h.largestInternal)
+        : 0;
+    const uint32_t missingTotal = requestedBytes > h.freeInternal
+        ? (uint32_t)(requestedBytes - h.freeInternal)
+        : 0;
+
+    SNES_LOG("[SNES][INIT][FAIL] %s requested=%lu freeInternal=%lu largestInternal=%lu free8=%lu largest8=%lu missingLargest=%lu missingTotal=%lu\n",
+             step,
+             (unsigned long)requestedBytes,
+             (unsigned long)h.freeInternal,
+             (unsigned long)h.largestInternal,
+             (unsigned long)h.free8,
+             (unsigned long)h.largest8,
+             (unsigned long)missingLargest,
+             (unsigned long)missingTotal);
+}
+#else
+#define SNES_LOG(...) ((void)0)
+#define snes_log_heap_step(step) ((void)0)
+#define snes_log_heap_runtime(step, frame) ((void)0)
+#define snes_log_init_failure(step, requestedBytes) ((void)0)
+#define snes_estimated_memory_alloc_bytes() ((size_t)0)
+#define snes_estimated_map_alloc_bytes() ((size_t)0)
+#define snes_estimated_ppu_alloc_bytes() ((size_t)0)
+#define snes_estimated_core_alloc_bytes() ((size_t)0)
+#define snes_estimated_linebuf_bytes() ((size_t)0)
+#define snes_estimated_alt_alloc_bytes() ((size_t)0)
+#define snes_log_runtime_config(targetFps) ((void)0)
+#endif
+
+#ifdef SNES_LOGS
 static void snes_log_runtime_config(int targetFps)
 {
-    EMU_LOG("[SNES] Core/Video only, no audio, %s, no tilecache, %d FPS target\n",
-           snes_save_has_sram() ? "with SRAM" : "no SRAM",
-           targetFps);
+    SNES_LOG("[SNES] Core/Video only, no audio, %s, no tilecache, %d FPS target\n",
+             snes_save_has_sram() ? "with SRAM" : "no SRAM",
+             targetFps);
 }
+#endif
 
 static inline bool snes_should_render_frame(uint32_t last_frame_exec_us,
                                             uint32_t budget55_us,
@@ -94,10 +231,10 @@ static inline void snes_log_fps_and_heap(uint32_t &frameCount, uint32_t &lastFps
 
     snes_update_interlace_from_fps(fps);
 
-    EMU_LOG("[SNES] FPS: %.2f | HEAP: %lu | INTERLACE: %s\n",
-           fps,
-           (unsigned long)esp_get_free_heap_size(),
-           interlace_enabled ? "ON" : "OFF");
+    SNES_LOG("[SNES] FPS: %.2f | HEAP: %lu | INTERLACE: %s\n",
+             fps,
+             (unsigned long)esp_get_free_heap_size(),
+             interlace_enabled ? "ON" : "OFF");
 
     frameCount = 0;
     lastFpsMs  = nowMs;
@@ -212,15 +349,6 @@ static void S9XLineRenderAlt(uint32_t srcY,
 
 extern "C" void S9xSetLineCallback(S9xLineCallback cb);
 
-static void snes_log_heap_step(const char* step)
-{
-    EMU_LOG("[SNES][INIT] %-14s heap=%lu largestInternal=%lu largest8=%lu\n",
-            step,
-            (unsigned long)esp_get_free_heap_size(),
-            (unsigned long)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL),
-            (unsigned long)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
-}
-
 /* ---------------------------------------------------- */
 /* Input hook                                           */
 /* ---------------------------------------------------- */
@@ -269,42 +397,42 @@ bool snes_init()
 
     if (!S9xInitDisplay())
     {
-        EMU_LOG("[SNES] S9xInitDisplay failed\n");
+        snes_log_init_failure("display", 0);
         return false;
     }
     snes_log_heap_step("display");
 
     if (!S9xInitGFX())
     {
-        EMU_LOG("[SNES] S9xInitGFX failed\n");
+        snes_log_init_failure("gfx", 0);
         return false;
     }
     snes_log_heap_step("gfx");
 
     if (!S9xInitMemory())
     {
-        EMU_LOG("[SNES] S9xInitMemory failed\n");
+        snes_log_init_failure("memory", snes_estimated_memory_alloc_bytes());
         return false;
     }
     snes_log_heap_step("memory");
 
     if (!S9xInitMap())
     {
-        EMU_LOG("[SNES] S9xInitMap failed\n");
+        snes_log_init_failure("map", snes_estimated_map_alloc_bytes());
         return false;
     }
     snes_log_heap_step("map");
 
     if (!S9xInitPpu())
     {
-        EMU_LOG("[SNES] S9xInitPpu failed\n");
+        snes_log_init_failure("ppu", snes_estimated_ppu_alloc_bytes());
         return false;
     }
     snes_log_heap_step("ppu");
 
     if (!S9xInitLineBuffers())
     {
-        EMU_LOG("[SNES] S9xInitLineBuffers failed\n");
+        snes_log_init_failure("linebuf", snes_estimated_linebuf_bytes());
         return false;
     }
     snes_log_heap_step("linebuf");
@@ -312,7 +440,7 @@ bool snes_init()
     /* NULL means use already mapped ROM */
     if (!LoadROM(NULL))
     {
-        EMU_LOG("[SNES] LoadROM failed\n");
+        snes_log_init_failure("loadrom", 0);
         return false;
     }
 
@@ -361,7 +489,7 @@ static bool snes_alt_buffers_alloc()
 
 void run_snes_default(const uint8_t* rom, size_t romSize, const char* romName)
 {
-    EMU_LOG("[SNES] ROM: %p (size %zu bytes)\n", rom, romSize);
+    SNES_LOG("[SNES] ROM: %p (size %zu bytes)\n", rom, romSize);
 
     Memory.ROM           = (uint8_t*)rom;
     Memory.ROM_Offset    = 0;
@@ -371,7 +499,7 @@ void run_snes_default(const uint8_t* rom, size_t romSize, const char* romName)
 
     if (!snes_init())
     {
-        EMU_LOG("[SNES] snes_init failed, aborting\n");
+        snes_log_init_failure("snes_init", snes_estimated_core_alloc_bytes());
         return;
     }
 
@@ -396,13 +524,18 @@ void run_snes_default(const uint8_t* rom, size_t romSize, const char* romName)
     const float scale    = (float)PPU.ScreenHeight / (float)LCD_H;
     const float srcStart = 0.5f * (PPU.ScreenHeight - LCD_H * scale);
 
+    snes_log_heap_runtime("pre-display", 0);
     snes_display_init();
+    snes_log_heap_runtime("display-init", 0);
     snes_display_start();
+    snes_log_heap_runtime("display-start", 0);
     snes_input_start();
+    snes_log_heap_runtime("input-start", 0);
 
     snes_log_runtime_config(targetFps);
 
     heap_caps_check_integrity_all(true);
+    bool firstFrameLogged = false;
 
     while (true)
     {
@@ -410,9 +543,13 @@ void run_snes_default(const uint8_t* rom, size_t romSize, const char* romName)
             last_frame_exec_us, budget55_us, skipped_last_render);
 
         const int64_t frame_start_us = esp_timer_get_time();
+        if (!firstFrameLogged)
+            snes_log_heap_runtime("pre-mainloop", frameCount);
 
         S9xMainLoop();
         snes_save_tick();
+        if (!firstFrameLogged)
+            snes_log_heap_runtime("post-mainloop", frameCount);
 
         if (IPPU.RenderThisFrame)
         {
@@ -435,6 +572,11 @@ void run_snes_default(const uint8_t* rom, size_t romSize, const char* romName)
 
             if (interlace_enabled && !snes_interlace_lock_parity)
                 fieldParity ^= 1;
+        }
+        if (!firstFrameLogged)
+        {
+            snes_log_heap_runtime("post-render", frameCount);
+            firstFrameLogged = true;
         }
 
         const int64_t frame_end_us = esp_timer_get_time();
@@ -465,7 +607,7 @@ void run_snes_default(const uint8_t* rom, size_t romSize, const char* romName)
 
 void run_snes_alt(const uint8_t* rom, size_t romSize, const char* romName)
 {
-    EMU_LOG("[SNES] ROM: %p (size %zu bytes)\n", rom, romSize);
+    SNES_LOG("[SNES] ROM: %p (size %zu bytes)\n", rom, romSize);
 
     Memory.ROM           = (uint8_t*)rom;
     Memory.ROM_Offset    = 0;
@@ -476,7 +618,7 @@ void run_snes_alt(const uint8_t* rom, size_t romSize, const char* romName)
 
     if (!snes_init())
     {
-        EMU_LOG("[SNES] snes_init failed, aborting\n");
+        snes_log_init_failure("snes_init", snes_estimated_core_alloc_bytes());
         return;
     }
 
@@ -498,13 +640,18 @@ void run_snes_alt(const uint8_t* rom, size_t romSize, const char* romName)
     int64_t        now;
     int64_t        lateness;
 
+    snes_log_heap_runtime("pre-display", 0);
     snes_display_init();
+    snes_log_heap_runtime("display-init", 0);
     snes_display_start();
+    snes_log_heap_runtime("display-start", 0);
     snes_input_start();
+    snes_log_heap_runtime("input-start", 0);
 
     snes_log_runtime_config(targetFps);
 
     heap_caps_check_integrity_all(true);
+    bool firstFrameLogged = false;
 
     while (true)
     {
@@ -515,12 +662,21 @@ void run_snes_alt(const uint8_t* rom, size_t romSize, const char* romName)
             buildInterlaceSourceMaskExact();
 
         const int64_t frame_start_us = esp_timer_get_time();
+        if (!firstFrameLogged)
+            snes_log_heap_runtime("pre-mainloop", frameCount);
 
         S9xMainLoop();
         snes_save_tick();
+        if (!firstFrameLogged)
+            snes_log_heap_runtime("post-mainloop", frameCount);
 
         if (IPPU.RenderThisFrame && interlace_enabled && !snes_interlace_lock_parity)
             fieldParity ^= 1;
+        if (!firstFrameLogged)
+        {
+            snes_log_heap_runtime("post-render", frameCount);
+            firstFrameLogged = true;
+        }
 
         const int64_t frame_end_us = esp_timer_get_time();
         last_frame_exec_us = (uint32_t)(frame_end_us - frame_start_us);
@@ -550,21 +706,22 @@ void run_snes_alt(const uint8_t* rom, size_t romSize, const char* romName)
 
 void run_snes(const uint8_t* rom, size_t romSize, const char* romName)
 {
-#ifdef SNES_LOGS
-    EMU_LOG("[SNES][BOOT] run_snes entered rom=%s ptr=%p size=%zu\n",
+    SNES_LOG("[SNES][BOOT] run_snes entered rom=%s ptr=%p size=%zu\n",
             romName ? romName : "(null)", rom, romSize);
-#endif
 
     const bool alt = isAltGame(rom, romSize);
 
     char title[32];
     if (snes_read_title(title, sizeof(title), rom, romSize))
-        EMU_LOG("[SNES] Internal title: %s, ALT: %s\n", title, alt ? "YES" : "NO");
+        SNES_LOG("[SNES] Internal title: %s, ALT: %s\n", title, alt ? "YES" : "NO");
 
     // Some game can't render line by line properly, for those we use an alternate rendering method 
     if (alt)
     {
-        snes_alt_buffers_alloc();
+        if (!snes_alt_buffers_alloc()) {
+            snes_log_init_failure("altbuf", snes_estimated_alt_alloc_bytes());
+            return;
+        }
         run_snes_alt(rom, romSize, romName);
     }
     // Default rendering method, should work for most games and is more efficient
