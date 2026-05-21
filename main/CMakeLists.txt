@@ -128,7 +128,7 @@ set(ENABLE_A2600_JUMP_TABLES_IN_TEXT_SECTION ON)
 
 # ProSystem (Atari 7800): Drop built-in 7800 MD5 database (~5 KB flash);
 # headered ROMs still work.
-set(ENABLE_A7800_NO_DATABASE ON)
+set(ENABLE_A7800_NO_DATABASE OFF)
 
 # fMSX
 set(ENABLE_FMSX_LSB_FIRST ON)
