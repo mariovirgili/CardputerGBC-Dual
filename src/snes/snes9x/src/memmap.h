@@ -132,6 +132,7 @@ typedef struct
    // char     ROMFilename [_MAX_PATH];
    uint8_t  ROMRegion;
    uint8_t  ExtendedFormat;
+   bool     ROM_ReadOnly;
    size_t   ROM_AllocSize; // size of *ROM content
    size_t   ROM_Offset;
 } CMemory;

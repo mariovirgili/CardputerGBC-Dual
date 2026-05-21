@@ -227,6 +227,7 @@ void S9xDeinitMemory(void)
    Memory.VRAM = NULL;
 
    Memory.ROM = NULL;
+   Memory.ROM_ReadOnly = false;
    Memory.ROM_Offset = 0;
    Memory.ROM_AllocSize = 0;
 
@@ -1393,6 +1394,17 @@ bool match_id(const char* str)
 
 void ApplyROMPatches(void)
 {
+#ifdef SNES_NO_ROM_PATCHES
+   SNES_PRINTF("Skipping in-place ROM patches (disabled)\n");
+   return;
+#endif
+
+   if (Memory.ROM_ReadOnly)
+   {
+      SNES_PRINTF("Skipping in-place ROM patches for read-only XIP ROM\n");
+      return;
+   }
+
    /* Mario Early Years: Fun with Numbers */
    if ((strncmp ((char *) &Memory.ROM [0x7fc0], "MEY Fun with Numbers", 20) == 0))
    {

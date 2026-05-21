@@ -492,6 +492,7 @@ void run_snes_default(const uint8_t* rom, size_t romSize, const char* romName)
     SNES_LOG("[SNES] ROM: %p (size %zu bytes)\n", rom, romSize);
 
     Memory.ROM           = (uint8_t*)rom;
+    Memory.ROM_ReadOnly  = true;
     Memory.ROM_Offset    = 0;
     Memory.ROM_AllocSize = romSize;
 
@@ -610,6 +611,7 @@ void run_snes_alt(const uint8_t* rom, size_t romSize, const char* romName)
     SNES_LOG("[SNES] ROM: %p (size %zu bytes)\n", rom, romSize);
 
     Memory.ROM           = (uint8_t*)rom;
+    Memory.ROM_ReadOnly  = true;
     Memory.ROM_Offset    = 0;
     Memory.ROM_AllocSize = romSize;
 

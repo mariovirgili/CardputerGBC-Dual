@@ -126,6 +126,9 @@ set(ENABLE_SNES_NO_BYTE2000 ON)
 set(ENABLE_SNES_NO_THREADED_DISPLAY ON)
 set(ENABLE_SNES_NO_THREADED_INPUT ON)
 set(ENABLE_SNES_NO_THREADED_SAVE ON)
+# XIP ROMs are flash-mapped read-only; never patch ROM bytes in-place.
+set(ENABLE_SNES_NO_ROM_PATCHES ON)
+set(ENABLE_SNES_NO_SPEEDHACKS ON)
 # ESP32-S3 is little-endian and supports unaligned word loads.
 set(ENABLE_SNES_FAST_LSB_WORD_ACCESS ON)
 # SNES experiment: reduce code bloat/ICache pressure from loop unrolling.
@@ -281,6 +284,8 @@ if(ENABLE_SNES_CORE)
     add_private_define_if(ENABLE_SNES_NO_THREADED_DISPLAY SNES_DISPLAY_ON_MAIN)
     add_private_define_if(ENABLE_SNES_NO_THREADED_INPUT SNES_NO_THREADED_INPUT)
     add_private_define_if(ENABLE_SNES_NO_THREADED_SAVE SNES_NO_THREADED_SAVE)
+    add_private_define_if(ENABLE_SNES_NO_ROM_PATCHES SNES_NO_ROM_PATCHES)
+    add_private_define_if(ENABLE_SNES_NO_SPEEDHACKS NO_SPEEDHACKS)
     add_private_define_if(ENABLE_SNES_FAST_LSB_WORD_ACCESS FAST_LSB_WORD_ACCESS)
     add_private_define_if(ENABLE_SNES_STRICT_PSEUDO_HIRES SNES_STRICT_PSEUDO_HIRES)
 endif()
