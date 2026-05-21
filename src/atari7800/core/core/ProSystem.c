@@ -63,19 +63,25 @@ bool prosystem_Reset(void)
     * allocation order critical. */
    if(!maria_EnsureAllocated())
    {
-      printf("[A7800][CORE] maria_EnsureAllocated failed\n");
+#ifdef A7800_LOGS
+      EMU_LOG("[A7800][CORE] maria_EnsureAllocated failed\n");
+#endif
       return false;
    }
 
    if(!memory_EnsureAllocated())
    {
-      printf("[A7800][CORE] memory_EnsureAllocated failed\n");
+#ifdef A7800_LOGS
+      EMU_LOG("[A7800][CORE] memory_EnsureAllocated failed\n");
+#endif
       return false;
    }
 
    if(cartridge_pokey && !pokey_EnsureAllocated())
    {
-      printf("[A7800][CORE] pokey_EnsureAllocated failed\n");
+#ifdef A7800_LOGS
+      EMU_LOG("[A7800][CORE] pokey_EnsureAllocated failed\n");
+#endif
       return false;
    }
 

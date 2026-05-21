@@ -495,10 +495,12 @@ void ngp_mem_init(void)
 
 			//koyote.bin handling
             memcpy(mainram,koyote_bin,KOYOTE_BIN_SIZE/*12*1024*/);
-			printf("cpuram[0]=%02X cpuram[0xBC]=%02X\n", cpuram[0], cpuram[0xBC]);
-			printf("mainrom[0..7] = %02X %02X %02X %02X %02X %02X %02X %02X\n",
+#ifdef NGP_TRACE_LOGS
+			EMU_LOG("cpuram[0]=%02X cpuram[0xBC]=%02X\n", cpuram[0], cpuram[0xBC]);
+			EMU_LOG("mainrom[0..7] = %02X %02X %02X %02X %02X %02X %02X %02X\n",
 				mainrom[0], mainrom[1], mainrom[2], mainrom[3],
 				mainrom[4], mainrom[5], mainrom[6], mainrom[7]);
+#endif
 
 			// setup interrupt vectors in RAM
 			for(i=0; i<18; i++) {

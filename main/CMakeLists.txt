@@ -68,6 +68,9 @@ set(ENABLE_NGP_TRACE_LOGS OFF)
 # GX4000/Coleco-SMS: Coleco/SMS detail logs, requires ENABLE_EMU_LOGS.
 set(ENABLE_COLECO_DEBUG_LOGS OFF)
 
+# ProSystem (Atari 7800): allocation/core diagnostics, requires ENABLE_EMU_LOGS.
+set(ENABLE_A7800_LOGS OFF)
+
 # ---==  CORE COMPILE OPTIONS SECTION:  ==---
 # Core compile-definition switches. Defaults mirror the current firmware build;
 # flip one to OFF here to remove its define without touching platformio.ini.
@@ -433,10 +436,17 @@ set(AUDIO_LOG_SRCS
 set(MD_RENDER_LOG_SRCS
     "${SRC_ROOT}/genesis/genesis_display.cpp"
     "${SRC_ROOT}/genesis/run_genesis.cpp"
+    "${SRC_ROOT}/genesis/gwenesis/bus/gwenesis_bus.c"
+    "${SRC_ROOT}/genesis/gwenesis/vdp/gwenesis_vdp_mem.c"
+    "${SRC_ROOT}/genesis/gwenesis/vdp/gwenesis_vdp_gfx.c"
 )
 
 set(MD_AUDIO_LOG_SRCS
     "${SRC_ROOT}/genesis/genesis_sound.cpp"
+    "${SRC_ROOT}/genesis/gwenesis/cpus/Z80/ConDebug.c"
+    "${SRC_ROOT}/genesis/gwenesis/cpus/Z80/Debug.c"
+    "${SRC_ROOT}/genesis/gwenesis/sound/z80inst.c"
+    "${SRC_ROOT}/genesis/gwenesis/sound/ym2612.c"
 )
 
 set(MSX_LOG_SRCS
@@ -448,6 +458,7 @@ set(NES_LOG_SRCS
     "${SRC_ROOT}/nes/nes_osd.c"
     "${SRC_ROOT}/nes/run_nes.cpp"
     "${LIB_ROOT}/arduino-nofrendo/src/log.c"
+    "${LIB_ROOT}/arduino-nofrendo/src/mappers/map002.c"
     "${LIB_ROOT}/arduino-nofrendo/src/nes/nes.c"
     "${LIB_ROOT}/arduino-nofrendo/src/nes/nes_rom.c"
 )
@@ -474,11 +485,24 @@ set(NGP_TRACE_LOG_SRCS
     "${SRC_ROOT}/ngp/ngc_display.cpp"
     "${SRC_ROOT}/ngp/ngc_scheduler.cpp"
     "${SRC_ROOT}/ngp/race/graphics.c"
+    "${SRC_ROOT}/ngp/race/race-memory.c"
 )
 
 set(COLECO_DEBUG_LOG_SRCS
     "${SRC_ROOT}/sms/run_sms.cpp"
     "${SRC_ROOT}/sms/smsplus/sms.c"
+    "${SRC_ROOT}/gx4000/arnold/audioevent.c"
+    "${SRC_ROOT}/gx4000/arnold/z80/z80.c"
+)
+
+set(A7800_LOG_SRCS
+    "${SRC_ROOT}/atari7800/core/core/BupChip.c"
+    "${SRC_ROOT}/atari7800/core/core/libretro.c"
+    "${SRC_ROOT}/atari7800/core/core/Maria.c"
+    "${SRC_ROOT}/atari7800/core/core/Memory.c"
+    "${SRC_ROOT}/atari7800/core/core/Pokey.c"
+    "${SRC_ROOT}/atari7800/core/core/ProSystem.c"
+    "${SRC_ROOT}/atari7800/core/core/Tia.c"
 )
 
 set(SNES_LOG_SRCS
@@ -706,6 +730,10 @@ endif()
 
 if(ENABLE_COLECO_DEBUG_LOGS)
     add_source_compile_defs(DEFINITIONS EMU_LOGS_ENABLED COLECO_DEBUG_LOGS SOURCES ${COLECO_DEBUG_LOG_SRCS})
+endif()
+
+if(ENABLE_A7800_LOGS)
+    add_source_compile_defs(DEFINITIONS EMU_LOGS_ENABLED A7800_LOGS SOURCES ${A7800_LOG_SRCS})
 endif()
 
 if(ENABLE_BENCHMARK_LOGS)

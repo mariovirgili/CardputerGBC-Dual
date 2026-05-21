@@ -12,7 +12,7 @@
 /**     commercially. Please, notify me, if you make any    **/
 /**     changes to this file.                               **/
 /*************************************************************/
-#ifdef DEBUG
+#if defined(DEBUG) && EMU_LOG_MASTER_ENABLED && defined(MD_AUDIO_LOGS)
 
 #ifndef CONDEBUG
 /** Normal DebugZ80() ****************************************/

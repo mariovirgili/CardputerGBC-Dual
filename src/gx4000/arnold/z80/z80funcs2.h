@@ -106,7 +106,9 @@ static void    Z80_BuildParityTable(void)
 		if ((ParityTable == NULL) || (ZeroSignTable == NULL) ||
 		    (ZeroSignTable2 == NULL) || (ZeroSignParityTable == NULL))
 		{
-			printf("[GX4-Z80] table alloc failed\n");
+#ifdef COLECO_DEBUG_LOGS
+			EMU_LOG("[GX4-Z80] table alloc failed\n");
+#endif
 			return;
 		}
 	}

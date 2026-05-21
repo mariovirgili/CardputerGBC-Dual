@@ -46,7 +46,7 @@ void ResetZ80(register Z80 *R);
 
 #define Z80_INST_DISABLE_LOGGING 1
 
-#if !Z80_INST_DISABLE_LOGGING
+#if !Z80_INST_DISABLE_LOGGING && EMU_LOG_MASTER_ENABLED && defined(MD_AUDIO_LOGS)
 #include <stdarg.h>
 void z80_log(const char *subs, const char *fmt, ...) {
   extern int frame_counter;

@@ -306,19 +306,23 @@ void run_ngp(const uint8_t* rom_base, size_t rom_size, const char* rom_name, int
   ngp_trace_vdp("run start");
 
   // Go
+#ifdef NGP_TRACE_LOGS
   EMU_LOG("[NGPC_RUN] entering ngpc_run() ... m_bIsActive=%d\n", m_bIsActive);
   EMU_LOG("[FORCE] Enabling LCD + VBLANK IRQ @ 0x4000 = 0xC0\n");
+#endif
   tlcsMemWriteB(0x00004000, 0xC0);   // bit 7 = LCD ON, bit 6 = VBlank IRQ enable
   m_bIsActive = 1;
 
+#ifdef NGP_TRACE_LOGS
   EMU_LOG("[NGPC_RUN] starting core loop\n");
+#endif
 
   #ifdef FRAMESKIP
       const int skipFrames = 1;
   #endif
 
   unsigned long status_last = millis();
-#if EMU_LOG_MASTER_ENABLED
+#ifdef NGP_TRACE_LOGS
   unsigned long frames = 0;
   unsigned long total_frames = 0;
   unsigned long frame_time_total = 0;
@@ -350,7 +354,7 @@ void run_ngp(const uint8_t* rom_base, size_t rom_size, const char* rom_name, int
       
       // Pacing 60 Hz
       uint32_t emuUs = micros() - t0;
-#if EMU_LOG_MASTER_ENABLED
+#ifdef NGP_TRACE_LOGS
       frame_time_total += emuUs;
       if (emuUs < frame_time_min) frame_time_min = emuUs;
       if (emuUs > frame_time_max) frame_time_max = emuUs;
@@ -362,20 +366,18 @@ void run_ngp(const uint8_t* rom_base, size_t rom_size, const char* rom_name, int
       }
       
       // Log framerate and do save tick
-#if EMU_LOG_MASTER_ENABLED
+#ifdef NGP_TRACE_LOGS
       frames++;
       total_frames++;
-#ifdef NGP_TRACE_LOGS
       if (total_frames <= 5 || (total_frames % 60) == 0) {
         ngp_trace_frame(total_frames, emuUs);
       }
-#endif
 #endif
       if (millis() - status_last >= 2000)
       {
           ngc_save_tick();
 
-#if EMU_LOG_MASTER_ENABLED
+#ifdef NGP_TRACE_LOGS
           size_t heap_free = heap_caps_get_free_size(MALLOC_CAP_DEFAULT);
           float avg_ms = frame_time_total / (float)frames / 1000.0f;
           float min_ms = frame_time_min / 1000.0f;

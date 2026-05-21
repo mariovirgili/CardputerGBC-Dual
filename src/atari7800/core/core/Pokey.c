@@ -130,7 +130,9 @@ bool pokey_EnsureAllocated(void)
       pokey_buffer = (uint8_t*)pokey_Alloc(POKEY_BUFFER_SIZE);
       if(!pokey_buffer)
       {
-         printf("[A7800][POKEY] buffer alloc failed (%u bytes)\n", (unsigned)POKEY_BUFFER_SIZE);
+#ifdef A7800_LOGS
+         EMU_LOG("[A7800][POKEY] buffer alloc failed (%u bytes)\n", (unsigned)POKEY_BUFFER_SIZE);
+#endif
          return false;
       }
       memset(pokey_buffer, 0, POKEY_BUFFER_SIZE);
@@ -151,7 +153,9 @@ bool pokey_EnsureAllocated(void)
          if(pokey_poly17)
          {
             s_pokey_small_buf = true;
-            printf("[A7800][POKEY] poly17 alloc failed; using poly9 fallback\n");
+#ifdef A7800_LOGS
+            EMU_LOG("[A7800][POKEY] poly17 alloc failed; using poly9 fallback\n");
+#endif
          }
       }
    }

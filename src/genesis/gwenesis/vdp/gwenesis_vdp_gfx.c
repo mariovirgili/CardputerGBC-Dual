@@ -99,7 +99,7 @@ static int Window_lastcol;
 #define FETCH16VRAM(A)  ( (VRAM[(A)+1]) | (VRAM[(A)] << 8) )
 #define VDP_GFX_DISABLE_LOGGING 1
 
-#if !VDP_GFX_DISABLE_LOGGING
+#if !VDP_GFX_DISABLE_LOGGING && EMU_LOG_MASTER_ENABLED && defined(MD_RENDER_LOGS)
 #include <stdarg.h>
 void vdpg_log(const char *subs, const char *fmt, ...) {
   extern int frame_counter;

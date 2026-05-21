@@ -368,7 +368,9 @@ bool retro_load_game(const struct retro_game_info *info)
 
    if(!libretro_EnsureBuffers())
    {
-      printf("[A7800][CORE] audio/video buffer allocation failed\n");
+#ifdef A7800_LOGS
+      EMU_LOG("[A7800][CORE] audio/video buffer allocation failed\n");
+#endif
       return false;
    }
 
@@ -390,7 +392,9 @@ bool retro_load_game(const struct retro_game_info *info)
 
    if(!cartridge_Load(persistent_data, (const uint8_t*)info->data, info->size))
    {
-      printf("[A7800][CORE] cartridge_Load failed, size=%u\n", info->size);
+#ifdef A7800_LOGS
+      EMU_LOG("[A7800][CORE] cartridge_Load failed, size=%u\n", info->size);
+#endif
       return false;
    }
 
@@ -409,14 +413,18 @@ bool retro_load_game(const struct retro_game_info *info)
    reset_ok = prosystem_Reset();
    if(!reset_ok && bios_enabled)
    {
-      printf("[A7800][CORE] retrying without BIOS due to low memory\n");
+#ifdef A7800_LOGS
+      EMU_LOG("[A7800][CORE] retrying without BIOS due to low memory\n");
+#endif
       bios_Release();
       reset_ok = prosystem_Reset();
    }
 
    if(!reset_ok)
    {
-      printf("[A7800][CORE] prosystem_Reset failed\n");
+#ifdef A7800_LOGS
+      EMU_LOG("[A7800][CORE] prosystem_Reset failed\n");
+#endif
       bios_Release();
       cartridge_Release(persistent_data);
       persistent_data = false;

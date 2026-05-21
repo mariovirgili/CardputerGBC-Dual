@@ -44,7 +44,7 @@ uint32_t SRAM_SIZE = 0;
 
 #define BUS_DISABLE_LOGGING 1
 
-#if !BUS_DISABLE_LOGGING
+#if !BUS_DISABLE_LOGGING && EMU_LOG_MASTER_ENABLED && defined(MD_RENDER_LOGS)
 #include <stdarg.h>
 void bus_log(const char *subs, const char *fmt, ...) {
   extern int frame_counter;
@@ -252,15 +252,19 @@ void set_region()
 
     char rom_str[3];
 
-    printf("ROM game  : ");
-    for (int j=0; j < 48;j++) printf("%c",(char)FETCH8ROM(0x150+j));
-    printf("\n");
+#if EMU_LOG_MASTER_ENABLED && defined(MD_LOGS)
+    EMU_LOG("ROM game  : ");
+    for (int j=0; j < 48;j++) EMU_LOG("%c",(char)FETCH8ROM(0x150+j));
+    EMU_LOG("\n");
+#endif
 
     rom_str[0]=FETCH8ROM(0x1F0);
     rom_str[1]=FETCH8ROM(0x1F1);
     rom_str[2]=FETCH8ROM(0x1F2);
 
-    printf("ROM region:%c%c%c (0x%02x 0x%02x 0x%02x)\n", rom_str[0],rom_str[1],rom_str[2],rom_str[0],rom_str[1],rom_str[2]);
+#if EMU_LOG_MASTER_ENABLED && defined(MD_LOGS)
+    EMU_LOG("ROM region:%c%c%c (0x%02x 0x%02x 0x%02x)\n", rom_str[0],rom_str[1],rom_str[2],rom_str[0],rom_str[1],rom_str[2]);
+#endif
 
     /* from Gens */
     if (!memcmp(rom_str, "eur", 3)) country |= 8;
@@ -289,7 +293,9 @@ void set_region()
         else if ((c >= 'A') && (c <= 'F')) country |= c - 'A' + 10;
       }
     }
-    printf("country code=%01x : ",country);
+#if EMU_LOG_MASTER_ENABLED && defined(MD_LOGS)
+    EMU_LOG("country code=%01x : ",country);
+#endif
       /* set default console region (USA > EUROPE > JAPAN) */
       /*
       IO REG0	:	MODE 	VMOD 	DISK 	RSV 	VER3 	VER2 	VER1 	VER0
@@ -301,7 +307,9 @@ void set_region()
 
     /* USA 60Hz*/
     if (country & 4){
-      printf("Oversea-NTSC USA 60Hz\n");
+#if EMU_LOG_MASTER_ENABLED && defined(MD_LOGS)
+      EMU_LOG("Oversea-NTSC USA 60Hz\n");
+#endif
       gwenesis_io_set_reg(0, 0x81);
    //   gwenesis_vdp_status &= 0xFFFE;
      // mode_pal = 0;
@@ -309,7 +317,9 @@ void set_region()
     }
     /* EUROPE 50Hz */
     if (country & 8){
-      printf("Oversea-PAL Europe 50Hz\n");
+#if EMU_LOG_MASTER_ENABLED && defined(MD_LOGS)
+      EMU_LOG("Oversea-PAL Europe 50Hz\n");
+#endif
       gwenesis_io_set_reg(0, 0xC1);
     //  gwenesis_vdp_status |= 0x1;
       //mode_pal = 1;
@@ -317,13 +327,17 @@ void set_region()
     }
     /* set Asia 60HZ */
     if (country & 1){
-      printf("Domestic-NTSC Asia 60Hz\n");
+#if EMU_LOG_MASTER_ENABLED && defined(MD_LOGS)
+      EMU_LOG("Domestic-NTSC Asia 60Hz\n");
+#endif
       gwenesis_io_set_reg(0, 0x1);
     //  gwenesis_vdp_status &= 0xFFFE;
       //mode_pal = 0;
       return;
     }
-      printf("Oversea-NTSC USA 60Hz no detection>> default mode\n");
+#if EMU_LOG_MASTER_ENABLED && defined(MD_LOGS)
+      EMU_LOG("Oversea-NTSC USA 60Hz no detection>> default mode\n");
+#endif
       gwenesis_io_set_reg(0, 0x81);
      // gwenesis_vdp_status &= 0xFFFE;
      // mode_pal = 0;
@@ -770,7 +784,9 @@ void gwenesis_init_sram(uint8_t *rom, uint32_t rom_size) {
 
   SRAM = (uint8_t*)calloc(1, size);
   if (SRAM == NULL) {
-    printf("SRAM alloc failed: %u\n", (unsigned)size);
+#if EMU_LOG_MASTER_ENABLED && defined(MD_LOGS)
+    EMU_LOG("SRAM alloc failed: %u\n", (unsigned)size);
+#endif
     return;
   }
 
@@ -779,6 +795,8 @@ void gwenesis_init_sram(uint8_t *rom, uint32_t rom_size) {
   SRAM_SIZE = size;
   SRAM_ENABLED = 1;
 
-  printf("SRAM detected: start=%08X end=%08X size=%u\n",
-         (unsigned)start, (unsigned)end, (unsigned)size);
+#if EMU_LOG_MASTER_ENABLED && defined(MD_LOGS)
+  EMU_LOG("SRAM detected: start=%08X end=%08X size=%u\n",
+          (unsigned)start, (unsigned)end, (unsigned)size);
+#endif
 }

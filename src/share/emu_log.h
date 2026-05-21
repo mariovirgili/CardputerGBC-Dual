@@ -21,6 +21,7 @@
  *   WS_CPU_PROFILE, WS_CPU_BRANCH_PROFILE
  *   NGP_TRACE_LOGS
  *   COLECO_DEBUG_LOGS
+ *   A7800_LOGS
  *
  * Legacy BENCHMARK_LOGS is kept as a convenience alias for the old global
  * benchmark switch, but the code now uses core-specific benchmark flags.
@@ -94,6 +95,7 @@
 #undef WS_CPU_BRANCH_PROFILE
 #undef WS_LOGS_ENABLED
 #undef COLECO_DEBUG_LOGS
+#undef A7800_LOGS
 #undef NES_DIAG_LOGS
 #undef NGP_TRACE_LOGS
 #undef SNES_LOGS

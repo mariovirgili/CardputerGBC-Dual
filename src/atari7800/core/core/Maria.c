@@ -118,16 +118,24 @@ bool maria_EnsureAllocated(void)
 
       maria_surface = (uint8_t*)maria_Alloc(maria_surface_size);
       if(!maria_surface)
-         printf("[A7800][MARIA] surface allocation FAILED (%u bytes)\n",
-                (unsigned)maria_surface_size);
+      {
+#ifdef A7800_LOGS
+         EMU_LOG("[A7800][MARIA] surface allocation FAILED (%u bytes)\n",
+                 (unsigned)maria_surface_size);
+#endif
+      }
    }
 
    if(!maria_lineRAM)
    {
       maria_lineRAM = (uint8_t*)maria_Alloc(MARIA_LINERAM_SIZE);
       if(!maria_lineRAM)
-         printf("[A7800][MARIA] lineRAM allocation FAILED (%u bytes)\n",
-                (unsigned)MARIA_LINERAM_SIZE);
+      {
+#ifdef A7800_LOGS
+         EMU_LOG("[A7800][MARIA] lineRAM allocation FAILED (%u bytes)\n",
+                 (unsigned)MARIA_LINERAM_SIZE);
+#endif
+      }
    }
 
    if(!(maria_surface && maria_lineRAM))

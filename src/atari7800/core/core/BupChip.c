@@ -78,7 +78,9 @@ static bool bupchip_EnsureAllocated(void)
       bupchip_buffer = (short*)malloc(bufferSize);
       if(!bupchip_buffer)
       {
-         printf("[A7800][BUPCHIP] buffer alloc failed (%u bytes)\n", (unsigned)bufferSize);
+#ifdef A7800_LOGS
+         EMU_LOG("[A7800][BUPCHIP] buffer alloc failed (%u bytes)\n", (unsigned)bufferSize);
+#endif
          return false;
       }
       memset(bupchip_buffer, 0, bufferSize);
@@ -89,8 +91,10 @@ static bool bupchip_EnsureAllocated(void)
       bupchip_songs = (BupchipFileContents*)malloc(sizeof(BupchipFileContents) * 32);
       if(!bupchip_songs)
       {
-         printf("[A7800][BUPCHIP] songs alloc failed (%u bytes)\n",
-                (unsigned)(sizeof(BupchipFileContents) * 32));
+#ifdef A7800_LOGS
+         EMU_LOG("[A7800][BUPCHIP] songs alloc failed (%u bytes)\n",
+                 (unsigned)(sizeof(BupchipFileContents) * 32));
+#endif
          return false;
       }
       memset(bupchip_songs, 0, sizeof(BupchipFileContents) * 32);

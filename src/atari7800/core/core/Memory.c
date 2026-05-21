@@ -107,7 +107,9 @@ bool memory_EnsureAllocated(void)
       if(memory_flat_buf)
       {
          int i;
-         printf("[A7800][MEM] flat 64KB alloc OK, aliasing pages\n");
+#ifdef A7800_LOGS
+         EMU_LOG("[A7800][MEM] flat 64KB alloc OK, aliasing pages\n");
+#endif
          for(i = 0; i < MEMORY_NUM_PAGES; i++)
             memory_pages[i] = memory_flat_buf + (size_t)i * MEMORY_PAGE_SIZE;
       }
@@ -120,11 +122,15 @@ bool memory_EnsureAllocated(void)
             memory_pages[i] = (uint8_t*)memory_Alloc(MEMORY_PAGE_SIZE, true);
             if(!memory_pages[i])
             {
-               printf("[A7800][MEM] page %d alloc failed\n", i);
+#ifdef A7800_LOGS
+               EMU_LOG("[A7800][MEM] page %d alloc failed\n", i);
+#endif
                return false;
             }
          }
-         printf("[A7800][MEM] alloc ram 4x%u bytes\n", (unsigned)MEMORY_PAGE_SIZE);
+#ifdef A7800_LOGS
+         EMU_LOG("[A7800][MEM] alloc ram 4x%u bytes\n", (unsigned)MEMORY_PAGE_SIZE);
+#endif
       }
       memory_ram = memory_pages[0];
    }

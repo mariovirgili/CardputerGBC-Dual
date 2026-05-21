@@ -37,7 +37,7 @@ __license__ = "GPLv3"
 
 #define VDP_MEM_DISABLE_LOGGING 1
 
-#if !VDP_MEM_DISABLE_LOGGING
+#if !VDP_MEM_DISABLE_LOGGING && EMU_LOG_MASTER_ENABLED && defined(MD_RENDER_LOGS)
 #include <stdarg.h>
 void vdpm_log(const char *subs, const char *fmt, ...) {
   extern int frame_counter;
@@ -465,7 +465,9 @@ void gwenesis_vdp_dma_fill(unsigned short value)
     } while (--dma_length);
     break;
   default:
-    printf("Invalid code during DMA fill\n");
+#if EMU_LOG_MASTER_ENABLED && defined(MD_RENDER_LOGS)
+    EMU_LOG("Invalid code during DMA fill\n");
+#endif
   }
 
 
@@ -739,7 +741,9 @@ unsigned int gwenesis_vdp_read_data_port_16()
 
             return value;
         default:
-            printf("unhandled gwenesis_vdp_read_data_port_16(%x)\n", address_reg);
+#if EMU_LOG_MASTER_ENABLED && defined(MD_RENDER_LOGS)
+            EMU_LOG("unhandled gwenesis_vdp_read_data_port_16(%x)\n", address_reg);
+#endif
             return 0xFF;
         }
    // }
@@ -880,7 +884,9 @@ void gwenesis_vdp_write_data_port_16(unsigned int value)
         case 0x9: // VDP FIFO TEST
             break;
         default:
-            printf("VDP Data Port invalid");
+#if EMU_LOG_MASTER_ENABLED && defined(MD_RENDER_LOGS)
+            EMU_LOG("VDP Data Port invalid");
+#endif
         }
 
     /* if a DMA is scheduled, do it */
@@ -986,7 +992,9 @@ void gwenesis_vdp_write_memory_16(unsigned int address, unsigned int value) {
     return;
   }
   // UNHANDLED
-  printf("unhandled gwenesis_vdp_write(%x, %x)\n", address, value);
+#if EMU_LOG_MASTER_ENABLED && defined(MD_RENDER_LOGS)
+  EMU_LOG("unhandled gwenesis_vdp_write(%x, %x)\n", address, value);
+#endif
 
 }
 

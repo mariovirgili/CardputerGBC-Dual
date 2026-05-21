@@ -147,7 +147,9 @@ void    AudioEvent_Initialise(void)
 	}
 	else
 	{
-		printf("[GX4-AUDCORE] eventbuf alloc failed\n");
+#ifdef COLECO_DEBUG_LOGS
+		EMU_LOG("[GX4-AUDCORE] eventbuf alloc failed\n");
+#endif
         }
 
         NopCount.FixedPoint.L = 0;

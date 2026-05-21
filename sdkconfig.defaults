@@ -95,6 +95,9 @@ CONFIG_MBEDTLS_AES_C=y
 # capability in Kconfig, but the application does not initialize it.
 # CONFIG_BT_ENABLED is not set
 
+# No terminal/termios API is used by the emulator UI.
+CONFIG_VFS_SUPPORT_TERMIOS=n
+
 # FATFS must expose long filenames; without this, readdir() returns 8.3 aliases
 # such as AEROBI~2.SFC and save/title logic loses the real ROM name.
 # CONFIG_FATFS_LFN_NONE is not set

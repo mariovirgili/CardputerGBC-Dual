@@ -70,7 +70,9 @@ static void* tia_Alloc(size_t size)
     void* ptr = malloc(size);
     if (!ptr)
     {
-        printf("[TIA] malloc failed (%u bytes)\n", (unsigned)size);
+#ifdef A7800_LOGS
+        EMU_LOG("[TIA] malloc failed (%u bytes)\n", (unsigned)size);
+#endif
     }
     return ptr;
 }
@@ -82,7 +84,9 @@ static int tia_EnsureAllocated(void)
       tia_buffer = (uint8_t*)tia_Alloc(TIA_BUFFER_SIZE);
       if(!tia_buffer)
       {
-         printf("[A7800][TIA] buffer alloc failed (%u bytes)\n", (unsigned)TIA_BUFFER_SIZE);
+#ifdef A7800_LOGS
+         EMU_LOG("[A7800][TIA] buffer alloc failed (%u bytes)\n", (unsigned)TIA_BUFFER_SIZE);
+#endif
          return 0;
       }
       memset(tia_buffer, 0, TIA_BUFFER_SIZE);

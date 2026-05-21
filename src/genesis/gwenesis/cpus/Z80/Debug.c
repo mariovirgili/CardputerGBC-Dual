@@ -11,7 +11,7 @@
 /**     commercially. Please, notify me, if you make any    **/
 /**     changes to this file.                               **/
 /*************************************************************/
-#ifdef DEBUG
+#if defined(DEBUG) && EMU_LOG_MASTER_ENABLED && defined(MD_AUDIO_LOGS)
 
 #include "Z80.h"
 
@@ -431,4 +431,4 @@ byte DebugZ80(Z80 *R)
   return(1);
 }
 
-#endif /* DEBUG */
+#endif /* DEBUG && MD_AUDIO_LOGS */

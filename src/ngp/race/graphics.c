@@ -776,7 +776,9 @@ BOOL graphics_init(void)
         if (!scanlineY) {
             static unsigned char dummy = 0;
             scanlineY = &dummy;
+#ifdef NGP_TRACE_LOGS
             EMU_LOG("[SAFE INIT] scanlineY not mapped yet -> using dummy\n");
+#endif
         }
     }
 

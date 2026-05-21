@@ -153,7 +153,7 @@ static uint32_t ssg_mask_any = 0; // 1 bit par slot
 
 #define YM2612_DISABLE_LOGGING 1
 
-#if !YM2612_DISABLE_LOGGING
+#if !YM2612_DISABLE_LOGGING && EMU_LOG_MASTER_ENABLED && defined(MD_AUDIO_LOGS)
 #include <stdarg.h>
 void ym_log(const char *subs, const char *fmt, ...) {
   extern int frame_counter;
