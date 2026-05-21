@@ -143,6 +143,10 @@ set(ENABLE_SNES_STRICT_PSEUDO_HIRES ON)
 set(ENABLE_SNES_BRANCHLESS_CONVERT_TILE_4BPP ON)
 # SNES experiment: specialize color add/sub for RGB565.
 set(ENABLE_SNES_FAST_RGB565_COLOR_MATH ON)
+# SNES experiment: place the hottest memory readers in IRAM.
+set(ENABLE_SNES_GETSET_IRAM ON)
+# SNES experiment: compile CPU opcode and memory dispatch with -Ofast.
+set(ENABLE_SNES_CPU_MEM_OFAST ON)
 
 
 # Stella (Atari 2600)
@@ -294,6 +298,7 @@ if(ENABLE_SNES_CORE)
     add_private_define_if(ENABLE_SNES_STRICT_PSEUDO_HIRES SNES_STRICT_PSEUDO_HIRES)
     add_private_define_if(ENABLE_SNES_BRANCHLESS_CONVERT_TILE_4BPP SNES_BRANCHLESS_CONVERT_TILE_4BPP)
     add_private_define_if(ENABLE_SNES_FAST_RGB565_COLOR_MATH SNES_FAST_RGB565_COLOR_MATH)
+    add_private_define_if(ENABLE_SNES_GETSET_IRAM SNES_GETSET_IRAM)
 endif()
 
 # Global
@@ -616,6 +621,11 @@ set(SNES_HOT_O3_SRCS
     "${SRC_ROOT}/snes/snes9x/src/tile.c"
 )
 
+set(SNES_CPU_MEM_OFAST_SRCS
+    "${SRC_ROOT}/snes/snes9x/src/cpuops.c"
+    "${SRC_ROOT}/snes/snes9x/src/getset.c"
+)
+
 if(ENABLE_GX4000_LTO)
     add_source_compile_opts(OPTIONS -flto -ffat-lto-objects SOURCES ${GX4000_LTO_SRCS})
 endif()
@@ -678,6 +688,10 @@ endif()
 
 if(ENABLE_SNES_CORE AND ENABLE_SNES_HOT_O3)
     add_source_compile_opts(OPTIONS -O3 SOURCES ${SNES_HOT_O3_SRCS})
+endif()
+
+if(ENABLE_SNES_CORE AND ENABLE_SNES_CPU_MEM_OFAST)
+    add_source_compile_opts(OPTIONS -Ofast SOURCES ${SNES_CPU_MEM_OFAST_SRCS})
 endif()
 
 if(ENABLE_GX4000_LTO OR ENABLE_SMS_LTO OR ENABLE_NES_LTO OR ENABLE_A2600_LTO OR ENABLE_A7800_LTO OR ENABLE_PCE_LTO OR ENABLE_GBC_LTO OR ENABLE_LYNX_LTO OR ENABLE_MSX_LTO OR ENABLE_WS_LTO OR ENABLE_MD_LTO OR ENABLE_NGP_LTO OR (ENABLE_SNES_CORE AND ENABLE_SNES_LTO))

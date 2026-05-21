@@ -5,6 +5,13 @@
 
 #include "snes9x.h"
 
+#ifdef SNES_GETSET_IRAM
+#include "esp_attr.h"
+#define SNES_GETSET_CODE_ATTR IRAM_ATTR
+#else
+#define SNES_GETSET_CODE_ATTR
+#endif
+
 #ifdef FAST_LSB_WORD_ACCESS
 #define READ_WORD(s)      (*(uint16_t *) (s))
 #define READ_DWORD(s)     (*(uint32_t *) (s))
