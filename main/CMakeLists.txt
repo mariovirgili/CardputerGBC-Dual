@@ -126,6 +126,10 @@ set(ENABLE_SNES_NO_THREADED_INPUT ON)
 set(ENABLE_SNES_NO_THREADED_SAVE ON)
 # ESP32-S3 is little-endian and supports unaligned word loads.
 set(ENABLE_SNES_FAST_LSB_WORD_ACCESS ON)
+# SNES experiment: reduce code bloat/ICache pressure from loop unrolling.
+set(ENABLE_SNES_NO_UNROLL_LOOPS ON)
+# SNES experiment: allow faster floating-point math where the core uses it.
+set(ENABLE_SNES_FAST_MATH ON)
 
 
 # Stella (Atari 2600)
@@ -634,6 +638,14 @@ endif()
 
 if(ENABLE_SNES_CORE AND ENABLE_SNES_LTO)
     add_source_compile_opts(OPTIONS -flto -ffat-lto-objects SOURCES ${SNES_LTO_SRCS})
+endif()
+
+if(ENABLE_SNES_CORE AND ENABLE_SNES_NO_UNROLL_LOOPS)
+    add_source_compile_opts(OPTIONS -fno-unroll-loops SOURCES ${SNES_LTO_SRCS})
+endif()
+
+if(ENABLE_SNES_CORE AND ENABLE_SNES_FAST_MATH)
+    add_source_compile_opts(OPTIONS -ffast-math SOURCES ${SNES_LTO_SRCS})
 endif()
 
 if(ENABLE_GX4000_LTO OR ENABLE_SMS_LTO OR ENABLE_NES_LTO OR ENABLE_A2600_LTO OR ENABLE_A7800_LTO OR ENABLE_PCE_LTO OR ENABLE_GBC_LTO OR ENABLE_LYNX_LTO OR ENABLE_MSX_LTO OR ENABLE_WS_LTO OR ENABLE_MD_LTO OR ENABLE_NGP_LTO OR (ENABLE_SNES_CORE AND ENABLE_SNES_LTO))
