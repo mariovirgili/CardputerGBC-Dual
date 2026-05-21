@@ -130,6 +130,8 @@ set(ENABLE_SNES_FAST_LSB_WORD_ACCESS ON)
 set(ENABLE_SNES_NO_UNROLL_LOOPS ON)
 # SNES experiment: allow faster floating-point math where the core uses it.
 set(ENABLE_SNES_FAST_MATH ON)
+# SNES experiment: optimize only hot runtime paths with -O3.
+set(ENABLE_SNES_HOT_O3 ON)
 
 
 # Stella (Atari 2600)
@@ -588,6 +590,15 @@ file(GLOB_RECURSE SNES_LTO_SRCS
     "${SRC_ROOT}/snes/*.cpp"
 )
 
+set(SNES_HOT_O3_SRCS
+    "${SRC_ROOT}/snes/snes9x/src/cpuops.c"
+    "${SRC_ROOT}/snes/snes9x/src/cpuexec.c"
+    "${SRC_ROOT}/snes/snes9x/src/getset.c"
+    "${SRC_ROOT}/snes/snes9x/src/ppu.c"
+    "${SRC_ROOT}/snes/snes9x/src/gfx.c"
+    "${SRC_ROOT}/snes/snes9x/src/tile.c"
+)
+
 if(ENABLE_GX4000_LTO)
     add_source_compile_opts(OPTIONS -flto -ffat-lto-objects SOURCES ${GX4000_LTO_SRCS})
 endif()
@@ -646,6 +657,10 @@ endif()
 
 if(ENABLE_SNES_CORE AND ENABLE_SNES_FAST_MATH)
     add_source_compile_opts(OPTIONS -ffast-math SOURCES ${SNES_LTO_SRCS})
+endif()
+
+if(ENABLE_SNES_CORE AND ENABLE_SNES_HOT_O3)
+    add_source_compile_opts(OPTIONS -O3 SOURCES ${SNES_HOT_O3_SRCS})
 endif()
 
 if(ENABLE_GX4000_LTO OR ENABLE_SMS_LTO OR ENABLE_NES_LTO OR ENABLE_A2600_LTO OR ENABLE_A7800_LTO OR ENABLE_PCE_LTO OR ENABLE_GBC_LTO OR ENABLE_LYNX_LTO OR ENABLE_MSX_LTO OR ENABLE_WS_LTO OR ENABLE_MD_LTO OR ENABLE_NGP_LTO OR (ENABLE_SNES_CORE AND ENABLE_SNES_LTO))
