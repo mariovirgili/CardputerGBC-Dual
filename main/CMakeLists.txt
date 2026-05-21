@@ -147,6 +147,8 @@ set(ENABLE_SNES_FAST_RGB565_COLOR_MATH ON)
 set(ENABLE_SNES_GETSET_IRAM ON)
 # SNES experiment: compile CPU opcode and memory dispatch with -Ofast.
 set(ENABLE_SNES_CPU_MEM_OFAST ON)
+# SNES experiment: start line buffers at normal width and grow for hi-res only.
+set(ENABLE_SNES_LAZY_LINE_BUFFERS ON)
 
 
 # Stella (Atari 2600)
@@ -299,6 +301,7 @@ if(ENABLE_SNES_CORE)
     add_private_define_if(ENABLE_SNES_BRANCHLESS_CONVERT_TILE_4BPP SNES_BRANCHLESS_CONVERT_TILE_4BPP)
     add_private_define_if(ENABLE_SNES_FAST_RGB565_COLOR_MATH SNES_FAST_RGB565_COLOR_MATH)
     add_private_define_if(ENABLE_SNES_GETSET_IRAM SNES_GETSET_IRAM)
+    add_private_define_if(ENABLE_SNES_LAZY_LINE_BUFFERS SNES_LAZY_LINE_BUFFERS)
 endif()
 
 # Global

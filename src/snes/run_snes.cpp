@@ -126,8 +126,13 @@ static size_t snes_estimated_core_alloc_bytes()
 
 static size_t snes_estimated_linebuf_bytes()
 {
+#ifdef SNES_LAZY_LINE_BUFFERS
+    return (sizeof(uint16_t) * SNES_WIDTH * 2u) +
+           (sizeof(uint8_t) * SNES_WIDTH * 2u);
+#else
     return (sizeof(uint16_t) * SNES_WIDTH * 2u * 2u) +
            (sizeof(uint8_t) * SNES_WIDTH * 2u * 2u);
+#endif
 }
 
 static size_t snes_estimated_alt_alloc_bytes()

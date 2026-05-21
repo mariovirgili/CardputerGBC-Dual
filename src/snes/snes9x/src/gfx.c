@@ -132,6 +132,7 @@ static ClippedTileRenderer DrawHiResClippedTilePtr;
 static LargePixelRenderer  DrawLargePixelPtr;
 static uint8_t  Mode7Depths [2];
 static LineBuffers s_line;
+static uint32_t s_line_width;
 
 static struct {
    SLineData LineData[240];
@@ -217,6 +218,59 @@ void DrawLargePixel16Add1_2(uint32_t Tile, int32_t Offset, uint32_t StartPixel, 
 void DrawLargePixel16Sub(uint32_t Tile, int32_t Offset, uint32_t StartPixel, uint32_t Pixels, uint32_t StartLine, uint32_t LineCount);
 void DrawLargePixel16Sub1_2(uint32_t Tile, int32_t Offset, uint32_t StartPixel, uint32_t Pixels, uint32_t StartLine, uint32_t LineCount);
 
+static bool S9xEnsureLineBufferWidth(uint32_t width)
+{
+   if (width <= s_line_width &&
+       s_line.main && s_line.sub && s_line.z && s_line.subz)
+      return true;
+
+   const uint32_t caps = MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT;
+   uint16_t *main = (uint16_t*)heap_caps_malloc(sizeof(uint16_t) * width, caps);
+   uint16_t *sub  = (uint16_t*)heap_caps_malloc(sizeof(uint16_t) * width, caps);
+   uint8_t  *z    = (uint8_t*) heap_caps_malloc(sizeof(uint8_t)  * width, caps);
+   uint8_t  *subz = (uint8_t*) heap_caps_malloc(sizeof(uint8_t)  * width, caps);
+
+   if (!main || !sub || !z || !subz)
+   {
+      free(main);
+      free(sub);
+      free(z);
+      free(subz);
+      snes_gfx_log_alloc_fail("line buffers",
+         (sizeof(uint16_t) * width * 2u) +
+         (sizeof(uint8_t) * width * 2u));
+      return false;
+   }
+
+   free(s_line.main);
+   free(s_line.sub);
+   free(s_line.z);
+   free(s_line.subz);
+
+   s_line.main = main;
+   s_line.sub  = sub;
+   s_line.z    = z;
+   s_line.subz = subz;
+   s_line_width = width;
+
+   memset(s_line.main, 0, sizeof(uint16_t) * width);
+   memset(s_line.sub,  0, sizeof(uint16_t) * width);
+   memset(s_line.z,    0, sizeof(uint8_t)  * width);
+   memset(s_line.subz, 0, sizeof(uint8_t)  * width);
+   return true;
+}
+
+static inline uint32_t S9xRequiredLineBufferWidth(void)
+{
+#ifdef SNES_LAZY_LINE_BUFFERS
+   return (PPU.BGMode == 5 || PPU.BGMode == 6 || IPPU.Interlace)
+      ? SNES_WIDTH * 2u
+      : SNES_WIDTH;
+#else
+   return SNES_WIDTH * 2u;
+#endif
+}
+
 bool S9xInitGFX(void)
 {
    LocalState = calloc(1, sizeof(*LocalState));
@@ -297,26 +351,11 @@ bool S9xInitGFX(void)
 
 bool S9xInitLineBuffers(void)
 {
-   // buffer lines - allocate from internal SRAM with DMA capability for better alignment
-   const uint32_t caps = MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT;
-   s_line.main  = heap_caps_malloc(sizeof(uint16_t) * SNES_WIDTH * 2, caps); // hi-res
-   s_line.sub   = heap_caps_malloc(sizeof(uint16_t) * SNES_WIDTH * 2, caps);
-   s_line.z     = heap_caps_malloc(sizeof(uint8_t)  * SNES_WIDTH * 2, caps);
-   s_line.subz  = heap_caps_malloc(sizeof(uint8_t)  * SNES_WIDTH * 2, caps);
-
-   if (!s_line.main || !s_line.sub || !s_line.z || !s_line.subz)
-   {
-      snes_gfx_log_alloc_fail("line buffers",
-         (sizeof(uint16_t) * SNES_WIDTH * 2u * 2u) +
-         (sizeof(uint8_t) * SNES_WIDTH * 2u * 2u));
-      return false;
-   }
-
-   memset(s_line.main, 0, sizeof(uint16_t) * SNES_WIDTH * 2);
-   memset(s_line.sub,  0, sizeof(uint16_t) * SNES_WIDTH * 2);
-   memset(s_line.z,    0, sizeof(uint8_t)  * SNES_WIDTH * 2);
-   memset(s_line.subz, 0, sizeof(uint8_t)  * SNES_WIDTH * 2);
-   return true;
+#ifdef SNES_LAZY_LINE_BUFFERS
+   return S9xEnsureLineBufferWidth(SNES_WIDTH);
+#else
+   return S9xEnsureLineBufferWidth(SNES_WIDTH * 2u);
+#endif
 }
 
 void S9xDeinitGFX(void)
@@ -332,6 +371,15 @@ void S9xDeinitGFX(void)
       free(LocalState);
       LocalState = NULL;
    }
+   free(s_line.main);
+   free(s_line.sub);
+   free(s_line.z);
+   free(s_line.subz);
+   s_line.main = NULL;
+   s_line.sub = NULL;
+   s_line.z = NULL;
+   s_line.subz = NULL;
+   s_line_width = 0;
 }
 
 void S9xStartScreenRefresh(void)
@@ -3151,6 +3199,13 @@ static void S9xFlushLiveSpanRange(uint32_t start, uint32_t end)
       return;
    }
 
+   if (!S9xEnsureLineBufferWidth(S9xRequiredLineBufferWidth()))
+   {
+      IPPU.PreviousLine = end;
+      IPPU.CurrentLine  = end;
+      return;
+   }
+
    uint8_t *oldScreen     = GFX.Screen;
    uint8_t *oldSubScreen  = GFX.SubScreen;
    uint8_t *oldZBuffer    = GFX.ZBuffer;
@@ -3231,6 +3286,9 @@ static void S9xFlushLiveSpanRange(uint32_t start, uint32_t end)
 static void S9xFlushLiveLine(uint32_t line)
 {
    if (!s_liveLineCallback)
+      return;
+
+   if (!S9xEnsureLineBufferWidth(S9xRequiredLineBufferWidth()))
       return;
 
    uint8_t *oldScreen     = GFX.Screen;
@@ -3404,6 +3462,9 @@ void S9xRenderLine_NoFramebuffer(uint32_t line, S9xLineCallback cb)
         return;
 
     if (!IPPU.RenderThisFrame)
+        return;
+
+    if (!S9xEnsureLineBufferWidth(S9xRequiredLineBufferWidth()))
         return;
 
     /* Save old state */
