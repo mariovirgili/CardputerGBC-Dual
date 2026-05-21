@@ -195,6 +195,29 @@ static uint8_t ConvertTile(uint8_t* pCache, uint32_t TileAddr)
          );                                                                                         \
       }                                                                                             \
    } while (0)
+
+#define WRITE_PIXEL16_X2_XTENSA(Screen, Depth, PixelValue, ScreenColors, DepthOffset, ScreenByteOffset) \
+   do                                                                                                  \
+   {                                                                                                   \
+      uint8_t Pixel = (uint8_t) (PixelValue);                                                          \
+      if (GFX.Z1 > (Depth)[DepthOffset] && Pixel)                                                      \
+      {                                                                                                \
+         uint32_t Color;                                                                               \
+         __asm__ __volatile__ (                                                                        \
+            "slli  %[Color], %[Pixel], 1        \n"                                                    \
+            "add   %[Color], %[Pal], %[Color]   \n"                                                    \
+            "l16ui %[Color], %[Color], 0        \n"                                                    \
+            "s8i   %[ZSet], %[Z], " SNES_STRINGIFY(DepthOffset) "\n"                                  \
+            "s8i   %[ZSet], %[Z], " SNES_STRINGIFY(DepthOffset + 1) "\n"                              \
+            "s16i  %[Color], %[Out], " SNES_STRINGIFY(ScreenByteOffset) "\n"                          \
+            "s16i  %[Color], %[Out], " SNES_STRINGIFY(ScreenByteOffset + 2) "\n"                      \
+            : [Color] "=&r" (Color)                                                                   \
+            : [Out] "r" (Screen), [Z] "r" (Depth), [Pixel] "r" ((uint32_t) Pixel),                    \
+              [Pal] "r" (ScreenColors), [ZSet] "r" ((uint32_t) GFX.Z2)                                \
+            : "memory"                                                                                \
+         );                                                                                            \
+      }                                                                                                \
+   } while (0)
 #endif
 
 static INLINE void WRITE_4PIXELS16(int32_t Offset, uint8_t* Pixels, uint16_t* ScreenColors)
@@ -281,6 +304,14 @@ static void WRITE_4PIXELS16_FLIPPED_HALFWIDTH(int32_t Offset, uint8_t* Pixels, u
 
 static void WRITE_4PIXELS16x2(int32_t Offset, uint8_t* Pixels, uint16_t* ScreenColors)
 {
+#if (defined(__XTENSA__) || defined(__xtensa__)) && defined(__GNUC__) && !defined(NO_ASM)
+   uint16_t* Screen = (uint16_t*) GFX.S + Offset;
+   uint8_t*  Depth  = GFX.DB + Offset;
+   WRITE_PIXEL16_X2_XTENSA(Screen, Depth, Pixels[0], ScreenColors, 0, 0);
+   WRITE_PIXEL16_X2_XTENSA(Screen, Depth, Pixels[1], ScreenColors, 2, 4);
+   WRITE_PIXEL16_X2_XTENSA(Screen, Depth, Pixels[2], ScreenColors, 4, 8);
+   WRITE_PIXEL16_X2_XTENSA(Screen, Depth, Pixels[3], ScreenColors, 6, 12);
+#else
    uint8_t  Pixel, N;
    uint16_t* Screen = (uint16_t*) GFX.S + Offset;
    uint8_t*  Depth = GFX.DB + Offset;
@@ -293,10 +324,19 @@ static void WRITE_4PIXELS16x2(int32_t Offset, uint8_t* Pixels, uint16_t* ScreenC
          Depth [N * 2] = Depth [N * 2 + 1] = GFX.Z2;
       }
    }
+#endif
 }
 
 static void WRITE_4PIXELS16_FLIPPEDx2(int32_t Offset, uint8_t* Pixels, uint16_t* ScreenColors)
 {
+#if (defined(__XTENSA__) || defined(__xtensa__)) && defined(__GNUC__) && !defined(NO_ASM)
+   uint16_t* Screen = (uint16_t*) GFX.S + Offset;
+   uint8_t*  Depth  = GFX.DB + Offset;
+   WRITE_PIXEL16_X2_XTENSA(Screen, Depth, Pixels[3], ScreenColors, 0, 0);
+   WRITE_PIXEL16_X2_XTENSA(Screen, Depth, Pixels[2], ScreenColors, 2, 4);
+   WRITE_PIXEL16_X2_XTENSA(Screen, Depth, Pixels[1], ScreenColors, 4, 8);
+   WRITE_PIXEL16_X2_XTENSA(Screen, Depth, Pixels[0], ScreenColors, 6, 12);
+#else
    uint8_t  Pixel, N;
    uint16_t* Screen = (uint16_t*) GFX.S + Offset;
    uint8_t*  Depth = GFX.DB + Offset;
@@ -309,6 +349,7 @@ static void WRITE_4PIXELS16_FLIPPEDx2(int32_t Offset, uint8_t* Pixels, uint16_t*
          Depth [N * 2] = Depth [N * 2 + 1] = GFX.Z2;
       }
    }
+#endif
 }
 
 static void WRITE_4PIXELS16x2x2(int32_t Offset, uint8_t* Pixels, uint16_t* ScreenColors)
