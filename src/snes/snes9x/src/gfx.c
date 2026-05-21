@@ -2626,7 +2626,13 @@ IRAM_ATTR void S9xUpdateScreen_Core(void)
    GFX.r212c = Memory.FillRAM [0x212c];
    GFX.r212d = Memory.FillRAM [0x212d];
    GFX.r2130 = Memory.FillRAM [0x2130];
+#ifdef SNES_STRICT_PSEUDO_HIRES
+   GFX.Pseudo = (Memory.FillRAM [0x2133] & 8) &&
+      ((GFX.r212c & 15) != (GFX.r212d & 15)) &&
+      ((GFX.r2131 & 0x3f) == 0);
+#else
    GFX.Pseudo = Memory.FillRAM [0x2133] & 8;
+#endif
 
    if (IPPU.OBJChanged)
       S9xSetupOBJ();

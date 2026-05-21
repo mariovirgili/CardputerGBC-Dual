@@ -132,6 +132,8 @@ set(ENABLE_SNES_NO_UNROLL_LOOPS ON)
 set(ENABLE_SNES_FAST_MATH ON)
 # SNES experiment: optimize only hot runtime paths with -O3.
 set(ENABLE_SNES_HOT_O3 ON)
+# SNES: keep pseudo-hires on the same narrow condition used by PocketSNES.
+set(ENABLE_SNES_STRICT_PSEUDO_HIRES ON)
 
 
 # Stella (Atari 2600)
@@ -277,6 +279,7 @@ if(ENABLE_SNES_CORE)
     add_private_define_if(ENABLE_SNES_NO_THREADED_INPUT SNES_NO_THREADED_INPUT)
     add_private_define_if(ENABLE_SNES_NO_THREADED_SAVE SNES_NO_THREADED_SAVE)
     add_private_define_if(ENABLE_SNES_FAST_LSB_WORD_ACCESS FAST_LSB_WORD_ACCESS)
+    add_private_define_if(ENABLE_SNES_STRICT_PSEUDO_HIRES SNES_STRICT_PSEUDO_HIRES)
 endif()
 
 # Global
