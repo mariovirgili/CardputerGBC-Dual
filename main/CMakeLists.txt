@@ -117,6 +117,8 @@ set(WS_AUDIO_DMA_COUNT "")
 
 # SNES
 set(ENABLE_SNES_NO_ZERO_LUT ON)
+# The decoded tile cache is disabled; skip its stale/valid flags too.
+set(ENABLE_SNES_NO_TILE_CACHE_FLAGS ON)
 # Disable sound support.
 set(ENABLE_SNES_NO_SOUND ON)
 set(ENABLE_SNES_NO_APU ON)
@@ -270,6 +272,7 @@ add_private_define_if(ENABLE_WS_AUDIO_POLL_MS WS_AUDIO_POLL_MS=4)
 if(ENABLE_SNES_CORE)
     # SNES
     add_private_define_if(ENABLE_SNES_NO_ZERO_LUT NO_ZERO_LUT)
+    add_private_define_if(ENABLE_SNES_NO_TILE_CACHE_FLAGS SNES_NO_TILE_CACHE_FLAGS)
     # SNES: Disable sound support.
     add_private_define_if(ENABLE_SNES_NO_SOUND SNES_NO_SOUND)
     add_private_define_if(ENABLE_SNES_NO_APU SNES_NO_APU)

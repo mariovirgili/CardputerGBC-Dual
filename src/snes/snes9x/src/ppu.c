@@ -1652,7 +1652,9 @@ static void CommonPPUReset()
    IPPU.OBJChanged = true;
    IPPU.RenderThisFrame = true;
    IPPU.FrameCount = 0;
+#ifndef SNES_NO_TILE_CACHE_FLAGS
    memset(IPPU.TileCached, 0, MAX_2BIT_TILES);
+#endif
    IPPU.FirstVRAMRead = false;
    IPPU.Interlace = false;
    IPPU.DoubleWidthPixels = false;

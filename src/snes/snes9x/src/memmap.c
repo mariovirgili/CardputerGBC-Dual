@@ -190,8 +190,12 @@ bool S9xInitPpu(void)
    IPPU.ScreenColors = (uint16_t *)calloc(256 * 9, sizeof(uint16_t)); // 4 KB
    IPPU.DirectColors = IPPU.ScreenColors + 256;
 
-   IPPU.TileCache  = NULL; // no cache
+   IPPU.TileCache  = NULL; // no decoded tile cache
+#ifndef SNES_NO_TILE_CACHE_FLAGS
    IPPU.TileCached = (uint8_t*)calloc(MAX_2BIT_TILES, 1);
+#else
+   IPPU.TileCached = NULL;
+#endif
 
    IPPU.Red   = (uint8_t*)calloc(256, 1);
    IPPU.Green = (uint8_t*)calloc(256, 1);
@@ -201,7 +205,10 @@ bool S9xInitPpu(void)
    PPU.OBJ     = (SOBJ *)calloc(128, sizeof(SOBJ));         // 2 KB
    PPU.OAMData = (uint8_t *)calloc(512 + 32, 1);            // 544 B
 
-   if (!IPPU.ScreenColors || !IPPU.TileCached ||
+   if (!IPPU.ScreenColors ||
+#ifndef SNES_NO_TILE_CACHE_FLAGS
+       !IPPU.TileCached ||
+#endif
        !IPPU.Red || !IPPU.Green || !IPPU.Blue ||
        !PPU.CGDATA || !PPU.OBJ || !PPU.OAMData)
    {

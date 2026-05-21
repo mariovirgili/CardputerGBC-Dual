@@ -223,6 +223,18 @@ extern SPPU PPU;
 extern SDMA DMA [8];
 extern InternalPPU IPPU;
 
+#ifndef SNES_NO_TILE_CACHE_FLAGS
+#define INVALIDATE_TILE_CACHE(address)          \
+   do                                           \
+   {                                            \
+      IPPU.TileCached[(address) >> 4] = false; \
+      IPPU.TileCached[(address) >> 5] = false; \
+      IPPU.TileCached[(address) >> 6] = false; \
+   } while (0)
+#else
+#define INVALIDATE_TILE_CACHE(address) do { } while (0)
+#endif
+
 #include "memmap.h"
 
 #define SNES_5C77 1
@@ -353,9 +365,7 @@ static INLINE void REGISTER_2118(uint8_t Byte)
    }
    else
       Memory.VRAM[address = (PPU.VMA.Address << 1) & 0xFFFF] = Byte;
-   IPPU.TileCached[address >> 4] = false;
-   IPPU.TileCached[address >> 5] = false;
-   IPPU.TileCached[address >> 6] = false;
+   INVALIDATE_TILE_CACHE(address);
    if (!PPU.VMA.High)
       PPU.VMA.Address += PPU.VMA.Increment;
 }
@@ -366,9 +376,7 @@ static INLINE void REGISTER_2118_tile(uint8_t Byte)
    uint32_t rem = PPU.VMA.Address & PPU.VMA.Mask1;
    address = (((PPU.VMA.Address & ~PPU.VMA.Mask1) + (rem >> PPU.VMA.Shift) + ((rem & (PPU.VMA.FullGraphicCount - 1)) << 3)) << 1) & 0xffff;
    Memory.VRAM [address] = Byte;
-   IPPU.TileCached[address >> 4] = false;
-   IPPU.TileCached[address >> 5] = false;
-   IPPU.TileCached[address >> 6] = false;
+   INVALIDATE_TILE_CACHE(address);
    if (!PPU.VMA.High)
       PPU.VMA.Address += PPU.VMA.Increment;
 }
@@ -377,9 +385,7 @@ static INLINE void REGISTER_2118_linear(uint8_t Byte)
 {
    uint32_t address = (PPU.VMA.Address << 1) & 0xFFFF;
    Memory.VRAM[address] = Byte;
-   IPPU.TileCached[address >> 4] = false;
-   IPPU.TileCached[address >> 5] = false;
-   IPPU.TileCached[address >> 6] = false;
+   INVALIDATE_TILE_CACHE(address);
    if (!PPU.VMA.High)
       PPU.VMA.Address += PPU.VMA.Increment;
 }
@@ -395,9 +401,7 @@ static INLINE void REGISTER_2119(uint8_t Byte)
    }
    else
       Memory.VRAM[address = ((PPU.VMA.Address << 1) + 1) & 0xFFFF] = Byte;
-   IPPU.TileCached[address >> 4] = false;
-   IPPU.TileCached[address >> 5] = false;
-   IPPU.TileCached[address >> 6] = false;
+   INVALIDATE_TILE_CACHE(address);
    if (PPU.VMA.High)
       PPU.VMA.Address += PPU.VMA.Increment;
 }
@@ -407,9 +411,7 @@ static INLINE void REGISTER_2119_tile(uint8_t Byte)
    uint32_t rem = PPU.VMA.Address & PPU.VMA.Mask1;
    uint32_t address = ((((PPU.VMA.Address & ~PPU.VMA.Mask1) + (rem >> PPU.VMA.Shift) + ((rem & (PPU.VMA.FullGraphicCount - 1)) << 3)) << 1) + 1) & 0xFFFF;
    Memory.VRAM [address] = Byte;
-   IPPU.TileCached[address >> 4] = false;
-   IPPU.TileCached[address >> 5] = false;
-   IPPU.TileCached[address >> 6] = false;
+   INVALIDATE_TILE_CACHE(address);
    if (PPU.VMA.High)
       PPU.VMA.Address += PPU.VMA.Increment;
 }
@@ -418,9 +420,7 @@ static INLINE void REGISTER_2119_linear(uint8_t Byte)
 {
    uint32_t address;
    Memory.VRAM[address = ((PPU.VMA.Address << 1) + 1) & 0xFFFF] = Byte;
-   IPPU.TileCached[address >> 4] = false;
-   IPPU.TileCached[address >> 5] = false;
-   IPPU.TileCached[address >> 6] = false;
+   INVALIDATE_TILE_CACHE(address);
    if (PPU.VMA.High)
       PPU.VMA.Address += PPU.VMA.Increment;
 }
