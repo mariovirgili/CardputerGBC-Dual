@@ -139,6 +139,8 @@ set(ENABLE_SNES_FAST_MATH ON)
 set(ENABLE_SNES_HOT_O3 ON)
 # SNES: keep pseudo-hires on the same narrow condition used by PocketSNES.
 set(ENABLE_SNES_STRICT_PSEUDO_HIRES ON)
+# SNES experiment: remove zero-pixel branches in the common 4bpp tile decoder.
+set(ENABLE_SNES_BRANCHLESS_CONVERT_TILE_4BPP ON)
 
 
 # Stella (Atari 2600)
@@ -288,6 +290,7 @@ if(ENABLE_SNES_CORE)
     add_private_define_if(ENABLE_SNES_NO_SPEEDHACKS NO_SPEEDHACKS)
     add_private_define_if(ENABLE_SNES_FAST_LSB_WORD_ACCESS FAST_LSB_WORD_ACCESS)
     add_private_define_if(ENABLE_SNES_STRICT_PSEUDO_HIRES SNES_STRICT_PSEUDO_HIRES)
+    add_private_define_if(ENABLE_SNES_BRANCHLESS_CONVERT_TILE_4BPP SNES_BRANCHLESS_CONVERT_TILE_4BPP)
 endif()
 
 # Global

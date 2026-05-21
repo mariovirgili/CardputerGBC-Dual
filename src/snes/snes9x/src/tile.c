@@ -121,6 +121,20 @@ static uint8_t ConvertTile(uint8_t* pCache, uint32_t TileAddr)
       for (line = 8; line != 0; line--, tp += 2)
       {
          p1 = p2 = 0;
+#ifdef SNES_BRANCHLESS_CONVERT_TILE_4BPP
+         pix = tp[0];
+         p1 |= odd[0][pix >> 4];
+         p2 |= odd[0][pix & 0xf];
+         pix = tp[1];
+         p1 |= even[0][pix >> 4];
+         p2 |= even[0][pix & 0xf];
+         pix = tp[16];
+         p1 |= odd[1][pix >> 4];
+         p2 |= odd[1][pix & 0xf];
+         pix = tp[17];
+         p1 |= even[1][pix >> 4];
+         p2 |= even[1][pix & 0xf];
+#else
          if((pix = tp[0]))
          {
             p1 |= odd[0][pix >> 4];
@@ -141,6 +155,7 @@ static uint8_t ConvertTile(uint8_t* pCache, uint32_t TileAddr)
             p1 |= even[1][pix >> 4];
             p2 |= even[1][pix & 0xf];
          }
+#endif
          *p++ = p1;
          *p++ = p2;
          non_zero |= p1 | p2;
