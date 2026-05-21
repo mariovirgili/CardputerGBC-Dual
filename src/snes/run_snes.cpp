@@ -40,6 +40,7 @@ static uint32_t g_dstY            = 0;
 bool     interlace_enabled           = false;
 uint32_t fieldParity                 = 0;
 bool     snes_interlace_lock_parity  = false;
+static SnesInterlaceMode s_interlace_mode = SNES_INTERLACE_OFF;
 
 /* ---------------------------------------------------- */
 /* Helpers                                              */
@@ -213,8 +214,15 @@ static inline bool snes_should_render_frame(uint32_t last_frame_exec_us,
     return !(want_skip && !skipped_last_render);
 }
 
-static inline void snes_update_interlace_from_fps(float /*fps*/)
+static inline void snes_update_interlace_from_fps(float fps)
 {
+    if (s_interlace_mode != SNES_INTERLACE_AUTO)
+        return;
+
+    if (!interlace_enabled && fps < 48.0f)
+        interlace_enabled = true;
+    else if (interlace_enabled && fps > 60.0f)
+        interlace_enabled = false;
 }
 
 static inline void snes_log_fps_and_heap(uint32_t &frameCount, uint32_t &lastFpsMs)
@@ -702,14 +710,26 @@ void run_snes_alt(const uint8_t* rom, size_t romSize, const char* romName)
 /* Entry point                                          */
 /* ---------------------------------------------------- */
 
-void run_snes(const uint8_t* rom, size_t romSize, const char* romName, bool enableInterlace)
+static const char* snes_interlace_mode_name(SnesInterlaceMode mode)
 {
-    interlace_enabled = enableInterlace;
+    switch (mode)
+    {
+        case SNES_INTERLACE_ON:   return "ON";
+        case SNES_INTERLACE_AUTO: return "AUTO";
+        case SNES_INTERLACE_OFF:
+        default:                  return "OFF";
+    }
+}
+
+void run_snes(const uint8_t* rom, size_t romSize, const char* romName, SnesInterlaceMode interlaceMode)
+{
+    s_interlace_mode = interlaceMode;
+    interlace_enabled = (interlaceMode == SNES_INTERLACE_ON);
     fieldParity = 0;
     snes_interlace_lock_parity = false;
 
     SNES_LOG("[SNES][BOOT] run_snes entered rom=%s ptr=%p size=%zu interlace=%s\n",
-            romName ? romName : "(null)", rom, romSize, interlace_enabled ? "ON" : "OFF");
+            romName ? romName : "(null)", rom, romSize, snes_interlace_mode_name(interlaceMode));
 
     const bool alt = isAltGame(rom, romSize);
 

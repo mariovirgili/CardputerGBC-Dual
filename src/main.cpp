@@ -498,7 +498,7 @@ extern "C" void app_main(void) {
   bool copiedToFlash = false;
   bool forceRomSelector = false;
 #ifdef SNES_CORE_ENABLED
-  bool snesInterlaceEnabled = false;
+  SnesInterlaceMode snesInterlaceMode = SNES_INTERLACE_AUTO;
 #endif
 
   for (;;) {
@@ -635,8 +635,9 @@ extern "C" void app_main(void) {
 
 #ifdef SNES_CORE_ENABLED
   if (ext == ROM_TYPE_SNES) {
-    const std::vector<std::string> interlaceOptions = { "OFF", "ON" };
+    const std::vector<std::string> interlaceOptions = { "AUTO", "OFF", "ON" };
     const std::vector<std::string> interlaceDescriptions = {
+      "FPS-based switching",
       "Stable progressive",
       "Half-line speed mode"
     };
@@ -651,8 +652,10 @@ extern "C" void app_main(void) {
         false,
         true,
         0);
-    snesInterlaceEnabled = (choice == 1);
-    BOOT_LOG("SNES", "interlace=%d", snesInterlaceEnabled ? 1 : 0);
+    snesInterlaceMode = (choice == 1)
+        ? SNES_INTERLACE_OFF
+        : (choice == 2 ? SNES_INTERLACE_ON : SNES_INTERLACE_AUTO);
+    BOOT_LOG("SNES", "interlace=%d", (int)snesInterlaceMode);
     input.flushInput(10);
   }
 #endif
@@ -759,7 +762,7 @@ extern "C" void app_main(void) {
       // --- SNES / Super Famicom ---
       display.displaySnesInfo();
       input.waitPress();
-      run_snes(get_rom_ptr(), get_rom_size(), romName.c_str(), snesInterlaceEnabled);
+      run_snes(get_rom_ptr(), get_rom_size(), romName.c_str(), snesInterlaceMode);
   }
 #endif
   else if (ext == ROM_TYPE_MSX) {
