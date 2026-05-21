@@ -86,7 +86,7 @@ set(ENABLE_NGP_CZ80 ON)
 set(ENABLE_NGP_USE_SDL ON)
 set(ENABLE_NGP_DISABLE_WATCHDOGS ON)
 # Use a separate thread for color mapping to improve performance.
-set(ENABLE_NGP_THREADED_COLORMAPPING ON)
+set(ENABLE_NGP_THREADED_COLORMAPPING OFF)
 # Disables rendering of lines that are not visible due to scaling.
 set(ENABLE_NGP_ONLY_RENDER_VISIBLE_LINES ON)
 # 16-bit reads with alignment check for native bus transactions.
@@ -124,6 +124,8 @@ set(ENABLE_SNES_NO_BYTE2000 ON)
 set(ENABLE_SNES_NO_THREADED_DISPLAY ON)
 set(ENABLE_SNES_NO_THREADED_INPUT ON)
 set(ENABLE_SNES_NO_THREADED_SAVE ON)
+# ESP32-S3 is little-endian and supports unaligned word loads.
+set(ENABLE_SNES_FAST_LSB_WORD_ACCESS ON)
 
 
 # Stella (Atari 2600)
@@ -268,6 +270,7 @@ if(ENABLE_SNES_CORE)
     add_private_define_if(ENABLE_SNES_NO_THREADED_DISPLAY SNES_DISPLAY_ON_MAIN)
     add_private_define_if(ENABLE_SNES_NO_THREADED_INPUT SNES_NO_THREADED_INPUT)
     add_private_define_if(ENABLE_SNES_NO_THREADED_SAVE SNES_NO_THREADED_SAVE)
+    add_private_define_if(ENABLE_SNES_FAST_LSB_WORD_ACCESS FAST_LSB_WORD_ACCESS)
 endif()
 
 # Global
