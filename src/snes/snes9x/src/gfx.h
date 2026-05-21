@@ -144,6 +144,20 @@ typedef void (*S9xLineCallback)(uint32_t y,
 #define SUB_SCREEN_DEPTH 0
 #define MAIN_SCREEN_DEPTH 32
 
+#if defined(SNES_FAST_RGB565_COLOR_MATH) && RED_SHIFT_BITS == 11 && GREEN_SHIFT_BITS == 6
+static INLINE uint16_t COLOR_ADD(uint16_t C1, uint16_t C2)
+{
+	uint32_t rb          = (C1 & 0xf81f) + (C2 & 0xf81f);
+	uint32_t rbcarry     = rb & 0x10020;
+	uint32_t g           = (C1 & 0x07c0) + (C2 & 0x07c0);
+	uint32_t rgbsaturate = (((g & 0x0800) | rbcarry) >> 5) * 0x1f;
+	uint32_t retval      = (rb & 0xf81f) | (g & 0x07c0) | rgbsaturate;
+
+	retval |= (retval & 0x0400) >> 5;
+
+	return (uint16_t)retval;
+}
+#else
 static INLINE uint16_t COLOR_ADD(uint16_t C1, uint16_t C2)
 {
 	const int RED_MASK   = 0x1F << RED_SHIFT_BITS;
@@ -162,12 +176,27 @@ static INLINE uint16_t COLOR_ADD(uint16_t C1, uint16_t C2)
 
 	return retval;
 }
+#endif
 
 #define COLOR_ADD1_2(C1, C2) \
 (((((C1) & RGB_REMOVE_LOW_BITS_MASK) + \
           ((C2) & RGB_REMOVE_LOW_BITS_MASK)) >> 1) + \
          (((C1) & (C2) & RGB_LOW_BITS_MASK) | ALPHA_BITS_MASK))
 
+#if defined(SNES_FAST_RGB565_COLOR_MATH) && RED_SHIFT_BITS == 11 && GREEN_SHIFT_BITS == 6
+static INLINE uint16_t COLOR_SUB(uint16_t C1, uint16_t C2)
+{
+	uint32_t rb          = ((C1 & 0xf81f) | 0x10020) - (C2 & 0xf81f);
+	uint32_t rbcarry     = rb & 0x10020;
+	uint32_t g           = ((C1 & 0x07e0) | 0x0800) - (C2 & 0x07e0);
+	uint32_t rgbsaturate = (((g & 0x0800) | rbcarry) >> 5) * 0x1f;
+	uint32_t retval      = ((rb & 0xf81f) | (g & 0x07e0)) & rgbsaturate;
+
+	retval |= (retval & 0x0400) >> 5;
+
+	return (uint16_t)retval;
+}
+#else
 static INLINE uint16_t COLOR_SUB(uint16_t C1, uint16_t C2)
 {
 	int rb1         = (C1 & (THIRD_COLOR_MASK | FIRST_COLOR_MASK)) | ((0x20 << 0) | (0x20 << RED_SHIFT_BITS));
@@ -184,6 +213,7 @@ static INLINE uint16_t COLOR_SUB(uint16_t C1, uint16_t C2)
 
 	return retval;
 }
+#endif
 
 #ifdef NO_ZERO_LUT
 static INLINE uint16_t COLOR_SUB1_2(uint16_t C1, uint16_t C2)

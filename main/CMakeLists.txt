@@ -141,6 +141,8 @@ set(ENABLE_SNES_HOT_O3 ON)
 set(ENABLE_SNES_STRICT_PSEUDO_HIRES ON)
 # SNES experiment: remove zero-pixel branches in the common 4bpp tile decoder.
 set(ENABLE_SNES_BRANCHLESS_CONVERT_TILE_4BPP ON)
+# SNES experiment: specialize color add/sub for RGB565.
+set(ENABLE_SNES_FAST_RGB565_COLOR_MATH ON)
 
 
 # Stella (Atari 2600)
@@ -291,6 +293,7 @@ if(ENABLE_SNES_CORE)
     add_private_define_if(ENABLE_SNES_FAST_LSB_WORD_ACCESS FAST_LSB_WORD_ACCESS)
     add_private_define_if(ENABLE_SNES_STRICT_PSEUDO_HIRES SNES_STRICT_PSEUDO_HIRES)
     add_private_define_if(ENABLE_SNES_BRANCHLESS_CONVERT_TILE_4BPP SNES_BRANCHLESS_CONVERT_TILE_4BPP)
+    add_private_define_if(ENABLE_SNES_FAST_RGB565_COLOR_MATH SNES_FAST_RGB565_COLOR_MATH)
 endif()
 
 # Global
