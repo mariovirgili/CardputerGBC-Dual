@@ -213,12 +213,8 @@ static inline bool snes_should_render_frame(uint32_t last_frame_exec_us,
     return !(want_skip && !skipped_last_render);
 }
 
-static inline void snes_update_interlace_from_fps(float fps)
+static inline void snes_update_interlace_from_fps(float /*fps*/)
 {
-    if (!interlace_enabled && fps < 48.0f)
-        interlace_enabled = true;
-    else if (interlace_enabled && fps > 60.0f)
-        interlace_enabled = false;
 }
 
 static inline void snes_log_fps_and_heap(uint32_t &frameCount, uint32_t &lastFpsMs)
@@ -706,10 +702,14 @@ void run_snes_alt(const uint8_t* rom, size_t romSize, const char* romName)
 /* Entry point                                          */
 /* ---------------------------------------------------- */
 
-void run_snes(const uint8_t* rom, size_t romSize, const char* romName)
+void run_snes(const uint8_t* rom, size_t romSize, const char* romName, bool enableInterlace)
 {
-    SNES_LOG("[SNES][BOOT] run_snes entered rom=%s ptr=%p size=%zu\n",
-            romName ? romName : "(null)", rom, romSize);
+    interlace_enabled = enableInterlace;
+    fieldParity = 0;
+    snes_interlace_lock_parity = false;
+
+    SNES_LOG("[SNES][BOOT] run_snes entered rom=%s ptr=%p size=%zu interlace=%s\n",
+            romName ? romName : "(null)", rom, romSize, interlace_enabled ? "ON" : "OFF");
 
     const bool alt = isAltGame(rom, romSize);
 

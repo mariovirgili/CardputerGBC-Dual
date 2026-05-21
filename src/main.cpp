@@ -2,6 +2,7 @@
 #include <select_rom.h>
 #include "cardputer/CardputerView.h"
 #include "cardputer/CardputerInput.h"
+#include "cardputer/VerticalSelector.h"
 #include "cardputer/SdService.h"
 #include "vfs/vfs_xip.h"
 #include "vfs/rom_flash_io.h"
@@ -496,6 +497,9 @@ extern "C" void app_main(void) {
   ColecoFlashStatus colecoStatus = ColecoFlashStatus::Ok;
   bool copiedToFlash = false;
   bool forceRomSelector = false;
+#ifdef SNES_CORE_ENABLED
+  bool snesInterlaceEnabled = false;
+#endif
 
   for (;;) {
     if (forceRomSelector) {
@@ -629,6 +633,30 @@ extern "C" void app_main(void) {
   const size_t xipRunSize = xipRomSize ? xipRomSize : get_rom_size();
   const uint8_t* colecoBiosPtr = (ext == ROM_TYPE_COLECO) ? xipBase : nullptr;
 
+#ifdef SNES_CORE_ENABLED
+  if (ext == ROM_TYPE_SNES) {
+    const std::vector<std::string> interlaceOptions = { "OFF", "ON" };
+    const std::vector<std::string> interlaceDescriptions = {
+      "Stable progressive",
+      "Half-line speed mode"
+    };
+    VerticalSelector selector(display, input);
+    const int choice = selector.select(
+        "SNES INTERLACE",
+        interlaceOptions,
+        false,
+        false,
+        interlaceDescriptions,
+        {},
+        false,
+        true,
+        0);
+    snesInterlaceEnabled = (choice == 1);
+    BOOT_LOG("SNES", "interlace=%d", snesInterlaceEnabled ? 1 : 0);
+    input.flushInput(10);
+  }
+#endif
+
   // Show keymapping
   display.topBar("- + SOUND [ ] BRIGHT", false, false);
   int numButtons = (ext == ROM_TYPE_GENESIS) ? 3 : 2;
@@ -731,7 +759,7 @@ extern "C" void app_main(void) {
       // --- SNES / Super Famicom ---
       display.displaySnesInfo();
       input.waitPress();
-      run_snes(get_rom_ptr(), get_rom_size(), romName.c_str());
+      run_snes(get_rom_ptr(), get_rom_size(), romName.c_str(), snesInterlaceEnabled);
   }
 #endif
   else if (ext == ROM_TYPE_MSX) {
