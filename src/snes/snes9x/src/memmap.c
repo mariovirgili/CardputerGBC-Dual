@@ -174,7 +174,7 @@ bool S9xInitMap(void)
 {
    // Map / MapInfo
    Memory.Map     = (uint8_t**)calloc(MEMMAP_NUM_BLOCKS, sizeof(uint8_t*)); // 4 KB
-   Memory.MapInfo = (SMapInfo*)calloc(MEMMAP_NUM_BLOCKS, sizeof(SMapInfo)); // 16 KB
+   Memory.MapInfo = (SMapInfo*)calloc(MEMMAP_NUM_BLOCKS, sizeof(SMapInfo)); // 4 KB packed
 
    // Test allocations
    if (!Memory.Map || !Memory.MapInfo)

@@ -104,11 +104,17 @@ enum
    MAP_TYPE_RAM = 3
 };
 
-typedef struct
+typedef struct __attribute__((packed))
 {
    uint8_t Speed:5;
    uint8_t Type:3;
 } SMapInfo;
+
+#ifdef __cplusplus
+static_assert(sizeof(SMapInfo) == 1, "SMapInfo must stay packed");
+#else
+_Static_assert(sizeof(SMapInfo) == 1, "SMapInfo must stay packed");
+#endif
 
 typedef struct
 {
