@@ -12,6 +12,9 @@
 #include "snes_save.h"
 #include "snes_rom.h"
 
+#include <ctype.h>
+#include <string.h>
+
 extern "C" {
     #include "snes9x/snes9x.h"
     #include "snes9x/src/memmap.h"
@@ -41,6 +44,12 @@ bool     interlace_enabled           = false;
 uint32_t fieldParity                 = 0;
 bool     snes_interlace_lock_parity  = false;
 static SnesInterlaceMode s_interlace_mode = SNES_INTERLACE_OFF;
+
+#ifdef SNES_DEEP_BENCH
+extern "C" {
+bool g_snes_animaniacs_probe_enabled = false;
+}
+#endif
 
 /* ---------------------------------------------------- */
 /* Helpers                                              */
@@ -211,6 +220,120 @@ static void snes_log_runtime_config(int targetFps)
 }
 #endif
 
+#ifdef SNES_DEEP_BENCH
+struct SnesDeepBenchState
+{
+    uint32_t frames;
+    uint32_t rendered;
+    uint32_t skipped;
+    uint32_t renderCalls;
+    uint32_t mainloopUs;
+    uint32_t cpuUs;
+    uint32_t renderUs;
+    uint32_t maxMainloopUs;
+    uint32_t maxCpuUs;
+    uint32_t maxRenderUs;
+};
+
+static volatile uint32_t s_snesFrameRenderUs    = 0;
+static volatile uint32_t s_snesFrameRenderCalls = 0;
+static SnesDeepBenchState s_snesDeepBench       = {};
+
+extern "C" void snes_profile_render_add(uint32_t elapsedUs)
+{
+    s_snesFrameRenderUs += elapsedUs;
+    ++s_snesFrameRenderCalls;
+}
+
+static inline void snes_profile_frame_begin()
+{
+    s_snesFrameRenderUs    = 0;
+    s_snesFrameRenderCalls = 0;
+}
+
+static inline void snes_profile_frame_end(uint32_t mainloopUs, bool rendered)
+{
+    const uint32_t renderUs = s_snesFrameRenderUs;
+    const uint32_t cpuUs    = mainloopUs > renderUs ? mainloopUs - renderUs : 0;
+
+    ++s_snesDeepBench.frames;
+    if (rendered)
+        ++s_snesDeepBench.rendered;
+    else
+        ++s_snesDeepBench.skipped;
+
+    s_snesDeepBench.renderCalls += s_snesFrameRenderCalls;
+    s_snesDeepBench.mainloopUs  += mainloopUs;
+    s_snesDeepBench.cpuUs       += cpuUs;
+    s_snesDeepBench.renderUs    += renderUs;
+
+    if (mainloopUs > s_snesDeepBench.maxMainloopUs)
+        s_snesDeepBench.maxMainloopUs = mainloopUs;
+    if (cpuUs > s_snesDeepBench.maxCpuUs)
+        s_snesDeepBench.maxCpuUs = cpuUs;
+    if (renderUs > s_snesDeepBench.maxRenderUs)
+        s_snesDeepBench.maxRenderUs = renderUs;
+}
+
+static inline void snes_deep_bench_log_window(float fps)
+{
+    if (s_snesDeepBench.frames == 0)
+        return;
+
+    const uint32_t frames = s_snesDeepBench.frames;
+    EMU_LOG("[SNES][DEEP] fps=%.2f frames=%lu drawn=%lu skip=%lu calls=%lu avgMain=%luus avgCpu=%luus avgRender=%luus maxMain=%luus maxCpu=%luus maxRender=%luus mode=%u h=%u interlace=%u forced=%u regs=2100:%02X 212C:%02X 212D:%02X 2130:%02X 2131:%02X 2133:%02X\n",
+            fps,
+            (unsigned long)frames,
+            (unsigned long)s_snesDeepBench.rendered,
+            (unsigned long)s_snesDeepBench.skipped,
+            (unsigned long)s_snesDeepBench.renderCalls,
+            (unsigned long)(s_snesDeepBench.mainloopUs / frames),
+            (unsigned long)(s_snesDeepBench.cpuUs / frames),
+            (unsigned long)(s_snesDeepBench.renderUs / frames),
+            (unsigned long)s_snesDeepBench.maxMainloopUs,
+            (unsigned long)s_snesDeepBench.maxCpuUs,
+            (unsigned long)s_snesDeepBench.maxRenderUs,
+            (unsigned)PPU.BGMode,
+            (unsigned)PPU.ScreenHeight,
+            (unsigned)IPPU.Interlace,
+            (unsigned)PPU.ForcedBlanking,
+            (unsigned)Memory.FillRAM[0x2100],
+            (unsigned)Memory.FillRAM[0x212c],
+            (unsigned)Memory.FillRAM[0x212d],
+            (unsigned)Memory.FillRAM[0x2130],
+            (unsigned)Memory.FillRAM[0x2131],
+            (unsigned)Memory.FillRAM[0x2133]);
+
+    memset(&s_snesDeepBench, 0, sizeof(s_snesDeepBench));
+}
+
+static bool snes_title_contains_nocase(const char* title, const char* needle)
+{
+    if (!title || !needle || !*needle)
+        return false;
+
+    for (const char* p = title; *p; ++p)
+    {
+        const char* a = p;
+        const char* b = needle;
+        while (*a && *b &&
+               tolower((unsigned char)*a) == tolower((unsigned char)*b))
+        {
+            ++a;
+            ++b;
+        }
+        if (*b == '\0')
+            return true;
+    }
+
+    return false;
+}
+#else
+#define snes_profile_frame_begin() ((void)0)
+#define snes_profile_frame_end(mainloopUs, rendered) ((void)0)
+#define snes_deep_bench_log_window(fps) ((void)0)
+#endif
+
 static inline bool snes_should_render_frame(uint32_t last_frame_exec_us,
                                             uint32_t budget55_us,
                                             bool skipped_last_render)
@@ -244,6 +367,8 @@ static inline void snes_log_fps_and_heap(uint32_t &frameCount, uint32_t &lastFps
              fps,
              (unsigned long)esp_get_free_heap_size(),
              interlace_enabled ? "ON" : "OFF");
+
+    snes_deep_bench_log_window(fps);
 
     frameCount = 0;
     lastFpsMs  = nowMs;
@@ -557,7 +682,14 @@ void run_snes_default(const uint8_t* rom, size_t romSize, const char* romName)
             snes_log_heap_runtime("pre-mainloop", frameCount);
 
         snes_input_tick();
+#ifdef SNES_DEEP_BENCH
+        snes_profile_frame_begin();
+        const int64_t mainloop_start_us = esp_timer_get_time();
+#endif
         S9xMainLoop();
+#ifdef SNES_DEEP_BENCH
+        const uint32_t mainloop_us = (uint32_t)(esp_timer_get_time() - mainloop_start_us);
+#endif
         snes_save_tick();
         if (!firstFrameLogged)
             snes_log_heap_runtime("post-mainloop", frameCount);
@@ -584,6 +716,9 @@ void run_snes_default(const uint8_t* rom, size_t romSize, const char* romName)
             if (interlace_enabled && !snes_interlace_lock_parity)
                 fieldParity ^= 1;
         }
+#ifdef SNES_DEEP_BENCH
+        snes_profile_frame_end(mainloop_us, IPPU.RenderThisFrame);
+#endif
         if (!firstFrameLogged)
         {
             snes_log_heap_runtime("post-render", frameCount);
@@ -678,13 +813,23 @@ void run_snes_alt(const uint8_t* rom, size_t romSize, const char* romName)
             snes_log_heap_runtime("pre-mainloop", frameCount);
 
         snes_input_tick();
+#ifdef SNES_DEEP_BENCH
+        snes_profile_frame_begin();
+        const int64_t mainloop_start_us = esp_timer_get_time();
+#endif
         S9xMainLoop();
+#ifdef SNES_DEEP_BENCH
+        const uint32_t mainloop_us = (uint32_t)(esp_timer_get_time() - mainloop_start_us);
+#endif
         snes_save_tick();
         if (!firstFrameLogged)
             snes_log_heap_runtime("post-mainloop", frameCount);
 
         if (IPPU.RenderThisFrame && interlace_enabled && !snes_interlace_lock_parity)
             fieldParity ^= 1;
+#ifdef SNES_DEEP_BENCH
+        snes_profile_frame_end(mainloop_us, IPPU.RenderThisFrame);
+#endif
         if (!firstFrameLogged)
         {
             snes_log_heap_runtime("post-render", frameCount);
@@ -741,7 +886,14 @@ void run_snes(const uint8_t* rom, size_t romSize, const char* romName, SnesInter
     const bool alt = isAltGame(rom, romSize);
 
     char title[32];
-    if (snes_read_title(title, sizeof(title), rom, romSize))
+    const bool haveTitle = snes_read_title(title, sizeof(title), rom, romSize);
+#ifdef SNES_DEEP_BENCH
+    g_snes_animaniacs_probe_enabled = haveTitle &&
+        snes_title_contains_nocase(title, "ANIMANIACS");
+    if (g_snes_animaniacs_probe_enabled)
+        EMU_LOG("[SNES][DEEP][ANIMANIACS] title probe enabled for '%s'\n", title);
+#endif
+    if (haveTitle)
         SNES_LOG("[SNES] Internal title: %s, ALT: %s\n", title, alt ? "YES" : "NO");
 
     // Some game can't render line by line properly, for those we use an alternate rendering method 

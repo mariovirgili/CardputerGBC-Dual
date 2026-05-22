@@ -46,6 +46,8 @@ set(ENABLE_MSX_LOGS ON)
 
 # SNES: SNES detail logs, requires ENABLE_EMU_LOGS.
 set(ENABLE_SNES_LOGS ON)
+# SNES: deep CPU/render benchmark and targeted PPU probes.
+set(ENABLE_SNES_DEEP_BENCH ON)
 
 # NES: diagnostic logs, requires ENABLE_EMU_LOGS.
 set(ENABLE_NES_DIAG_LOGS OFF)
@@ -549,6 +551,11 @@ set(SNES_LOG_SRCS
     "${SRC_ROOT}/snes/snes9x/src/memmap.c"
 )
 
+set(SNES_DEEP_BENCH_SRCS
+    "${SRC_ROOT}/snes/run_snes.cpp"
+    "${SRC_ROOT}/snes/snes9x/src/gfx.c"
+)
+
 file(GLOB_RECURSE GX4000_LTO_SRCS
     "${SRC_ROOT}/gx4000/*.c"
     "${SRC_ROOT}/gx4000/*.cpp"
@@ -749,6 +756,10 @@ endif()
 
 if(ENABLE_SNES_CORE AND ENABLE_SNES_LOGS)
     add_source_compile_defs(DEFINITIONS EMU_LOGS_ENABLED SNES_LOGS SOURCES ${SNES_LOG_SRCS})
+endif()
+
+if(ENABLE_SNES_CORE AND ENABLE_SNES_DEEP_BENCH)
+    add_source_compile_defs(DEFINITIONS EMU_LOGS_ENABLED SNES_DEEP_BENCH SOURCES ${SNES_DEEP_BENCH_SRCS})
 endif()
 
 if(ENABLE_NES_DIAG_LOGS)

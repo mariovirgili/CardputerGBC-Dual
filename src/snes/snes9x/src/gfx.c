@@ -11,8 +11,15 @@
 #include "apu.h"
 #include "esp_attr.h"
 #include "esp_heap_caps.h"
+#ifdef SNES_DEEP_BENCH
+#include "esp_timer.h"
+#endif
 
 extern bool S9xIsSourceLineNeeded(uint32_t srcY);
+#ifdef SNES_DEEP_BENCH
+extern bool g_snes_animaniacs_probe_enabled;
+extern void snes_profile_render_add(uint32_t elapsedUs);
+#endif
 
 #ifdef SNES_LOGS
 static void snes_gfx_log_alloc_fail(const char* what, size_t requested)
@@ -36,6 +43,55 @@ static void snes_gfx_log_alloc_fail(const char* what, size_t requested)
 }
 #else
 #define snes_gfx_log_alloc_fail(what, requested) ((void)0)
+#endif
+
+#ifdef SNES_DEEP_BENCH
+static void snes_deep_probe_animaniacs(uint32_t starty, uint32_t endy, int32_t x2)
+{
+   static uint32_t calls = 0;
+
+   if (!g_snes_animaniacs_probe_enabled)
+      return;
+
+   ++calls;
+   if (calls > 8 && (calls % 30) != 0)
+      return;
+
+   EMU_LOG("[SNES][DEEP][ANIMANIACS][PPU] call=%lu lines=%lu..%lu x2=%d mode=%u forced=%u bright=%u main=%02X sub=%02X add=%02X cg=%02X screen=%u rendered=%dx%d interlace=%u dh=%u dw=%u half=%u pseudo=%u clipM=%lu clipS=%lu win1=%u..%u win2=%u..%u bg1=%04X,%04X bg2=%04X,%04X obj=%u recompute=%u\n",
+           (unsigned long)calls,
+           (unsigned long)starty,
+           (unsigned long)endy,
+           (int)x2,
+           (unsigned)PPU.BGMode,
+           (unsigned)PPU.ForcedBlanking,
+           (unsigned)PPU.Brightness,
+           (unsigned)Memory.FillRAM[0x212c],
+           (unsigned)Memory.FillRAM[0x212d],
+           (unsigned)Memory.FillRAM[0x2131],
+           (unsigned)Memory.FillRAM[0x2130],
+           (unsigned)PPU.ScreenHeight,
+           (int)IPPU.RenderedScreenWidth,
+           (int)IPPU.RenderedScreenHeight,
+           (unsigned)IPPU.Interlace,
+           (unsigned)IPPU.DoubleHeightPixels,
+           (unsigned)IPPU.DoubleWidthPixels,
+           (unsigned)IPPU.HalfWidthPixels,
+           (unsigned)GFX.Pseudo,
+           (unsigned long)IPPU.Clip[0].Count[5],
+           (unsigned long)IPPU.Clip[1].Count[5],
+           (unsigned)PPU.Window1Left,
+           (unsigned)PPU.Window1Right,
+           (unsigned)PPU.Window2Left,
+           (unsigned)PPU.Window2Right,
+           (unsigned)PPU.BG[0].SCBase,
+           (unsigned)PPU.BG[0].NameBase,
+           (unsigned)PPU.BG[1].SCBase,
+           (unsigned)PPU.BG[1].NameBase,
+           (unsigned)(Memory.FillRAM[0x212c] & 0x10),
+           (unsigned)PPU.RecomputeClipWindows);
+}
+#else
+#define snes_deep_probe_animaniacs(starty, endy, x2) ((void)0)
 #endif
 
 typedef struct
@@ -2818,6 +2874,9 @@ static void SNES_GFX_HOT_CODE_ATTR S9xApplyBackdropSpan(uint16_t* p,
 
 void S9xUpdateScreen_Core(void)
 {
+#ifdef SNES_DEEP_BENCH
+   const int64_t snesRenderStartUs = esp_timer_get_time();
+#endif
    int32_t x2 = 1;
    uint32_t starty, endy, black;
 
@@ -2910,6 +2969,8 @@ void S9xUpdateScreen_Core(void)
          }
       }
    }
+
+   snes_deep_probe_animaniacs(starty, endy, x2);
 
    black = BLACK | (BLACK << 16);
 
@@ -3199,6 +3260,9 @@ void S9xUpdateScreen_Core(void)
       FIX_INTERLACE(GFX.Screen, false, GFX.ZBuffer);
 
    IPPU.PreviousLine = IPPU.CurrentLine;
+#ifdef SNES_DEEP_BENCH
+   snes_profile_render_add((uint32_t)(esp_timer_get_time() - snesRenderStartUs));
+#endif
 }
 
 static void S9xFlushLiveSpanRange(uint32_t start, uint32_t end)
