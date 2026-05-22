@@ -253,9 +253,46 @@ static void snes_enter_sd_off_gameplay()
 {
     share::setBeforeRestartCallback(snes_before_restart_callback);
     snes_save_suspend_background();
-    snes_log_heap_step("pre SD close");
-    share_sd_close();
-    snes_log_heap_step("after SD close");
+    if (share_sd_is_mounted())
+    {
+        snes_log_heap_step("pre SD close");
+        share_sd_close();
+        snes_log_heap_step("after SD close");
+    }
+    else
+    {
+        snes_log_heap_step("SD already off");
+    }
+}
+
+static void snes_load_sram_with_sd()
+{
+    if (!snes_save_has_sram())
+    {
+        snes_save_load();
+        return;
+    }
+
+    const bool was_mounted = share_sd_is_mounted();
+    if (!was_mounted)
+    {
+        snes_log_heap_step("pre SD load");
+        if (!share_sd_begin_retry())
+        {
+            SNES_LOG("[SNES][SAVE] SD remount failed, SRAM load skipped\n");
+            return;
+        }
+        snes_log_heap_step("after SD load");
+    }
+
+    snes_save_load();
+
+    if (!was_mounted)
+    {
+        snes_log_heap_step("pre SD close");
+        share_sd_close();
+        snes_log_heap_step("after SD close");
+    }
 }
 
 #ifdef SNES_DEEP_BENCH
@@ -871,7 +908,7 @@ void run_snes_default(const uint8_t* rom, size_t romSize, const char* romName)
     snes_save_prepare_sram();
     snes_log_heap_step("sram");
     snes_save_init(romName);
-    snes_save_load();
+    snes_load_sram_with_sd();
     snes_enter_sd_off_gameplay();
 
     S9xReset();
@@ -1004,7 +1041,7 @@ void run_snes_alt(const uint8_t* rom, size_t romSize, const char* romName)
     snes_save_prepare_sram();
     snes_log_heap_step("sram");
     snes_save_init(romName);
-    snes_save_load();
+    snes_load_sram_with_sd();
     snes_enter_sd_off_gameplay();
 
     S9xReset();

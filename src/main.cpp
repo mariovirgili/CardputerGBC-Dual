@@ -764,6 +764,9 @@ extern "C" void app_main(void) {
       // --- SNES / Super Famicom ---
       display.displaySnesInfo();
       input.waitPress();
+      BOOT_LOG("SD", "close before SNES init");
+      share_sd_close();
+      logStartupHeap("after SNES SD close");
       run_snes(get_rom_ptr(), get_rom_size(), romName.c_str(), snesInterlaceMode);
   }
 #endif
