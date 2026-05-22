@@ -8,6 +8,10 @@
 #include "snes9x.h"
 #define SNES_MAX_WIDTH 512
 
+#ifndef SNES_MODE7_INTERPOLATED
+#define SNES_MODE7_INTERPOLATED 0
+#endif
+
 typedef void (*S9xLineCallback)(uint32_t y, const uint16_t* pixels, uint32_t width);
 
 void S9xStartScreenRefresh(void);

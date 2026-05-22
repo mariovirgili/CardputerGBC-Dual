@@ -224,9 +224,14 @@ static void snes_log_init_failure(const char* step, size_t requestedBytes)
 static void snes_log_runtime_config(int targetFps)
 {
     const bool tileCache = S9xSmallTileCacheEnabled();
-    SNES_LOG("[SNES] Core/Video only, no audio, %s, %s, %d FPS target\n",
+    SNES_LOG("[SNES] Core/Video only, no audio, %s, %s, mode7=%s, %d FPS target\n",
              snes_save_has_sram() ? "with SRAM" : "no SRAM",
              tileCache ? "small tilecache" : "no tilecache",
+#if SNES_MODE7_INTERPOLATED
+             "interp",
+#else
+             "fast",
+#endif
              targetFps);
 }
 #endif
