@@ -556,6 +556,7 @@ void run_snes_default(const uint8_t* rom, size_t romSize, const char* romName)
         if (!firstFrameLogged)
             snes_log_heap_runtime("pre-mainloop", frameCount);
 
+        snes_input_tick();
         S9xMainLoop();
         snes_save_tick();
         if (!firstFrameLogged)
@@ -676,6 +677,7 @@ void run_snes_alt(const uint8_t* rom, size_t romSize, const char* romName)
         if (!firstFrameLogged)
             snes_log_heap_runtime("pre-mainloop", frameCount);
 
+        snes_input_tick();
         S9xMainLoop();
         snes_save_tick();
         if (!firstFrameLogged)

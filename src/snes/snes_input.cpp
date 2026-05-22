@@ -14,11 +14,11 @@ extern "C" {
 extern bool snes_interlace_lock_parity;
 static volatile uint32_t s_lastInputMask = 0;
 
-static uint32_t snes_input_compute_mask()
+static uint32_t snes_input_compute_mask(bool force = false)
 {
     uint32_t mask = 0;
 
-    if (share::shouldPollInput() == false) {
+    if (!force && share::shouldPollInput() == false) {
         return s_lastInputMask;
     }
 
@@ -143,6 +143,10 @@ extern "C" void snes_input_stop(void)
     s_inputMask       = 0;
 }
 
+extern "C" void snes_input_tick(void)
+{
+}
+
 extern "C" uint32_t snes_input_poll(void)
 {
     return s_inputMask;
@@ -152,15 +156,21 @@ extern "C" uint32_t snes_input_poll(void)
 
 extern "C" void snes_input_start(void)
 {
+    s_lastInputMask = snes_input_compute_mask(true);
 }
 
 extern "C" void snes_input_stop(void)
 {
 }
 
+extern "C" void snes_input_tick(void)
+{
+    s_lastInputMask = snes_input_compute_mask();
+}
+
 extern "C" uint32_t snes_input_poll(void)
 {
-    return snes_input_compute_mask();
+    return s_lastInputMask;
 }
 
 #endif
