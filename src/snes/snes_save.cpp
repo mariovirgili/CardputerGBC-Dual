@@ -159,19 +159,18 @@ extern "C" void snes_save_prepare_sram(void) {
 
 /* ============================ Save ============================= */
 
-static bool save_now(void) {
+static bool save_buffer_now(const uint8_t* data, size_t size, bool wake_display) {
   if (!g_save_path) return false;
-  if (!Memory.SRAM) return false;
-
-  size_t sram_size = get_sram_size();
-  if (sram_size == 0) {
+  if (!data || size == 0) {
     EMU_LOG("[SNES][SAVE] SRAM disabled or size=0, skip save\n");
     return false;
   }
 
   share::setGameIsSaving(true);
-  snes_display_wake();
-  while (!snes_display_is_spi_released()) {
+  if (wake_display) {
+    snes_display_wake();
+  }
+  while (wake_display && !snes_display_is_spi_released()) {
       vTaskDelay(1);
   }
 
@@ -188,25 +187,32 @@ static bool save_now(void) {
     return false;
   }
 
-  size_t n = fwrite(Memory.SRAM, 1, sram_size, f);
+  size_t n = fwrite(data, 1, size, f);
   fclose(f);
 
   share::setGameIsSaving(false);
   
-  if (n != sram_size) {
+  if (n != size) {
     EMU_LOG("[SNES][SAVE] fwrite failed: wrote %u / %u bytes\n",
-           (unsigned)n, (unsigned)sram_size);
+           (unsigned)n, (unsigned)size);
     return false;
   }
 
   g_last_save   = xTaskGetTickCount();
   g_first_dirty = 0;
-  g_last_hash   = hash_sram(Memory.SRAM, sram_size);
+  g_last_hash   = hash_sram(data, size);
   g_hash_valid  = true;
 
   EMU_LOG("[SNES][SAVE] SRAM saved to %s (%u bytes)\n",
-         g_save_path, (unsigned)sram_size);
+         g_save_path, (unsigned)size);
   return true;
+}
+
+static bool save_now(void) {
+  if (!Memory.SRAM) return false;
+
+  size_t sram_size = get_sram_size();
+  return save_buffer_now(Memory.SRAM, sram_size, true);
 }
 
 #ifdef SNES_NO_THREADED_SAVE
@@ -445,6 +451,58 @@ extern "C" void snes_save_request_flush(void) {
 
 extern "C" void snes_save_force_flush(void) {
   save_now();
+}
+
+extern "C" bool snes_save_snapshot_sram(uint8_t** outData, size_t* outSize) {
+  if (outData) *outData = nullptr;
+  if (outSize) *outSize = 0;
+  if (!outData || !outSize) return false;
+
+  size_t sram_size = get_sram_size();
+  if (!Memory.SRAM || sram_size == 0) {
+    return false;
+  }
+
+  uint8_t* copy = (uint8_t*)malloc(sram_size);
+  if (!copy) {
+    EMU_LOG("[SNES][SAVE] SRAM snapshot alloc failed (%u bytes)\n",
+            (unsigned)sram_size);
+    return false;
+  }
+
+  memcpy(copy, Memory.SRAM, sram_size);
+  *outData = copy;
+  *outSize = sram_size;
+  EMU_LOG("[SNES][SAVE] SRAM snapshot captured (%u bytes)\n",
+          (unsigned)sram_size);
+  return true;
+}
+
+extern "C" bool snes_save_force_flush_buffer(const uint8_t* data, size_t size) {
+  return save_buffer_now(data, size, false);
+}
+
+extern "C" void snes_save_release_sram(void) {
+  release_sram_buffer();
+}
+
+extern "C" void snes_save_shutdown(void) {
+  release_sram_buffer();
+  if (g_save_path) {
+    free(g_save_path);
+    g_save_path = nullptr;
+  }
+  g_next_check = 0;
+  g_next_allow = 0;
+  g_first_dirty = 0;
+  g_last_save = 0;
+  g_last_hash = 0;
+  g_hash_valid = false;
+  g_bg_enabled = false;
+#ifndef SNES_NO_THREADED_SAVE
+  g_flag_check = false;
+  g_flag_flush = false;
+#endif
 }
 
 extern "C" void snes_save_suspend_background(void) {

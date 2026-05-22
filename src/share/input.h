@@ -46,6 +46,9 @@ namespace share
     void checkCommonInput(const Keyboard_Class::KeysState& status);
     void setBeforeRestartCallback(BeforeRestartCallback callback);
     void clearBeforeRestartCallback();
+    void setRestartRequestMode(bool enabled);
+    bool restartRequested();
+    void clearRestartRequest();
 
     // I2C PAD (M5Stack JoyV2 or Joystick v1.1)
     void detectI2cPad();

@@ -202,6 +202,7 @@ extern "C" void snes_display_start()
 {
     if (s_task) return;
     s_running = true;
+    s_spi_released_for_save = false;
 
     BaseType_t ok = xTaskCreatePinnedToCore(
         snes_display_task,
@@ -227,6 +228,7 @@ extern "C" void snes_display_start()
 extern "C" void snes_display_stop(void)
 {
     s_running = false;
+    s_spi_released_for_save = true;
 
     if (s_task) {
         xTaskNotify(s_task, 0, eNoAction);

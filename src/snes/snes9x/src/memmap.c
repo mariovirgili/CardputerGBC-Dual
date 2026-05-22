@@ -246,6 +246,24 @@ void S9xDeinitMemory(void)
    free(IPPU.TileCached);
    IPPU.TileCached = NULL;
 
+   free(IPPU.Red);
+   IPPU.Red = NULL;
+
+   free(IPPU.Green);
+   IPPU.Green = NULL;
+
+   free(IPPU.Blue);
+   IPPU.Blue = NULL;
+
+   free(PPU.CGDATA);
+   PPU.CGDATA = NULL;
+
+   free(PPU.OBJ);
+   PPU.OBJ = NULL;
+
+   free(PPU.OAMData);
+   PPU.OAMData = NULL;
+
 #ifndef SNES_NO_BYTE2000
    free(bytes0x2000);
    bytes0x2000 = NULL;

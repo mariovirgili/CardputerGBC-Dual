@@ -768,6 +768,8 @@ extern "C" void app_main(void) {
       share_sd_close();
       logStartupHeap("after SNES SD close");
       run_snes(get_rom_ptr(), get_rom_size(), romName.c_str(), snesInterlaceMode);
+      BOOT_LOG("EMU", "SNES returned, restarting");
+      esp_restart();
   }
 #endif
   else if (ext == ROM_TYPE_MSX) {

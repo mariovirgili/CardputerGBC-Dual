@@ -15,10 +15,12 @@
 #include "share/sd_control.h"
 
 #include <ctype.h>
+#include <stdlib.h>
 #include <string.h>
 
 extern "C" {
     #include "snes9x/snes9x.h"
+    #include "snes9x/src/gfx.h"
     #include "snes9x/src/memmap.h"
     #include "snes9x/src/ppu.h"
 #include "share/emu_log_cpp.h"
@@ -227,31 +229,11 @@ static void snes_log_runtime_config(int targetFps)
 }
 #endif
 
-static void snes_before_restart_callback()
-{
-    SNES_LOG("[SNES][SD] before restart callback start\n");
-
-    if (!snes_save_has_sram())
-    {
-        SNES_LOG("[SNES][SD] no SRAM, skip SD remount/save\n");
-        return;
-    }
-
-    snes_log_heap_step("pre SD begin");
-    if (!share_sd_begin_retry())
-    {
-        SNES_LOG("[SNES][SAVE] SD remount failed, SRAM not saved\n");
-        return;
-    }
-
-    snes_log_heap_step("after SD begin");
-    snes_save_force_flush();
-    snes_log_heap_step("after save");
-}
-
 static void snes_enter_sd_off_gameplay()
 {
-    share::setBeforeRestartCallback(snes_before_restart_callback);
+    share::clearRestartRequest();
+    share::setRestartRequestMode(true);
+    share::clearBeforeRestartCallback();
     snes_save_suspend_background();
     if (share_sd_is_mounted())
     {
@@ -263,6 +245,110 @@ static void snes_enter_sd_off_gameplay()
     {
         snes_log_heap_step("SD already off");
     }
+}
+
+static void snes_alt_buffers_free()
+{
+    if (g_dstFirstForSrc) { free(g_dstFirstForSrc); g_dstFirstForSrc = nullptr; }
+    if (g_dstLastForSrc)  { free(g_dstLastForSrc);  g_dstLastForSrc  = nullptr; }
+    if (g_srcLineNeeded)  { free(g_srcLineNeeded);  g_srcLineNeeded  = nullptr; }
+    if (g_srcForDst)      { free(g_srcForDst);      g_srcForDst      = nullptr; }
+    g_lineMap = {};
+    g_defaultSrcMapH = 0;
+    g_defaultSrcMapStart = 0xFFFFFFFFu;
+    g_defaultSrcMapStep = 0;
+}
+
+static void snes_release_core_allocations(bool releaseSram)
+{
+    S9xDeinitGFX();
+    S9xDeinitMemory();
+    if (releaseSram)
+        snes_save_release_sram();
+    snes_alt_buffers_free();
+}
+
+static void snes_reset_quit_controls()
+{
+    share::setRestartRequestMode(false);
+    share::clearRestartRequest();
+    share::clearBeforeRestartCallback();
+}
+
+static void snes_clean_teardown_and_save()
+{
+    SNES_LOG("[SNES][QUIT] clean teardown start\n");
+    snes_log_heap_step("quit start");
+
+    snes_save_suspend_background();
+
+    uint8_t* sramSnapshot = nullptr;
+    size_t sramSnapshotSize = 0;
+    const bool hadSram = snes_save_has_sram();
+    const bool haveSnapshot = hadSram &&
+        snes_save_snapshot_sram(&sramSnapshot, &sramSnapshotSize);
+
+    if (hadSram && !haveSnapshot)
+        SNES_LOG("[SNES][SAVE] SRAM snapshot failed, using live-buffer fallback\n");
+
+    snes_input_stop();
+    snes_display_stop();
+    snes_log_heap_step("tasks stopped");
+
+    if (haveSnapshot)
+    {
+        snes_release_core_allocations(true);
+        snes_log_heap_step("core freed");
+
+        snes_log_heap_step("pre SD begin");
+        if (share_sd_begin_retry())
+        {
+            snes_log_heap_step("after SD begin");
+            snes_save_force_flush_buffer(sramSnapshot, sramSnapshotSize);
+            snes_log_heap_step("after save");
+        }
+        else
+        {
+            SNES_LOG("[SNES][SAVE] SD remount failed, SRAM snapshot not saved\n");
+        }
+    }
+    else if (hadSram)
+    {
+        snes_log_heap_step("pre SD begin");
+        if (share_sd_begin_retry())
+        {
+            snes_log_heap_step("after SD begin");
+            snes_save_force_flush();
+            snes_log_heap_step("after save");
+        }
+        else
+        {
+            SNES_LOG("[SNES][SAVE] SD remount failed, SRAM not saved\n");
+        }
+
+        snes_release_core_allocations(true);
+        snes_log_heap_step("core freed");
+    }
+    else
+    {
+        snes_release_core_allocations(true);
+        snes_log_heap_step("core freed");
+        SNES_LOG("[SNES][SD] no SRAM, skip SD remount/save\n");
+    }
+
+    if (sramSnapshot)
+        free(sramSnapshot);
+
+    if (share_sd_is_mounted())
+    {
+        share_sd_close();
+        snes_log_heap_step("SD reclosed");
+    }
+
+    snes_save_shutdown();
+    snes_reset_quit_controls();
+    snes_log_heap_step("quit done");
+    SNES_LOG("[SNES][QUIT] clean teardown done\n");
 }
 
 static void snes_load_sram_with_sd()
@@ -947,6 +1033,8 @@ void run_snes_default(const uint8_t* rom, size_t romSize, const char* romName)
             snes_log_heap_runtime("pre-mainloop", frameCount);
 
         snes_input_tick();
+        if (share::restartRequested())
+            break;
 #ifdef SNES_DEEP_BENCH
         snes_profile_frame_begin();
         snes_profile_set_phase(SNES_PROFILE_PHASE_MAINLOOP);
@@ -1014,6 +1102,8 @@ void run_snes_default(const uint8_t* rom, size_t romSize, const char* romName)
 
         share::sleep_until_us(next_frame_us);
     }
+
+    snes_clean_teardown_and_save();
 }
 
 /* ---------------------------------------------------- */
@@ -1083,6 +1173,8 @@ void run_snes_alt(const uint8_t* rom, size_t romSize, const char* romName)
             snes_log_heap_runtime("pre-mainloop", frameCount);
 
         snes_input_tick();
+        if (share::restartRequested())
+            break;
 #ifdef SNES_DEEP_BENCH
         snes_profile_frame_begin();
         snes_profile_set_phase(SNES_PROFILE_PHASE_MAINLOOP);
@@ -1129,6 +1221,8 @@ void run_snes_alt(const uint8_t* rom, size_t romSize, const char* romName)
 
         share::sleep_until_us(next_frame_us);
     }
+
+    snes_clean_teardown_and_save();
 }
 
 /* ---------------------------------------------------- */

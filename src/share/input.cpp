@@ -13,6 +13,8 @@ uint32_t lastPadState = 0xFFFFFFFF;
 static const uint32_t INPUT_POLL_PERIOD_MS = 32;
 constexpr int64_t INPUT_POLL_PERIOD_US = 1000 * INPUT_POLL_PERIOD_MS;
 static share::BeforeRestartCallback s_beforeRestartCallback = nullptr;
+static volatile bool s_restartRequestMode = false;
+static volatile bool s_restartRequested = false;
 
 // I2C joypad type
 enum I2cPadType : uint8_t {
@@ -47,6 +49,21 @@ namespace share
         s_beforeRestartCallback = nullptr;
     }
 
+    void setRestartRequestMode(bool enabled)
+    {
+        s_restartRequestMode = enabled;
+    }
+
+    bool restartRequested()
+    {
+        return s_restartRequested;
+    }
+
+    void clearRestartRequest()
+    {
+        s_restartRequested = false;
+    }
+
    bool shouldPollInput()
     {
         uint32_t now = esp_timer_get_time();
@@ -66,11 +83,21 @@ namespace share
     {
         // Bouton GO → restart (hack for quit game and reset memory)
         if (M5Cardputer.BtnA.pressedFor(1000)) {
+            if (s_restartRequested) {
+                return;
+            }
+
             BOOT_LOG("INPUT", "BtnA pressedFor(1000) -> quit/restart");
             Preferences prefs; // Mark quit game flag in NVS
             prefs.begin("cardputer_emu", false);  // RW
             prefs.putBool("quit_game", true);
             prefs.end();
+
+            if (s_restartRequestMode) {
+                BOOT_LOG("INPUT", "restart requested for deferred teardown");
+                s_restartRequested = true;
+                return;
+            }
 
             if (s_beforeRestartCallback) {
                 BOOT_LOG("INPUT", "beforeRestart callback start");
