@@ -10,6 +10,8 @@ void snes_save_load(void);
 void snes_save_tick(void);
 void snes_save_request_flush(void);
 void snes_save_force_flush(void);
+void snes_save_suspend_background(void);
+void snes_save_resume_background(void);
 bool snes_save_has_sram();
 
 #ifdef __cplusplus

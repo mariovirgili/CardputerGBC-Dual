@@ -33,6 +33,7 @@ static TickType_t g_last_save   = 0;
 static uint32_t   g_last_hash   = 0;
 static bool       g_hash_valid  = false;
 static size_t     g_sram_alloc_size = 0;
+static volatile bool g_bg_enabled = true;
 
 #ifndef SNES_NO_THREADED_SAVE
 static TaskHandle_t   g_task        = nullptr;
@@ -258,6 +259,12 @@ static void SaveTask(void* /*arg*/) {
   for (;;) {
     ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
 
+    if (!g_bg_enabled) {
+      g_flag_check = false;
+      g_flag_flush = false;
+      continue;
+    }
+
     bool do_check = g_flag_check; g_flag_check = false;
     bool do_flush = g_flag_flush; g_flag_flush = false;
     TickType_t now = xTaskGetTickCount();
@@ -322,6 +329,8 @@ extern "C" void snes_save_init(const char* romPathOrName) {
     g_last_hash  = 0;
     g_hash_valid = false;
   }
+
+  g_bg_enabled = true;
 
 #ifndef SNES_NO_THREADED_SAVE
   g_flag_check  = false;
@@ -408,6 +417,7 @@ extern "C" void snes_save_load(void) {
 }
 
 extern "C" void snes_save_tick(void) {
+  if (!g_bg_enabled) return;
 #ifdef SNES_NO_THREADED_SAVE
   process_save_logic(false);
 #else
@@ -424,6 +434,7 @@ extern "C" void snes_save_tick(void) {
 }
 
 extern "C" void snes_save_request_flush(void) {
+  if (!g_bg_enabled) return;
 #ifdef SNES_NO_THREADED_SAVE
   process_save_logic(true);
 #else
@@ -434,6 +445,29 @@ extern "C" void snes_save_request_flush(void) {
 
 extern "C" void snes_save_force_flush(void) {
   save_now();
+}
+
+extern "C" void snes_save_suspend_background(void) {
+  g_bg_enabled = false;
+#ifndef SNES_NO_THREADED_SAVE
+  g_flag_check = false;
+  g_flag_flush = false;
+  if (g_task) {
+    xTaskNotifyGive(g_task);
+  }
+  EMU_LOG("[SNES][SAVE] background suspended\n");
+#else
+  EMU_LOG("[SNES][SAVE] non-threaded tick disabled by SD-off mode\n");
+#endif
+}
+
+extern "C" void snes_save_resume_background(void) {
+  g_bg_enabled = true;
+#ifndef SNES_NO_THREADED_SAVE
+  EMU_LOG("[SNES][SAVE] background resumed\n");
+#else
+  EMU_LOG("[SNES][SAVE] non-threaded tick resume ignored\n");
+#endif
 }
 
 extern "C" bool snes_save_has_sram() {

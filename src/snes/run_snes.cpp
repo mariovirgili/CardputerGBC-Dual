@@ -11,6 +11,8 @@
 #include "snes_input.h"
 #include "snes_save.h"
 #include "snes_rom.h"
+#include "share/input.h"
+#include "share/sd_control.h"
 
 #include <ctype.h>
 #include <string.h>
@@ -224,6 +226,37 @@ static void snes_log_runtime_config(int targetFps)
              targetFps);
 }
 #endif
+
+static void snes_before_restart_callback()
+{
+    SNES_LOG("[SNES][SD] before restart callback start\n");
+
+    if (!snes_save_has_sram())
+    {
+        SNES_LOG("[SNES][SD] no SRAM, skip SD remount/save\n");
+        return;
+    }
+
+    snes_log_heap_step("pre SD begin");
+    if (!share_sd_begin_retry())
+    {
+        SNES_LOG("[SNES][SAVE] SD remount failed, SRAM not saved\n");
+        return;
+    }
+
+    snes_log_heap_step("after SD begin");
+    snes_save_force_flush();
+    snes_log_heap_step("after save");
+}
+
+static void snes_enter_sd_off_gameplay()
+{
+    share::setBeforeRestartCallback(snes_before_restart_callback);
+    snes_save_suspend_background();
+    snes_log_heap_step("pre SD close");
+    share_sd_close();
+    snes_log_heap_step("after SD close");
+}
 
 #ifdef SNES_DEEP_BENCH
 enum
@@ -839,6 +872,7 @@ void run_snes_default(const uint8_t* rom, size_t romSize, const char* romName)
     snes_log_heap_step("sram");
     snes_save_init(romName);
     snes_save_load();
+    snes_enter_sd_off_gameplay();
 
     S9xReset();
 
@@ -971,6 +1005,7 @@ void run_snes_alt(const uint8_t* rom, size_t romSize, const char* romName)
     snes_log_heap_step("sram");
     snes_save_init(romName);
     snes_save_load();
+    snes_enter_sd_off_gameplay();
 
     S9xReset();
 

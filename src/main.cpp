@@ -39,6 +39,7 @@
 #include "share/input.h"
 #include "share/emu_log_cpp.h"
 #include "share/boot_log.h"
+#include "share/sd_control.h"
 
 static constexpr size_t COLECO_BIOS_SIZE = 8192;
 
@@ -465,6 +466,7 @@ extern "C" void app_main(void) {
   CardputerInput input;
   BOOT_LOG("SD", "creating SdService");
   SdService sd;
+  share::sdRegisterService(&sd);
   BOOT_LOG("DISPLAY", "creating CardputerView");
   CardputerView display;
   BOOT_LOG("DISPLAY", "initialize start");
