@@ -239,12 +239,16 @@ struct SnesDeepBenchState
     uint32_t mainloopRenderUs;
     uint32_t postRenderUs;
     uint32_t displayUs;
+    uint32_t mainloopDisplayUs;
+    uint32_t postDisplayUs;
     uint32_t maxFrameUs;
     uint32_t maxMainloopUs;
     uint32_t maxCpuUs;
     uint32_t maxRenderUs;
     uint32_t maxPostRenderUs;
     uint32_t maxDisplayUs;
+    uint32_t maxMainloopDisplayUs;
+    uint32_t maxPostDisplayUs;
 };
 
 enum
@@ -258,6 +262,8 @@ static volatile uint32_t s_snesFrameRenderUs         = 0;
 static volatile uint32_t s_snesFrameMainloopRenderUs = 0;
 static volatile uint32_t s_snesFramePostRenderUs     = 0;
 static volatile uint32_t s_snesFrameDisplayUs        = 0;
+static volatile uint32_t s_snesFrameMainloopDisplayUs = 0;
+static volatile uint32_t s_snesFramePostDisplayUs     = 0;
 static volatile uint32_t s_snesFrameRenderCalls      = 0;
 static volatile uint32_t s_snesFrameDisplayCalls     = 0;
 static volatile uint32_t s_snesProfilePhase          = SNES_PROFILE_PHASE_IDLE;
@@ -266,7 +272,7 @@ static SnesDeepBenchState s_snesDeepBench            = {};
 extern "C" void snes_profile_render_add(uint32_t elapsedUs)
 {
     s_snesFrameRenderUs += elapsedUs;
-    ++s_snesFrameRenderCalls;
+    s_snesFrameRenderCalls = s_snesFrameRenderCalls + 1;
 
     if (s_snesProfilePhase == SNES_PROFILE_PHASE_MAINLOOP)
         s_snesFrameMainloopRenderUs += elapsedUs;
@@ -277,7 +283,12 @@ extern "C" void snes_profile_render_add(uint32_t elapsedUs)
 static inline void snes_profile_display_add(uint32_t elapsedUs)
 {
     s_snesFrameDisplayUs += elapsedUs;
-    ++s_snesFrameDisplayCalls;
+    s_snesFrameDisplayCalls = s_snesFrameDisplayCalls + 1;
+
+    if (s_snesProfilePhase == SNES_PROFILE_PHASE_MAINLOOP)
+        s_snesFrameMainloopDisplayUs += elapsedUs;
+    else if (s_snesProfilePhase == SNES_PROFILE_PHASE_POST_RENDER)
+        s_snesFramePostDisplayUs += elapsedUs;
 }
 
 static inline void snes_profile_set_phase(uint32_t phase)
@@ -291,6 +302,8 @@ static inline void snes_profile_frame_begin()
     s_snesFrameMainloopRenderUs = 0;
     s_snesFramePostRenderUs     = 0;
     s_snesFrameDisplayUs        = 0;
+    s_snesFrameMainloopDisplayUs = 0;
+    s_snesFramePostDisplayUs     = 0;
     s_snesFrameRenderCalls      = 0;
     s_snesFrameDisplayCalls     = 0;
     s_snesProfilePhase          = SNES_PROFILE_PHASE_IDLE;
@@ -304,8 +317,11 @@ static inline void snes_profile_frame_end(uint32_t mainloopUs,
     const uint32_t mainloopRenderUs = s_snesFrameMainloopRenderUs;
     const uint32_t postRenderUs     = s_snesFramePostRenderUs;
     const uint32_t displayUs        = s_snesFrameDisplayUs;
-    const uint32_t cpuUs            = mainloopUs > mainloopRenderUs
-        ? mainloopUs - mainloopRenderUs
+    const uint32_t mainloopDisplayUs = s_snesFrameMainloopDisplayUs;
+    const uint32_t postDisplayUs     = s_snesFramePostDisplayUs;
+    const uint32_t mainloopOverheadUs = mainloopRenderUs + mainloopDisplayUs;
+    const uint32_t cpuUs            = mainloopUs > mainloopOverheadUs
+        ? mainloopUs - mainloopOverheadUs
         : 0;
 
     ++s_snesDeepBench.frames;
@@ -323,6 +339,8 @@ static inline void snes_profile_frame_end(uint32_t mainloopUs,
     s_snesDeepBench.mainloopRenderUs += mainloopRenderUs;
     s_snesDeepBench.postRenderUs += postRenderUs;
     s_snesDeepBench.displayUs    += displayUs;
+    s_snesDeepBench.mainloopDisplayUs += mainloopDisplayUs;
+    s_snesDeepBench.postDisplayUs += postDisplayUs;
 
     if (frameUs > s_snesDeepBench.maxFrameUs)
         s_snesDeepBench.maxFrameUs = frameUs;
@@ -336,6 +354,10 @@ static inline void snes_profile_frame_end(uint32_t mainloopUs,
         s_snesDeepBench.maxPostRenderUs = postRenderUs;
     if (displayUs > s_snesDeepBench.maxDisplayUs)
         s_snesDeepBench.maxDisplayUs = displayUs;
+    if (mainloopDisplayUs > s_snesDeepBench.maxMainloopDisplayUs)
+        s_snesDeepBench.maxMainloopDisplayUs = mainloopDisplayUs;
+    if (postDisplayUs > s_snesDeepBench.maxPostDisplayUs)
+        s_snesDeepBench.maxPostDisplayUs = postDisplayUs;
 }
 
 static inline void snes_deep_bench_log_window(float fps)
@@ -344,7 +366,7 @@ static inline void snes_deep_bench_log_window(float fps)
         return;
 
     const uint32_t frames = s_snesDeepBench.frames;
-    EMU_LOG("[SNES][DEEP] fps=%.2f frames=%lu drawn=%lu skip=%lu calls=%lu dispCalls=%lu avgFrame=%luus avgMain=%luus avgCpu=%luus avgRender=%luus avgMainRender=%luus avgPostRender=%luus avgDisplay=%luus maxFrame=%luus maxMain=%luus maxCpu=%luus maxRender=%luus maxPostRender=%luus maxDisplay=%luus mode=%u h=%u interlace=%u forced=%u regs=2100:%02X 212C:%02X 212D:%02X 2130:%02X 2131:%02X 2133:%02X\n",
+    EMU_LOG("[SNES][DEEP] fps=%.2f frames=%lu drawn=%lu skip=%lu calls=%lu dispCalls=%lu avgFrame=%luus avgMain=%luus avgCpu=%luus avgRender=%luus avgMainRender=%luus avgPostRender=%luus avgDisplay=%luus avgMainDisplay=%luus avgPostDisplay=%luus maxFrame=%luus maxMain=%luus maxCpu=%luus maxRender=%luus maxPostRender=%luus maxDisplay=%luus maxMainDisplay=%luus maxPostDisplay=%luus mode=%u h=%u interlace=%u forced=%u regs=2100:%02X 212C:%02X 212D:%02X 2130:%02X 2131:%02X 2133:%02X\n",
             fps,
             (unsigned long)frames,
             (unsigned long)s_snesDeepBench.rendered,
@@ -358,12 +380,16 @@ static inline void snes_deep_bench_log_window(float fps)
             (unsigned long)(s_snesDeepBench.mainloopRenderUs / frames),
             (unsigned long)(s_snesDeepBench.postRenderUs / frames),
             (unsigned long)(s_snesDeepBench.displayUs / frames),
+            (unsigned long)(s_snesDeepBench.mainloopDisplayUs / frames),
+            (unsigned long)(s_snesDeepBench.postDisplayUs / frames),
             (unsigned long)s_snesDeepBench.maxFrameUs,
             (unsigned long)s_snesDeepBench.maxMainloopUs,
             (unsigned long)s_snesDeepBench.maxCpuUs,
             (unsigned long)s_snesDeepBench.maxRenderUs,
             (unsigned long)s_snesDeepBench.maxPostRenderUs,
             (unsigned long)s_snesDeepBench.maxDisplayUs,
+            (unsigned long)s_snesDeepBench.maxMainloopDisplayUs,
+            (unsigned long)s_snesDeepBench.maxPostDisplayUs,
             (unsigned)PPU.BGMode,
             (unsigned)PPU.ScreenHeight,
             (unsigned)IPPU.Interlace,
