@@ -19,6 +19,72 @@ extern bool S9xIsSourceLineNeeded(uint32_t srcY);
 #ifdef SNES_DEEP_BENCH
 extern bool g_snes_animaniacs_probe_enabled;
 extern void snes_profile_render_add(uint32_t elapsedUs);
+
+enum
+{
+   SNES_PPU_PROF_COLOR_MATH = 0,
+   SNES_PPU_PROF_SIMPLE,
+   SNES_PPU_PROF_SUB_RENDER_CALLS,
+   SNES_PPU_PROF_SUB_RENDER_US,
+   SNES_PPU_PROF_MAIN_RENDER_CALLS,
+   SNES_PPU_PROF_MAIN_RENDER_US,
+   SNES_PPU_PROF_SUBCLIP_US,
+   SNES_PPU_PROF_BACKDROP_CALLS,
+   SNES_PPU_PROF_BACKDROP_US,
+   SNES_PPU_PROF_SIMPLE_FILL_US,
+   SNES_PPU_PROF_BD_SUB_HALF,
+   SNES_PPU_PROF_BD_SUB,
+   SNES_PPU_PROF_BD_ADD_HALF,
+   SNES_PPU_PROF_BD_ADD,
+   SNES_PPU_PROF_BD_COPY_SUB,
+   SNES_PPU_PROF_RS_OBJ_CALLS,
+   SNES_PPU_PROF_RS_OBJ_US,
+   SNES_PPU_PROF_RS_BG0_CALLS,
+   SNES_PPU_PROF_RS_BG0_US,
+   SNES_PPU_PROF_RS_BG1_CALLS,
+   SNES_PPU_PROF_RS_BG1_US,
+   SNES_PPU_PROF_RS_BG2_CALLS,
+   SNES_PPU_PROF_RS_BG2_US,
+   SNES_PPU_PROF_RS_BG3_CALLS,
+   SNES_PPU_PROF_RS_BG3_US,
+   SNES_PPU_PROF_RS_MODE7_CALLS,
+   SNES_PPU_PROF_RS_MODE7_US,
+   SNES_PPU_PROF_COUNT
+};
+
+static uint32_t s_snesPpuProfile[SNES_PPU_PROF_COUNT];
+
+void snes_profile_ppu_get_and_reset(uint32_t* out, uint32_t count)
+{
+   uint32_t i;
+   const uint32_t n = count < SNES_PPU_PROF_COUNT ? count : SNES_PPU_PROF_COUNT;
+
+   for (i = 0; i < n; i++)
+   {
+      out[i] = s_snesPpuProfile[i];
+      s_snesPpuProfile[i] = 0;
+   }
+   for (; i < count; i++)
+      out[i] = 0;
+}
+
+#define SNES_PPU_PROF_INC(idx) (s_snesPpuProfile[(idx)]++)
+#define SNES_PPU_PROF_ADD(idx, value) (s_snesPpuProfile[(idx)] += (uint32_t)(value))
+#define SNES_PPU_PROF_TIME_BEGIN(name) int64_t name = esp_timer_get_time()
+#define SNES_PPU_PROF_TIME_END(idx, name) SNES_PPU_PROF_ADD((idx), esp_timer_get_time() - (name))
+#define SNES_PPU_PROF_RENDER_BLOCK(calls_idx, us_idx, call_expr) \
+   do { \
+      SNES_PPU_PROF_INC(calls_idx); \
+      SNES_PPU_PROF_TIME_BEGIN(tRenderBlock); \
+      call_expr; \
+      SNES_PPU_PROF_TIME_END(us_idx, tRenderBlock); \
+   } while (0)
+#else
+#define SNES_PPU_PROF_INC(idx) ((void)0)
+#define SNES_PPU_PROF_ADD(idx, value) ((void)0)
+#define SNES_PPU_PROF_TIME_BEGIN(name) ((void)0)
+#define SNES_PPU_PROF_TIME_END(idx, name) ((void)0)
+#define SNES_PPU_PROF_RENDER_BLOCK(calls_idx, us_idx, call_expr) do { call_expr; } while (0)
 #endif
 
 #ifdef SNES_LOGS
@@ -2624,27 +2690,37 @@ static void RenderScreen(uint8_t* Screen, bool sub, bool force_no_add, uint8_t D
          if (OB)
          {
             SelectTileRenderer(sub || !SUB_OR_ADD(4));
-            DrawOBJS(!sub, D);
+            SNES_PPU_PROF_RENDER_BLOCK(SNES_PPU_PROF_RS_OBJ_CALLS,
+                                       SNES_PPU_PROF_RS_OBJ_US,
+                                       DrawOBJS(!sub, D));
          }
          if (BG0)
          {
             SelectTileRenderer(sub || !SUB_OR_ADD(0));
-            DrawBackground(PPU.BGMode, 0, D + 10, D + 14);
+            SNES_PPU_PROF_RENDER_BLOCK(SNES_PPU_PROF_RS_BG0_CALLS,
+                                       SNES_PPU_PROF_RS_BG0_US,
+                                       DrawBackground(PPU.BGMode, 0, D + 10, D + 14));
          }
          if (BG1)
          {
             SelectTileRenderer(sub || !SUB_OR_ADD(1));
-            DrawBackground(PPU.BGMode, 1, D + 9, D + 13);
+            SNES_PPU_PROF_RENDER_BLOCK(SNES_PPU_PROF_RS_BG1_CALLS,
+                                       SNES_PPU_PROF_RS_BG1_US,
+                                       DrawBackground(PPU.BGMode, 1, D + 9, D + 13));
          }
          if (BG2)
          {
             SelectTileRenderer(sub || !SUB_OR_ADD(2));
-            DrawBackground(PPU.BGMode, 2, D + 3, PPU.BG3Priority ? D + 17 : D + 6);
+            SNES_PPU_PROF_RENDER_BLOCK(SNES_PPU_PROF_RS_BG2_CALLS,
+                                       SNES_PPU_PROF_RS_BG2_US,
+                                       DrawBackground(PPU.BGMode, 2, D + 3, PPU.BG3Priority ? D + 17 : D + 6));
          }
          if (BG3 && PPU.BGMode == 0)
          {
             SelectTileRenderer(sub || !SUB_OR_ADD(3));
-            DrawBackground(PPU.BGMode, 3, D + 2, D + 5);
+            SNES_PPU_PROF_RENDER_BLOCK(SNES_PPU_PROF_RS_BG3_CALLS,
+                                       SNES_PPU_PROF_RS_BG3_US,
+                                       DrawBackground(PPU.BGMode, 3, D + 2, D + 5));
          }
          break;
       case 2:
@@ -2655,24 +2731,32 @@ static void RenderScreen(uint8_t* Screen, bool sub, bool force_no_add, uint8_t D
          if (OB)
          {
             SelectTileRenderer(sub || !SUB_OR_ADD(4));
-            DrawOBJS(!sub, D);
+            SNES_PPU_PROF_RENDER_BLOCK(SNES_PPU_PROF_RS_OBJ_CALLS,
+                                       SNES_PPU_PROF_RS_OBJ_US,
+                                       DrawOBJS(!sub, D));
          }
          if (BG0)
          {
             SelectTileRenderer(sub || !SUB_OR_ADD(0));
-            DrawBackground(PPU.BGMode, 0, D + 5, D + 13);
+            SNES_PPU_PROF_RENDER_BLOCK(SNES_PPU_PROF_RS_BG0_CALLS,
+                                       SNES_PPU_PROF_RS_BG0_US,
+                                       DrawBackground(PPU.BGMode, 0, D + 5, D + 13));
          }
          if (BG1 && PPU.BGMode != 6)
          {
             SelectTileRenderer(sub || !SUB_OR_ADD(1));
-            DrawBackground(PPU.BGMode, 1, D + 2, D + 9);
+            SNES_PPU_PROF_RENDER_BLOCK(SNES_PPU_PROF_RS_BG1_CALLS,
+                                       SNES_PPU_PROF_RS_BG1_US,
+                                       DrawBackground(PPU.BGMode, 1, D + 2, D + 9));
          }
          break;
       case 7:
          if (OB)
          {
             SelectTileRenderer(sub || !SUB_OR_ADD(4));
-            DrawOBJS(!sub, D);
+            SNES_PPU_PROF_RENDER_BLOCK(SNES_PPU_PROF_RS_OBJ_CALLS,
+                                       SNES_PPU_PROF_RS_OBJ_US,
+                                       DrawOBJS(!sub, D));
          }
          if (BG0 || ((Memory.FillRAM [0x2133] & 0x40) && BG1))
          {
@@ -2695,22 +2779,42 @@ static void RenderScreen(uint8_t* Screen, bool sub, bool force_no_add, uint8_t D
                bg = 0;
             }
             if (sub || !SUB_OR_ADD(0))
-               DrawBGMode7Background16(Screen, bg);
+            {
+               SNES_PPU_PROF_RENDER_BLOCK(SNES_PPU_PROF_RS_MODE7_CALLS,
+                                          SNES_PPU_PROF_RS_MODE7_US,
+                                          DrawBGMode7Background16(Screen, bg));
+            }
             else
             {
                if (GFX.r2131 & 0x80)
                {
                   if (GFX.r2131 & 0x40)
-                     DrawBGMode7Background16Sub1_2(Screen, bg);
+                  {
+                     SNES_PPU_PROF_RENDER_BLOCK(SNES_PPU_PROF_RS_MODE7_CALLS,
+                                                SNES_PPU_PROF_RS_MODE7_US,
+                                                DrawBGMode7Background16Sub1_2(Screen, bg));
+                  }
                   else
-                     DrawBGMode7Background16Sub(Screen, bg);
+                  {
+                     SNES_PPU_PROF_RENDER_BLOCK(SNES_PPU_PROF_RS_MODE7_CALLS,
+                                                SNES_PPU_PROF_RS_MODE7_US,
+                                                DrawBGMode7Background16Sub(Screen, bg));
+                  }
                }
                else
                {
                   if (GFX.r2131 & 0x40)
-                     DrawBGMode7Background16Add1_2(Screen, bg);
+                  {
+                     SNES_PPU_PROF_RENDER_BLOCK(SNES_PPU_PROF_RS_MODE7_CALLS,
+                                                SNES_PPU_PROF_RS_MODE7_US,
+                                                DrawBGMode7Background16Add1_2(Screen, bg));
+                  }
                   else
-                     DrawBGMode7Background16Add(Screen, bg);
+                  {
+                     SNES_PPU_PROF_RENDER_BLOCK(SNES_PPU_PROF_RS_MODE7_CALLS,
+                                                SNES_PPU_PROF_RS_MODE7_US,
+                                                DrawBGMode7Background16Add(Screen, bg));
+                  }
                }
             }
          }
@@ -2742,14 +2846,17 @@ static void SNES_GFX_HOT_CODE_ATTR S9xFill16Range(uint8_t* line, uint32_t left, 
 
 static void SNES_GFX_HOT_CODE_ATTR S9xApplySubClipFallback(uint16_t* p, uint8_t* d, uint8_t* e, int32_t delta)
 {
+   uint16_t* q = p + delta;
+
    while (d < e)
    {
       if (*d > 1)
-         *p = *(p + delta);
+         *p = *q;
       else
          *p = BLACK;
       d++;
       p++;
+      q++;
    }
 }
 
@@ -2783,6 +2890,10 @@ static void SNES_GFX_HOT_CODE_ATTR S9xApplyBackdropSpan(uint16_t* p,
                                                         uint32_t mode)
 {
    uint16_t back_fixed;
+   uint16_t* q = p + delta;
+
+   if (mode <= SNES_BACKDROP_COPY_SUB)
+      SNES_PPU_PROF_INC(SNES_PPU_PROF_BD_SUB_HALF + mode);
 
    switch (mode)
    {
@@ -2793,12 +2904,13 @@ static void SNES_GFX_HOT_CODE_ATTR S9xApplyBackdropSpan(uint16_t* p,
             if (*d == 0)
             {
                if (*s)
-                  *p = (*s != 1) ? COLOR_SUB1_2(back, *(p + delta)) : back_fixed;
+                  *p = (*s != 1) ? COLOR_SUB1_2(back, *q) : back_fixed;
                else
                   *p = back;
             }
             d++;
             p++;
+            q++;
             s++;
          }
          break;
@@ -2810,12 +2922,13 @@ static void SNES_GFX_HOT_CODE_ATTR S9xApplyBackdropSpan(uint16_t* p,
             if (*d == 0)
             {
                if (*s)
-                  *p = (*s != 1) ? COLOR_SUB(back, *(p + delta)) : back_fixed;
+                  *p = (*s != 1) ? COLOR_SUB(back, *q) : back_fixed;
                else
                   *p = back;
             }
             d++;
             p++;
+            q++;
             s++;
          }
          break;
@@ -2827,12 +2940,13 @@ static void SNES_GFX_HOT_CODE_ATTR S9xApplyBackdropSpan(uint16_t* p,
             if (*d == 0)
             {
                if (*s)
-                  *p = (*s != 1) ? COLOR_ADD1_2(back, *(p + delta)) : back_fixed;
+                  *p = (*s != 1) ? COLOR_ADD1_2(back, *q) : back_fixed;
                else
                   *p = back;
             }
             d++;
             p++;
+            q++;
             s++;
          }
          break;
@@ -2844,12 +2958,13 @@ static void SNES_GFX_HOT_CODE_ATTR S9xApplyBackdropSpan(uint16_t* p,
             if (*d == 0)
             {
                if (*s)
-                  *p = (*s != 1) ? COLOR_ADD(back, *(p + delta)) : back_fixed;
+                  *p = (*s != 1) ? COLOR_ADD(back, *q) : back_fixed;
                else
                   *p = back;
             }
             d++;
             p++;
+            q++;
             s++;
          }
          break;
@@ -2860,12 +2975,13 @@ static void SNES_GFX_HOT_CODE_ATTR S9xApplyBackdropSpan(uint16_t* p,
             if (*d == 0)
             {
                if (*s)
-                  *p = (*s != 1) ? *(p + delta) : fixed;
+                  *p = (*s != 1) ? *q : fixed;
                else
                   *p = back;
             }
             d++;
             p++;
+            q++;
             s++;
          }
          break;
@@ -2985,6 +3101,7 @@ void S9xUpdateScreen_Core(void)
    if (!PPU.ForcedBlanking && ADD_OR_SUB_ON_ANYTHING && (GFX.r2130 & 0x30) != 0x30 && !((GFX.r2130 & 0x30) == 0x10 && IPPU.Clip[1].Count[5] == 0))
    {
       ClipData* pClip;
+      SNES_PPU_PROF_INC(SNES_PPU_PROF_COLOR_MATH);
 
       GFX.FixedColour = BUILD_PIXEL(IPPU.XB [PPU.FixedColourRed], IPPU.XB [PPU.FixedColourGreen], IPPU.XB [PPU.FixedColourBlue]);
 
@@ -3045,12 +3162,16 @@ void S9xUpdateScreen_Core(void)
       if (ANYTHING_ON_SUB)
       {
          GFX.DB = GFX.SubZBuffer;
+         SNES_PPU_PROF_INC(SNES_PPU_PROF_SUB_RENDER_CALLS);
+         SNES_PPU_PROF_TIME_BEGIN(tSubRender);
          RenderScreen(GFX.SubScreen, true, true, SUB_SCREEN_DEPTH);
+         SNES_PPU_PROF_TIME_END(SNES_PPU_PROF_SUB_RENDER_US, tSubRender);
       }
 
       if (IPPU.Clip [0].Count [5])
       {
          uint32_t y;
+         SNES_PPU_PROF_TIME_BEGIN(tSubClip);
          for (y = starty; y <= endy; y++)
          {
             uint16_t* p = (uint16_t*)(GFX.Screen + y * GFX.Pitch2);
@@ -3058,10 +3179,14 @@ void S9xUpdateScreen_Core(void)
             uint8_t* e = d + IPPU.RenderedScreenWidth;
             S9xApplySubClipFallback(p, d, e, GFX.Delta);
          }
+         SNES_PPU_PROF_TIME_END(SNES_PPU_PROF_SUBCLIP_US, tSubClip);
       }
 
       GFX.DB = GFX.ZBuffer;
+      SNES_PPU_PROF_INC(SNES_PPU_PROF_MAIN_RENDER_CALLS);
+      SNES_PPU_PROF_TIME_BEGIN(tMainRender);
       RenderScreen(GFX.Screen, false, false, MAIN_SCREEN_DEPTH);
+      SNES_PPU_PROF_TIME_END(SNES_PPU_PROF_MAIN_RENDER_US, tMainRender);
 
       if (SUB_OR_ADD(5))
       {
@@ -3070,6 +3195,8 @@ void S9xUpdateScreen_Core(void)
          uint32_t Left = 0;
          uint32_t Right = 256;
          uint32_t Count;
+         SNES_PPU_PROF_INC(SNES_PPU_PROF_BACKDROP_CALLS);
+         SNES_PPU_PROF_TIME_BEGIN(tBackdrop);
 
          pClip = &IPPU.Clip [0];
          for (y = starty; y <= endy; y++)
@@ -3158,6 +3285,7 @@ void S9xUpdateScreen_Core(void)
                }
             }
          }
+         SNES_PPU_PROF_TIME_END(SNES_PPU_PROF_BACKDROP_US, tBackdrop);
       } /* --if (SUB_OR_ADD(5)) */
       else
       {
@@ -3165,6 +3293,7 @@ void S9xUpdateScreen_Core(void)
          /* Subscreen not being added to back */
          uint32_t back = IPPU.ScreenColors [0] | (IPPU.ScreenColors [0] << 16);
          pClip = &IPPU.Clip [0];
+         SNES_PPU_PROF_TIME_BEGIN(tSimpleFillColor);
 
          if (pClip->Count [5])
          {
@@ -3193,6 +3322,7 @@ void S9xUpdateScreen_Core(void)
                S9xFillDepthZero(p, d, e, (uint16_t) back);
             }
          }
+         SNES_PPU_PROF_TIME_END(SNES_PPU_PROF_SIMPLE_FILL_US, tSimpleFillColor);
       }
    } /* force blanking */
    else
@@ -3201,6 +3331,8 @@ void S9xUpdateScreen_Core(void)
        * operation. */
 
       uint32_t back = IPPU.ScreenColors [0] | (IPPU.ScreenColors [0] << 16);
+      SNES_PPU_PROF_INC(SNES_PPU_PROF_SIMPLE);
+      SNES_PPU_PROF_TIME_BEGIN(tSimpleFill);
 
       if (PPU.ForcedBlanking)
          back = black;
@@ -3235,9 +3367,15 @@ void S9xUpdateScreen_Core(void)
          uint32_t y;
          for (y = starty; y <= endy; y++)
             memset(GFX.ZBuffer + y * GFX.ZPitch, 0, IPPU.RenderedScreenWidth);
+         SNES_PPU_PROF_TIME_END(SNES_PPU_PROF_SIMPLE_FILL_US, tSimpleFill);
          GFX.DB = GFX.ZBuffer;
+         SNES_PPU_PROF_INC(SNES_PPU_PROF_MAIN_RENDER_CALLS);
+         SNES_PPU_PROF_TIME_BEGIN(tSimpleMainRender);
          RenderScreen(GFX.Screen, false, true, SUB_SCREEN_DEPTH);
+         SNES_PPU_PROF_TIME_END(SNES_PPU_PROF_MAIN_RENDER_US, tSimpleMainRender);
       }
+      else
+         SNES_PPU_PROF_TIME_END(SNES_PPU_PROF_SIMPLE_FILL_US, tSimpleFill);
    }
 
    if (PPU.BGMode != 5 && PPU.BGMode != 6 && IPPU.DoubleWidthPixels)

@@ -52,6 +52,7 @@ static SnesInterlaceMode s_interlace_mode = SNES_INTERLACE_OFF;
 #ifdef SNES_DEEP_BENCH
 extern "C" {
 bool g_snes_animaniacs_probe_enabled = false;
+void snes_profile_ppu_get_and_reset(uint32_t* out, uint32_t count);
 }
 #endif
 
@@ -225,6 +226,38 @@ static void snes_log_runtime_config(int targetFps)
 #endif
 
 #ifdef SNES_DEEP_BENCH
+enum
+{
+    SNES_PPU_PROF_COLOR_MATH = 0,
+    SNES_PPU_PROF_SIMPLE,
+    SNES_PPU_PROF_SUB_RENDER_CALLS,
+    SNES_PPU_PROF_SUB_RENDER_US,
+    SNES_PPU_PROF_MAIN_RENDER_CALLS,
+    SNES_PPU_PROF_MAIN_RENDER_US,
+    SNES_PPU_PROF_SUBCLIP_US,
+    SNES_PPU_PROF_BACKDROP_CALLS,
+    SNES_PPU_PROF_BACKDROP_US,
+    SNES_PPU_PROF_SIMPLE_FILL_US,
+    SNES_PPU_PROF_BD_SUB_HALF,
+    SNES_PPU_PROF_BD_SUB,
+    SNES_PPU_PROF_BD_ADD_HALF,
+    SNES_PPU_PROF_BD_ADD,
+    SNES_PPU_PROF_BD_COPY_SUB,
+    SNES_PPU_PROF_RS_OBJ_CALLS,
+    SNES_PPU_PROF_RS_OBJ_US,
+    SNES_PPU_PROF_RS_BG0_CALLS,
+    SNES_PPU_PROF_RS_BG0_US,
+    SNES_PPU_PROF_RS_BG1_CALLS,
+    SNES_PPU_PROF_RS_BG1_US,
+    SNES_PPU_PROF_RS_BG2_CALLS,
+    SNES_PPU_PROF_RS_BG2_US,
+    SNES_PPU_PROF_RS_BG3_CALLS,
+    SNES_PPU_PROF_RS_BG3_US,
+    SNES_PPU_PROF_RS_MODE7_CALLS,
+    SNES_PPU_PROF_RS_MODE7_US,
+    SNES_PPU_PROF_COUNT
+};
+
 struct SnesDeepBenchState
 {
     uint32_t frames;
@@ -366,7 +399,10 @@ static inline void snes_deep_bench_log_window(float fps)
         return;
 
     const uint32_t frames = s_snesDeepBench.frames;
-    EMU_LOG("[SNES][DEEP] fps=%.2f frames=%lu drawn=%lu skip=%lu calls=%lu dispCalls=%lu avgFrame=%luus avgMain=%luus avgCpu=%luus avgRender=%luus avgMainRender=%luus avgPostRender=%luus avgDisplay=%luus avgMainDisplay=%luus avgPostDisplay=%luus maxFrame=%luus maxMain=%luus maxCpu=%luus maxRender=%luus maxPostRender=%luus maxDisplay=%luus maxMainDisplay=%luus maxPostDisplay=%luus mode=%u h=%u interlace=%u forced=%u regs=2100:%02X 212C:%02X 212D:%02X 2130:%02X 2131:%02X 2133:%02X\n",
+    uint32_t ppu[SNES_PPU_PROF_COUNT] = {};
+    snes_profile_ppu_get_and_reset(ppu, SNES_PPU_PROF_COUNT);
+
+    EMU_LOG("[SNES][DEEP] fps=%.2f frames=%lu drawn=%lu skip=%lu calls=%lu dispCalls=%lu avgFrame=%luus avgMain=%luus avgCpu=%luus avgRender=%luus avgMainRender=%luus avgPostRender=%luus avgDisplay=%luus avgMainDisplay=%luus avgPostDisplay=%luus maxFrame=%luus maxMain=%luus maxCpu=%luus maxRender=%luus maxPostRender=%luus maxDisplay=%luus maxMainDisplay=%luus maxPostDisplay=%luus mode=%u h=%u interlace=%u forced=%u regs=2100:%02X 212C:%02X 212D:%02X 2130:%02X 2131:%02X 2133:%02X ppu=color:%lu simple:%lu sub:%lu/%luus main:%lu/%luus subclip:%luus backdrop:%lu/%luus fill:%luus bd:%lu,%lu,%lu,%lu,%lu rs=obj:%lu/%luus bg0:%lu/%luus bg1:%lu/%luus bg2:%lu/%luus bg3:%lu/%luus m7:%lu/%luus\n",
             fps,
             (unsigned long)frames,
             (unsigned long)s_snesDeepBench.rendered,
@@ -399,7 +435,34 @@ static inline void snes_deep_bench_log_window(float fps)
             (unsigned)Memory.FillRAM[0x212d],
             (unsigned)Memory.FillRAM[0x2130],
             (unsigned)Memory.FillRAM[0x2131],
-            (unsigned)Memory.FillRAM[0x2133]);
+            (unsigned)Memory.FillRAM[0x2133],
+            (unsigned long)ppu[SNES_PPU_PROF_COLOR_MATH],
+            (unsigned long)ppu[SNES_PPU_PROF_SIMPLE],
+            (unsigned long)ppu[SNES_PPU_PROF_SUB_RENDER_CALLS],
+            (unsigned long)ppu[SNES_PPU_PROF_SUB_RENDER_US],
+            (unsigned long)ppu[SNES_PPU_PROF_MAIN_RENDER_CALLS],
+            (unsigned long)ppu[SNES_PPU_PROF_MAIN_RENDER_US],
+            (unsigned long)ppu[SNES_PPU_PROF_SUBCLIP_US],
+            (unsigned long)ppu[SNES_PPU_PROF_BACKDROP_CALLS],
+            (unsigned long)ppu[SNES_PPU_PROF_BACKDROP_US],
+            (unsigned long)ppu[SNES_PPU_PROF_SIMPLE_FILL_US],
+            (unsigned long)ppu[SNES_PPU_PROF_BD_SUB_HALF],
+            (unsigned long)ppu[SNES_PPU_PROF_BD_SUB],
+            (unsigned long)ppu[SNES_PPU_PROF_BD_ADD_HALF],
+            (unsigned long)ppu[SNES_PPU_PROF_BD_ADD],
+            (unsigned long)ppu[SNES_PPU_PROF_BD_COPY_SUB],
+            (unsigned long)ppu[SNES_PPU_PROF_RS_OBJ_CALLS],
+            (unsigned long)ppu[SNES_PPU_PROF_RS_OBJ_US],
+            (unsigned long)ppu[SNES_PPU_PROF_RS_BG0_CALLS],
+            (unsigned long)ppu[SNES_PPU_PROF_RS_BG0_US],
+            (unsigned long)ppu[SNES_PPU_PROF_RS_BG1_CALLS],
+            (unsigned long)ppu[SNES_PPU_PROF_RS_BG1_US],
+            (unsigned long)ppu[SNES_PPU_PROF_RS_BG2_CALLS],
+            (unsigned long)ppu[SNES_PPU_PROF_RS_BG2_US],
+            (unsigned long)ppu[SNES_PPU_PROF_RS_BG3_CALLS],
+            (unsigned long)ppu[SNES_PPU_PROF_RS_BG3_US],
+            (unsigned long)ppu[SNES_PPU_PROF_RS_MODE7_CALLS],
+            (unsigned long)ppu[SNES_PPU_PROF_RS_MODE7_US]);
 
     memset(&s_snesDeepBench, 0, sizeof(s_snesDeepBench));
 }
