@@ -173,7 +173,7 @@ bool S9xInitMemory(void)
 bool S9xInitMap(void)
 {
    // Map / MapInfo
-   Memory.Map     = (uint8_t**)calloc(MEMMAP_NUM_BLOCKS, sizeof(uint8_t*)); // 4 KB
+   Memory.Map     = (uint8_t**)calloc(MEMMAP_NUM_BLOCKS, sizeof(uint8_t*)); // 16 KB on ESP32
    Memory.MapInfo = (SMapInfo*)calloc(MEMMAP_NUM_BLOCKS, sizeof(SMapInfo)); // 4 KB packed
 
    // Test allocations

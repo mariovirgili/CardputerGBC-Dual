@@ -36,6 +36,10 @@ static uint16_t   *g_dstLastForSrc  = nullptr;
 static uint8_t    *g_srcLineNeeded  = nullptr;
 static uint16_t   *g_srcForDst      = nullptr;
 static SnesLineMap g_lineMap        = {};
+static uint16_t    g_defaultSrcForDst[LCD_H];
+static uint32_t    g_defaultSrcMapH     = 0;
+static uint32_t    g_defaultSrcMapStart = 0xFFFFFFFFu;
+static uint32_t    g_defaultSrcMapStep  = 0;
 
 static bool     g_altHardHalfSkip = true;
 static uint32_t g_dstY            = 0;
@@ -227,34 +231,82 @@ struct SnesDeepBenchState
     uint32_t rendered;
     uint32_t skipped;
     uint32_t renderCalls;
+    uint32_t displayCalls;
+    uint32_t frameUs;
     uint32_t mainloopUs;
     uint32_t cpuUs;
     uint32_t renderUs;
+    uint32_t mainloopRenderUs;
+    uint32_t postRenderUs;
+    uint32_t displayUs;
+    uint32_t maxFrameUs;
     uint32_t maxMainloopUs;
     uint32_t maxCpuUs;
     uint32_t maxRenderUs;
+    uint32_t maxPostRenderUs;
+    uint32_t maxDisplayUs;
 };
 
-static volatile uint32_t s_snesFrameRenderUs    = 0;
-static volatile uint32_t s_snesFrameRenderCalls = 0;
-static SnesDeepBenchState s_snesDeepBench       = {};
+enum
+{
+    SNES_PROFILE_PHASE_IDLE = 0,
+    SNES_PROFILE_PHASE_MAINLOOP,
+    SNES_PROFILE_PHASE_POST_RENDER,
+};
+
+static volatile uint32_t s_snesFrameRenderUs         = 0;
+static volatile uint32_t s_snesFrameMainloopRenderUs = 0;
+static volatile uint32_t s_snesFramePostRenderUs     = 0;
+static volatile uint32_t s_snesFrameDisplayUs        = 0;
+static volatile uint32_t s_snesFrameRenderCalls      = 0;
+static volatile uint32_t s_snesFrameDisplayCalls     = 0;
+static volatile uint32_t s_snesProfilePhase          = SNES_PROFILE_PHASE_IDLE;
+static SnesDeepBenchState s_snesDeepBench            = {};
 
 extern "C" void snes_profile_render_add(uint32_t elapsedUs)
 {
     s_snesFrameRenderUs += elapsedUs;
     ++s_snesFrameRenderCalls;
+
+    if (s_snesProfilePhase == SNES_PROFILE_PHASE_MAINLOOP)
+        s_snesFrameMainloopRenderUs += elapsedUs;
+    else if (s_snesProfilePhase == SNES_PROFILE_PHASE_POST_RENDER)
+        s_snesFramePostRenderUs += elapsedUs;
+}
+
+static inline void snes_profile_display_add(uint32_t elapsedUs)
+{
+    s_snesFrameDisplayUs += elapsedUs;
+    ++s_snesFrameDisplayCalls;
+}
+
+static inline void snes_profile_set_phase(uint32_t phase)
+{
+    s_snesProfilePhase = phase;
 }
 
 static inline void snes_profile_frame_begin()
 {
-    s_snesFrameRenderUs    = 0;
-    s_snesFrameRenderCalls = 0;
+    s_snesFrameRenderUs         = 0;
+    s_snesFrameMainloopRenderUs = 0;
+    s_snesFramePostRenderUs     = 0;
+    s_snesFrameDisplayUs        = 0;
+    s_snesFrameRenderCalls      = 0;
+    s_snesFrameDisplayCalls     = 0;
+    s_snesProfilePhase          = SNES_PROFILE_PHASE_IDLE;
 }
 
-static inline void snes_profile_frame_end(uint32_t mainloopUs, bool rendered)
+static inline void snes_profile_frame_end(uint32_t mainloopUs,
+                                          uint32_t frameUs,
+                                          bool rendered)
 {
-    const uint32_t renderUs = s_snesFrameRenderUs;
-    const uint32_t cpuUs    = mainloopUs > renderUs ? mainloopUs - renderUs : 0;
+    const uint32_t renderUs         = s_snesFrameRenderUs;
+    const uint32_t mainloopRenderUs = s_snesFrameMainloopRenderUs;
+    const uint32_t postRenderUs     = s_snesFramePostRenderUs;
+    const uint32_t displayUs        = s_snesFrameDisplayUs;
+    const uint32_t cpuUs            = mainloopUs > mainloopRenderUs
+        ? mainloopUs - mainloopRenderUs
+        : 0;
 
     ++s_snesDeepBench.frames;
     if (rendered)
@@ -263,16 +315,27 @@ static inline void snes_profile_frame_end(uint32_t mainloopUs, bool rendered)
         ++s_snesDeepBench.skipped;
 
     s_snesDeepBench.renderCalls += s_snesFrameRenderCalls;
+    s_snesDeepBench.displayCalls += s_snesFrameDisplayCalls;
+    s_snesDeepBench.frameUs      += frameUs;
     s_snesDeepBench.mainloopUs  += mainloopUs;
     s_snesDeepBench.cpuUs       += cpuUs;
     s_snesDeepBench.renderUs    += renderUs;
+    s_snesDeepBench.mainloopRenderUs += mainloopRenderUs;
+    s_snesDeepBench.postRenderUs += postRenderUs;
+    s_snesDeepBench.displayUs    += displayUs;
 
+    if (frameUs > s_snesDeepBench.maxFrameUs)
+        s_snesDeepBench.maxFrameUs = frameUs;
     if (mainloopUs > s_snesDeepBench.maxMainloopUs)
         s_snesDeepBench.maxMainloopUs = mainloopUs;
     if (cpuUs > s_snesDeepBench.maxCpuUs)
         s_snesDeepBench.maxCpuUs = cpuUs;
     if (renderUs > s_snesDeepBench.maxRenderUs)
         s_snesDeepBench.maxRenderUs = renderUs;
+    if (postRenderUs > s_snesDeepBench.maxPostRenderUs)
+        s_snesDeepBench.maxPostRenderUs = postRenderUs;
+    if (displayUs > s_snesDeepBench.maxDisplayUs)
+        s_snesDeepBench.maxDisplayUs = displayUs;
 }
 
 static inline void snes_deep_bench_log_window(float fps)
@@ -281,18 +344,26 @@ static inline void snes_deep_bench_log_window(float fps)
         return;
 
     const uint32_t frames = s_snesDeepBench.frames;
-    EMU_LOG("[SNES][DEEP] fps=%.2f frames=%lu drawn=%lu skip=%lu calls=%lu avgMain=%luus avgCpu=%luus avgRender=%luus maxMain=%luus maxCpu=%luus maxRender=%luus mode=%u h=%u interlace=%u forced=%u regs=2100:%02X 212C:%02X 212D:%02X 2130:%02X 2131:%02X 2133:%02X\n",
+    EMU_LOG("[SNES][DEEP] fps=%.2f frames=%lu drawn=%lu skip=%lu calls=%lu dispCalls=%lu avgFrame=%luus avgMain=%luus avgCpu=%luus avgRender=%luus avgMainRender=%luus avgPostRender=%luus avgDisplay=%luus maxFrame=%luus maxMain=%luus maxCpu=%luus maxRender=%luus maxPostRender=%luus maxDisplay=%luus mode=%u h=%u interlace=%u forced=%u regs=2100:%02X 212C:%02X 212D:%02X 2130:%02X 2131:%02X 2133:%02X\n",
             fps,
             (unsigned long)frames,
             (unsigned long)s_snesDeepBench.rendered,
             (unsigned long)s_snesDeepBench.skipped,
             (unsigned long)s_snesDeepBench.renderCalls,
+            (unsigned long)s_snesDeepBench.displayCalls,
+            (unsigned long)(s_snesDeepBench.frameUs / frames),
             (unsigned long)(s_snesDeepBench.mainloopUs / frames),
             (unsigned long)(s_snesDeepBench.cpuUs / frames),
             (unsigned long)(s_snesDeepBench.renderUs / frames),
+            (unsigned long)(s_snesDeepBench.mainloopRenderUs / frames),
+            (unsigned long)(s_snesDeepBench.postRenderUs / frames),
+            (unsigned long)(s_snesDeepBench.displayUs / frames),
+            (unsigned long)s_snesDeepBench.maxFrameUs,
             (unsigned long)s_snesDeepBench.maxMainloopUs,
             (unsigned long)s_snesDeepBench.maxCpuUs,
             (unsigned long)s_snesDeepBench.maxRenderUs,
+            (unsigned long)s_snesDeepBench.maxPostRenderUs,
+            (unsigned long)s_snesDeepBench.maxDisplayUs,
             (unsigned)PPU.BGMode,
             (unsigned)PPU.ScreenHeight,
             (unsigned)IPPU.Interlace,
@@ -330,7 +401,9 @@ static bool snes_title_contains_nocase(const char* title, const char* needle)
 }
 #else
 #define snes_profile_frame_begin() ((void)0)
-#define snes_profile_frame_end(mainloopUs, rendered) ((void)0)
+#define snes_profile_frame_end(mainloopUs, frameUs, rendered) ((void)0)
+#define snes_profile_set_phase(phase) ((void)0)
+#define snes_profile_display_add(elapsedUs) ((void)0)
 #define snes_deep_bench_log_window(fps) ((void)0)
 #endif
 
@@ -374,17 +447,21 @@ static inline void snes_log_fps_and_heap(uint32_t &frameCount, uint32_t &lastFps
     lastFpsMs  = nowMs;
 }
 
+static inline uint32_t snes_map_dst_to_src(uint32_t dstY, uint32_t srcH)
+{
+    if (srcH == 0)
+        srcH = SNES_HEIGHT;
+
+    uint32_t srcY = (((dstY << 1) + 1u) * srcH) / (LCD_H * 2u);
+    if (srcY >= srcH)
+        srcY = srcH - 1;
+
+    return srcY;
+}
+
 static inline uint32_t mapDstToSrc(uint32_t dstY)
 {
-    const float srcYf = g_lineMap.srcStart + (dstY + 0.5f) * g_lineMap.scaleY;
-    int32_t srcY = (int32_t)srcYf;
-
-    if (srcY < 0)
-        srcY = 0;
-    if (srcY >= (int32_t)g_lineMap.srcH)
-        srcY = (int32_t)g_lineMap.srcH - 1;
-
-    return (uint32_t)srcY;
+    return snes_map_dst_to_src(dstY, g_lineMap.srcH);
 }
 
 extern "C" bool S9xIsSourceLineNeeded(uint32_t srcY)
@@ -450,6 +527,23 @@ static void buildInterlaceSourceMaskExact()
     }
 }
 
+static void buildDefaultSourceMap(uint32_t srcH, uint32_t startY, uint32_t stepY)
+{
+    if (g_defaultSrcMapH == srcH &&
+        g_defaultSrcMapStart == startY &&
+        g_defaultSrcMapStep == stepY)
+    {
+        return;
+    }
+
+    g_defaultSrcMapH     = srcH;
+    g_defaultSrcMapStart = startY;
+    g_defaultSrcMapStep  = stepY;
+
+    for (uint32_t dstY = startY; dstY < LCD_H; dstY += stepY)
+        g_defaultSrcForDst[dstY] = (uint16_t)snes_map_dst_to_src(dstY, srcH);
+}
+
 /* ---------------------------------------------------- */
 /* Video callbacks                                      */
 /* ---------------------------------------------------- */
@@ -458,7 +552,13 @@ static void S9XLineRender(uint32_t /*y*/,
                           const uint16_t* pixels,
                           uint32_t width)
 {
+#ifdef SNES_DEEP_BENCH
+    const int64_t displayStartUs = esp_timer_get_time();
+#endif
     snes_display_submit_line(g_dstY, pixels, width);
+#ifdef SNES_DEEP_BENCH
+    snes_profile_display_add((uint32_t)(esp_timer_get_time() - displayStartUs));
+#endif
 }
 
 static void S9XLineRenderAlt(uint32_t srcY,
@@ -477,7 +577,15 @@ static void S9XLineRenderAlt(uint32_t srcY,
     for (uint32_t dstY = first; dstY <= last; dstY += g_lineMap.stepY)
     {
         if (g_srcForDst[dstY] == srcY)
+        {
+#ifdef SNES_DEEP_BENCH
+            const int64_t displayStartUs = esp_timer_get_time();
+#endif
             snes_display_submit_line(dstY, pixels, width);
+#ifdef SNES_DEEP_BENCH
+            snes_profile_display_add((uint32_t)(esp_timer_get_time() - displayStartUs));
+#endif
+        }
     }
 }
 
@@ -543,19 +651,19 @@ bool snes_init()
     }
     snes_log_heap_step("gfx");
 
-    if (!S9xInitMemory())
-    {
-        snes_log_init_failure("memory", snes_estimated_memory_alloc_bytes());
-        return false;
-    }
-    snes_log_heap_step("memory");
-
     if (!S9xInitMap())
     {
         snes_log_init_failure("map", snes_estimated_map_alloc_bytes());
         return false;
     }
     snes_log_heap_step("map");
+
+    if (!S9xInitMemory())
+    {
+        snes_log_init_failure("memory", snes_estimated_memory_alloc_bytes());
+        return false;
+    }
+    snes_log_heap_step("memory");
 
     if (!S9xInitPpu())
     {
@@ -656,9 +764,6 @@ void run_snes_default(const uint8_t* rom, size_t romSize, const char* romName)
     int64_t        now;
     int64_t        lateness;
 
-    const float scale    = (float)PPU.ScreenHeight / (float)LCD_H;
-    const float srcStart = 0.5f * (PPU.ScreenHeight - LCD_H * scale);
-
     snes_log_heap_runtime("pre-display", 0);
     snes_display_init();
     snes_log_heap_runtime("display-init", 0);
@@ -684,11 +789,13 @@ void run_snes_default(const uint8_t* rom, size_t romSize, const char* romName)
         snes_input_tick();
 #ifdef SNES_DEEP_BENCH
         snes_profile_frame_begin();
+        snes_profile_set_phase(SNES_PROFILE_PHASE_MAINLOOP);
         const int64_t mainloop_start_us = esp_timer_get_time();
 #endif
         S9xMainLoop();
 #ifdef SNES_DEEP_BENCH
         const uint32_t mainloop_us = (uint32_t)(esp_timer_get_time() - mainloop_start_us);
+        snes_profile_set_phase(SNES_PROFILE_PHASE_IDLE);
 #endif
         snes_save_tick();
         if (!firstFrameLogged)
@@ -698,27 +805,25 @@ void run_snes_default(const uint8_t* rom, size_t romSize, const char* romName)
         {
             const uint32_t startY = interlace_enabled ? fieldParity : 0;
             const uint32_t stepY  = interlace_enabled ? 2 : 1;
+            const uint32_t srcH   = PPU.ScreenHeight ? PPU.ScreenHeight : SNES_HEIGHT;
 
+            buildDefaultSourceMap(srcH, startY, stepY);
+
+#ifdef SNES_DEEP_BENCH
+            snes_profile_set_phase(SNES_PROFILE_PHASE_POST_RENDER);
+#endif
             for (uint32_t dstY = startY; dstY < LCD_H; dstY += stepY)
             {
-                float   srcYf = srcStart + (dstY + 0.5f) * scale;
-                int32_t srcY  = (int32_t)srcYf;
-
-                if (srcY < 0)
-                    srcY = 0;
-                if (srcY >= (int32_t)PPU.ScreenHeight)
-                    srcY = PPU.ScreenHeight - 1;
-
                 g_dstY = dstY;
-                S9xRenderLine_NoFramebuffer((uint32_t)srcY, S9XLineRender);
+                S9xRenderLine_NoFramebuffer((uint32_t)g_defaultSrcForDst[dstY], S9XLineRender);
             }
+#ifdef SNES_DEEP_BENCH
+            snes_profile_set_phase(SNES_PROFILE_PHASE_IDLE);
+#endif
 
             if (interlace_enabled && !snes_interlace_lock_parity)
                 fieldParity ^= 1;
         }
-#ifdef SNES_DEEP_BENCH
-        snes_profile_frame_end(mainloop_us, IPPU.RenderThisFrame);
-#endif
         if (!firstFrameLogged)
         {
             snes_log_heap_runtime("post-render", frameCount);
@@ -726,7 +831,11 @@ void run_snes_default(const uint8_t* rom, size_t romSize, const char* romName)
         }
 
         const int64_t frame_end_us = esp_timer_get_time();
-        last_frame_exec_us = (uint32_t)(frame_end_us - frame_start_us);
+        const uint32_t frame_exec_us = (uint32_t)(frame_end_us - frame_start_us);
+#ifdef SNES_DEEP_BENCH
+        snes_profile_frame_end(mainloop_us, frame_exec_us, IPPU.RenderThisFrame);
+#endif
+        last_frame_exec_us = frame_exec_us;
         skipped_last_render = !IPPU.RenderThisFrame;
 
         ++frameCount;
@@ -815,11 +924,13 @@ void run_snes_alt(const uint8_t* rom, size_t romSize, const char* romName)
         snes_input_tick();
 #ifdef SNES_DEEP_BENCH
         snes_profile_frame_begin();
+        snes_profile_set_phase(SNES_PROFILE_PHASE_MAINLOOP);
         const int64_t mainloop_start_us = esp_timer_get_time();
 #endif
         S9xMainLoop();
 #ifdef SNES_DEEP_BENCH
         const uint32_t mainloop_us = (uint32_t)(esp_timer_get_time() - mainloop_start_us);
+        snes_profile_set_phase(SNES_PROFILE_PHASE_IDLE);
 #endif
         snes_save_tick();
         if (!firstFrameLogged)
@@ -827,9 +938,6 @@ void run_snes_alt(const uint8_t* rom, size_t romSize, const char* romName)
 
         if (IPPU.RenderThisFrame && interlace_enabled && !snes_interlace_lock_parity)
             fieldParity ^= 1;
-#ifdef SNES_DEEP_BENCH
-        snes_profile_frame_end(mainloop_us, IPPU.RenderThisFrame);
-#endif
         if (!firstFrameLogged)
         {
             snes_log_heap_runtime("post-render", frameCount);
@@ -837,7 +945,11 @@ void run_snes_alt(const uint8_t* rom, size_t romSize, const char* romName)
         }
 
         const int64_t frame_end_us = esp_timer_get_time();
-        last_frame_exec_us = (uint32_t)(frame_end_us - frame_start_us);
+        const uint32_t frame_exec_us = (uint32_t)(frame_end_us - frame_start_us);
+#ifdef SNES_DEEP_BENCH
+        snes_profile_frame_end(mainloop_us, frame_exec_us, IPPU.RenderThisFrame);
+#endif
+        last_frame_exec_us = frame_exec_us;
         skipped_last_render = !IPPU.RenderThisFrame;
 
         ++frameCount;
