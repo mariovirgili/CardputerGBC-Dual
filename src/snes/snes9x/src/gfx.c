@@ -2322,19 +2322,16 @@ static void DrawBGMode7Background16Fast(uint8_t* Screen, int32_t bg)
 
                for (; count; count--, sampleX += aa, sampleY += cc, p++, d++)
                {
-                  if (depth0 > *d)
-                  {
-                     const uint32_t X = (sampleX >> 8) & 0x3ff;
-                     const uint32_t Y = (sampleY >> 8) & 0x3ff;
-                     const uint8_t tile = VRAM[((Y & ~7) << 5) + ((X >> 2) & ~1)];
-                     const uint32_t b = VRAM1[((uint32_t)tile << 7) + ((Y & 7) << 4) + ((X & 7) << 1)];
-                     const uint32_t pixel = b & mode7Mask;
+                  const uint32_t X = (sampleX >> 8) & 0x3ff;
+                  const uint32_t Y = (sampleY >> 8) & 0x3ff;
+                  const uint8_t tile = VRAM[((Y & ~7) << 5) + ((X >> 2) & ~1)];
+                  const uint32_t b = VRAM1[((uint32_t)tile << 7) + ((Y & 7) << 4) + ((X & 7) << 1)];
+                  const uint32_t pixel = b & mode7Mask;
 
-                     if (pixel)
-                     {
-                        *p = ScreenColors[pixel];
-                        *d = depth0;
-                     }
+                  if (pixel && depth0 > *d)
+                  {
+                     *p = ScreenColors[pixel];
+                     *d = depth0;
                   }
                }
             }
@@ -2363,14 +2360,11 @@ static void DrawBGMode7Background16Fast(uint8_t* Screen, int32_t bg)
                   else
                      continue;
 
-                  if (depth0 > *d)
+                  pixel = b & mode7Mask;
+                  if (pixel && depth0 > *d)
                   {
-                     pixel = b & mode7Mask;
-                     if (pixel)
-                     {
-                        *p = ScreenColors[pixel];
-                        *d = depth0;
-                     }
+                     *p = ScreenColors[pixel];
+                     *d = depth0;
                   }
                }
             }
