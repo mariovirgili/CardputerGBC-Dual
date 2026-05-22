@@ -47,7 +47,7 @@ set(ENABLE_MSX_LOGS ON)
 # SNES: SNES detail logs, requires ENABLE_EMU_LOGS.
 set(ENABLE_SNES_LOGS ON)
 # SNES: deep CPU/render benchmark and targeted PPU probes.
-set(ENABLE_SNES_DEEP_BENCH ON)
+set(ENABLE_SNES_DEEP_BENCH OFF)
 
 # NES: diagnostic logs, requires ENABLE_EMU_LOGS.
 set(ENABLE_NES_DIAG_LOGS OFF)
