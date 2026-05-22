@@ -2782,7 +2782,7 @@ static void RenderScreen(uint8_t* Screen, bool sub, bool force_no_add, uint8_t D
             {
                SNES_PPU_PROF_RENDER_BLOCK(SNES_PPU_PROF_RS_MODE7_CALLS,
                                           SNES_PPU_PROF_RS_MODE7_US,
-                                          DrawBGMode7Background16(Screen, bg));
+                                          DrawBGMode7Background16_i(Screen, bg));
             }
             else
             {
@@ -2792,13 +2792,13 @@ static void RenderScreen(uint8_t* Screen, bool sub, bool force_no_add, uint8_t D
                   {
                      SNES_PPU_PROF_RENDER_BLOCK(SNES_PPU_PROF_RS_MODE7_CALLS,
                                                 SNES_PPU_PROF_RS_MODE7_US,
-                                                DrawBGMode7Background16Sub1_2(Screen, bg));
+                                                DrawBGMode7Background16Sub1_2_i(Screen, bg));
                   }
                   else
                   {
                      SNES_PPU_PROF_RENDER_BLOCK(SNES_PPU_PROF_RS_MODE7_CALLS,
                                                 SNES_PPU_PROF_RS_MODE7_US,
-                                                DrawBGMode7Background16Sub(Screen, bg));
+                                                DrawBGMode7Background16Sub_i(Screen, bg));
                   }
                }
                else
@@ -2807,13 +2807,13 @@ static void RenderScreen(uint8_t* Screen, bool sub, bool force_no_add, uint8_t D
                   {
                      SNES_PPU_PROF_RENDER_BLOCK(SNES_PPU_PROF_RS_MODE7_CALLS,
                                                 SNES_PPU_PROF_RS_MODE7_US,
-                                                DrawBGMode7Background16Add1_2(Screen, bg));
+                                                DrawBGMode7Background16Add1_2_i(Screen, bg));
                   }
                   else
                   {
                      SNES_PPU_PROF_RENDER_BLOCK(SNES_PPU_PROF_RS_MODE7_CALLS,
                                                 SNES_PPU_PROF_RS_MODE7_US,
-                                                DrawBGMode7Background16Add(Screen, bg));
+                                                DrawBGMode7Background16Add_i(Screen, bg));
                   }
                }
             }
