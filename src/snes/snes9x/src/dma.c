@@ -6,6 +6,7 @@
 #include "cpuexec.h"
 #include "dma.h"
 #include "apu.h"
+#include "esp_attr.h"
 
 /*modified per anomie Mode 5 findings */
 static const int32_t HDMA_ModeByteCounts [8] =
@@ -424,7 +425,7 @@ void S9xStartHDMA(void)
    }
 }
 
-uint8_t S9xDoHDMA(uint8_t byte)
+IRAM_ATTR uint8_t S9xDoHDMA(uint8_t byte)
 {
    uint8_t mask;
    SDMA* p = &DMA [0];

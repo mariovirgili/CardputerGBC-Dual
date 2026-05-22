@@ -3199,7 +3199,8 @@ static void S9xFlushLiveSpanRange(uint32_t start, uint32_t end)
       return;
    }
 
-   if (!S9xEnsureLineBufferWidth(S9xRequiredLineBufferWidth()))
+   const uint32_t lineWidth = S9xRequiredLineBufferWidth();
+   if (!S9xEnsureLineBufferWidth(lineWidth))
    {
       IPPU.PreviousLine = end;
       IPPU.CurrentLine  = end;
@@ -3224,14 +3225,14 @@ static void S9xFlushLiveSpanRange(uint32_t start, uint32_t end)
    uint32_t oldPPLx2      = GFX.PPLx2;
    uint32_t oldZPitch     = GFX.ZPitch;
 
-   const uint32_t linePitch = SNES_WIDTH * sizeof(uint16_t);
-   const uint32_t zPitch    = SNES_WIDTH;
+   const uint32_t linePitch = lineWidth * sizeof(uint16_t);
+   const uint32_t zPitch    = lineWidth;
 
    GFX.RealPitch = linePitch;
    GFX.Pitch     = linePitch;
    GFX.Pitch2    = linePitch;
-   GFX.PPL       = SNES_WIDTH;
-   GFX.PPLx2     = SNES_WIDTH * 2;
+   GFX.PPL       = lineWidth;
+   GFX.PPLx2     = linePitch;
    GFX.ZPitch    = zPitch;
 
    uint8_t *screenBase = (uint8_t *) s_line.main - start * linePitch;
@@ -3288,7 +3289,8 @@ static void S9xFlushLiveLine(uint32_t line)
    if (!s_liveLineCallback)
       return;
 
-   if (!S9xEnsureLineBufferWidth(S9xRequiredLineBufferWidth()))
+   const uint32_t lineWidth = S9xRequiredLineBufferWidth();
+   if (!S9xEnsureLineBufferWidth(lineWidth))
       return;
 
    uint8_t *oldScreen     = GFX.Screen;
@@ -3309,8 +3311,8 @@ static void S9xFlushLiveLine(uint32_t line)
    uint32_t oldPPLx2      = GFX.PPLx2;
    uint32_t oldZPitch     = GFX.ZPitch;
 
-   const uint32_t linePitch = SNES_WIDTH * sizeof(uint16_t);
-   const uint32_t zPitch    = SNES_WIDTH;
+   const uint32_t linePitch = lineWidth * sizeof(uint16_t);
+   const uint32_t zPitch    = lineWidth;
 
    IPPU.PreviousLine = line;
    IPPU.CurrentLine  = line + 1;
@@ -3318,8 +3320,8 @@ static void S9xFlushLiveLine(uint32_t line)
    GFX.RealPitch = linePitch;
    GFX.Pitch     = linePitch;
    GFX.Pitch2    = linePitch;
-   GFX.PPL       = SNES_WIDTH;
-   GFX.PPLx2     = SNES_WIDTH * 2;
+   GFX.PPL       = lineWidth;
+   GFX.PPLx2     = linePitch;
    GFX.ZPitch    = zPitch;
 
    GFX.Screen     = (uint8_t*)s_line.main - line * linePitch;
@@ -3464,7 +3466,8 @@ void S9xRenderLine_NoFramebuffer(uint32_t line, S9xLineCallback cb)
     if (!IPPU.RenderThisFrame)
         return;
 
-    if (!S9xEnsureLineBufferWidth(S9xRequiredLineBufferWidth()))
+    const uint32_t lineWidth = S9xRequiredLineBufferWidth();
+    if (!S9xEnsureLineBufferWidth(lineWidth))
         return;
 
     /* Save old state */
@@ -3495,13 +3498,13 @@ void S9xRenderLine_NoFramebuffer(uint32_t line, S9xLineCallback cb)
     IPPU.CurrentLine  = line + 1;
 
     // Virtual line buffer
-    GFX.RealPitch = SNES_WIDTH * sizeof(uint16_t);  // in bytes
+    GFX.RealPitch = lineWidth * sizeof(uint16_t);  // in bytes
     GFX.Pitch     = GFX.RealPitch;
     GFX.Pitch2    = GFX.RealPitch;
 
-    GFX.PPL       = SNES_WIDTH;                // in pixels
-    GFX.PPLx2     = SNES_WIDTH * 2;            // hi-res
-    GFX.ZPitch    = SNES_WIDTH;                // zbuffer
+    GFX.PPL       = lineWidth;                 // in pixels
+    GFX.PPLx2     = GFX.RealPitch;             // historical byte-sized pitch helper
+    GFX.ZPitch    = lineWidth;                 // zbuffer
 
     /* 
      The line buffers are allocated in s_line.{main,sub,z,subz} during S9xInitUpdate().

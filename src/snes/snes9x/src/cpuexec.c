@@ -8,6 +8,7 @@
 #include "cpuexec.h"
 #include "gfx.h"
 #include "dma.h"
+#include "esp_attr.h"
 
 #ifndef SNES_NO_SOUND
 #include "apu.h"
@@ -102,7 +103,7 @@ void S9xClearIRQ(uint32_t source)
    CLEAR_IRQ_SOURCE(source);
 }
 
-void S9xDoHBlankProcessing()
+IRAM_ATTR void S9xDoHBlankProcessing()
 {
    CPU.WaitCounter++;
    switch (CPU.WhichEvent)

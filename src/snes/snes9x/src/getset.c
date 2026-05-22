@@ -7,22 +7,16 @@
 
 extern uint8_t OpenBus;
 
-uint8_t SNES_GETSET_CODE_ATTR S9xGetByte(uint32_t Address)
+#ifndef SNES_LIKELY
+#define SNES_LIKELY(x)   __builtin_expect(!!(x), 1)
+#define SNES_UNLIKELY(x) __builtin_expect(!!(x), 0)
+#endif
+
+#define SNES_COLD_PATH __attribute__((noinline))
+
+static uint8_t SNES_COLD_PATH S9xGetByteSlow(uint32_t Address, intptr_t GetAddress)
 {
-   int32_t block = (Address >> MEMMAP_SHIFT) & MEMMAP_MASK;
-   uint8_t* GetAddress = Memory.Map [block];
-
-   if ((intptr_t) GetAddress != MAP_CPU || !CPU.InDMA)
-      CPU.Cycles += Memory.MapInfo[block].Speed;
-
-   if (GetAddress >= (uint8_t*) MAP_LAST)
-   {
-      if (Memory.MapInfo[block].Type == MAP_TYPE_RAM)
-         CPU.WaitAddress = CPU.PCAtOpcodeStart;
-      return GetAddress[Address & 0xffff];
-   }
-
-   switch ((intptr_t) GetAddress)
+   switch (GetAddress)
    {
    case MAP_PPU:
       return S9xGetPPU(Address & 0xffff);
@@ -62,32 +56,9 @@ uint8_t SNES_GETSET_CODE_ATTR S9xGetByte(uint32_t Address)
    }
 }
 
-uint16_t SNES_GETSET_CODE_ATTR S9xGetWord(uint32_t Address)
+static uint16_t SNES_COLD_PATH S9xGetWordSlow(uint32_t Address, intptr_t GetAddress)
 {
-   if ((Address & 0x0fff) == 0x0fff)
-   {
-      OpenBus = S9xGetByte(Address);
-      return OpenBus | (S9xGetByte(Address + 1) << 8);
-   }
-
-   int32_t block = (Address >> MEMMAP_SHIFT) & MEMMAP_MASK;
-   uint8_t* GetAddress = Memory.Map[block];
-
-   if ((intptr_t) GetAddress != MAP_CPU || !CPU.InDMA)
-      CPU.Cycles += (Memory.MapInfo[block].Speed << 1);
-
-   if (GetAddress >= (uint8_t*) MAP_LAST)
-   {
-      if (Memory.MapInfo[block].Type == MAP_TYPE_RAM)
-         CPU.WaitAddress = CPU.PCAtOpcodeStart;
-#ifdef FAST_LSB_WORD_ACCESS
-      return *(uint16_t*) (GetAddress + (Address & 0xffff));
-#else
-      return *(GetAddress + (Address & 0xffff)) | (*(GetAddress + (Address & 0xffff) + 1) << 8);
-#endif
-   }
-
-   switch ((intptr_t) GetAddress)
+   switch (GetAddress)
    {
    case MAP_PPU:
       return S9xGetPPU(Address & 0xffff) | (S9xGetPPU((Address + 1) & 0xffff) << 8);
@@ -128,27 +99,9 @@ uint16_t SNES_GETSET_CODE_ATTR S9xGetWord(uint32_t Address)
    }
 }
 
-void S9xSetByte(uint8_t Byte, uint32_t Address)
+static void SNES_COLD_PATH S9xSetByteSlow(uint8_t Byte, uint32_t Address, intptr_t SetAddress)
 {
-   int32_t block = (Address >> MEMMAP_SHIFT) & MEMMAP_MASK;
-   uint8_t* SetAddress = Memory.Map[block];
-
-   if (Memory.MapInfo[block].Type == MAP_TYPE_ROM)
-      SetAddress = (uint8_t*) MAP_NONE;
-
-   CPU.WaitAddress = NULL;
-
-   if ((intptr_t) SetAddress != MAP_CPU || !CPU.InDMA)
-      CPU.Cycles += Memory.MapInfo[block].Speed;
-
-   if (SetAddress >= (uint8_t*) MAP_LAST)
-   {
-      SetAddress += Address & 0xffff;
-      *SetAddress = Byte;
-      return;
-   }
-
-   switch ((intptr_t) SetAddress)
+   switch (SetAddress)
    {
    case MAP_PPU:
       S9xSetPPU(Byte, Address & 0xffff);
@@ -191,39 +144,9 @@ void S9xSetByte(uint8_t Byte, uint32_t Address)
    }
 }
 
-void S9xSetWord(uint16_t Word, uint32_t Address)
+static void SNES_COLD_PATH S9xSetWordSlow(uint16_t Word, uint32_t Address, intptr_t SetAddress)
 {
-   if ((Address & 0x0FFF) == 0x0FFF)
-   {
-      S9xSetByte(Word & 0x00FF, Address);
-      S9xSetByte(Word >> 8, Address + 1);
-      return;
-   }
-
-   int32_t block = (Address >> MEMMAP_SHIFT) & MEMMAP_MASK;
-   uint8_t* SetAddress = Memory.Map[block];
-
-   CPU.WaitAddress = NULL;
-
-   if (Memory.MapInfo[block].Type == MAP_TYPE_ROM)
-      SetAddress = (uint8_t*) MAP_NONE;
-
-   if ((intptr_t) SetAddress != MAP_CPU || !CPU.InDMA)
-      CPU.Cycles += Memory.MapInfo[block].Speed << 1;
-
-   if (SetAddress >= (uint8_t*) MAP_LAST)
-   {
-      SetAddress += Address & 0xffff;
-#ifdef FAST_LSB_WORD_ACCESS
-      *(uint16_t*)SetAddress = Word;
-#else
-      *SetAddress = (uint8_t) Word;
-      *(SetAddress + 1) = Word >> 8;
-#endif
-      return;
-   }
-
-   switch ((intptr_t) SetAddress)
+   switch (SetAddress)
    {
    case MAP_PPU:
       S9xSetPPU((uint8_t) Word, Address & 0xffff);
@@ -279,6 +202,110 @@ void S9xSetWord(uint16_t Word, uint32_t Address)
    default:
       return;
    }
+}
+
+uint8_t SNES_GETSET_CODE_ATTR S9xGetByte(uint32_t Address)
+{
+   int32_t block = (Address >> MEMMAP_SHIFT) & MEMMAP_MASK;
+   uint8_t* GetAddress = Memory.Map [block];
+
+   if ((intptr_t) GetAddress != MAP_CPU || !CPU.InDMA)
+      CPU.Cycles += Memory.MapInfo[block].Speed;
+
+   if (SNES_LIKELY(GetAddress >= (uint8_t*) MAP_LAST))
+   {
+      if (Memory.MapInfo[block].Type == MAP_TYPE_RAM)
+         CPU.WaitAddress = CPU.PCAtOpcodeStart;
+      return GetAddress[Address & 0xffff];
+   }
+
+   return S9xGetByteSlow(Address, (intptr_t)GetAddress);
+}
+
+uint16_t SNES_GETSET_CODE_ATTR S9xGetWord(uint32_t Address)
+{
+   if ((Address & 0x0fff) == 0x0fff)
+   {
+      OpenBus = S9xGetByte(Address);
+      return OpenBus | (S9xGetByte(Address + 1) << 8);
+   }
+
+   int32_t block = (Address >> MEMMAP_SHIFT) & MEMMAP_MASK;
+   uint8_t* GetAddress = Memory.Map[block];
+
+   if ((intptr_t) GetAddress != MAP_CPU || !CPU.InDMA)
+      CPU.Cycles += (Memory.MapInfo[block].Speed << 1);
+
+   if (SNES_LIKELY(GetAddress >= (uint8_t*) MAP_LAST))
+   {
+      if (Memory.MapInfo[block].Type == MAP_TYPE_RAM)
+         CPU.WaitAddress = CPU.PCAtOpcodeStart;
+#ifdef FAST_LSB_WORD_ACCESS
+      return *(uint16_t*) (GetAddress + (Address & 0xffff));
+#else
+      return *(GetAddress + (Address & 0xffff)) | (*(GetAddress + (Address & 0xffff) + 1) << 8);
+#endif
+   }
+
+   return S9xGetWordSlow(Address, (intptr_t)GetAddress);
+}
+
+void SNES_GETSET_CODE_ATTR S9xSetByte(uint8_t Byte, uint32_t Address)
+{
+   int32_t block = (Address >> MEMMAP_SHIFT) & MEMMAP_MASK;
+   uint8_t* SetAddress = Memory.Map[block];
+
+   if (Memory.MapInfo[block].Type == MAP_TYPE_ROM)
+      SetAddress = (uint8_t*) MAP_NONE;
+
+   CPU.WaitAddress = NULL;
+
+   if ((intptr_t) SetAddress != MAP_CPU || !CPU.InDMA)
+      CPU.Cycles += Memory.MapInfo[block].Speed;
+
+   if (SNES_LIKELY(SetAddress >= (uint8_t*) MAP_LAST))
+   {
+      SetAddress += Address & 0xffff;
+      *SetAddress = Byte;
+      return;
+   }
+
+   S9xSetByteSlow(Byte, Address, (intptr_t)SetAddress);
+}
+
+void SNES_GETSET_CODE_ATTR S9xSetWord(uint16_t Word, uint32_t Address)
+{
+   if (SNES_UNLIKELY((Address & 0x0FFF) == 0x0FFF))
+   {
+      S9xSetByte(Word & 0x00FF, Address);
+      S9xSetByte(Word >> 8, Address + 1);
+      return;
+   }
+
+   int32_t block = (Address >> MEMMAP_SHIFT) & MEMMAP_MASK;
+   uint8_t* SetAddress = Memory.Map[block];
+
+   CPU.WaitAddress = NULL;
+
+   if (Memory.MapInfo[block].Type == MAP_TYPE_ROM)
+      SetAddress = (uint8_t*) MAP_NONE;
+
+   if ((intptr_t) SetAddress != MAP_CPU || !CPU.InDMA)
+      CPU.Cycles += Memory.MapInfo[block].Speed << 1;
+
+   if (SNES_LIKELY(SetAddress >= (uint8_t*) MAP_LAST))
+   {
+      SetAddress += Address & 0xffff;
+#ifdef FAST_LSB_WORD_ACCESS
+      *(uint16_t*)SetAddress = Word;
+#else
+      *SetAddress = (uint8_t) Word;
+      *(SetAddress + 1) = Word >> 8;
+#endif
+      return;
+   }
+
+   S9xSetWordSlow(Word, Address, (intptr_t)SetAddress);
 }
 
 uint8_t* GetBasePointer(uint32_t Address)
