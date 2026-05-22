@@ -14,6 +14,98 @@ extern uint8_t OpenBus;
 
 #define SNES_COLD_PATH __attribute__((noinline))
 
+static inline uint8_t S9xFastReadByte(uint8_t* base, uint32_t Address)
+{
+#if defined(__XTENSA__) && defined(__GNUC__)
+   uint32_t out;
+   uint32_t ptr;
+   __asm__ __volatile__(
+      "extui %[ptr], %[addr], 0, 16\n"
+      "add   %[ptr], %[base], %[ptr]\n"
+      "l8ui  %[out], %[ptr], 0\n"
+      : [out] "=&r" (out), [ptr] "=&r" (ptr)
+      : [addr] "r" (Address), [base] "r" (base)
+      : "memory");
+   return (uint8_t) out;
+#else
+   return base[Address & 0xffff];
+#endif
+}
+
+static inline uint16_t S9xFastReadWord(uint8_t* base, uint32_t Address)
+{
+#if defined(__XTENSA__) && defined(__GNUC__)
+   uint32_t out;
+   uint32_t ptr;
+   __asm__ __volatile__(
+      "extui %[ptr], %[addr], 0, 16\n"
+      "add   %[ptr], %[base], %[ptr]\n"
+#ifdef FAST_LSB_WORD_ACCESS
+      "l16ui %[out], %[ptr], 0\n"
+#else
+      "l8ui  %[out], %[ptr], 0\n"
+      "l8ui  %[ptr], %[ptr], 1\n"
+      "slli  %[ptr], %[ptr], 8\n"
+      "or    %[out], %[out], %[ptr]\n"
+#endif
+      : [out] "=&r" (out), [ptr] "=&r" (ptr)
+      : [addr] "r" (Address), [base] "r" (base)
+      : "memory");
+   return (uint16_t) out;
+#else
+#ifdef FAST_LSB_WORD_ACCESS
+   return *(uint16_t*) (base + (Address & 0xffff));
+#else
+   return *(base + (Address & 0xffff)) | (*(base + (Address & 0xffff) + 1) << 8);
+#endif
+#endif
+}
+
+static inline void S9xFastWriteByte(uint8_t* base, uint32_t Address, uint8_t Byte)
+{
+#if defined(__XTENSA__) && defined(__GNUC__)
+   uint32_t ptr;
+   uint32_t value = Byte;
+   __asm__ __volatile__(
+      "extui %[ptr], %[addr], 0, 16\n"
+      "add   %[ptr], %[base], %[ptr]\n"
+      "s8i   %[value], %[ptr], 0\n"
+      : [ptr] "=&r" (ptr)
+      : [addr] "r" (Address), [base] "r" (base), [value] "r" (value)
+      : "memory");
+#else
+   base[Address & 0xffff] = Byte;
+#endif
+}
+
+static inline void S9xFastWriteWord(uint8_t* base, uint32_t Address, uint16_t Word)
+{
+#if defined(__XTENSA__) && defined(__GNUC__)
+   uint32_t ptr;
+   uint32_t value = Word;
+   __asm__ __volatile__(
+      "extui %[ptr], %[addr], 0, 16\n"
+      "add   %[ptr], %[base], %[ptr]\n"
+#ifdef FAST_LSB_WORD_ACCESS
+      "s16i  %[value], %[ptr], 0\n"
+#else
+      "s8i   %[value], %[ptr], 0\n"
+      "srli  %[value], %[value], 8\n"
+      "s8i   %[value], %[ptr], 1\n"
+#endif
+      : [ptr] "=&r" (ptr), [value] "+r" (value)
+      : [addr] "r" (Address), [base] "r" (base)
+      : "memory");
+#else
+#ifdef FAST_LSB_WORD_ACCESS
+   *(uint16_t*) (base + (Address & 0xffff)) = Word;
+#else
+   *(base + (Address & 0xffff)) = (uint8_t) Word;
+   *(base + (Address & 0xffff) + 1) = Word >> 8;
+#endif
+#endif
+}
+
 static uint8_t SNES_COLD_PATH S9xGetByteSlow(uint32_t Address, intptr_t GetAddress)
 {
    switch (GetAddress)
@@ -204,7 +296,7 @@ static void SNES_COLD_PATH S9xSetWordSlow(uint16_t Word, uint32_t Address, intpt
    }
 }
 
-uint8_t SNES_GETSET_CODE_ATTR S9xGetByte(uint32_t Address)
+uint8_t S9xGetByte(uint32_t Address)
 {
    int32_t block = (Address >> MEMMAP_SHIFT) & MEMMAP_MASK;
    uint8_t* GetAddress = Memory.Map [block];
@@ -216,13 +308,13 @@ uint8_t SNES_GETSET_CODE_ATTR S9xGetByte(uint32_t Address)
    {
       if (Memory.MapInfo[block].Type == MAP_TYPE_RAM)
          CPU.WaitAddress = CPU.PCAtOpcodeStart;
-      return GetAddress[Address & 0xffff];
+      return S9xFastReadByte(GetAddress, Address);
    }
 
    return S9xGetByteSlow(Address, (intptr_t)GetAddress);
 }
 
-uint16_t SNES_GETSET_CODE_ATTR S9xGetWord(uint32_t Address)
+uint16_t S9xGetWord(uint32_t Address)
 {
    if ((Address & 0x0fff) == 0x0fff)
    {
@@ -240,17 +332,13 @@ uint16_t SNES_GETSET_CODE_ATTR S9xGetWord(uint32_t Address)
    {
       if (Memory.MapInfo[block].Type == MAP_TYPE_RAM)
          CPU.WaitAddress = CPU.PCAtOpcodeStart;
-#ifdef FAST_LSB_WORD_ACCESS
-      return *(uint16_t*) (GetAddress + (Address & 0xffff));
-#else
-      return *(GetAddress + (Address & 0xffff)) | (*(GetAddress + (Address & 0xffff) + 1) << 8);
-#endif
+      return S9xFastReadWord(GetAddress, Address);
    }
 
    return S9xGetWordSlow(Address, (intptr_t)GetAddress);
 }
 
-void SNES_GETSET_CODE_ATTR S9xSetByte(uint8_t Byte, uint32_t Address)
+void S9xSetByte(uint8_t Byte, uint32_t Address)
 {
    int32_t block = (Address >> MEMMAP_SHIFT) & MEMMAP_MASK;
    uint8_t* SetAddress = Memory.Map[block];
@@ -265,15 +353,14 @@ void SNES_GETSET_CODE_ATTR S9xSetByte(uint8_t Byte, uint32_t Address)
 
    if (SNES_LIKELY(SetAddress >= (uint8_t*) MAP_LAST))
    {
-      SetAddress += Address & 0xffff;
-      *SetAddress = Byte;
+      S9xFastWriteByte(SetAddress, Address, Byte);
       return;
    }
 
    S9xSetByteSlow(Byte, Address, (intptr_t)SetAddress);
 }
 
-void SNES_GETSET_CODE_ATTR S9xSetWord(uint16_t Word, uint32_t Address)
+void S9xSetWord(uint16_t Word, uint32_t Address)
 {
    if (SNES_UNLIKELY((Address & 0x0FFF) == 0x0FFF))
    {
@@ -295,13 +382,7 @@ void SNES_GETSET_CODE_ATTR S9xSetWord(uint16_t Word, uint32_t Address)
 
    if (SNES_LIKELY(SetAddress >= (uint8_t*) MAP_LAST))
    {
-      SetAddress += Address & 0xffff;
-#ifdef FAST_LSB_WORD_ACCESS
-      *(uint16_t*)SetAddress = Word;
-#else
-      *SetAddress = (uint8_t) Word;
-      *(SetAddress + 1) = Word >> 8;
-#endif
+      S9xFastWriteWord(SetAddress, Address, Word);
       return;
    }
 

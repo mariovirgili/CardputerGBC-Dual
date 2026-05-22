@@ -143,8 +143,8 @@ set(ENABLE_SNES_STRICT_PSEUDO_HIRES ON)
 set(ENABLE_SNES_BRANCHLESS_CONVERT_TILE_4BPP ON)
 # SNES experiment: specialize color add/sub for RGB565.
 set(ENABLE_SNES_FAST_RGB565_COLOR_MATH ON)
-# SNES experiment: place the hottest memory readers in IRAM.
-set(ENABLE_SNES_GETSET_IRAM ON)
+# SNES experiment: keep get/set wrappers out of IRAM; use Xtensa asm fast paths instead.
+set(ENABLE_SNES_GETSET_IRAM OFF)
 # SNES experiment: compile CPU opcode and memory dispatch with -Ofast.
 set(ENABLE_SNES_CPU_MEM_OFAST ON)
 # SNES experiment: start line buffers at normal width and grow for hi-res only.
