@@ -2226,6 +2226,224 @@ static void DrawBGMode7Background16(uint8_t* Screen, int32_t bg)
    RENDER_BACKGROUND_MODE7(uint16_t, ScreenColors [b & GFX.Mode7Mask]);
 }
 
+static void DrawBGMode7Background16Fast(uint8_t* Screen, int32_t bg)
+{
+   uint16_t* ScreenColors = (GFX.r2130 & 1) ? IPPU.DirectColors : IPPU.ScreenColors;
+   uint8_t* const VRAM = Memory.VRAM;
+   uint8_t* const VRAM1 = Memory.VRAM + 1;
+   const uint32_t clipCountRaw = GFX.pCurrentClip->Count[bg];
+   const uint32_t ClipCount = clipCountRaw ? clipCountRaw : 1;
+   const uint32_t mode7Mask = GFX.Mode7Mask;
+   const uint32_t mode7PriorityMask = GFX.Mode7PriorityMask;
+   const uint8_t depth0 = Mode7Depths[0];
+   const uint8_t depth1 = Mode7Depths[1];
+   uint8_t* Depth;
+   SLineMatrixData* l;
+   uint32_t Line;
+
+   Screen += GFX.StartY * GFX.Pitch;
+   Depth = GFX.DB + GFX.StartY * GFX.PPL;
+   l = &LineMatrixData[GFX.StartY];
+
+   for (Line = GFX.StartY; Line <= GFX.EndY; Line++, Screen += GFX.Pitch, Depth += GFX.PPL, l++)
+   {
+      const int32_t matrixA = l->MatrixA;
+      const int32_t matrixB = l->MatrixB;
+      const int32_t matrixC = l->MatrixC;
+      const int32_t matrixD = l->MatrixD;
+      const int32_t HOffset = ((int32_t)LineData[Line].BG[0].HOffset << M7) >> M7;
+      const int32_t VOffset = ((int32_t)LineData[Line].BG[0].VOffset << M7) >> M7;
+      const int32_t CentreX = ((int32_t)l->CentreX << M7) >> M7;
+      const int32_t CentreY = ((int32_t)l->CentreY << M7) >> M7;
+      int32_t yy = PPU.Mode7VFlip ? 255 - (int32_t)Line : (int32_t)Line;
+      int32_t BB;
+      int32_t DD;
+      uint32_t clip;
+
+      yy += CLIP_10_BIT_SIGNED(VOffset - CentreY);
+      BB = matrixB * yy + (CentreX << 8);
+      DD = matrixD * yy + (CentreY << 8);
+
+      for (clip = 0; clip < ClipCount; clip++)
+      {
+         uint32_t Left = 0;
+         uint32_t Right = 256;
+         uint16_t* p;
+         uint8_t* d;
+         int32_t startx;
+         int32_t endx;
+         int32_t dir;
+         int32_t aa;
+         int32_t cc;
+         int32_t xx;
+         int32_t AA;
+         int32_t CC;
+         int32_t x;
+
+         if (clipCountRaw)
+         {
+            Left = GFX.pCurrentClip->Left[clip][bg];
+            Right = GFX.pCurrentClip->Right[clip][bg];
+            if (Right <= Left)
+               continue;
+         }
+
+         p = (uint16_t*)Screen + Left;
+         d = Depth + Left;
+
+         if (PPU.Mode7HFlip)
+         {
+            startx = (int32_t)Right - 1;
+            endx = (int32_t)Left - 1;
+            dir = -1;
+            aa = -matrixA;
+            cc = -matrixC;
+         }
+         else
+         {
+            startx = (int32_t)Left;
+            endx = (int32_t)Right;
+            dir = 1;
+            aa = matrixA;
+            cc = matrixC;
+         }
+
+         xx = startx + CLIP_10_BIT_SIGNED(HOffset - CentreX);
+         AA = matrixA * xx;
+         CC = matrixC * xx;
+
+         if (!mode7PriorityMask)
+         {
+            if (!PPU.Mode7Repeat)
+            {
+               int32_t sampleX = AA + BB;
+               int32_t sampleY = CC + DD;
+               uint32_t count = Right - Left;
+
+               for (; count; count--, sampleX += aa, sampleY += cc, p++, d++)
+               {
+                  if (depth0 > *d)
+                  {
+                     const uint32_t X = (sampleX >> 8) & 0x3ff;
+                     const uint32_t Y = (sampleY >> 8) & 0x3ff;
+                     const uint8_t tile = VRAM[((Y & ~7) << 5) + ((X >> 2) & ~1)];
+                     const uint32_t b = VRAM1[((uint32_t)tile << 7) + ((Y & 7) << 4) + ((X & 7) << 1)];
+                     const uint32_t pixel = b & mode7Mask;
+
+                     if (pixel)
+                     {
+                        *p = ScreenColors[pixel];
+                        *d = depth0;
+                     }
+                  }
+               }
+            }
+            else
+            {
+               const bool repeatChar = PPU.Mode7Repeat == 3;
+
+               for (x = startx; x != endx; x += dir, AA += aa, CC += cc, p++, d++)
+               {
+                  int32_t X = (AA + BB) >> 8;
+                  int32_t Y = (CC + DD) >> 8;
+                  uint32_t b;
+                  uint32_t pixel;
+
+                  if (((X | Y) & ~0x3ff) == 0)
+                  {
+                     const uint8_t tile = VRAM[((Y & ~7) << 5) + ((X >> 2) & ~1)];
+                     b = VRAM1[((uint32_t)tile << 7) + ((Y & 7) << 4) + ((X & 7) << 1)];
+                  }
+                  else if (repeatChar)
+                  {
+                     X = (x + HOffset) & 7;
+                     Y = (yy + CentreY) & 7;
+                     b = VRAM1[((Y & 7) << 4) + ((X & 7) << 1)];
+                  }
+                  else
+                     continue;
+
+                  if (depth0 > *d)
+                  {
+                     pixel = b & mode7Mask;
+                     if (pixel)
+                     {
+                        *p = ScreenColors[pixel];
+                        *d = depth0;
+                     }
+                  }
+               }
+            }
+
+            continue;
+         }
+
+         if (!PPU.Mode7Repeat)
+         {
+            int32_t sampleX = AA + BB;
+            int32_t sampleY = CC + DD;
+            uint32_t count = Right - Left;
+
+            for (; count; count--, sampleX += aa, sampleY += cc, p++, d++)
+            {
+               const uint32_t X = (sampleX >> 8) & 0x3ff;
+               const uint32_t Y = (sampleY >> 8) & 0x3ff;
+               const uint8_t tile = VRAM[((Y & ~7) << 5) + ((X >> 2) & ~1)];
+               const uint32_t b = VRAM1[((uint32_t)tile << 7) + ((Y & 7) << 4) + ((X & 7) << 1)];
+               const uint32_t pixel = b & mode7Mask;
+
+               if (pixel)
+               {
+                  const uint8_t z = (b & mode7PriorityMask) ? depth1 : depth0;
+                  if (z > *d)
+                  {
+                     *p = ScreenColors[pixel];
+                     *d = z;
+                  }
+               }
+            }
+         }
+         else
+         {
+            const bool repeatChar = PPU.Mode7Repeat == 3;
+
+            for (x = startx; x != endx; x += dir, AA += aa, CC += cc, p++, d++)
+            {
+               int32_t X = (AA + BB) >> 8;
+               int32_t Y = (CC + DD) >> 8;
+               uint32_t b;
+               uint32_t pixel;
+
+               if (((X | Y) & ~0x3ff) == 0)
+               {
+                  const uint8_t tile = VRAM[((Y & ~7) << 5) + ((X >> 2) & ~1)];
+                  b = VRAM1[((uint32_t)tile << 7) + ((Y & 7) << 4) + ((X & 7) << 1)];
+               }
+               else if (repeatChar)
+               {
+                  X = (x + HOffset) & 7;
+                  Y = (yy + CentreY) & 7;
+                  b = VRAM1[((Y & 7) << 4) + ((X & 7) << 1)];
+               }
+               else
+                  continue;
+
+               pixel = b & mode7Mask;
+               if (pixel)
+               {
+                  const uint8_t z = (b & mode7PriorityMask) ? depth1 : depth0;
+                  if (z > *d)
+                  {
+                     *p = ScreenColors[pixel];
+                     *d = z;
+                  }
+               }
+            }
+         }
+      }
+   }
+}
+
 static void DrawBGMode7Background16Add(uint8_t * Screen, int32_t bg)
 {
    RENDER_BACKGROUND_MODE7(uint16_t, *(d + GFX.DepthDelta) ? (*(d + GFX.DepthDelta) != 1 ? COLOR_ADD(ScreenColors[b & GFX.Mode7Mask], p[GFX.Delta]) : COLOR_ADD(ScreenColors[b & GFX.Mode7Mask], GFX.FixedColour)) : ScreenColors[b & GFX.Mode7Mask]);
@@ -2797,11 +3015,22 @@ static void RenderScreen(uint8_t* Screen, bool sub, bool force_no_add, uint8_t D
 #if SNES_MODE7_INTERPOLATED
                                           DrawBGMode7Background16_i(Screen, bg));
 #else
-                                          DrawBGMode7Background16(Screen, bg));
+                                          DrawBGMode7Background16Fast(Screen, bg));
 #endif
             }
             else
             {
+               if (!ANYTHING_ON_SUB && !IPPU.Clip[0].Count[5])
+               {
+                  SNES_PPU_PROF_RENDER_BLOCK(SNES_PPU_PROF_RS_MODE7_CALLS,
+                                             SNES_PPU_PROF_RS_MODE7_US,
+#if SNES_MODE7_INTERPOLATED
+                                             DrawBGMode7Background16_i(Screen, bg));
+#else
+                                             DrawBGMode7Background16Fast(Screen, bg));
+#endif
+                  break;
+               }
                if (GFX.r2131 & 0x80)
                {
                   if (GFX.r2131 & 0x40)
