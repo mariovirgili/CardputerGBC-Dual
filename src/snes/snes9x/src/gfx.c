@@ -483,10 +483,22 @@ bool S9xInitLineBuffers(void)
 void S9xDeinitGFX(void)
 {
    /* Free any memory allocated in S9xInitGFX */
+   S9xDeinitSmallTileCache();
+
    if (GFX.ZERO)
    {
       free(GFX.ZERO);
       GFX.ZERO = NULL;
+   }
+   if (GFX.OBJWidths)
+   {
+      free(GFX.OBJWidths);
+      GFX.OBJWidths = NULL;
+   }
+   if (GFX.OBJVisibleTiles)
+   {
+      free(GFX.OBJVisibleTiles);
+      GFX.OBJVisibleTiles = NULL;
    }
    if (LocalState)
    {

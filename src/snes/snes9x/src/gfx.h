@@ -21,6 +21,11 @@ void RenderLine(uint8_t line);
 bool S9xInitGFX(void);
 bool S9xInitLineBuffers(void);
 void S9xDeinitGFX(void);
+bool S9xInitSmallTileCache(uint32_t entries);
+void S9xDeinitSmallTileCache(void);
+bool S9xSmallTileCacheEnabled(void);
+uint32_t S9xSmallTileCacheEntries(void);
+uint32_t S9xSmallTileCacheBytes(void);
 
 typedef struct
 {

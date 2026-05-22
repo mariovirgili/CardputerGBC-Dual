@@ -16,12 +16,16 @@
         TileAddr += BG.NameSelect;                            \
     TileAddr &= 0xffff;                                       \
                                                               \
-    /* Buffer local */                                        \
     uint8_t localTileCache[64];                               \
-    pCache = localTileCache;                                  \
                                                               \
     {                                                         \
-        uint8_t conv = ConvertTile(pCache, TileAddr);         \
+        uint8_t conv;                                         \
+        pCache = S9xSmallTileCacheFetch(TileAddr, &conv);     \
+        if (!pCache)                                          \
+        {                                                     \
+            pCache = localTileCache;                          \
+            conv = ConvertTile(pCache, TileAddr);             \
+        }                                                     \
         if (conv == BLANK_TILE)                               \
             return;                                           \
     }                                                         \

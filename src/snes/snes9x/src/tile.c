@@ -184,6 +184,93 @@ static uint8_t ConvertTile(uint8_t* pCache, uint32_t TileAddr)
    return non_zero ? (0x10|BG.Depth) : BLANK_TILE;
 }
 
+typedef struct
+{
+   uint32_t key;
+   uint32_t epoch;
+   uint8_t  state;
+   uint8_t  pixels[64];
+} SSmallTileCacheEntry;
+
+uint32_t S9xSmallTileCacheEpoch = 1;
+
+static SSmallTileCacheEntry* s_smallTileCache = NULL;
+static uint32_t              s_smallTileCacheMask = 0;
+static uint32_t              s_smallTileCacheEntries = 0;
+
+static uint32_t S9xRoundDownPow2(uint32_t value)
+{
+   uint32_t result = 1;
+   while ((result << 1) != 0 && (result << 1) <= value)
+      result <<= 1;
+   return result;
+}
+
+bool S9xInitSmallTileCache(uint32_t entries)
+{
+   if (entries < 32)
+      entries = 32;
+   entries = S9xRoundDownPow2(entries);
+
+   S9xDeinitSmallTileCache();
+
+   s_smallTileCache = (SSmallTileCacheEntry*) calloc(entries, sizeof(*s_smallTileCache));
+   if (!s_smallTileCache)
+      return false;
+
+   s_smallTileCacheEntries = entries;
+   s_smallTileCacheMask = entries - 1;
+   S9xSmallTileCacheEpoch++;
+   return true;
+}
+
+void S9xDeinitSmallTileCache(void)
+{
+   free(s_smallTileCache);
+   s_smallTileCache = NULL;
+   s_smallTileCacheMask = 0;
+   s_smallTileCacheEntries = 0;
+   S9xSmallTileCacheEpoch++;
+}
+
+bool S9xSmallTileCacheEnabled(void)
+{
+   return s_smallTileCache != NULL;
+}
+
+uint32_t S9xSmallTileCacheEntries(void)
+{
+   return s_smallTileCacheEntries;
+}
+
+uint32_t S9xSmallTileCacheBytes(void)
+{
+   return s_smallTileCacheEntries * (uint32_t) sizeof(*s_smallTileCache);
+}
+
+static INLINE uint8_t* S9xSmallTileCacheFetch(uint32_t TileAddr, uint8_t* conv)
+{
+   if (!s_smallTileCache)
+      return NULL;
+
+   const uint32_t epoch = S9xSmallTileCacheEpoch;
+   const uint32_t key = TileAddr ^ (BG.BitShift << 16) ^ ((uint32_t) BG.Depth << 24);
+   const uint32_t slot = ((TileAddr >> 4) ^ (TileAddr >> 9) ^ (BG.BitShift * 17u)) & s_smallTileCacheMask;
+   SSmallTileCacheEntry* entry = &s_smallTileCache[slot];
+
+   if (entry->state && entry->key == key && entry->epoch == epoch)
+   {
+      *conv = entry->state;
+      return entry->pixels;
+   }
+
+   *conv = ConvertTile(entry->pixels, TileAddr);
+   entry->key = key;
+   entry->epoch = epoch;
+   entry->state = *conv;
+   return entry->pixels;
+}
+
 #define PLOT_PIXEL(screen, pixel) (pixel)
 
 #define SNES_STRINGIFY_VALUE(x) #x

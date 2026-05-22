@@ -223,11 +223,30 @@ static void snes_log_init_failure(const char* step, size_t requestedBytes)
 #ifdef SNES_LOGS
 static void snes_log_runtime_config(int targetFps)
 {
-    SNES_LOG("[SNES] Core/Video only, no audio, %s, no tilecache, %d FPS target\n",
+    const bool tileCache = S9xSmallTileCacheEnabled();
+    SNES_LOG("[SNES] Core/Video only, no audio, %s, %s, %d FPS target\n",
              snes_save_has_sram() ? "with SRAM" : "no SRAM",
+             tileCache ? "small tilecache" : "no tilecache",
              targetFps);
 }
 #endif
+
+static void snes_init_dynamic_tilecache()
+{
+    constexpr uint32_t kEntries = 128;
+    if (S9xInitSmallTileCache(kEntries))
+    {
+        SNES_LOG("[SNES][TILECACHE] dynamic entries=%u bytes=%u\n",
+                 (unsigned) S9xSmallTileCacheEntries(),
+                 (unsigned) S9xSmallTileCacheBytes());
+    }
+    else
+    {
+        SNES_LOG("[SNES][TILECACHE] disabled: allocation failed entries=%u\n",
+                 (unsigned) kEntries);
+    }
+    snes_log_heap_step("tilecache");
+}
 
 static void snes_enter_sd_off_gameplay()
 {
@@ -996,6 +1015,7 @@ void run_snes_default(const uint8_t* rom, size_t romSize, const char* romName)
     snes_save_init(romName);
     snes_load_sram_with_sd();
     snes_enter_sd_off_gameplay();
+    snes_init_dynamic_tilecache();
 
     S9xReset();
 
@@ -1133,6 +1153,7 @@ void run_snes_alt(const uint8_t* rom, size_t romSize, const char* romName)
     snes_save_init(romName);
     snes_load_sram_with_sd();
     snes_enter_sd_off_gameplay();
+    snes_init_dynamic_tilecache();
 
     S9xReset();
 

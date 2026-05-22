@@ -222,17 +222,26 @@ uint8_t S9xGetC4RAM(uint16_t Address);
 extern SPPU PPU;
 extern SDMA DMA [8];
 extern InternalPPU IPPU;
+extern uint32_t S9xSmallTileCacheEpoch;
 
 #ifndef SNES_NO_TILE_CACHE_FLAGS
 #define INVALIDATE_TILE_CACHE(address)          \
    do                                           \
    {                                            \
-      IPPU.TileCached[(address) >> 4] = false; \
-      IPPU.TileCached[(address) >> 5] = false; \
-      IPPU.TileCached[(address) >> 6] = false; \
+      S9xSmallTileCacheEpoch++;                 \
+      if (IPPU.TileCached)                      \
+      {                                         \
+         IPPU.TileCached[(address) >> 4] = false; \
+         IPPU.TileCached[(address) >> 5] = false; \
+         IPPU.TileCached[(address) >> 6] = false; \
+      }                                         \
    } while (0)
 #else
-#define INVALIDATE_TILE_CACHE(address) do { } while (0)
+#define INVALIDATE_TILE_CACHE(address)          \
+   do                                           \
+   {                                            \
+      S9xSmallTileCacheEpoch++;                 \
+   } while (0)
 #endif
 
 #include "memmap.h"
