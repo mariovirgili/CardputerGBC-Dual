@@ -2226,6 +2226,14 @@ static void DrawBGMode7Background16(uint8_t* Screen, int32_t bg)
    RENDER_BACKGROUND_MODE7(uint16_t, ScreenColors [b & GFX.Mode7Mask]);
 }
 
+#ifndef SNES_MODE7_VISIBLE_X_MIN
+#define SNES_MODE7_VISIBLE_X_MIN 8u
+#endif
+
+#ifndef SNES_MODE7_VISIBLE_X_MAX
+#define SNES_MODE7_VISIBLE_X_MAX 248u
+#endif
+
 static void DrawBGMode7Background16Fast(uint8_t* Screen, int32_t bg)
 {
    uint16_t* ScreenColors = (GFX.r2130 & 1) ? IPPU.DirectColors : IPPU.ScreenColors;
@@ -2284,6 +2292,16 @@ static void DrawBGMode7Background16Fast(uint8_t* Screen, int32_t bg)
          {
             Left = GFX.pCurrentClip->Left[clip][bg];
             Right = GFX.pCurrentClip->Right[clip][bg];
+            if (Right <= Left)
+               continue;
+         }
+
+         if (GFX.LineRenderMode && IPPU.RenderedScreenWidth == 256)
+         {
+            if (Left < SNES_MODE7_VISIBLE_X_MIN)
+               Left = SNES_MODE7_VISIBLE_X_MIN;
+            if (Right > SNES_MODE7_VISIBLE_X_MAX)
+               Right = SNES_MODE7_VISIBLE_X_MAX;
             if (Right <= Left)
                continue;
          }
