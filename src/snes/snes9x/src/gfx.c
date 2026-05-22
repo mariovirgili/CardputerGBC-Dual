@@ -2664,7 +2664,159 @@ static void RenderScreen(uint8_t* Screen, bool sub, bool force_no_add, uint8_t D
    }
 }
 
-IRAM_ATTR void S9xUpdateScreen_Core(void)
+#define SNES_GFX_HOT_CODE_ATTR IRAM_ATTR __attribute__((noinline))
+
+static void SNES_GFX_HOT_CODE_ATTR S9xFill32Pixels(uint8_t* line, uint32_t pixels, uint32_t value)
+{
+   uint32_t* p = (uint32_t*) line;
+   uint32_t* q = (uint32_t*)((uint16_t*) p + pixels);
+
+   while (p < q)
+      *p++ = value;
+}
+
+static void SNES_GFX_HOT_CODE_ATTR S9xFill16Range(uint8_t* line, uint32_t left, uint32_t right, uint16_t value)
+{
+   uint16_t* p = (uint16_t*) line + left;
+   uint16_t* q = (uint16_t*) line + right;
+
+   while (p < q)
+      *p++ = value;
+}
+
+static void SNES_GFX_HOT_CODE_ATTR S9xApplySubClipFallback(uint16_t* p, uint8_t* d, uint8_t* e, int32_t delta)
+{
+   while (d < e)
+   {
+      if (*d > 1)
+         *p = *(p + delta);
+      else
+         *p = BLACK;
+      d++;
+      p++;
+   }
+}
+
+static void SNES_GFX_HOT_CODE_ATTR S9xFillDepthZero(uint16_t* p, uint8_t* d, uint8_t* e, uint16_t value)
+{
+   while (d < e)
+   {
+      if (*d == 0)
+         *p = value;
+      d++;
+      p++;
+   }
+}
+
+enum
+{
+   SNES_BACKDROP_SUB_HALF = 0,
+   SNES_BACKDROP_SUB,
+   SNES_BACKDROP_ADD_HALF,
+   SNES_BACKDROP_ADD,
+   SNES_BACKDROP_COPY_SUB
+};
+
+static void SNES_GFX_HOT_CODE_ATTR S9xApplyBackdropSpan(uint16_t* p,
+                                                        uint8_t* d,
+                                                        uint8_t* s,
+                                                        uint8_t* e,
+                                                        int32_t delta,
+                                                        uint16_t back,
+                                                        uint16_t fixed,
+                                                        uint32_t mode)
+{
+   uint16_t back_fixed;
+
+   switch (mode)
+   {
+      case SNES_BACKDROP_SUB_HALF:
+         back_fixed = COLOR_SUB(back, fixed);
+         while (d < e)
+         {
+            if (*d == 0)
+            {
+               if (*s)
+                  *p = (*s != 1) ? COLOR_SUB1_2(back, *(p + delta)) : back_fixed;
+               else
+                  *p = back;
+            }
+            d++;
+            p++;
+            s++;
+         }
+         break;
+
+      case SNES_BACKDROP_SUB:
+         back_fixed = COLOR_SUB(back, fixed);
+         while (d < e)
+         {
+            if (*d == 0)
+            {
+               if (*s)
+                  *p = (*s != 1) ? COLOR_SUB(back, *(p + delta)) : back_fixed;
+               else
+                  *p = back;
+            }
+            d++;
+            p++;
+            s++;
+         }
+         break;
+
+      case SNES_BACKDROP_ADD_HALF:
+         back_fixed = COLOR_ADD(back, fixed);
+         while (d < e)
+         {
+            if (*d == 0)
+            {
+               if (*s)
+                  *p = (*s != 1) ? COLOR_ADD1_2(back, *(p + delta)) : back_fixed;
+               else
+                  *p = back;
+            }
+            d++;
+            p++;
+            s++;
+         }
+         break;
+
+      case SNES_BACKDROP_ADD:
+         back_fixed = COLOR_ADD(back, fixed);
+         while (d < e)
+         {
+            if (*d == 0)
+            {
+               if (*s)
+                  *p = (*s != 1) ? COLOR_ADD(back, *(p + delta)) : back_fixed;
+               else
+                  *p = back;
+            }
+            d++;
+            p++;
+            s++;
+         }
+         break;
+
+      default:
+         while (d < e)
+         {
+            if (*d == 0)
+            {
+               if (*s)
+                  *p = (*s != 1) ? *(p + delta) : fixed;
+               else
+                  *p = back;
+            }
+            d++;
+            p++;
+            s++;
+         }
+         break;
+   }
+}
+
+void S9xUpdateScreen_Core(void)
 {
    int32_t x2 = 1;
    uint32_t starty, endy, black;
@@ -2792,12 +2944,7 @@ IRAM_ATTR void S9xUpdateScreen_Core(void)
             memset(GFX.ZBuffer + y * GFX.ZPitch, 0, IPPU.RenderedScreenWidth);
 
             if (IPPU.Clip [0].Count [5])
-            {
-               uint32_t* p = (uint32_t*)(GFX.SubScreen + y * GFX.Pitch2);
-               uint32_t* q = (uint32_t*)((uint16_t*) p + IPPU.RenderedScreenWidth);
-               while (p < q)
-                  *p++ = black;
-            }
+               S9xFill32Pixels(GFX.SubScreen + y * GFX.Pitch2, IPPU.RenderedScreenWidth, black);
 
             for (c = 0; c < pClip->Count [5]; c++)
             {
@@ -2806,19 +2953,10 @@ IRAM_ATTR void S9xUpdateScreen_Core(void)
                   memset(GFX.SubZBuffer + y * GFX.ZPitch + pClip->Left [c][5] * x2, 1, (pClip->Right [c][5] - pClip->Left [c][5]) * x2);
 
                   if (IPPU.Clip [0].Count [5])
-                  {
-                     /* Blast, have to clear the sub-screen to the fixed-colour
-                      * because there is a colour window in effect clipping
-                      * the main screen that will allow the sub-screen
-                      * 'underneath' to show through. */
-
-                     uint16_t* p = (uint16_t*)(GFX.SubScreen + y * GFX.Pitch2);
-                     uint16_t* q = p + pClip->Right [c][5] * x2;
-                     p += pClip->Left [c][5] * x2;
-
-                     while (p < q)
-                        *p++ = (uint16_t) GFX.FixedColour;
-                  }
+                     S9xFill16Range(GFX.SubScreen + y * GFX.Pitch2,
+                                    pClip->Left [c][5] * x2,
+                                    pClip->Right [c][5] * x2,
+                                    (uint16_t) GFX.FixedColour);
                }
             }
          }
@@ -2838,11 +2976,7 @@ IRAM_ATTR void S9xUpdateScreen_Core(void)
                 * the main screen that will allow the sub-screen
                 * 'underneath' to show through. */
                uint32_t b = GFX.FixedColour | (GFX.FixedColour << 16);
-               uint32_t* p = (uint32_t*)(GFX.SubScreen + y * GFX.Pitch2);
-               uint32_t* q = (uint32_t*)((uint16_t*) p + IPPU.RenderedScreenWidth);
-
-               while (p < q)
-                  *p++ = b;
+               S9xFill32Pixels(GFX.SubScreen + y * GFX.Pitch2, IPPU.RenderedScreenWidth, b);
             }
          }
       }
@@ -2861,16 +2995,7 @@ IRAM_ATTR void S9xUpdateScreen_Core(void)
             uint16_t* p = (uint16_t*)(GFX.Screen + y * GFX.Pitch2);
             uint8_t* d = GFX.SubZBuffer + y * GFX.ZPitch;
             uint8_t* e = d + IPPU.RenderedScreenWidth;
-
-            while (d < e)
-            {
-               if (*d > 1)
-                  *p = *(p + GFX.Delta);
-               else
-                  *p = BLACK;
-               d++;
-               p++;
-            }
+            S9xApplySubClipFallback(p, d, e, GFX.Delta);
          }
       }
 
@@ -2915,27 +3040,10 @@ IRAM_ATTR void S9xUpdateScreen_Core(void)
                      uint8_t* d = GFX.ZBuffer + y * GFX.ZPitch;
                      uint8_t* s = GFX.SubZBuffer + y * GFX.ZPitch + Left;
                      uint8_t* e = d + Right;
-                     uint16_t back_fixed = COLOR_SUB(back, GFX.FixedColour);
 
                      d += Left;
-                     while (d < e)
-                     {
-                        if (*d == 0)
-                        {
-                           if (*s)
-                           {
-                              if (*s != 1)
-                                 *p = COLOR_SUB1_2(back, *(p + GFX.Delta));
-                              else
-                                 *p = back_fixed;
-                           }
-                           else
-                              *p = (uint16_t) back;
-                        }
-                        d++;
-                        p++;
-                        s++;
-                     }
+                     S9xApplyBackdropSpan(p, d, s, e, GFX.Delta, (uint16_t) back,
+                                          (uint16_t) GFX.FixedColour, SNES_BACKDROP_SUB_HALF);
                   }
                   else
                   {
@@ -2944,27 +3052,10 @@ IRAM_ATTR void S9xUpdateScreen_Core(void)
                      uint8_t* s = GFX.SubZBuffer + y * GFX.ZPitch + Left;
                      uint8_t* d = GFX.ZBuffer + y * GFX.ZPitch;
                      uint8_t* e = d + Right;
-                     uint16_t back_fixed = COLOR_SUB(back, GFX.FixedColour);
 
                      d += Left;
-                     while (d < e)
-                     {
-                        if (*d == 0)
-                        {
-                           if (*s)
-                           {
-                              if (*s != 1)
-                                 *p = COLOR_SUB(back, *(p + GFX.Delta));
-                              else
-                                 *p = back_fixed;
-                           }
-                           else
-                              *p = (uint16_t) back;
-                        }
-                        d++;
-                        p++;
-                        s++;
-                     }
+                     S9xApplyBackdropSpan(p, d, s, e, GFX.Delta, (uint16_t) back,
+                                          (uint16_t) GFX.FixedColour, SNES_BACKDROP_SUB);
                   }
                }
                else if (GFX.r2131 & 0x40)
@@ -2973,26 +3064,9 @@ IRAM_ATTR void S9xUpdateScreen_Core(void)
                   uint8_t* d = GFX.ZBuffer + y * GFX.ZPitch;
                   uint8_t* s = GFX.SubZBuffer + y * GFX.ZPitch + Left;
                   uint8_t* e = d + Right;
-                  uint16_t back_fixed = COLOR_ADD(back, GFX.FixedColour);
                   d += Left;
-                  while (d < e)
-                  {
-                     if (*d == 0)
-                     {
-                        if (*s)
-                        {
-                           if (*s != 1)
-                              *p = COLOR_ADD1_2(back, *(p + GFX.Delta));
-                           else
-                              *p = back_fixed;
-                        }
-                        else
-                           *p = (uint16_t) back;
-                     }
-                     d++;
-                     p++;
-                     s++;
-                  }
+                  S9xApplyBackdropSpan(p, d, s, e, GFX.Delta, (uint16_t) back,
+                                       (uint16_t) GFX.FixedColour, SNES_BACKDROP_ADD_HALF);
                }
                else if (back != 0)
                {
@@ -3000,26 +3074,9 @@ IRAM_ATTR void S9xUpdateScreen_Core(void)
                   uint8_t* d = GFX.ZBuffer + y * GFX.ZPitch;
                   uint8_t* s = GFX.SubZBuffer + y * GFX.ZPitch + Left;
                   uint8_t* e = d + Right;
-                  uint16_t back_fixed = COLOR_ADD(back, GFX.FixedColour);
                   d += Left;
-                  while (d < e)
-                  {
-                     if (*d == 0)
-                     {
-                        if (*s)
-                        {
-                           if (*s != 1)
-                              *p = COLOR_ADD(back, *(p + GFX.Delta));
-                           else
-                              *p = back_fixed;
-                        }
-                        else
-                           *p = (uint16_t) back;
-                     }
-                     d++;
-                     p++;
-                     s++;
-                  }
+                  S9xApplyBackdropSpan(p, d, s, e, GFX.Delta, (uint16_t) back,
+                                       (uint16_t) GFX.FixedColour, SNES_BACKDROP_ADD);
                }
                else
                {
@@ -3034,24 +3091,8 @@ IRAM_ATTR void S9xUpdateScreen_Core(void)
                      uint8_t* s = GFX.SubZBuffer + y * GFX.ZPitch + Left;
                      uint8_t* e = d + Right;
                      d += Left;
-                     while (d < e)
-                     {
-                        if (*d == 0)
-                        {
-                           if (*s)
-                           {
-                              if (*s != 1)
-                                 *p = *(p + GFX.Delta);
-                              else
-                                 *p = GFX.FixedColour;
-                           }
-                           else
-                              *p = (uint16_t) back;
-                        }
-                        d++;
-                        p++;
-                        s++;
-                     }
+                     S9xApplyBackdropSpan(p, d, s, e, GFX.Delta, (uint16_t) back,
+                                          (uint16_t) GFX.FixedColour, SNES_BACKDROP_COPY_SUB);
                   }
                }
             }
@@ -3077,14 +3118,7 @@ IRAM_ATTR void S9xUpdateScreen_Core(void)
                   uint8_t* d = GFX.ZBuffer + y * GFX.ZPitch;
                   uint8_t* e = d + Right;
                   d += Left;
-
-                  while (d < e)
-                  {
-                     if (*d == 0)
-                        *p = (int16_t) back;
-                     d++;
-                     p++;
-                  }
+                  S9xFillDepthZero(p, d, e, (uint16_t) back);
                }
             }
          }
@@ -3095,14 +3129,7 @@ IRAM_ATTR void S9xUpdateScreen_Core(void)
                uint16_t* p = (uint16_t*)(GFX.Screen + y * GFX.Pitch2);
                uint8_t* d = GFX.ZBuffer + y * GFX.ZPitch;
                uint8_t* e = d + 256 * x2;
-
-               while (d < e)
-               {
-                  if (*d == 0)
-                     *p = (int16_t) back;
-                  d++;
-                  p++;
-               }
+               S9xFillDepthZero(p, d, e, (uint16_t) back);
             }
          }
       }
@@ -3123,23 +3150,15 @@ IRAM_ATTR void S9xUpdateScreen_Core(void)
          for (y = starty; y <= endy; y++)
          {
             uint32_t c;
-            uint32_t* p = (uint32_t*)(GFX.Screen + y * GFX.Pitch2);
-            uint32_t* q = (uint32_t*)((uint16_t*) p + IPPU.RenderedScreenWidth);
-
-            while (p < q)
-               *p++ = black;
+            S9xFill32Pixels(GFX.Screen + y * GFX.Pitch2, IPPU.RenderedScreenWidth, black);
 
             for (c = 0; c < IPPU.Clip [0].Count [5]; c++)
             {
                if (IPPU.Clip [0].Right [c][5] > IPPU.Clip [0].Left [c][5])
-               {
-                  uint16_t* p = (uint16_t*)(GFX.Screen + y * GFX.Pitch2);
-                  uint16_t* q = p + IPPU.Clip [0].Right [c][5] * x2;
-                  p += IPPU.Clip [0].Left [c][5] * x2;
-
-                  while (p < q)
-                     *p++ = (uint16_t) back;
-               }
+                  S9xFill16Range(GFX.Screen + y * GFX.Pitch2,
+                                  IPPU.Clip [0].Left [c][5] * x2,
+                                  IPPU.Clip [0].Right [c][5] * x2,
+                                  (uint16_t) back);
             }
          }
       }
@@ -3147,12 +3166,7 @@ IRAM_ATTR void S9xUpdateScreen_Core(void)
       {
          uint32_t y;
          for (y = starty; y <= endy; y++)
-         {
-            uint32_t* p = (uint32_t*)(GFX.Screen + y * GFX.Pitch2);
-            uint32_t* q = (uint32_t*)((uint16_t*) p + IPPU.RenderedScreenWidth);
-            while (p < q)
-               *p++ = back;
-         }
+            S9xFill32Pixels(GFX.Screen + y * GFX.Pitch2, IPPU.RenderedScreenWidth, back);
       }
 
       if (!PPU.ForcedBlanking)
