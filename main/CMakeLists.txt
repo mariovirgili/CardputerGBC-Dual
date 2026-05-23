@@ -83,6 +83,9 @@ set(ENABLE_A7800_LOGS OFF)
 set(ENABLE_CORE_DEBUG_LEVEL_DEFINE ON)
 set(ENABLE_LOG_LOCAL_LEVEL_DEFINE ON)
 set(ENABLE_REMOVE_PRINTF_DEFINE ON)
+# Global speed/heap profile for RAM-expensive optimizations.
+# ON keeps the fast IRAM/inline paths; set OFF to recover heap/IRAM.
+set(TURN_OFF_IF_HEAP_LOW ON)
 
 # Race (NGP)
 set(ENABLE_NGP_USE_CZ80 ON)
@@ -115,6 +118,9 @@ set(WS_TILE_ROW_CACHE_ENTRIES 2048)
 set(ENABLE_WS_PPU_IRAM ON)
 set(ENABLE_WS_APU_IRAM ON)
 set(ENABLE_WS_CORE_IRAM ON)
+set(ENABLE_WS_RENDER_INLINE_FASTPATHS ON)
+set(ENABLE_WS_RENDER_TILE_SPLIT ON)
+set(WS_TURN_OFF_IF_HEAP_LOW ${TURN_OFF_IF_HEAP_LOW})
 # test only; keep current WS task layout explicit for scheduler experiments.
 set(WS_DISPLAY_TASK_CORE "0")
 set(WS_DISPLAY_TASK_PRIORITY "5")
@@ -286,6 +292,12 @@ add_private_define_if(ENABLE_GNW_TARGET_MARIO_DEFINE GNW_TARGET_MARIO=0)
 add_private_define_if(ENABLE_GNW_TARGET_ZELDA_DEFINE GNW_TARGET_ZELDA=0)
 
 # Oswan
+if(NOT WS_TURN_OFF_IF_HEAP_LOW)
+    set(ENABLE_WS_TILE_ROW_CACHE OFF)
+    set(ENABLE_WS_RENDER_INLINE_FASTPATHS OFF)
+    set(ENABLE_WS_RENDER_TILE_SPLIT OFF)
+endif()
+
 add_private_define_if(ENABLE_WS_SAVE WS_SAVE_ENABLED=1)
 add_private_define_if(ENABLE_WS_NO_SPLASH_SCREEN WS_NO_SPLASH_SCREEN=1)
 add_private_define_if(ENABLE_WS_PPU_IRAM WS_PPU_IRAM=1)
@@ -294,6 +306,8 @@ add_private_define_if(ENABLE_WS_CPU_SAFE_POLL_WAIT_FASTPATH WS_CPU_SAFE_POLL_WAI
 # Oswan: test only; keep 8 ms blocks, refill/check speaker queue twice as often.
 add_private_define_if(ENABLE_WS_AUDIO_POLL_MS WS_AUDIO_POLL_MS=4)
 add_private_define_if(ENABLE_WS_DIRECT_I2S_AUDIO WS_DIRECT_I2S_AUDIO=1)
+add_private_define_if(ENABLE_WS_RENDER_INLINE_FASTPATHS WS_RENDER_INLINE_FASTPATHS=1)
+add_private_define_if(ENABLE_WS_RENDER_TILE_SPLIT WS_RENDER_TILE_SPLIT=1)
 
 if(ENABLE_SNES_CORE)
     # SNES

@@ -12,7 +12,7 @@ $Rev: 71 $
 #define WS_PPU_CODE
 #endif
 
-#if defined(__GNUC__)
+#if defined(WS_RENDER_INLINE_FASTPATHS) && defined(__GNUC__)
 #define WS_ALWAYS_INLINE static inline __attribute__((always_inline))
 #else
 #define WS_ALWAYS_INLINE static inline
@@ -256,6 +256,24 @@ WS_ALWAYS_INLINE int IsZeroTileRow(const BYTE* data, int color16)
     return 1;
 }
 
+#if defined(WS_RENDER_TILE_SPLIT)
+WS_ALWAYS_INLINE BYTE* WsTileData16(int tmap, int offsetY)
+{
+    BYTE* data = IRAM + ((tmap & MAP_BANK) ? 0x8000 : 0x4000);
+    data += (tmap & MAP_TILE) << 5;
+    data += ((tmap & MAP_VREV) ? (7 - offsetY) : offsetY) << 2;
+    return data;
+}
+
+WS_ALWAYS_INLINE BYTE* WsTileData4(int tmap, int offsetY, int bank1Enabled)
+{
+    BYTE* data = IRAM + ((bank1Enabled && (tmap & MAP_BANK)) ? 0x4000 : 0x2000);
+    data += (tmap & MAP_TILE) << 4;
+    data += ((tmap & MAP_VREV) ? (7 - offsetY) : offsetY) << 1;
+    return data;
+}
+#endif
+
 #ifdef WS_BENCHMARK_LOGS
 #define WS_SPR_BENCH_ARGS , unsigned int* sprPixels, unsigned int* sprPrioritySkips, unsigned int* sprTransparentSkips, unsigned int* sprWindowSkips
 #define WS_SPR_BENCH_CALL , &sprPixels, &sprPrioritySkips, &sprTransparentSkips, &sprWindowSkips
@@ -274,6 +292,7 @@ WS_ALWAYS_INLINE int IsZeroTileRow(const BYTE* data, int color16)
 #define WS_SPR_WINDOW_SKIP() ((void)0)
 #endif
 
+#if defined(WS_RENDER_INLINE_FASTPATHS)
 WS_ALWAYS_INLINE void RenderSpriteNoWindow(WORD* dst, const BYTE* zbuf,
                                            const WORD* pal, const BYTE* index,
                                            int firstPixel, int lastPixel,
@@ -371,6 +390,7 @@ WS_ALWAYS_INLINE void RenderSpriteNoWindow(WORD* dst, const BYTE* zbuf,
         }
     }
 }
+#endif
 
 static inline void RenderBgTile(WORD** dst, const WORD* pal, const BYTE* index,
                                 int zeroTransparent)
@@ -674,6 +694,7 @@ WS_PPU_CODE void RefreshLine(int Line)
     WORD BaseCol;           // 
     const int packedMode = COLCTL & 0x20;
     const int color16 = COLCTL & 0x40;
+    const int color4Bank1 = COLCTL & 0x80;
 #ifdef WS_BENCHMARK_LOGS
     unsigned int sprCandidates = 0;
     unsigned int sprVisible = 0;
@@ -752,6 +773,53 @@ WS_PPU_CODE void RefreshLine(int Line)
         TMapX = (SCR1X & 0xF8) >> 2;
         TMapXEnd = ((SCR1X + LCD_MAIN_W + 7) >> 2) & 0xFFE;
 
+#if defined(WS_RENDER_TILE_SPLIT)
+        if(color16)
+        {
+            for(; TMapX < TMapXEnd;)
+            {
+                TMap = *(pbTMap + (TMapX++ & 0x3F));
+                TMap |= *(pbTMap + (TMapX++ & 0x3F)) << 8;
+
+                pbTData = WsTileData16(TMap, OffsetY);
+                PalIndex = (TMap & MAP_PAL) >> 9;
+                if(IsZeroTileRow(pbTData, 1))
+                {
+                    pSWrBuf += 8;
+                    continue;
+                }
+
+                const BYTE* rowIndex = DecodeTileRowCached(index, pbTData,
+                                                           packedMode, 1,
+                                                           TMap & MAP_HREV,
+                                                           WS_RENDER_DECODE_COUNTER(bgDecodeCalls));
+                RenderBgTile(&pSWrBuf, Palette[PalIndex], rowIndex, 1);
+            }
+        }
+        else
+        {
+            for(; TMapX < TMapXEnd;)
+            {
+                TMap = *(pbTMap + (TMapX++ & 0x3F));
+                TMap |= *(pbTMap + (TMapX++ & 0x3F)) << 8;
+
+                pbTData = WsTileData4(TMap, OffsetY, color4Bank1);
+                const int zeroTransparent = TMap & 0x0800;
+                PalIndex = (TMap & MAP_PAL) >> 9;
+                if(zeroTransparent && IsZeroTileRow(pbTData, 0))
+                {
+                    pSWrBuf += 8;
+                    continue;
+                }
+
+                const BYTE* rowIndex = DecodeTileRowCached(index, pbTData,
+                                                           packedMode, 0,
+                                                           TMap & MAP_HREV,
+                                                           WS_RENDER_DECODE_COUNTER(bgDecodeCalls));
+                RenderBgTile(&pSWrBuf, Palette[PalIndex], rowIndex, zeroTransparent);
+            }
+        }
+#else
         for(; TMapX < TMapXEnd;)
         {
             TMap = *(pbTMap + (TMapX++ & 0x3F));
@@ -812,6 +880,7 @@ WS_PPU_CODE void RefreshLine(int Line)
                                                        WS_RENDER_DECODE_COUNTER(bgDecodeCalls));
             RenderBgTile(&pSWrBuf, Palette[PalIndex], rowIndex, zeroTransparent);
         }
+#endif
     }
 #if WS_RENDER_PROFILE_ON
     renderBgUs += WsRenderElapsedUs(renderSectionStart);
@@ -863,6 +932,81 @@ WS_PPU_CODE void RefreshLine(int Line)
         pW = WBuf + 8 - OffsetX;
         pZ = ZBuf + 8 - OffsetX;
         
+#if defined(WS_RENDER_TILE_SPLIT)
+        if(color16)
+        {
+            for(; TMapX < TMapXEnd;)
+            {
+                TMap = *(pbTMap + (TMapX++ & 0x3F));
+                TMap |= *(pbTMap + (TMapX++ & 0x3F)) << 8;
+
+                pbTData = WsTileData16(TMap, OffsetY);
+                PalIndex = (TMap & MAP_PAL) >> 9;
+                if(IsZeroTileRow(pbTData, 1))
+                {
+                    pSWrBuf += 8;
+                    pZ += 8;
+                    if(fgWindowEnabled)
+                    {
+                        pW += 8;
+                    }
+                    continue;
+                }
+
+                const BYTE* rowIndex = DecodeTileRowCached(index, pbTData,
+                                                           packedMode, 1,
+                                                           TMap & MAP_HREV,
+                                                           WS_RENDER_DECODE_COUNTER(fgDecodeCalls));
+                if(fgWindowEnabled)
+                {
+                    RenderFgTileWindow(&pSWrBuf, &pW, &pZ, Palette[PalIndex], rowIndex,
+                                       1);
+                }
+                else
+                {
+                    RenderFgTileNoWindow(&pSWrBuf, &pZ, Palette[PalIndex], rowIndex,
+                                         1);
+                }
+            }
+        }
+        else
+        {
+            for(; TMapX < TMapXEnd;)
+            {
+                TMap = *(pbTMap + (TMapX++ & 0x3F));
+                TMap |= *(pbTMap + (TMapX++ & 0x3F)) << 8;
+
+                pbTData = WsTileData4(TMap, OffsetY, color4Bank1);
+                const int zeroTransparent = TMap & 0x0800;
+                PalIndex = (TMap & MAP_PAL) >> 9;
+                if(zeroTransparent && IsZeroTileRow(pbTData, 0))
+                {
+                    pSWrBuf += 8;
+                    pZ += 8;
+                    if(fgWindowEnabled)
+                    {
+                        pW += 8;
+                    }
+                    continue;
+                }
+
+                const BYTE* rowIndex = DecodeTileRowCached(index, pbTData,
+                                                           packedMode, 0,
+                                                           TMap & MAP_HREV,
+                                                           WS_RENDER_DECODE_COUNTER(fgDecodeCalls));
+                if(fgWindowEnabled)
+                {
+                    RenderFgTileWindow(&pSWrBuf, &pW, &pZ, Palette[PalIndex], rowIndex,
+                                       zeroTransparent);
+                }
+                else
+                {
+                    RenderFgTileNoWindow(&pSWrBuf, &pZ, Palette[PalIndex], rowIndex,
+                                         zeroTransparent);
+                }
+            }
+        }
+#else
         for(; TMapX < TMapXEnd;)
         {
             TMap = *(pbTMap + (TMapX++ & 0x3F));
@@ -937,6 +1081,7 @@ WS_PPU_CODE void RefreshLine(int Line)
                                      zeroTransparent);
             }
         }
+#endif
     }
 #if WS_RENDER_PROFILE_ON
     renderFgUs += WsRenderElapsedUs(renderSectionStart);
@@ -1060,9 +1205,36 @@ WS_PPU_CODE void RefreshLine(int Line)
             const int lowPrioritySprite = !(TMap & SPR_LAYR);
             if(!spriteWindowEnabled)
             {
+#if defined(WS_RENDER_INLINE_FASTPATHS)
                 RenderSpriteNoWindow(pSWrBuf, pZ, spritePal, rowIndex,
                                      firstPixel, lastPixel, zeroTransparent,
                                      lowPrioritySprite WS_SPR_BENCH_CALL);
+#else
+                for(i = firstPixel; i <= (unsigned int)lastPixel; i++, pZ++)
+                {
+                    const BYTE pixel = rowIndex[i];
+                    if((!pixel) && zeroTransparent)
+                    {
+                        pSWrBuf++;
+#ifdef WS_BENCHMARK_LOGS
+                        sprTransparentSkips++;
+#endif
+                        continue;
+                    }
+                    if((*pZ) && lowPrioritySprite)
+                    {
+                        pSWrBuf++;
+#ifdef WS_BENCHMARK_LOGS
+                        sprPrioritySkips++;
+#endif
+                        continue;
+                    }
+                    *pSWrBuf++ = spritePal[pixel];
+#ifdef WS_BENCHMARK_LOGS
+                    sprPixels++;
+#endif
+                }
+#endif
             }
             else if(TMap & SPR_CLIP)
             {
