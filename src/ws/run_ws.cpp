@@ -7,6 +7,7 @@ extern "C" {
 
 #include <M5Cardputer.h>
 #include "esp_timer.h"
+#include "freertos/task.h"
 #ifdef WS_BENCHMARK_LOGS
 #include "esp_heap_caps.h"
 #endif
@@ -25,6 +26,9 @@ extern "C" {
 
 #ifndef WS_AUDIO_PERIOD_MS
 #define WS_AUDIO_PERIOD_MS 8
+#endif
+#ifndef WS_AUDIO_TASK_CORE
+#define WS_AUDIO_TASK_CORE 0
 #endif
 
 static void ws_update_adaptive_frameskip(uint32_t core_us, uint32_t frame_us)
@@ -90,8 +94,21 @@ extern "C" void run_ws(const uint8_t* rom, size_t len, const char* rom_name, boo
   ws_save_init(rom_name);
   ws_save_load();
   ws_state_init(rom_name);
-  ws_sound_start_task(WS_AUDIO_PERIOD_MS, 0);
+  ws_sound_start_task(WS_AUDIO_PERIOD_MS, WS_AUDIO_TASK_CORE);
   ws_input_start();
+#ifdef WS_BENCHMARK_LOGS
+  uint32_t displayPrio = 0, displayCore = 0;
+  uint32_t audioPrio = 0, audioCore = 0;
+  ws_display_get_task_info(&displayPrio, &displayCore);
+  ws_sound_get_task_info(&audioPrio, &audioCore);
+  EMU_LOG("[WS][TASK] main core=%d prio=%lu display core=%lu prio=%lu audio core=%lu prio=%lu\n",
+          xPortGetCoreID(),
+          (unsigned long)uxTaskPriorityGet(nullptr),
+          (unsigned long)displayCore,
+          (unsigned long)displayPrio,
+          (unsigned long)audioCore,
+          (unsigned long)audioPrio);
+#endif
 
   // Timing
   const uint32_t frame_us = 1000000u / 75u; // 13.3 ms

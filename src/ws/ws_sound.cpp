@@ -42,6 +42,12 @@ static int           g_sample_rate = kNativeSampleRate;
 #ifndef WS_AUDIO_POLL_MS
 #define WS_AUDIO_POLL_MS 0
 #endif
+#ifndef WS_AUDIO_TASK_CORE
+#define WS_AUDIO_TASK_CORE 0
+#endif
+#ifndef WS_AUDIO_TASK_PRIORITY
+#define WS_AUDIO_TASK_PRIORITY 6
+#endif
 static constexpr int kDefaultPeriodMs = WS_AUDIO_PERIOD_MS;
 static int           g_chunk       = 0; 
 static constexpr int kChannel      = 0;
@@ -512,7 +518,9 @@ extern "C" void ws_sound_start_task(uint32_t period_ms, int core) {
   if (s_periodTicks == 0) s_periodTicks = 1;
 
   s_runAudio = true;
-  xTaskCreatePinnedToCore(ws_audio_task, "ws_audio", 2048, nullptr, 6, &s_taskAudio, core);
+  if (core < 0) core = WS_AUDIO_TASK_CORE;
+  xTaskCreatePinnedToCore(ws_audio_task, "ws_audio", 2048, nullptr,
+                          WS_AUDIO_TASK_PRIORITY, &s_taskAudio, core);
 }
 
 extern "C" void ws_sound_stop_task(void) {
@@ -532,6 +540,12 @@ extern "C" void ws_sound_pause_task(int pause) {
     vTaskDelay(pdMS_TO_TICKS(2));
   }
 #endif
+}
+
+extern "C" void ws_sound_get_task_info(uint32_t* priority, uint32_t* core)
+{
+  if (priority) *priority = WS_AUDIO_TASK_PRIORITY;
+  if (core) *core = WS_AUDIO_TASK_CORE;
 }
 
 #ifdef WS_BENCHMARK_LOGS

@@ -12,6 +12,7 @@ void ws_sound_frame(void);
 void ws_sound_start_task(uint32_t period_ms, int core);
 void ws_sound_stop_task(void);
 void ws_sound_pause_task(int pause);
+void ws_sound_get_task_info(uint32_t* priority, uint32_t* core);
 #ifdef WS_BENCHMARK_LOGS
 void ws_sound_get_and_reset_stats(uint32_t* blocks,
                                   uint32_t* underflows,

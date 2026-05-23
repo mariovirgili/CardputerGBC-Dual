@@ -34,6 +34,13 @@ static const int kDstW = 240;
 static const int kDstH = 135;
 static const int kChunkLines = 8;
 
+#ifndef WS_DISPLAY_TASK_CORE
+#define WS_DISPLAY_TASK_CORE 0
+#endif
+#ifndef WS_DISPLAY_TASK_PRIORITY
+#define WS_DISPLAY_TASK_PRIORITY 5
+#endif
+
 // -----------------------------------------------------------------------------
 // Threading
 // -----------------------------------------------------------------------------
@@ -236,8 +243,8 @@ extern "C" void ws_display_start()
 
   BaseType_t ok = xTaskCreatePinnedToCore(
       ws_display_task, "WSDisp",
-      2048, nullptr, 5, &s_wsDispTask,
-      0 /* core */);
+      2048, nullptr, WS_DISPLAY_TASK_PRIORITY, &s_wsDispTask,
+      WS_DISPLAY_TASK_CORE);
 
   if (ok != pdPASS) {
     s_wsDispTask = nullptr;
@@ -252,6 +259,12 @@ extern "C" void ws_display_stop()
     s_wsDispTask = nullptr;
   }
   ws_display_free_buffers();
+}
+
+extern "C" void ws_display_get_task_info(uint32_t* priority, uint32_t* core)
+{
+  if (priority) *priority = WS_DISPLAY_TASK_PRIORITY;
+  if (core) *core = WS_DISPLAY_TASK_CORE;
 }
 
 // Hook oswan

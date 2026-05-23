@@ -115,6 +115,11 @@ set(WS_TILE_ROW_CACHE_ENTRIES 2048)
 set(ENABLE_WS_PPU_IRAM ON)
 set(ENABLE_WS_APU_IRAM ON)
 set(ENABLE_WS_CORE_IRAM ON)
+# test only; keep current WS task layout explicit for scheduler experiments.
+set(WS_DISPLAY_TASK_CORE "0")
+set(WS_DISPLAY_TASK_PRIORITY "5")
+set(WS_AUDIO_TASK_CORE "0")
+set(WS_AUDIO_TASK_PRIORITY "6")
 # test only; shorter 4 ms blocks reduce time-to-speaker and underflow recovery.
 set(WS_AUDIO_PERIOD_MS "4")
 # test only; smaller DMA frames keep the direct I2S pipeline more responsive.
@@ -370,6 +375,22 @@ endif()
 
 if(WS_AUDIO_PERIOD_MS)
     target_compile_definitions(${COMPONENT_LIB} PRIVATE WS_AUDIO_PERIOD_MS=${WS_AUDIO_PERIOD_MS})
+endif()
+
+if(WS_DISPLAY_TASK_CORE)
+    target_compile_definitions(${COMPONENT_LIB} PRIVATE WS_DISPLAY_TASK_CORE=${WS_DISPLAY_TASK_CORE})
+endif()
+
+if(WS_DISPLAY_TASK_PRIORITY)
+    target_compile_definitions(${COMPONENT_LIB} PRIVATE WS_DISPLAY_TASK_PRIORITY=${WS_DISPLAY_TASK_PRIORITY})
+endif()
+
+if(WS_AUDIO_TASK_CORE)
+    target_compile_definitions(${COMPONENT_LIB} PRIVATE WS_AUDIO_TASK_CORE=${WS_AUDIO_TASK_CORE})
+endif()
+
+if(WS_AUDIO_TASK_PRIORITY)
+    target_compile_definitions(${COMPONENT_LIB} PRIVATE WS_AUDIO_TASK_PRIORITY=${WS_AUDIO_TASK_PRIORITY})
 endif()
 
 if(WS_AUDIO_DMA_LEN)
