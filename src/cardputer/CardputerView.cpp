@@ -260,7 +260,7 @@ void CardputerView::welcome() {
     #endif
    
     const std::string title = "Game Station 1.2";
-    const std::string subtitle = "Enhanced";
+    const std::string subtitle = "Snes Boost";
     Display->setTextSize(TEXT_BIG);
     const int titleX = getCenterOffset(title);
     const int titleY = 54;
