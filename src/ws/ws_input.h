@@ -21,6 +21,9 @@ enum {
 extern "C" {
 #endif
 int ws_input_poll(int mode);
+void ws_input_start(void);
+void ws_input_tick(void);
+void ws_input_stop(void);
 #ifdef __cplusplus
 }
 #endif

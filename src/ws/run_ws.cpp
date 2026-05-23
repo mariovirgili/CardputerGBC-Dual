@@ -11,6 +11,7 @@ extern "C" {
 #include "esp_heap_caps.h"
 #endif
 #include "ws_display.h"
+#include "ws_input.h"
 #include "ws_sound.h"
 #include "ws_save.h"
 #include "ws_state.h"
@@ -90,6 +91,7 @@ extern "C" void run_ws(const uint8_t* rom, size_t len, const char* rom_name, boo
   ws_save_load();
   ws_state_init(rom_name);
   ws_sound_start_task(WS_AUDIO_PERIOD_MS, 0);
+  ws_input_start();
 
   // Timing
   const uint32_t frame_us = 1000000u / 75u; // 13.3 ms
@@ -111,6 +113,7 @@ extern "C" void run_ws(const uint8_t* rom, size_t len, const char* rom_name, boo
 
   for (;;) {
     // Run one frame
+    ws_input_tick();
     int64_t tRun0 = esp_timer_get_time();
     WsRun();
     uint32_t coreUs = (uint32_t)(esp_timer_get_time() - tRun0);

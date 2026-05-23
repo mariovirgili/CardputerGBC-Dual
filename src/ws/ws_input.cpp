@@ -1,7 +1,7 @@
 #include "ws_input.h"
 #include <M5Cardputer.h>
+#include <algorithm>
 #include <stdint.h>
-#include "ws_input.h"
 #include "share/input.h"
 #include "ws_save.h"
 #include "ws_state.h"
@@ -10,44 +10,14 @@ extern bool ws_fullscreen;
 extern int  ws_zoomPercent;
 extern uint32_t lastPadState;
 
-extern "C" int ws_input_poll(int mode)
+static volatile uint16_t s_cachedState[2] = {0, 0};
+
+static uint16_t ws_input_compute_state(int mode, uint32_t i2cPad)
 {
-  M5Cardputer.update();
-  Keyboard_Class::KeysState status = M5Cardputer.Keyboard.keysState();
   uint16_t state = 0;
-  static bool quitFlushDone = false;
-  static bool stateSaveLatch = false;
-  static bool stateLoadLatch = false;
-
-  if (M5Cardputer.BtnA.pressedFor(1000) && !quitFlushDone) {
-    ws_save_force_flush();
-    quitFlushDone = true;
-  }
-
-  share::checkCommonInput(status);
-
-  const bool saveStateCombo = status.fn && M5Cardputer.Keyboard.isKeyPressed('s');
-  const bool loadStateCombo = status.fn && M5Cardputer.Keyboard.isKeyPressed('l');
-  if (saveStateCombo && !stateSaveLatch) {
-    ws_state_request_save();
-    stateSaveLatch = true;
-  } else if (!saveStateCombo) {
-    stateSaveLatch = false;
-  }
-  if (loadStateCombo && !stateLoadLatch) {
-    ws_state_request_load();
-    stateLoadLatch = true;
-  } else if (!loadStateCombo) {
-    stateLoadLatch = false;
-  }
-  if (saveStateCombo || loadStateCombo) {
-    lastPadState = state;
-    return (int)state;
-  }
 
   // I2C PAD (M5Stack JoyV2)
-  if (share::hasI2cPad()) {
-      int i2cPad = share::pollI2cPad();
+  if (i2cPad) {
       if (i2cPad & share::PAD_LEFT)  state |= WS_X4; 
       if (i2cPad & share::PAD_RIGHT) state |= WS_X2; 
       if (i2cPad & share::PAD_UP)    state |= WS_X1; 
@@ -102,6 +72,55 @@ extern "C" int ws_input_poll(int mode)
 
   if (M5Cardputer.Keyboard.isKeyPressed(CARDPUTER_BTN_START)) state |= WS_START;  // START 
   if (M5Cardputer.Keyboard.isKeyPressed(CARDPUTER_BTN_SELECT))  state |= WS_OPTION; // OPTION 
+  
+  return state;
+}
+
+extern "C" void ws_input_start(void)
+{
+  ws_input_tick();
+}
+
+extern "C" void ws_input_tick(void)
+{
+  static bool quitFlushDone = false;
+  static bool stateSaveLatch = false;
+  static bool stateLoadLatch = false;
+
+  if (!share::shouldPollInput()) {
+    return;
+  }
+
+  M5Cardputer.update();
+  Keyboard_Class::KeysState status = M5Cardputer.Keyboard.keysState();
+
+  if (M5Cardputer.BtnA.pressedFor(1000) && !quitFlushDone) {
+    ws_save_force_flush();
+    quitFlushDone = true;
+  }
+
+  share::checkCommonInput(status);
+
+  const bool saveStateCombo = status.fn && M5Cardputer.Keyboard.isKeyPressed('s');
+  const bool loadStateCombo = status.fn && M5Cardputer.Keyboard.isKeyPressed('l');
+  if (saveStateCombo && !stateSaveLatch) {
+    ws_state_request_save();
+    stateSaveLatch = true;
+  } else if (!saveStateCombo) {
+    stateSaveLatch = false;
+  }
+  if (loadStateCombo && !stateLoadLatch) {
+    ws_state_request_load();
+    stateLoadLatch = true;
+  } else if (!loadStateCombo) {
+    stateLoadLatch = false;
+  }
+  if (saveStateCombo || loadStateCombo) {
+    s_cachedState[0] = 0;
+    s_cachedState[1] = 0;
+    lastPadState = 0;
+    return;
+  }
 
   // Zoom / fullscreen toggle
   if (M5Cardputer.Keyboard.isChange() && M5Cardputer.Keyboard.isKeyPressed(CARDPUTER_SCREEN_TOGGLE)) {
@@ -115,19 +134,31 @@ extern "C" int ws_input_poll(int mode)
         ws_fullscreen  = false;
       }
     }
-    return (int)state;
   }
 
   if (status.fn && M5Cardputer.Keyboard.isKeyPressed(CARDPUTER_ZOOM_PLUS)) {
     ws_zoomPercent = std::min(150, ws_zoomPercent + 1);
-    return (int)state;
   }
 
   if (status.fn && M5Cardputer.Keyboard.isKeyPressed(CARDPUTER_ZOOM_MINUS)) {
     ws_zoomPercent = std::max(100, ws_zoomPercent - 1);
-    return (int)state;
   }
-  
-  lastPadState = state;
-  return (int)state;
+
+  const uint32_t i2cPad = share::hasI2cPad() ? share::pollI2cPad() : 0;
+  const uint16_t horizontal = ws_input_compute_state(0, i2cPad);
+  const uint16_t vertical = ws_input_compute_state(1, i2cPad);
+  s_cachedState[0] = horizontal;
+  s_cachedState[1] = vertical;
+  lastPadState = horizontal;
+}
+
+extern "C" void ws_input_stop(void)
+{
+  s_cachedState[0] = 0;
+  s_cachedState[1] = 0;
+}
+
+extern "C" int ws_input_poll(int mode)
+{
+  return (int)s_cachedState[mode ? 1 : 0];
 }
