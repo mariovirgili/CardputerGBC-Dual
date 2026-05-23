@@ -161,6 +161,13 @@ extern "C" void run_ws(const uint8_t* rom, size_t len, const char* rom_name, boo
               coreStats.frames, coreStats.cpuSteps, coreStats.refreshLines,
               coreStats.paintRequests, coreStats.frameSkip, coreStats.apuTicks,
               coreStats.gdmaTransfers, coreStats.gdmaBytes);
+#ifdef WS_MODEL_LOGS
+      const uint8_t colctl = IO ? IO[0x60] : 0;
+      EMU_LOG("[WS][BENCH] model colctl=%02X mode=%s color16=%u packed=%u\n",
+              colctl, (colctl & 0x80) ? "WSC" : "WS",
+              (unsigned)((colctl >> 6) & 1u),
+              (unsigned)((colctl >> 5) & 1u));
+#endif
 #if defined(WS_RENDER_PROFILE)
       if (coreStats.renderLines) {
         const double renderLines = (double)coreStats.renderLines;

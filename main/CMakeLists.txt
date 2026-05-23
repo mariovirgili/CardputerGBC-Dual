@@ -56,6 +56,8 @@ set(ENABLE_NES_BENCHMARK_LOGS ON)
 # Oswan: WonderSwan detail logs, requires ENABLE_EMU_LOGS.
 set(ENABLE_WS_LOGS ON)
 set(ENABLE_WS_BENCHMARK_LOGS ON)
+# Oswan: temporary WS/WSC model and COLCTL diagnostics.
+set(ENABLE_WS_MODEL_LOGS OFF)
 # Oswan: temporary lightweight WS renderer section profiling.
 set(ENABLE_WS_RENDER_PROFILE OFF)
 # Oswan: temporary log hot NEC opcodes for IRAM slimming.
@@ -776,6 +778,13 @@ endif()
 
 if(ENABLE_WS_BENCHMARK_LOGS)
     add_source_compile_defs(DEFINITIONS EMU_LOGS_ENABLED WS_BENCHMARK_LOGS SOURCES ${WS_BENCHMARK_LOG_SRCS})
+endif()
+
+if(ENABLE_WS_MODEL_LOGS)
+    add_source_compile_defs(DEFINITIONS EMU_LOGS_ENABLED WS_MODEL_LOGS SOURCES
+        "${SRC_ROOT}/ws/run_ws.cpp"
+        "${SRC_ROOT}/ws/oswan/WSFileio.c"
+    )
 endif()
 
 if(ENABLE_WS_RENDER_PROFILE)

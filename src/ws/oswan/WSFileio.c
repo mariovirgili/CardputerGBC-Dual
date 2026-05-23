@@ -18,6 +18,12 @@ $Rev: 71 $
 #define WS_LOGF(...) ((void)0)
 #endif
 
+#ifdef WS_MODEL_LOGS
+#define WS_MODEL_LOGF(...) EMU_LOG(__VA_ARGS__)
+#else
+#define WS_MODEL_LOGF(...) ((void)0)
+#endif
+
 #define ERR_MALLOC					0
 #define ERR_OVER_RAMSIZE			0
 #define ERR_WRITE_ROM				0
@@ -457,6 +463,11 @@ int WsCreateFromMemory(const uint8_t *romData, size_t romSize)
     }
 
     WsReset();
+    WS_MODEL_LOGF("[WS][MODEL] post-reset footer1=0x%02X colctl=0x%02X mode=%s color16=%u packed=%u\n",
+                  footer[1], IO ? IO[0x60] : 0,
+                  (IO && (IO[0x60] & 0x80)) ? "WSC" : "WS",
+                  (unsigned)((IO ? IO[0x60] : 0) >> 6) & 1u,
+                  (unsigned)((IO ? IO[0x60] : 0) >> 5) & 1u);
     SetHVMode(footer[6] & 1);  /* 0: H, 1: V */
 
     WS_LOGF("[WS] Ready (HVMode=%d). XIP ROM mapped.\n", footer[6] & 1);
