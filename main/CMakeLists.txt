@@ -4,7 +4,7 @@ set(LIB_ROOT "${APP_ROOT}/lib")
 
 # Core inclusion switches. Disabled cores keep their source code in the tree,
 # but are not compiled, advertised, or launchable.
-set(ENABLE_SNES_CORE ON)
+set(ENABLE_SNES_CORE OFF)
 
 file(GLOB_RECURSE APP_SRCS
     "${SRC_ROOT}/*.c"
