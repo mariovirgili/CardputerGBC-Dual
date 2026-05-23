@@ -58,17 +58,6 @@ void JustifierButtons(uint32_t *justifiers)
 
 #ifdef SNES_NO_SOUND
 
-static uint32_t apu_rng = 0x12345678u;
-
-static inline uint32_t apu_rand32(void)
-{
-    // xorshift32
-    apu_rng ^= apu_rng << 13;
-    apu_rng ^= apu_rng >> 17;
-    apu_rng ^= apu_rng << 5;
-    return apu_rng;
-}
-
 void S9xAPUWritePort(int32_t port, uint8_t value)
 {
     const uint8_t p = (uint8_t)(port & 3);
@@ -80,31 +69,14 @@ void S9xAPUWritePort(int32_t port, uint8_t value)
 
 uint8_t S9xAPUReadPort(int32_t port)
 {
-    // Matches Snes9x APU disabled hack
-    // Some games expect random values to run properly
-
     const uint8_t p = (uint8_t)(port & 3);
     CPU.BranchSkip = true;
 
-    if (p < 2)
-    {
-        const uint32_t r = apu_rand32();
-        if (r & 2)
-        {
-            if (r & 4)
-                return (p == 1) ? 0xAA : 0xBB;
-            else
-                return (uint8_t)((r >> 3) & 0xFF);
-        }
-    }
-    else
-    {
-        const uint32_t r = apu_rand32();
-        if (r & 2)
-            return (uint8_t)((r >> 3) & 0xFF);
-    }
+    if (p == 0)
+        return 0xAA;
+    if (p == 1)
+        return 0xBB;
 
-    // Fallback like Snes9x
     const uint16_t addr = (uint16_t)(0x2140u + p);
     return Memory.FillRAM[addr];
 }
