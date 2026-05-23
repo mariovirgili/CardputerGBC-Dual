@@ -107,6 +107,8 @@ set(ENABLE_WS_NO_SPLASH_SCREEN ON)
 set(ENABLE_WS_CPU_SAFE_POLL_WAIT_FASTPATH ON)
 # test only; keep 8 ms blocks, refill/check speaker queue twice as often.
 set(ENABLE_WS_AUDIO_POLL_MS ON)
+# test only; bypass M5Unified playRaw queue and write WS audio directly to I2S.
+set(ENABLE_WS_DIRECT_I2S_AUDIO ON)
 set(ENABLE_WS_TILE_ROW_CACHE OFF)
 set(WS_TILE_ROW_CACHE_ENTRIES 2048)
 set(ENABLE_WS_PPU_IRAM ON)
@@ -285,6 +287,7 @@ add_private_define_if(ENABLE_WS_PPU_IRAM WS_PPU_IRAM=1)
 add_private_define_if(ENABLE_WS_CPU_SAFE_POLL_WAIT_FASTPATH WS_CPU_SAFE_POLL_WAIT_FASTPATH=1)
 # Oswan: test only; keep 8 ms blocks, refill/check speaker queue twice as often.
 add_private_define_if(ENABLE_WS_AUDIO_POLL_MS WS_AUDIO_POLL_MS=4)
+add_private_define_if(ENABLE_WS_DIRECT_I2S_AUDIO WS_DIRECT_I2S_AUDIO=1)
 
 if(ENABLE_SNES_CORE)
     # SNES
