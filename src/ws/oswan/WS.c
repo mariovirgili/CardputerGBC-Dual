@@ -69,6 +69,7 @@ static int SramCurrentBank = 0;
 static int SramBackingDirty = 0;
 static unsigned int SramBackingDirtyPageMask = 0;
 static unsigned int SramCacheClock = 0;
+static int SramCacheMruSlot = -1;
 typedef struct SramCacheSlot {
     BYTE* data;
     int bank;
@@ -79,6 +80,7 @@ typedef struct SramCacheSlot {
 } SramCacheSlot;
 static SramCacheSlot SramCache[SRAM_CACHE_SLOTS];
 static BYTE* SramCacheData = NULL;
+static BYTE RtcLatchedData[7];
 static int TblSkip[5][5] = {
     {1,1,1,1,1},
     {0,1,1,1,1},
@@ -88,6 +90,7 @@ static int TblSkip[5][5] = {
 };
 static void WsRefreshSpriteTable(void);
 static void WsApplyLoadedStatePointers(void);
+#define BCD(value) ((((value) / 10) << 4) | ((value) % 10))
 #ifdef WS_BENCHMARK_LOGS
 static WsCoreStats s_coreStats;
 #define WS_BENCH_INC(field)       (s_coreStats.field++)
@@ -140,11 +143,22 @@ static int WsSramCacheGetSlot(int bank, int offset)
         return 0;
     }
 
+    if(SramCacheMruSlot >= 0 && SramCacheMruSlot < SRAM_CACHE_SLOTS)
+    {
+        SramCacheSlot* mru = &SramCache[SramCacheMruSlot];
+        if(mru->valid && mru->bank == bank && mru->page == page)
+        {
+            mru->age = ++SramCacheClock;
+            return SramCacheMruSlot;
+        }
+    }
+
     for(int i = 0; i < SRAM_CACHE_SLOTS; ++i)
     {
         if(SramCache[i].valid && SramCache[i].bank == bank && SramCache[i].page == page)
         {
             SramCache[i].age = ++SramCacheClock;
+            SramCacheMruSlot = i;
             return i;
         }
         if(!SramCache[i].valid)
@@ -173,6 +187,7 @@ static int WsSramCacheGetSlot(int bank, int offset)
     SramCache[victim].valid = 1;
     SramCache[victim].dirty = 0;
     SramCache[victim].age = ++SramCacheClock;
+    SramCacheMruSlot = victim;
     return victim;
 }
 
@@ -195,6 +210,7 @@ void WsSramBackingClose(void)
     SramBackingDirty = 0;
     SramBackingDirtyPageMask = 0;
     SramCacheClock = 0;
+    SramCacheMruSlot = -1;
     memset(SramCache, 0, sizeof(SramCache));
 }
 
@@ -237,6 +253,7 @@ void WsSramBackingInit(int banks)
     SramBackingDirty = 0;
     SramBackingDirtyPageMask = 0;
     SramCacheClock = 0;
+    SramCacheMruSlot = -1;
     WsSramBackingFastActive = 1;
 }
 
@@ -294,6 +311,7 @@ void WsSramBackingSelect(int bank)
     }
 
     SramCurrentBank = bank;
+    SramCacheMruSlot = -1;
 }
 
 static int WsDecodeSramBank(BYTE value)
@@ -310,6 +328,34 @@ static int WsDecodeSramBank(BYTE value)
         return low;
     }
     return (int)value % RAMBanks;
+}
+
+static void WsRtcLatchTime(void)
+{
+    time_t longTime = time(NULL);
+    struct tm* newTime = localtime(&longTime);
+
+    if(!newTime)
+    {
+        memset(RtcLatchedData, 0, sizeof(RtcLatchedData));
+        return;
+    }
+
+    int year = newTime->tm_year % 100;
+    int mon = newTime->tm_mon + 1;
+    int hour = newTime->tm_hour;
+
+    RtcLatchedData[0] = BCD(year);
+    RtcLatchedData[1] = BCD(mon);
+    RtcLatchedData[2] = BCD(newTime->tm_mday);
+    RtcLatchedData[3] = BCD(newTime->tm_wday);
+    RtcLatchedData[4] = BCD(hour);
+    if(hour > 11)
+    {
+        RtcLatchedData[4] |= 0x80;
+    }
+    RtcLatchedData[5] = BCD(newTime->tm_min);
+    RtcLatchedData[6] = BCD(newTime->tm_sec);
 }
 
 BYTE WsSramBackingRead(int offset)
@@ -1190,6 +1236,7 @@ void  WriteIO(DWORD A, BYTE V)
         if (V == 0x15)
         {
             RtcCount = 0;
+            WsRtcLatchTime();
         }
         break;
     case 0xCB: //RTC DATA
@@ -1200,7 +1247,6 @@ void  WriteIO(DWORD A, BYTE V)
     IO[A] = V;
 }
 
-#define  BCD(value) ((value / 10) << 4) | (value % 10)
 BYTE ReadIO(DWORD A)
 {
     switch(A)
@@ -1210,50 +1256,17 @@ BYTE ReadIO(DWORD A)
     case 0xCB:
         if (IO[0xCA] == 0x15)  // get time command
         {
-            BYTE year, mon, mday, wday, hour, min, sec, j;
-            struct tm *newtime;
-            time_t long_time;
-
-			long_time = time(NULL);
-            //time(&long_time);
-            newtime = localtime(&long_time);
-            switch(RtcCount)
+            if(RtcCount < 0 || RtcCount >= 7)
             {
-            case 0:
-                RtcCount++;
-                year = newtime->tm_year;
-                year %= 100;
-                return BCD(year);
-            case 1:
-                RtcCount++;
-                mon = newtime->tm_mon;
-                mon++;
-                return BCD(mon);
-            case 2:
-                RtcCount++;
-                mday = newtime->tm_mday;
-                return BCD(mday);
-            case 3:
-                RtcCount++;
-                wday = newtime->tm_wday;
-                return BCD(wday);
-            case 4:
-                RtcCount++;
-                hour = newtime->tm_hour;
-                j = BCD(hour);
-                if (hour > 11)
-                    j |= 0x80;
-                return j;
-            case 5:
-                RtcCount++;
-                min = newtime->tm_min;
-                return BCD(min);
-            case 6:
                 RtcCount = 0;
-                sec = newtime->tm_sec;
-                return BCD(sec);
             }
-            return 0;
+            const BYTE value = RtcLatchedData[RtcCount];
+            RtcCount++;
+            if(RtcCount >= 7)
+            {
+                RtcCount = 0;
+            }
+            return value;
         }
         else {
             // set ack
@@ -1899,9 +1912,14 @@ int WsLoadStatePayload(FILE* fp, uint32_t sramSize)
     InterruptLCount = core.interruptLCount;
     InterruptJoyz = core.interruptJoyz;
     SramCurrentBank = core.sramCurrentBank;
+    SramCacheMruSlot = -1;
     sIEep.we = core.sIEepWe;
     sCEep.we = core.sCEepWe;
 
+    if(IO[0xCA] == 0x15)
+    {
+        WsRtcLatchTime();
+    }
     WsApplyLoadedStatePointers();
     nec_set_context(&cpu);
     return 1;

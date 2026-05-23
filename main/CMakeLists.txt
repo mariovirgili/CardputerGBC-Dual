@@ -815,6 +815,7 @@ endif()
 if(ENABLE_WS_RENDER_PROFILE)
     add_source_compile_defs(DEFINITIONS EMU_LOGS_ENABLED WS_BENCHMARK_LOGS WS_RENDER_PROFILE SOURCES
         "${SRC_ROOT}/ws/run_ws.cpp"
+        "${SRC_ROOT}/ws/oswan/WS.c"
         "${SRC_ROOT}/ws/oswan/WSRender.c"
     )
 endif()
