@@ -6,6 +6,7 @@ extern "C" {
 #include <M5Cardputer.h>
 #include <string.h>
 #include "cardputer/CardputerAudio.h"
+#include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
@@ -68,6 +69,14 @@ static volatile uint32_t s_statMissingMax = 0;
 static volatile uint32_t s_statQueueDepth[3] = { 0, 0, 0 };
 static volatile uint32_t s_statPostQueueDepth[3] = { 0, 0, 0 };
 static volatile uint32_t s_statPlayFails = 0;
+static volatile uint32_t s_statDirectWriteCalls = 0;
+static volatile uint32_t s_statDirectShortWrites = 0;
+static volatile uint32_t s_statDirectWriteWaitMaxUs = 0;
+static volatile uint32_t s_statDirectPushGapMaxUs = 0;
+static volatile uint32_t s_statDirectLatePushes = 0;
+static volatile uint64_t s_statDirectWriteWaitSumUs = 0;
+static volatile uint64_t s_statDirectPushGapSumUs = 0;
+static volatile uint64_t s_statDirectLastPushUs = 0;
 static inline void ws_sound_bench_inc(volatile uint32_t& field)
 {
   field = (uint32_t)(field + 1u);
@@ -96,6 +105,11 @@ static inline int16_t clamp16(int32_t v) {
   if (v >  32767) return  32767;
   if (v < -32768) return -32768;
   return (int16_t)v;
+}
+
+static inline uint32_t ws_chunk_duration_us() {
+  if (g_sample_rate <= 0 || g_chunk <= 0) return 0;
+  return (uint32_t)(((uint64_t)g_chunk * 1000000ull) / (uint64_t)g_sample_rate);
 }
 
 static bool buffers_ok() {
@@ -247,6 +261,21 @@ static inline bool ws_direct_i2s_write(const int16_t* pcm)
     return false;
   }
 
+  const uint64_t pushUs = (uint64_t)esp_timer_get_time();
+#ifdef WS_BENCHMARK_LOGS
+  if (s_statDirectLastPushUs != 0u) {
+    const uint32_t gapUs = (uint32_t)(pushUs - s_statDirectLastPushUs);
+    s_statDirectPushGapSumUs += gapUs;
+    WS_SOUND_BENCH_MAX(s_statDirectPushGapMaxUs, gapUs);
+    const uint32_t chunkUs = ws_chunk_duration_us();
+    const uint32_t lateThresholdUs = chunkUs ? (chunkUs + (chunkUs / 4u) + 500u) : 0u;
+    if (lateThresholdUs && gapUs > lateThresholdUs) {
+      WS_SOUND_BENCH_INC(s_statDirectLatePushes);
+    }
+  }
+  s_statDirectLastPushUs = pushUs;
+#endif
+
   s_volume = M5Cardputer.Speaker.getVolume();
   for (int i = 0; i < g_chunk; ++i) {
     int32_t sample = ((int32_t)pcm[i] * (int32_t)s_volume) / 255;
@@ -257,12 +286,24 @@ static inline bool ws_direct_i2s_write(const int16_t* pcm)
 
   size_t written = 0;
   const size_t bytes = (size_t)g_chunk * sizeof(int16_t);
+  const uint64_t waitStartUs = (uint64_t)esp_timer_get_time();
 #if WS_DIRECT_I2S_STD
   esp_err_t err = i2s_channel_write(s_i2sTx, s_directOut, bytes, &written, portMAX_DELAY);
 #else
   esp_err_t err = i2s_write(I2S_NUM_1, s_directOut, bytes, &written, portMAX_DELAY);
 #endif
+#ifdef WS_BENCHMARK_LOGS
+  const uint32_t waitUs = (uint32_t)((uint64_t)esp_timer_get_time() - waitStartUs);
+  WS_SOUND_BENCH_INC(s_statDirectWriteCalls);
+  s_statDirectWriteWaitSumUs += waitUs;
+  WS_SOUND_BENCH_MAX(s_statDirectWriteWaitMaxUs, waitUs);
+#endif
   const bool ok = (err == ESP_OK) && (written == bytes);
+#ifdef WS_BENCHMARK_LOGS
+  if (written != bytes) {
+    WS_SOUND_BENCH_INC(s_statDirectShortWrites);
+  }
+#endif
   if (!ok) WS_SOUND_BENCH_INC(s_statPlayFails);
   return ok;
 }
@@ -354,6 +395,14 @@ extern "C" void ws_sound_init(int sample_rate_hz) {
   s_statPostQueueDepth[1] = 0;
   s_statPostQueueDepth[2] = 0;
   s_statPlayFails = 0;
+  s_statDirectWriteCalls = 0;
+  s_statDirectShortWrites = 0;
+  s_statDirectWriteWaitMaxUs = 0;
+  s_statDirectPushGapMaxUs = 0;
+  s_statDirectLatePushes = 0;
+  s_statDirectWriteWaitSumUs = 0;
+  s_statDirectPushGapSumUs = 0;
+  s_statDirectLastPushUs = 0;
 #endif
 }
 
@@ -386,7 +435,7 @@ extern "C" void ws_sound_frame(void) {
     WS_SOUND_BENCH_INC(s_statPlayFails);
     return;
   }
-  WS_SOUND_BENCH_MAX(s_statMaxQueueDepth, cardputer_audio::kRuntimeAudioBufferCount);
+  WS_SOUND_BENCH_MAX(s_statMaxQueueDepth, WS_AUDIO_DMA_COUNT);
 #ifdef WS_BENCHMARK_LOGS
   WS_SOUND_BENCH_INC(s_statQueueDepth[2]);
 #endif
@@ -532,5 +581,44 @@ extern "C" void ws_sound_get_and_reset_stats(uint32_t* blocks,
   s_statPostQueueDepth[1] = 0;
   s_statPostQueueDepth[2] = 0;
   s_statPlayFails = 0;
+}
+
+extern "C" void ws_sound_get_and_reset_direct_stats(uint32_t* mode_direct,
+                                                     uint32_t* chunk_samples,
+                                                     uint32_t* dma_len,
+                                                     uint32_t* dma_count,
+                                                     uint32_t* write_calls,
+                                                     uint32_t* short_writes,
+                                                     uint32_t* write_wait_avg_us,
+                                                     uint32_t* write_wait_max_us,
+                                                     uint32_t* push_gap_avg_us,
+                                                     uint32_t* push_gap_max_us,
+                                                     uint32_t* late_pushes) {
+#ifdef WS_DIRECT_I2S_AUDIO
+  if (mode_direct) *mode_direct = 1;
+#else
+  if (mode_direct) *mode_direct = 0;
+#endif
+  if (chunk_samples) *chunk_samples = (uint32_t)g_chunk;
+  if (dma_len) *dma_len = (uint32_t)WS_AUDIO_DMA_LEN;
+  if (dma_count) *dma_count = (uint32_t)WS_AUDIO_DMA_COUNT;
+
+  const uint32_t calls = s_statDirectWriteCalls;
+  if (write_calls) *write_calls = calls;
+  if (short_writes) *short_writes = s_statDirectShortWrites;
+  if (write_wait_avg_us) *write_wait_avg_us = calls ? (uint32_t)(s_statDirectWriteWaitSumUs / calls) : 0;
+  if (write_wait_max_us) *write_wait_max_us = s_statDirectWriteWaitMaxUs;
+  if (push_gap_avg_us) *push_gap_avg_us = (calls > 1u) ? (uint32_t)(s_statDirectPushGapSumUs / (calls - 1u)) : 0;
+  if (push_gap_max_us) *push_gap_max_us = s_statDirectPushGapMaxUs;
+  if (late_pushes) *late_pushes = s_statDirectLatePushes;
+
+  s_statDirectWriteCalls = 0;
+  s_statDirectShortWrites = 0;
+  s_statDirectWriteWaitMaxUs = 0;
+  s_statDirectPushGapMaxUs = 0;
+  s_statDirectLatePushes = 0;
+  s_statDirectWriteWaitSumUs = 0;
+  s_statDirectPushGapSumUs = 0;
+  s_statDirectLastPushUs = 0;
 }
 #endif

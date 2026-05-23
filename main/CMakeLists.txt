@@ -105,7 +105,8 @@ set(ENABLE_WS_SAVE ON)
 set(ENABLE_WS_NO_SPLASH_SCREEN ON)
 # guarded NEC polling wait-loop fast paths.
 set(ENABLE_WS_CPU_SAFE_POLL_WAIT_FASTPATH ON)
-# test only; keep 8 ms blocks, refill/check speaker queue twice as often.
+# test only; legacy M5 speaker path refills/checks queue twice as often.
+# Direct I2S mode ignores this and drives audio as fast as DMA accepts it.
 set(ENABLE_WS_AUDIO_POLL_MS ON)
 # test only; bypass M5Unified playRaw queue and write WS audio directly to I2S.
 set(ENABLE_WS_DIRECT_I2S_AUDIO ON)
@@ -114,12 +115,12 @@ set(WS_TILE_ROW_CACHE_ENTRIES 2048)
 set(ENABLE_WS_PPU_IRAM ON)
 set(ENABLE_WS_APU_IRAM ON)
 set(ENABLE_WS_CORE_IRAM ON)
-# test only; default period is 8 ms. Leave empty to use the core default.
-set(WS_AUDIO_PERIOD_MS "")
-# test only; default DMA length is 320, two WS frames at 24 kHz.
-set(WS_AUDIO_DMA_LEN "")
-# test only; default DMA count is 6.
-set(WS_AUDIO_DMA_COUNT "")
+# test only; shorter 4 ms blocks reduce time-to-speaker and underflow recovery.
+set(WS_AUDIO_PERIOD_MS "4")
+# test only; smaller DMA frames keep the direct I2S pipeline more responsive.
+set(WS_AUDIO_DMA_LEN "256")
+# test only; deeper DMA queue adds slack for heavy render spikes.
+set(WS_AUDIO_DMA_COUNT "8")
 
 # SNES
 set(ENABLE_SNES_NO_ZERO_LUT ON)

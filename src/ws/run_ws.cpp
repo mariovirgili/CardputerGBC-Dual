@@ -144,12 +144,21 @@ extern "C" void run_ws(const uint8_t* rom, size_t len, const char* rom_name, boo
       uint32_t audioMinAvailable = 0, audioAvgAvailable = 0, audioMissingTotal = 0, audioMissingMax = 0;
       uint32_t audioQueue0 = 0, audioQueue1 = 0, audioQueue2 = 0;
       uint32_t audioPostQueue0 = 0, audioPostQueue1 = 0, audioPostQueue2 = 0, audioPlayFails = 0;
+      uint32_t audioDirectMode = 0, audioChunkSamples = 0, audioDmaLen = 0, audioDmaCount = 0;
+      uint32_t audioWriteCalls = 0, audioShortWrites = 0, audioWriteWaitAvgUs = 0, audioWriteWaitMaxUs = 0;
+      uint32_t audioPushGapAvgUs = 0, audioPushGapMaxUs = 0, audioLatePushes = 0;
       ws_sound_get_and_reset_stats(&audioBlocks, &audioUnderflows, &audioMaxAvailable, &audioMaxQueue,
                                    &audioMinAvailable, &audioAvgAvailable,
                                    &audioMissingTotal, &audioMissingMax,
                                    &audioQueue0, &audioQueue1, &audioQueue2,
                                    &audioPostQueue0, &audioPostQueue1, &audioPostQueue2,
                                    &audioPlayFails);
+      ws_sound_get_and_reset_direct_stats(&audioDirectMode, &audioChunkSamples,
+                                          &audioDmaLen, &audioDmaCount,
+                                          &audioWriteCalls, &audioShortWrites,
+                                          &audioWriteWaitAvgUs, &audioWriteWaitMaxUs,
+                                          &audioPushGapAvgUs, &audioPushGapMaxUs,
+                                          &audioLatePushes);
 
       const float coreAvgMs = frameCount ? (float)benchCoreTotalUs / (float)frameCount / 1000.0f : 0.0f;
       const float dispAvgMs = dispFrames ? (float)dispTotalUs / (float)dispFrames / 1000.0f : 0.0f;
@@ -223,6 +232,18 @@ extern "C" void run_ws(const uint8_t* rom, size_t len, const char* rom_name, boo
               (unsigned long)audioQueue2,
               (unsigned long)audioPostQueue0, (unsigned long)audioPostQueue1,
               (unsigned long)audioPostQueue2, (unsigned long)audioPlayFails);
+      EMU_LOG("[WS][AUDX] mode=%s chunk=%lu dma=%lux%lu writes=%lu short=%lu wait avg/max=%.3f/%.3f ms push avg/max=%.3f/%.3f ms late=%lu\n",
+              audioDirectMode ? "direct" : "m5",
+              (unsigned long)audioChunkSamples,
+              (unsigned long)audioDmaLen,
+              (unsigned long)audioDmaCount,
+              (unsigned long)audioWriteCalls,
+              (unsigned long)audioShortWrites,
+              (double)audioWriteWaitAvgUs / 1000.0,
+              (double)audioWriteWaitMaxUs / 1000.0,
+              (double)audioPushGapAvgUs / 1000.0,
+              (double)audioPushGapMaxUs / 1000.0,
+              (unsigned long)audioLatePushes);
       const uint32_t heapFree = esp_get_free_heap_size();
       const uint32_t largest8 = heap_caps_get_largest_free_block(MALLOC_CAP_8BIT);
       const uint32_t largestInternal = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
