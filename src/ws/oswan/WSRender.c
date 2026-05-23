@@ -64,6 +64,12 @@ BYTE *SprETMap;
 BYTE* SprTMap = NULL;
 WsSpriteMeta SprMeta[128];
 int SprMetaCount = 0;
+// Per-line sprite lists preserve the original first-32 scan order without
+// rescanning the full sprite table in every RefreshLine call.
+static BYTE SprLineCount[LCD_MAIN_H];
+static BYTE SprLineLimited[LCD_MAIN_H];
+static BYTE SprLineScanCount[LCD_MAIN_H];
+static BYTE SprLineMeta[LCD_MAIN_H][32];
 WORD* FrameBuffer = NULL;
 static WORD* FrameBufferAlloc = NULL;
 WORD (*Palette)[16] = NULL;
@@ -357,6 +363,9 @@ void WsPrecomputeSpriteTable(int count)
     if(!SprTMap)
     {
         SprMetaCount = 0;
+        memset(SprLineCount, 0, sizeof(SprLineCount));
+        memset(SprLineLimited, 0, sizeof(SprLineLimited));
+        memset(SprLineScanCount, 0, sizeof(SprLineScanCount));
         return;
     }
     if(count < 0)
@@ -368,12 +377,47 @@ void WsPrecomputeSpriteTable(int count)
         count = 128;
     }
     SprMetaCount = count;
+    memset(SprLineCount, 0, sizeof(SprLineCount));
+    memset(SprLineLimited, 0, sizeof(SprLineLimited));
+    memset(SprLineScanCount, count, sizeof(SprLineScanCount));
     for(int i = 0; i < count; ++i)
     {
         const BYTE* spr = SprTMap + (i << 2);
         SprMeta[i].map = (WORD)(spr[0] | (spr[1] << 8));
         SprMeta[i].y = (short)((spr[2] > 0xF8) ? (int)spr[2] - 0x100 : (int)spr[2]);
         SprMeta[i].x = (short)((spr[3] > 0xF8) ? (int)spr[3] - 0x100 : (int)spr[3]);
+
+        int firstLine = SprMeta[i].y;
+        int lastLine = firstLine + 7;
+        if(lastLine < 0 || firstLine >= LCD_MAIN_H)
+        {
+            continue;
+        }
+        if(firstLine < 0)
+        {
+            firstLine = 0;
+        }
+        if(lastLine >= LCD_MAIN_H)
+        {
+            lastLine = LCD_MAIN_H - 1;
+        }
+
+        for(int line = firstLine; line <= lastLine; ++line)
+        {
+            if(SprLineLimited[line])
+            {
+                continue;
+            }
+            BYTE lineCount = SprLineCount[line];
+            SprLineMeta[line][lineCount] = (BYTE)i;
+            lineCount++;
+            SprLineCount[line] = lineCount;
+            if(lineCount == 32)
+            {
+                SprLineLimited[line] = 1;
+                SprLineScanCount[line] = (BYTE)(i + 1);
+            }
+        }
     }
 }
 
@@ -383,6 +427,9 @@ void FreeBuffers(void) {
         SprTMap = NULL;
     }
     SprMetaCount = 0;
+    memset(SprLineCount, 0, sizeof(SprLineCount));
+    memset(SprLineLimited, 0, sizeof(SprLineLimited));
+    memset(SprLineScanCount, 0, sizeof(SprLineScanCount));
     if (FrameBufferAlloc) {
         free(FrameBufferAlloc);
         FrameBufferAlloc = NULL;
@@ -797,32 +844,14 @@ WS_PPU_CODE void RefreshLine(int Line)
         renderSectionStart = SDL_UXTimerRead();
 #endif
 
-        int lineSpriteCount = 0;
-        const WsSpriteMeta* lineSprites[32];
-        if (SprMetaCount > 0)
+        const int lineSpriteCount = SprLineCount[Line];
+#ifdef WS_BENCHMARK_LOGS
+        sprCandidates += SprLineScanCount[Line];
+        if(SprLineLimited[Line])
         {
-            for (int metaIndex = 0; metaIndex < SprMetaCount; ++metaIndex)
-            {
-                const WsSpriteMeta* spriteMeta = &SprMeta[metaIndex];
-#ifdef WS_BENCHMARK_LOGS
-                sprCandidates++;
-#endif
-                const int testY = spriteMeta->y;
-                if (Line < testY)
-                    continue;
-                if (Line >= testY + 8)
-                    continue;
-
-                lineSprites[lineSpriteCount++] = spriteMeta;
-                if (lineSpriteCount == 32)
-                {
-#ifdef WS_BENCHMARK_LOGS
-                    sprLimited++;
-#endif
-                    break;
-                }
-            }
+            sprLimited++;
         }
+#endif
 #if WS_RENDER_PROFILE_ON
         renderSpriteScanUs += WsRenderElapsedUs(renderSectionStart);
         renderSectionStart = SDL_UXTimerRead();
@@ -830,7 +859,7 @@ WS_PPU_CODE void RefreshLine(int Line)
 
         for (int spriteIndex = lineSpriteCount - 1; spriteIndex >= 0; --spriteIndex)
         {
-            const WsSpriteMeta* spriteMeta = lineSprites[spriteIndex];
+            const WsSpriteMeta* spriteMeta = &SprMeta[SprLineMeta[Line][spriteIndex]];
             TMap = spriteMeta->map;
 
             const int sprY = spriteMeta->y;
