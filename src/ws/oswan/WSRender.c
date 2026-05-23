@@ -12,6 +12,12 @@ $Rev: 71 $
 #define WS_PPU_CODE
 #endif
 
+#if defined(__GNUC__)
+#define WS_ALWAYS_INLINE static inline __attribute__((always_inline))
+#else
+#define WS_ALWAYS_INLINE static inline
+#endif
+
 #include "WSRender.h"
 #include "WS.h"
 #include "WSSegment.h"
@@ -114,7 +120,7 @@ static void InitTileDecodeLut(void)
     }
 }
 
-static inline void StorePackedPixels(BYTE* index, DWORD pixels, int hrev)
+WS_ALWAYS_INLINE void StorePackedPixels(BYTE* index, DWORD pixels, int hrev)
 {
     if(hrev)
     {
@@ -140,7 +146,7 @@ static inline void StorePackedPixels(BYTE* index, DWORD pixels, int hrev)
     }
 }
 
-static inline void DecodeTileRow(BYTE* index, const BYTE* data, int packedMode, int color16, int hrev)
+WS_ALWAYS_INLINE void DecodeTileRow(BYTE* index, const BYTE* data, int packedMode, int color16, int hrev)
 {
     DWORD pixels;
 
@@ -237,7 +243,7 @@ static inline const BYTE* DecodeTileRowCached(BYTE* scratch, const BYTE* data,
 }
 #endif
 
-static inline int IsZeroTileRow(const BYTE* data, int color16)
+WS_ALWAYS_INLINE int IsZeroTileRow(const BYTE* data, int color16)
 {
     if(data[0] | data[1])
     {
@@ -248,6 +254,122 @@ static inline int IsZeroTileRow(const BYTE* data, int color16)
         return 0;
     }
     return 1;
+}
+
+#ifdef WS_BENCHMARK_LOGS
+#define WS_SPR_BENCH_ARGS , unsigned int* sprPixels, unsigned int* sprPrioritySkips, unsigned int* sprTransparentSkips, unsigned int* sprWindowSkips
+#define WS_SPR_BENCH_CALL , &sprPixels, &sprPrioritySkips, &sprTransparentSkips, &sprWindowSkips
+#define WS_SPR_DRAWN() ((*sprPixels)++)
+#define WS_SPR_DRAWN_N(count) ((*sprPixels) += (unsigned int)(count))
+#define WS_SPR_PRIORITY_SKIP() ((*sprPrioritySkips)++)
+#define WS_SPR_TRANSPARENT_SKIP() ((*sprTransparentSkips)++)
+#define WS_SPR_WINDOW_SKIP() ((*sprWindowSkips)++)
+#else
+#define WS_SPR_BENCH_ARGS
+#define WS_SPR_BENCH_CALL
+#define WS_SPR_DRAWN() ((void)0)
+#define WS_SPR_DRAWN_N(count) ((void)0)
+#define WS_SPR_PRIORITY_SKIP() ((void)0)
+#define WS_SPR_TRANSPARENT_SKIP() ((void)0)
+#define WS_SPR_WINDOW_SKIP() ((void)0)
+#endif
+
+WS_ALWAYS_INLINE void RenderSpriteNoWindow(WORD* dst, const BYTE* zbuf,
+                                           const WORD* pal, const BYTE* index,
+                                           int firstPixel, int lastPixel,
+                                           int zeroTransparent,
+                                           int lowPrioritySprite
+                                           WS_SPR_BENCH_ARGS)
+{
+    if(lowPrioritySprite)
+    {
+        if(zeroTransparent)
+        {
+            for(int x = firstPixel; x <= lastPixel; ++x, ++dst, ++zbuf)
+            {
+                const BYTE pixel = index[x];
+                if(!pixel)
+                {
+                    WS_SPR_TRANSPARENT_SKIP();
+                    continue;
+                }
+                if(*zbuf)
+                {
+                    WS_SPR_PRIORITY_SKIP();
+                    continue;
+                }
+                *dst = pal[pixel];
+                WS_SPR_DRAWN();
+            }
+        }
+        else
+        {
+            for(int x = firstPixel; x <= lastPixel; ++x, ++dst, ++zbuf)
+            {
+                if(*zbuf)
+                {
+                    WS_SPR_PRIORITY_SKIP();
+                    continue;
+                }
+                *dst = pal[index[x]];
+                WS_SPR_DRAWN();
+            }
+        }
+    }
+    else
+    {
+        if(firstPixel == 0 && lastPixel == 7)
+        {
+            if(zeroTransparent)
+            {
+                BYTE pixel;
+                pixel = index[0]; if(pixel) { dst[0] = pal[pixel]; WS_SPR_DRAWN(); } else { WS_SPR_TRANSPARENT_SKIP(); }
+                pixel = index[1]; if(pixel) { dst[1] = pal[pixel]; WS_SPR_DRAWN(); } else { WS_SPR_TRANSPARENT_SKIP(); }
+                pixel = index[2]; if(pixel) { dst[2] = pal[pixel]; WS_SPR_DRAWN(); } else { WS_SPR_TRANSPARENT_SKIP(); }
+                pixel = index[3]; if(pixel) { dst[3] = pal[pixel]; WS_SPR_DRAWN(); } else { WS_SPR_TRANSPARENT_SKIP(); }
+                pixel = index[4]; if(pixel) { dst[4] = pal[pixel]; WS_SPR_DRAWN(); } else { WS_SPR_TRANSPARENT_SKIP(); }
+                pixel = index[5]; if(pixel) { dst[5] = pal[pixel]; WS_SPR_DRAWN(); } else { WS_SPR_TRANSPARENT_SKIP(); }
+                pixel = index[6]; if(pixel) { dst[6] = pal[pixel]; WS_SPR_DRAWN(); } else { WS_SPR_TRANSPARENT_SKIP(); }
+                pixel = index[7]; if(pixel) { dst[7] = pal[pixel]; WS_SPR_DRAWN(); } else { WS_SPR_TRANSPARENT_SKIP(); }
+            }
+            else
+            {
+                dst[0] = pal[index[0]];
+                dst[1] = pal[index[1]];
+                dst[2] = pal[index[2]];
+                dst[3] = pal[index[3]];
+                dst[4] = pal[index[4]];
+                dst[5] = pal[index[5]];
+                dst[6] = pal[index[6]];
+                dst[7] = pal[index[7]];
+                WS_SPR_DRAWN_N(8);
+            }
+            return;
+        }
+
+        if(zeroTransparent)
+        {
+            for(int x = firstPixel; x <= lastPixel; ++x, ++dst)
+            {
+                const BYTE pixel = index[x];
+                if(!pixel)
+                {
+                    WS_SPR_TRANSPARENT_SKIP();
+                    continue;
+                }
+                *dst = pal[pixel];
+                WS_SPR_DRAWN();
+            }
+        }
+        else
+        {
+            for(int x = firstPixel; x <= lastPixel; ++x, ++dst)
+            {
+                *dst = pal[index[x]];
+                WS_SPR_DRAWN();
+            }
+        }
+    }
 }
 
 static inline void RenderBgTile(WORD** dst, const WORD* pal, const BYTE* index,
@@ -938,30 +1060,9 @@ WS_PPU_CODE void RefreshLine(int Line)
             const int lowPrioritySprite = !(TMap & SPR_LAYR);
             if(!spriteWindowEnabled)
             {
-                for(i = firstPixel; i <= (unsigned int)lastPixel; i++, pZ++)
-                {
-                    const BYTE pixel = rowIndex[i];
-                    if((!pixel) && zeroTransparent)
-                    {
-                        pSWrBuf++;
-#ifdef WS_BENCHMARK_LOGS
-                        sprTransparentSkips++;
-#endif
-                        continue;
-                    }
-                    if((*pZ) && lowPrioritySprite)
-                    {
-                        pSWrBuf++;
-#ifdef WS_BENCHMARK_LOGS
-                        sprPrioritySkips++;
-#endif
-                        continue;
-                    }
-                    *pSWrBuf++ = spritePal[pixel];
-#ifdef WS_BENCHMARK_LOGS
-                    sprPixels++;
-#endif
-                }
+                RenderSpriteNoWindow(pSWrBuf, pZ, spritePal, rowIndex,
+                                     firstPixel, lastPixel, zeroTransparent,
+                                     lowPrioritySprite WS_SPR_BENCH_CALL);
             }
             else if(TMap & SPR_CLIP)
             {
