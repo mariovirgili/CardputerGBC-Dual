@@ -14,6 +14,9 @@ from typing import Iterable
 HANDLER_RE = re.compile(r"m68k_op_[A-Za-z0-9_]+")
 DEFAULT_TABLE = Path("src/genesis/gwenesis/cpus/M68K/m68ki_instruction_jump_table.h")
 DEFAULT_FULL_TABLE = Path("src/genesis/gwenesis/cpus/M68K/m68ki_instruction_jump_table_full.h")
+DEFAULT_CYCLE_TABLE = Path("src/genesis/gwenesis/cpus/M68K/m68ki_cycles.h")
+DEFAULT_CYCLE_FULL_TABLE = Path("src/genesis/gwenesis/cpus/M68K/m68ki_cycles_full.h")
+CYCLE_RE = re.compile(r"\b\d+\*7\b")
 POINTER_SIZE = 4
 
 
@@ -42,6 +45,11 @@ def parse_args() -> argparse.Namespace:
         help="Emit machine-readable JSON instead of text.",
     )
     parser.add_argument(
+        "--cycles",
+        action="store_true",
+        help="Analyze the generated M68K cycle table instead of the dispatch table.",
+    )
+    parser.add_argument(
         "--emit-c-header",
         type=Path,
         default=None,
@@ -68,12 +76,23 @@ def parse_args() -> argparse.Namespace:
             "direct 256-entry tables in the hybrid proposal."
         ),
     )
+    parser.add_argument(
+        "--emit-cycle-c-header",
+        type=Path,
+        default=None,
+        help=(
+            "Write a generated C header for a top-byte compressed cycle-table "
+            "lookup proposal."
+        ),
+    )
     return parser.parse_args()
 
 
 def resolve_table_path(args: argparse.Namespace) -> Path:
     if args.table is not None:
         return args.table
+    if args.cycles:
+        return DEFAULT_CYCLE_FULL_TABLE if args.full else DEFAULT_CYCLE_TABLE
     return DEFAULT_FULL_TABLE if args.full else DEFAULT_TABLE
 
 
@@ -83,6 +102,14 @@ def load_handlers(path: Path) -> list[str]:
     if not handlers:
         raise ValueError(f"No opcode handlers found in {path}")
     return handlers
+
+
+def load_cycle_values(path: Path) -> list[str]:
+    text = path.read_text(encoding="utf-8")
+    values = CYCLE_RE.findall(text)
+    if not values:
+        raise ValueError(f"No cycle values found in {path}")
+    return values
 
 
 def chunked(seq: list[str], size: int) -> Iterable[list[str]]:
@@ -95,8 +122,13 @@ def digest_block(block: list[str]) -> str:
     return hashlib.sha1(joined).hexdigest()[:12]
 
 
-def compression_stats(handlers: list[str], block_size: int) -> dict:
-    blocks = list(chunked(handlers, block_size))
+def compression_stats(
+    items: list[str],
+    block_size: int,
+    item_size: int = POINTER_SIZE,
+    zero_token: str | None = None,
+) -> dict:
+    blocks = list(chunked(items, block_size))
     block_map: dict[tuple[str, ...], int] = {}
     block_index: list[int] = []
     repeated_examples: defaultdict[int, list[int]] = defaultdict(list)
@@ -114,8 +146,8 @@ def compression_stats(handlers: list[str], block_size: int) -> dict:
 
     index_bits = max(1, math.ceil(math.log2(max(1, len(unique_blocks)))))
     index_bytes = 1 if index_bits <= 8 else 2 if index_bits <= 16 else 4
-    dense_table_bytes = len(handlers) * POINTER_SIZE
-    shared_subtables_bytes = len(unique_blocks) * block_size * POINTER_SIZE
+    dense_table_bytes = len(items) * item_size
+    shared_subtables_bytes = len(unique_blocks) * block_size * item_size
     l1_index_bytes = len(blocks) * index_bytes
     l1_pointer_bytes = len(blocks) * POINTER_SIZE
 
@@ -128,8 +160,8 @@ def compression_stats(handlers: list[str], block_size: int) -> dict:
                 "layout_index": idx,
                 "count": count,
                 "digest": digest_block(block),
-                "all_illegal": all(handler == "m68k_op_illegal" for handler in block),
-                "top_handlers": Counter(block).most_common(4),
+                "all_zero": all(token == zero_token for token in block) if zero_token is not None else False,
+                "top_items": Counter(block).most_common(4),
                 "example_block_indices": repeated_examples[idx],
             }
         )
@@ -182,12 +214,28 @@ def build_report(path: Path, handlers: list[str]) -> dict:
         "unique_handlers": unique_handlers,
         "top_handlers": handler_counts.most_common(20),
         "compression": {
-            "top_byte": compression_stats(handlers, 256),
-            "top_nibble": compression_stats(handlers, 4096),
+            "top_byte": compression_stats(handlers, 256, item_size=POINTER_SIZE, zero_token="m68k_op_illegal"),
+            "top_nibble": compression_stats(handlers, 4096, item_size=POINTER_SIZE, zero_token="m68k_op_illegal"),
         },
         "groups": {
             "top_byte": top_group_summary(handlers, 256, 2),
             "top_nibble": top_group_summary(handlers, 4096, 1),
+        },
+    }
+    return report
+
+
+def build_cycle_report(path: Path, values: list[str]) -> dict:
+    total = len(values)
+    value_counts = Counter(values)
+    report = {
+        "table": str(path),
+        "total_entries": total,
+        "unique_values": len(value_counts),
+        "top_values": value_counts.most_common(20),
+        "compression": {
+            "top_byte": compression_stats(values, 256, item_size=1, zero_token="0*7"),
+            "top_nibble": compression_stats(values, 4096, item_size=1, zero_token="0*7"),
         },
     }
     return report
@@ -401,6 +449,72 @@ static inline void {table_name}_dispatch(uint16_t opcode)
     output_path.write_text(content, encoding="utf-8")
 
 
+def emit_cycle_top_byte_header(report: dict, output_path: Path) -> None:
+    stats = report["compression"]["top_byte"]
+    block_index: list[int] = stats["block_index"]
+    unique_blocks: list[list[str]] = stats["unique_block_data"]
+    index_type = c_integer_type(max(block_index) if block_index else 0)
+    guard = sanitize_guard_token(output_path)
+    table_name = output_path.stem
+
+    l1_values = [str(value) for value in block_index]
+    subtables_rows = []
+    for block in unique_blocks:
+        padded = list(block) + ["0*7"] * (256 - len(block))
+        subtables_rows.append(
+            "    {\n"
+            + format_c_rows(padded, row_width=16, indent="      ")
+            + "\n    }"
+        )
+    subtables_blob = ",\n".join(subtables_rows)
+
+    content = f"""// Auto-generated by scripts/analyze_md_dispatch_table.py
+// Source cycle table: {report["table"]}
+// Dense entries: {report["total_entries"]}
+// Top-byte blocks: {stats["total_blocks"]} -> unique subtables: {stats["unique_blocks"]}
+//
+// Lookup shape:
+//   hi = opcode >> 8
+//   lo = opcode & 0xff
+//   cycles = {table_name}_subtables[{table_name}_l1[hi]][lo]
+//
+// Note:
+//   Missing entries in the final partial block are padded with 0*7.
+
+#ifndef {guard}
+#define {guard}
+
+#include <stdint.h>
+
+#define {table_name.upper()}_L1_COUNT {stats["total_blocks"]}
+#define {table_name.upper()}_SUBTABLE_COUNT {stats["unique_blocks"]}
+#define {table_name.upper()}_SUBTABLE_WIDTH 256
+
+static const {index_type} {table_name}_l1[{stats["total_blocks"]}] =
+{{
+{format_c_rows(l1_values, row_width=16, indent="    ")}
+}};
+
+static const uint8_t {table_name}_subtables[{stats["unique_blocks"]}][256] =
+{{
+{subtables_blob}
+}};
+
+static inline uint8_t m68ki_cycles_lookup(uint16_t opcode)
+{{
+    const unsigned hi = (unsigned)(opcode >> 8);
+    if (hi >= {table_name.upper()}_L1_COUNT) {{
+        return (uint8_t)(0 * 7);
+    }}
+    return {table_name}_subtables[{table_name}_l1[hi]][opcode & 0xff];
+}}
+
+#endif /* {guard} */
+"""
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(content, encoding="utf-8")
+
+
 def print_text_report(report: dict) -> None:
     print(f"Table: {report['table']}")
     print(
@@ -432,11 +546,11 @@ def print_text_report(report: dict) -> None:
         print("  most repeated layouts:")
         for layout in stats["top_layouts"][:5]:
             top_handlers = ", ".join(
-                f"{name}:{count}" for name, count in layout["top_handlers"]
+                f"{name}:{count}" for name, count in layout["top_items"]
             )
             print(
                 f"    idx={layout['layout_index']:>3} repeats={layout['count']:>3} "
-                f"digest={layout['digest']} illegal={layout['all_illegal']} "
+                f"digest={layout['digest']} zero={layout['all_zero']} "
                 f"blocks={layout['example_block_indices']} top=[{top_handlers}]"
             )
         print()
@@ -467,39 +581,103 @@ def print_text_report(report: dict) -> None:
     )
 
 
+def print_cycle_report(report: dict) -> None:
+    print(f"Cycle table: {report['table']}")
+    print(
+        f"Entries: {report['total_entries']} | distinct values: {report['unique_values']}"
+    )
+    print()
+    print("Top cycle values:")
+    for name, count in report["top_values"][:12]:
+        pct = (count * 100.0) / report["total_entries"]
+        print(f"  {name:<8} {count:>6}  {pct:6.2f}%")
+    print()
+    for key, title in (("top_byte", "Shared 256-entry cycle subtables"), ("top_nibble", "Shared 4096-entry cycle subtables")):
+        stats = report["compression"][key]
+        dense_kib = stats["dense_table_bytes"] / 1024.0
+        indexed_kib = stats["estimated_total_bytes_indexed"] / 1024.0
+        pointer_kib = stats["estimated_total_bytes_pointer_l1"] / 1024.0
+        print(title + ":")
+        print(
+            f"  blocks={stats['total_blocks']} unique={stats['unique_blocks']} "
+            f"reused={stats['reused_blocks']}"
+        )
+        print(
+            f"  size dense={dense_kib:.1f} KiB | "
+            f"indexed-L1={indexed_kib:.1f} KiB | pointer-L1={pointer_kib:.1f} KiB"
+        )
+        print("  most repeated layouts:")
+        for layout in stats["top_layouts"][:5]:
+            top_items = ", ".join(
+                f"{name}:{count}" for name, count in layout["top_items"]
+            )
+            print(
+                f"    idx={layout['layout_index']:>3} repeats={layout['count']:>3} "
+                f"digest={layout['digest']} zero={layout['all_zero']} "
+                f"blocks={layout['example_block_indices']} top=[{top_items}]"
+            )
+        print()
+    top_byte = report["compression"]["top_byte"]
+    index_type = c_integer_type(max(top_byte["block_index"]) if top_byte["block_index"] else 0)
+    print("Suggested compressed-cycle basis:")
+    print(
+        f"  L1 entries={top_byte['total_blocks']} type={index_type} | "
+        f"subtables={top_byte['unique_blocks']} x 256 bytes"
+    )
+    print(
+        "  lookup: subtables[l1[opcode >> 8]][opcode & 0xff]"
+    )
+
+
 def main() -> int:
     args = parse_args()
     table_path = resolve_table_path(args)
     if not table_path.is_absolute():
         table_path = Path.cwd() / table_path
-    handlers = load_handlers(table_path)
-    report = build_report(table_path, handlers)
-
-    if args.json:
-        print(json.dumps(report, indent=2))
+    if args.cycles:
+        values = load_cycle_values(table_path)
+        report = build_cycle_report(table_path, values)
+        if args.json:
+            print(json.dumps(report, indent=2))
+        else:
+            print_cycle_report(report)
+        if args.emit_cycle_c_header is not None:
+            output_path = args.emit_cycle_c_header
+            if not output_path.is_absolute():
+                output_path = Path.cwd() / output_path
+            emit_cycle_top_byte_header(report, output_path)
+            if not args.json:
+                print()
+                print(f"Wrote cycle C proposal header: {output_path}")
     else:
-        print_text_report(report)
-    if args.emit_c_header is not None:
-        output_path = args.emit_c_header
-        if not output_path.is_absolute():
-            output_path = Path.cwd() / output_path
-        emit_top_byte_header(report, output_path)
-        if not args.json:
-            print()
-            print(f"Wrote C proposal header: {output_path}")
-    if args.emit_hybrid_c_header is not None:
-        output_path = args.emit_hybrid_c_header
-        if not output_path.is_absolute():
-            output_path = Path.cwd() / output_path
-        emit_hybrid_top_byte_header(
-            report,
-            handlers,
-            output_path,
-            parse_hot_bytes(args.hybrid_hot_bytes),
-        )
-        if not args.json:
-            print()
-            print(f"Wrote hybrid C proposal header: {output_path}")
+        handlers = load_handlers(table_path)
+        report = build_report(table_path, handlers)
+
+        if args.json:
+            print(json.dumps(report, indent=2))
+        else:
+            print_text_report(report)
+        if args.emit_c_header is not None:
+            output_path = args.emit_c_header
+            if not output_path.is_absolute():
+                output_path = Path.cwd() / output_path
+            emit_top_byte_header(report, output_path)
+            if not args.json:
+                print()
+                print(f"Wrote C proposal header: {output_path}")
+        if args.emit_hybrid_c_header is not None:
+            output_path = args.emit_hybrid_c_header
+            if not output_path.is_absolute():
+                output_path = Path.cwd() / output_path
+            emit_hybrid_top_byte_header(
+                report,
+                handlers,
+                output_path,
+                parse_hot_bytes(args.hybrid_hot_bytes),
+            )
+            if not args.json:
+                print()
+                print(f"Wrote hybrid C proposal header: {output_path}")
     return 0
 
 

@@ -7,13 +7,21 @@ extern int vdp_68k_irq_ack(int int_level);
 #define m68ki_cpu m68k
 #define MUL (7)
 
+#ifndef MD_COMPRESSED_CYCLE_TABLE
+#define MD_COMPRESSED_CYCLE_TABLE 0
+#endif
+
 /* ======================================================================== */
 /* ================================ INCLUDES ============================== */
 /* ======================================================================== */
 
 #ifndef BUILD_TABLES
   #ifndef TABLES_FULL
-    #include "m68ki_cycles.h"
+    #if MD_COMPRESSED_CYCLE_TABLE
+      #include "m68ki_cycles_topbyte.h"
+    #else
+      #include "m68ki_cycles.h"
+    #endif
   #else
     #include "m68ki_cycles_full.h"
   #endif
@@ -295,7 +303,7 @@ void m68k_set_irq_delay(unsigned int int_level)
     if ((REG_IR & 0xF000) != 0x2000)
     {
       /* Finish executing current instruction */
-      USE_CYCLES(CYC_INSTRUCTION[REG_IR]);
+      USE_CYCLES(CYC_INSTRUCTION(REG_IR));
 
       /* One instruction delay before interrupt */
       irq_latency = 1;
@@ -374,7 +382,7 @@ void IRAM_ATTR m68k_run(unsigned int cycles)
     REG_IR = m68ki_read_imm_16();
     m68k_opcode_hist_record((uint16_t)REG_IR);
 
-//    printf("PC=%x IR=%x CYCLES=%d \n",m68k.pc,REG_IR,CYC_INSTRUCTION[REG_IR]);
+//    printf("PC=%x IR=%x CYCLES=%d \n",m68k.pc,REG_IR,CYC_INSTRUCTION(REG_IR));
 
     /* Execute instruction */
 #if MD_HYBRID_TOPBYTE_DISPATCH && !defined(TABLES_FULL)
@@ -384,7 +392,7 @@ void IRAM_ATTR m68k_run(unsigned int cycles)
 #else
     m68ki_instruction_jump_table[REG_IR]();
 #endif
-    USE_CYCLES(CYC_INSTRUCTION[REG_IR]);
+    USE_CYCLES(CYC_INSTRUCTION(REG_IR));
 
     /* Trace m68k_exception, if necessary */
     m68ki_exception_if_trace(); /* auto-disable (see m68kcpu.h) */
@@ -393,7 +401,7 @@ void IRAM_ATTR m68k_run(unsigned int cycles)
 
 int m68k_cycles(void)
 {
-  return CYC_INSTRUCTION[REG_IR];
+  return CYC_INSTRUCTION(REG_IR);
 }
 
 int m68k_cycles_run(void)

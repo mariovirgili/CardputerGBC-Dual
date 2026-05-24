@@ -29,6 +29,10 @@ static bool s_draw_toggle = false;  // for skipping frames
 static volatile bool s_skipZ80Next = false; // skip Z80 on next frame if true
 extern int genesisZoomPercent;
 
+#ifndef MD_BENCH_NO_FRAME_SKIP
+#define MD_BENCH_NO_FRAME_SKIP 0
+#endif
+
 #if MD_RENDER_LOGS_ENABLED
 struct MdFrameDiagStats {
   uint64_t lastLogMs = 0;
@@ -470,9 +474,15 @@ static void md_clean_teardown_and_save()
 /* RUN ONE FRAME with VDP, M68K, Z80, Sound, etc. */
 static void run_one_frame() {
   const uint64_t t_start = micros();
+#if MD_BENCH_NO_FRAME_SKIP
+  const bool drawFrame = true;
+  const bool skipZ80 = false;
+  s_skipZ80Next = false;
+#else
   const bool drawFrame = (!s_skipZ80Next) && (s_draw_toggle = !s_draw_toggle); // frame skip logic
   const bool skipZ80 = s_skipZ80Next;   // snapshot
   s_skipZ80Next = false;
+#endif
 
   // Reset sound state
   #ifndef GENESIS_NO_SOUND
@@ -638,9 +648,11 @@ static void run_one_frame() {
   const uint32_t kFrameBudgetUs = 1000000u / (g_target_fps - 8); // 52FPS target
   const uint32_t elapsedUs = (uint32_t)(micros() - t_start);
   const bool lateSkip = elapsedUs > kFrameBudgetUs;
+#if !MD_BENCH_NO_FRAME_SKIP
   if (lateSkip) {
     s_skipZ80Next = true;  // we are late, skip Z80 next frame
   }
+#endif
 #if MD_RENDER_LOGS_ENABLED
   md_render_diag_record(drawFrame, skipZ80, lateSkip, renderedLines, elapsedUs, kFrameBudgetUs, h, (uint32_t)lines_per_frame);
   md_render_diag_log_if_due();
