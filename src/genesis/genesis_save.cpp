@@ -33,6 +33,7 @@ static TickType_t   g_last_save   = 0;
 static volatile bool g_flag_check = false;
 static volatile bool g_flag_flush = false;
 static volatile bool g_sram_dirty = false;
+static volatile bool g_background_enabled = true;
 
 /* ========================== Utils FS =========================== */
 
@@ -125,6 +126,16 @@ static void SaveTask(void* /*arg*/) {
     TickType_t now = xTaskGetTickCount();
 
     if (do_check) {
+      if (!g_background_enabled) {
+        do_check = false;
+      }
+    }
+
+    if (do_flush && !g_background_enabled) {
+      do_flush = false;
+    }
+
+    if (do_check) {
       if (g_sram_dirty) {
         if (g_first_dirty == 0) g_first_dirty = now;
         if (now >= g_next_allow) {
@@ -170,6 +181,7 @@ extern "C" void genesis_save_init(const char* romPathOrName) {
   g_flag_check  = false;
   g_flag_flush  = false;
   g_sram_dirty  = false;
+  g_background_enabled = true;
 
   if (!g_task) {
     xTaskCreatePinnedToCore(
@@ -238,6 +250,7 @@ extern "C" void genesis_save_load(void) {
 
 extern "C" void genesis_save_tick(void) {
   if (!g_save_path) return;
+  if (!g_background_enabled) return;
 
   TickType_t now = xTaskGetTickCount();
   if (now < g_next_check) return;
@@ -248,6 +261,16 @@ extern "C" void genesis_save_tick(void) {
   if (g_task) xTaskNotifyGive(g_task);
 }
 
+extern "C" void genesis_save_suspend_background(void) {
+  g_background_enabled = false;
+  g_flag_check = false;
+  g_flag_flush = false;
+}
+
+extern "C" void genesis_save_resume_background(void) {
+  g_background_enabled = true;
+}
+
 extern "C" void genesis_save_request_flush(void) {
   g_flag_flush = true;
   if (g_task) xTaskNotifyGive(g_task);
@@ -255,6 +278,23 @@ extern "C" void genesis_save_request_flush(void) {
 
 extern "C" void genesis_save_force_flush(void) {
   save_now();
+}
+
+extern "C" void genesis_save_shutdown(void) {
+  if (g_task) {
+    vTaskDelete(g_task);
+    g_task = nullptr;
+  }
+
+  g_flag_check = false;
+  g_flag_flush = false;
+  g_sram_dirty = false;
+  g_background_enabled = false;
+
+  if (g_save_path) {
+    free(g_save_path);
+    g_save_path = nullptr;
+  }
 }
 
 extern "C" void genesis_save_mark_dirty_c(void) {

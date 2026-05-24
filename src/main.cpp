@@ -837,6 +837,8 @@ extern "C" void app_main(void) {
       // --- Megadrive / Genesis ---
       run_genesis(get_rom_ptr(), get_rom_size(), romName.c_str());
       launched = true;
+      BOOT_LOG("EMU", "MD returned, restarting");
+      esp_restart();
   }
 #endif
 #ifdef WS_CORE_ENABLED

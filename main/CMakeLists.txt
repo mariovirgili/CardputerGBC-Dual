@@ -74,7 +74,7 @@ set(ENABLE_MD_AUDIO_LOGS ON)
 set(ENABLE_MD_RENDER_LOGS ON)
 set(ENABLE_MD_BENCHMARK_LOGS ON)
 # targeted 68k bus access mix probe; requires ENABLE_EMU_LOGS.
-set(ENABLE_MD_BUS_PROBE_LOGS ON)
+set(ENABLE_MD_BUS_PROBE_LOGS OFF)
 
 # FMSX: fMSX detail logs, requires ENABLE_EMU_LOGS.
 set(ENABLE_MSX_LOGS ON)
@@ -123,7 +123,7 @@ set(ENABLE_REMOVE_PRINTF_DEFINE ON)
 set(TURN_OFF_IF_HEAP_LOW ON)
 # Cores listed here close the SD card after ROM/save load and remount it only
 # for explicit save work. Each core still owns its SRAM/runtime constraints.
-set(SD_OFF_DURING_GAMEPLAY_CORES SNES WS)
+set(SD_OFF_DURING_GAMEPLAY_CORES SNES WS MD)
 
 # Race (NGP)
 set(ENABLE_NGP_USE_CZ80 ON)
@@ -357,6 +357,9 @@ if(ENABLE_WS_CORE)
 endif()
 if(ENABLE_SNES_CORE)
     add_sd_off_define(SNES SNES_SD_OFF_DURING_GAMEPLAY=1)
+endif()
+if(ENABLE_MD_CORE)
+    add_sd_off_define(MD MD_SD_OFF_DURING_GAMEPLAY=1)
 endif()
 
 if(ENABLE_NGP_CORE)

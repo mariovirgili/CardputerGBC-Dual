@@ -8,6 +8,9 @@
 #include "genesis_display.h"
 #include "genesis_save.h"
 #include "genesis/gwenesis/bus/gwenesis_bus.h"
+#include "share/input.h"
+#include "share/sd_control.h"
+#include "share/sd_gameplay_guard.h"
 #include "share/utils.h"
 #include "share/emu_log_cpp.h"
 #include "compat/arduino_compat.h"
@@ -292,6 +295,82 @@ static void genesis_alloc_core_buffers(void) {
   gwenesis_vdp_allocate_buffers();
 }
 
+static bool md_has_sram()
+{
+  return SRAM_ENABLED && SRAM && SRAM_SIZE != 0;
+}
+
+static void md_reset_quit_controls()
+{
+  share::setRestartRequestMode(false);
+  share::clearRestartRequest();
+  share::clearBeforeRestartCallback();
+}
+
+static void md_enter_sd_off_gameplay()
+{
+#ifdef MD_SD_OFF_DURING_GAMEPLAY
+  share::clearRestartRequest();
+  share::setRestartRequestMode(true);
+  share::clearBeforeRestartCallback();
+  genesis_save_suspend_background();
+  share_sd_gameplay_close("MD");
+#else
+  share::setBeforeRestartCallback(genesis_save_force_flush);
+#endif
+}
+
+static void md_load_sram_with_sd()
+{
+  if (!md_has_sram()) {
+    genesis_save_load();
+    return;
+  }
+
+  const bool was_mounted = share_sd_is_mounted();
+  if (!was_mounted && !share_sd_gameplay_mount("MD", "load")) {
+    EMU_LOG("[GEN][SAVE] SD remount failed, SRAM load skipped\n");
+    return;
+  }
+
+  genesis_save_load();
+
+#ifdef MD_SD_OFF_DURING_GAMEPLAY
+  if (!was_mounted) {
+    share_sd_gameplay_close_if_mounted("MD", "load");
+  }
+#endif
+}
+
+static void md_clean_teardown_and_save()
+{
+  EMU_LOG("[MD][QUIT] clean teardown start\n");
+  genesis_save_suspend_background();
+
+  genesis_display_stop();
+  genesis_sound_ym_stop();
+  M5Cardputer.Speaker.stop(0);
+  M5Cardputer.Speaker.end();
+
+  if (md_has_sram()) {
+    if (share_sd_gameplay_mount("MD", "save")) {
+      genesis_save_force_flush();
+    } else {
+      EMU_LOG("[GEN][SAVE] SD remount failed, SRAM not saved\n");
+    }
+  } else {
+    EMU_LOG("[MD][SD] no SRAM, skip SD remount/save\n");
+  }
+
+#ifdef MD_SD_OFF_DURING_GAMEPLAY
+  share_sd_gameplay_close_if_mounted("MD", "save");
+#endif
+
+  genesis_save_shutdown();
+  md_reset_quit_controls();
+  EMU_LOG("[MD][QUIT] clean teardown done\n");
+}
+
 /* RUN ONE FRAME with VDP, M68K, Z80, Sound, etc. */
 static void run_one_frame() {
   const uint64_t t_start = micros();
@@ -536,7 +615,8 @@ extern "C" void run_genesis(const uint8_t* rom, size_t len, const char* rom_name
           (unsigned long)SRAM_START,
           (unsigned long)SRAM_END);
   genesis_save_init(rom_name);
-  genesis_save_load();
+  md_load_sram_with_sd();
+  md_enter_sd_off_gameplay();
 
   // header ASCII "SEGA"0x100
   EMU_LOG("[ROM] ptr=%p size=%u\n", rom, (unsigned)len);
@@ -570,6 +650,9 @@ extern "C" void run_genesis(const uint8_t* rom, size_t len, const char* rom_name
 
     // Emulate one frame
     run_one_frame();
+    if (share::restartRequested()) {
+      break;
+    }
     genesis_save_tick();
 
     // Pacing to maintain target FPS
@@ -587,4 +670,6 @@ extern "C" void run_genesis(const uint8_t* rom, size_t len, const char* rom_name
       taskYIELD();
     }
   }
+
+  md_clean_teardown_and_save();
 }
