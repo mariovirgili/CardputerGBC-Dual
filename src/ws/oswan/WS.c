@@ -90,6 +90,9 @@ static int TblSkip[5][5] = {
 };
 static void WsRefreshSpriteTable(void);
 static void WsApplyLoadedStatePointers(void);
+static void WriteRom(DWORD A, BYTE V);
+static void WriteIRam(DWORD A, BYTE V);
+static void WriteCRam(DWORD A, BYTE V);
 #define BCD(value) ((((value) / 10) << 4) | ((value) % 10))
 #ifdef WS_BENCHMARK_LOGS
 static WsCoreStats s_coreStats;
@@ -770,7 +773,27 @@ WS_CORE_CODE BYTE ReadMem(DWORD A)
 
 WS_CORE_CODE void WriteMem(DWORD A, BYTE V)
 {
-    (*WriteMemFnTable[(A >> 16) & 0x0F])(A, V);
+    const DWORD page = (A >> 16) & 0x0F;
+    if(__builtin_expect(page == 0, 1))
+    {
+        WriteIRam(A, V);
+    }
+    else if(page == 1)
+    {
+        if(__builtin_expect(!WsSramBackingFastActive && RAMEnable && RAMBanks == 1 &&
+                            RAMSize > 0 && RAMSize <= MAX_SRAM_PAGE_ALLOCATED &&
+                            RAMMap && RAMMap[0] && RAMMap[0] != MemDummy &&
+                            Page[1] == RAMMap[0], 1))
+        {
+            const DWORD offset = A & 0xFFFF;
+            if(__builtin_expect(offset < (DWORD)RAMSize, 1))
+            {
+                Page[1][offset] = V;
+                return;
+            }
+        }
+        WriteCRam(A, V);
+    }
 }
 
 static void WriteRom(DWORD A, BYTE V)
@@ -1275,25 +1298,6 @@ BYTE ReadIO(DWORD A)
     }
     return IO[A];
 }
-
-WriteMemFn WriteMemFnTable[16]= {
-    WriteIRam,
-    WriteCRam,
-    WriteRom,
-    WriteRom,
-    WriteRom,
-    WriteRom,
-    WriteRom,
-    WriteRom,
-    WriteRom,
-    WriteRom,
-    WriteRom,
-    WriteRom,
-    WriteRom,
-    WriteRom,
-    WriteRom,
-    WriteRom,
-};
 
 void WsReset (void)
 {

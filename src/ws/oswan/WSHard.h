@@ -15,8 +15,6 @@ typedef unsigned char BYTE;
 typedef unsigned short WORD;
 typedef unsigned long DWORD;
 
-typedef void  (*WriteMemFn) (DWORD A, BYTE V);
-extern WriteMemFn WriteMemFnTable[0x10];
 BYTE  ReadMem(DWORD A);
 void  WriteMem(DWORD A, BYTE V);
 void  WriteIO(DWORD A, BYTE V);

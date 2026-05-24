@@ -79,6 +79,7 @@ typedef enum { AL,AH,CL,CH,DL,DH,BL,BH,SPL,SPH,BPL,BPH,IXL,IXH,IYL,IYH } BREGS;
 extern BYTE *Page[0x10];
 extern BYTE *MemDummy;
 extern unsigned long WaveMap;
+extern int WsSramBackingFastActive;
 
 #if defined(__GNUC__)
 #define NEC_ALWAYS_INLINE static inline __attribute__((always_inline))
@@ -91,6 +92,11 @@ NEC_ALWAYS_INLINE BYTE NecFastRead8(UINT32 A)
 	const UINT32 page = (A >> 16) & 0x0f;
 	if(page == 1)
 	{
+		BYTE* p = Page[1];
+		if(__builtin_expect(!WsSramBackingFastActive && p && p != MemDummy, 1))
+		{
+			return p[A & 0xffff];
+		}
 		return cpu_readmem20(A);
 	}
 	return Page[page][A & 0xffff];
@@ -100,6 +106,14 @@ NEC_ALWAYS_INLINE UINT32 NecFastRead16(UINT32 A)
 {
 	const UINT32 off = A & 0xffff;
 	const UINT32 page = (A >> 16) & 0x0f;
+	if(page == 1 && off != 0xffff)
+	{
+		BYTE* p = Page[1];
+		if(__builtin_expect(!WsSramBackingFastActive && p && p != MemDummy, 1))
+		{
+			return (UINT32)p[off] | ((UINT32)p[off + 1] << 8);
+		}
+	}
 	if(page != 1 && off != 0xffff)
 	{
 		const BYTE* p = Page[page] + off;

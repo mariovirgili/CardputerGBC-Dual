@@ -158,7 +158,12 @@ static bool flush_now(){
 
   uint32_t crc = share::gameSaveCrc32Update(0, g_sram, g_sram_len);
   if (!g_save_dirty && crc == g_crc_last) return true;
-  if (!g_sram_backed && share::gameSaveIsTrivialSram(g_sram, g_sram_len)) return false;
+  if (!g_sram_backed && share::gameSaveIsTrivialSram(g_sram, g_sram_len)) {
+    g_crc_last = crc;
+    g_save_dirty = false;
+    WS_LOG("[WS][SAVE] SRAM is blank, save skipped\n");
+    return true;
+  }
 
   FILE* f = fopen(g_save_path, "r+b");
   if (!f) f = fopen(g_save_path, "w+b");
