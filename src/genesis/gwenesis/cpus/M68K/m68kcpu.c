@@ -47,6 +47,9 @@ m68ki_cpu_core m68k;
 #ifndef MD_OPCODE_HISTOGRAM
 #define MD_OPCODE_HISTOGRAM 0
 #endif
+#ifndef MD_OPCODE_PROFILING
+#define MD_OPCODE_PROFILING 0
+#endif
 
 #ifndef MD_TOPBYTE_COMPRESSED_DISPATCH
 #define MD_TOPBYTE_COMPRESSED_DISPATCH 0
@@ -55,46 +58,120 @@ m68ki_cpu_core m68k;
 #define MD_HYBRID_TOPBYTE_DISPATCH 0
 #endif
 
-#if MD_OPCODE_HISTOGRAM
-static uint64_t s_m68k_opcode_total;
-static uint32_t s_m68k_opcode_top_nibble[16];
-static uint32_t s_m68k_opcode_top_byte[256];
+#if MD_OPCODE_PROFILING
+#define M68K_OPCODE_PROFILE_SLOTS 2048u
+#define M68K_OPCODE_PROFILE_SAMPLE_SHIFT_VALUE 4u
+typedef struct m68k_opcode_profile_slot
+{
+  uint16_t opcode;
+  uint16_t used;
+  uint32_t count;
+} m68k_opcode_profile_slot;
 
-static inline void m68k_opcode_hist_record(uint16_t opcode)
+static uint64_t s_m68k_opcode_total;
+static uint64_t s_m68k_opcode_sampled_total;
+static uint32_t s_m68k_opcode_overflow_events;
+static m68k_opcode_profile_slot s_m68k_opcode_slots[M68K_OPCODE_PROFILE_SLOTS];
+
+static inline uint32_t m68k_opcode_profile_hash(uint16_t opcode)
+{
+  return ((uint32_t)opcode * 40503u) & (M68K_OPCODE_PROFILE_SLOTS - 1u);
+}
+
+static inline void m68k_opcode_profile_insert_top(m68k_opcode_profile_entry* top,
+                                                  uint16_t opcode,
+                                                  uint32_t count)
+{
+  if (!count) return;
+  int insert = -1;
+  for (int i = 0; i < M68K_OPCODE_PROFILE_TOP_COUNT; ++i)
+  {
+    if (count > top[i].count)
+    {
+      insert = i;
+      break;
+    }
+  }
+  if (insert < 0) return;
+  for (int i = M68K_OPCODE_PROFILE_TOP_COUNT - 1; i > insert; --i)
+  {
+    top[i] = top[i - 1];
+  }
+  top[insert].opcode = opcode;
+  top[insert].reserved = 0;
+  top[insert].count = count;
+}
+
+static inline void m68k_opcode_profile_record(uint16_t opcode)
 {
   ++s_m68k_opcode_total;
-  ++s_m68k_opcode_top_nibble[(opcode >> 12) & 0x0f];
-  ++s_m68k_opcode_top_byte[(opcode >> 8) & 0xff];
+  if ((s_m68k_opcode_total & ((1ULL << M68K_OPCODE_PROFILE_SAMPLE_SHIFT_VALUE) - 1ULL)) != 0ULL)
+  {
+    return;
+  }
+
+  ++s_m68k_opcode_sampled_total;
+  const uint32_t base = m68k_opcode_profile_hash(opcode);
+  for (uint32_t probe = 0; probe < M68K_OPCODE_PROFILE_SLOTS; ++probe)
+  {
+    m68k_opcode_profile_slot* slot = &s_m68k_opcode_slots[(base + probe) & (M68K_OPCODE_PROFILE_SLOTS - 1u)];
+    if (!slot->used)
+    {
+      slot->used = 1;
+      slot->opcode = opcode;
+      slot->count = 1;
+      return;
+    }
+    if (slot->opcode == opcode)
+    {
+      ++slot->count;
+      return;
+    }
+  }
+
+  ++s_m68k_opcode_overflow_events;
 }
 #else
-static inline void m68k_opcode_hist_record(uint16_t opcode)
+static inline void m68k_opcode_profile_record(uint16_t opcode)
 {
   (void)opcode;
 }
 #endif
 
-void m68k_opcode_hist_reset(void)
+void m68k_opcode_profile_reset(void)
 {
-#if MD_OPCODE_HISTOGRAM
+#if MD_OPCODE_PROFILING
   s_m68k_opcode_total = 0;
-  memset(s_m68k_opcode_top_nibble, 0, sizeof(s_m68k_opcode_top_nibble));
-  memset(s_m68k_opcode_top_byte, 0, sizeof(s_m68k_opcode_top_byte));
+  s_m68k_opcode_sampled_total = 0;
+  s_m68k_opcode_overflow_events = 0;
+  memset(s_m68k_opcode_slots, 0, sizeof(s_m68k_opcode_slots));
 #endif
 }
 
-int m68k_opcode_hist_get_snapshot(m68k_opcode_hist_snapshot *out, int reset)
+int m68k_opcode_profile_get_snapshot(m68k_opcode_profile_snapshot *out, int reset)
 {
-#if MD_OPCODE_HISTOGRAM
+#if MD_OPCODE_PROFILING
   const int has_data = (s_m68k_opcode_total != 0);
   if (out)
   {
+    memset(out, 0, sizeof(*out));
     out->total = s_m68k_opcode_total;
-    memcpy(out->top_nibble, s_m68k_opcode_top_nibble, sizeof(out->top_nibble));
-    memcpy(out->top_byte, s_m68k_opcode_top_byte, sizeof(out->top_byte));
+    out->sampled_total = s_m68k_opcode_sampled_total;
+    out->overflow_events = s_m68k_opcode_overflow_events;
+    out->sample_shift = M68K_OPCODE_PROFILE_SAMPLE_SHIFT_VALUE;
+    for (uint32_t i = 0; i < M68K_OPCODE_PROFILE_SLOTS; ++i)
+    {
+      const m68k_opcode_profile_slot* slot = &s_m68k_opcode_slots[i];
+      if (!slot->used || slot->count == 0) continue;
+      ++out->tracked_opcodes;
+      out->top_nibble[(slot->opcode >> 12) & 0x0f] += slot->count;
+      out->top_byte[(slot->opcode >> 8) & 0xff] += slot->count;
+      m68k_opcode_profile_insert_top(out->top_exact, slot->opcode, slot->count);
+    }
   }
   if (reset)
   {
-    m68k_opcode_hist_reset();
+    m68k_opcode_profile_reset();
   }
   return has_data;
 #else
@@ -310,7 +387,7 @@ void m68k_set_irq_delay(unsigned int int_level)
       m68ki_trace_t1() /* auto-disable (see m68kcpu.h) */
       m68ki_use_data_space() /* auto-disable (see m68kcpu.h) */
       REG_IR = m68ki_read_imm_16();
-      m68k_opcode_hist_record((uint16_t)REG_IR);
+      m68k_opcode_profile_record((uint16_t)REG_IR);
 #if MD_HYBRID_TOPBYTE_DISPATCH && !defined(TABLES_FULL)
       m68ki_dispatch_hybrid_topbyte_dispatch((uint16_t)REG_IR);
 #elif MD_TOPBYTE_COMPRESSED_DISPATCH && !defined(TABLES_FULL)
@@ -380,7 +457,7 @@ void IRAM_ATTR m68k_run(unsigned int cycles)
 
     /* Decode next instruction */
     REG_IR = m68ki_read_imm_16();
-    m68k_opcode_hist_record((uint16_t)REG_IR);
+    m68k_opcode_profile_record((uint16_t)REG_IR);
 
 //    printf("PC=%x IR=%x CYCLES=%d \n",m68k.pc,REG_IR,CYC_INSTRUCTION(REG_IR));
 

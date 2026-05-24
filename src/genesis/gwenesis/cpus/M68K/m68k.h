@@ -536,15 +536,29 @@ extern void m68k_pulse_reset(void);
 /* Run until given cycle count is reached */
 extern void m68k_run(unsigned int cycles);
 
-typedef struct m68k_opcode_hist_snapshot
+#define M68K_OPCODE_PROFILE_TOP_COUNT 16
+
+typedef struct m68k_opcode_profile_entry
+{
+	uint16_t opcode;
+	uint16_t reserved;
+	uint32_t count;
+} m68k_opcode_profile_entry;
+
+typedef struct m68k_opcode_profile_snapshot
 {
 	uint64_t total;
+	uint64_t sampled_total;
+	uint32_t tracked_opcodes;
+	uint32_t overflow_events;
+	uint32_t sample_shift;
 	uint32_t top_nibble[16];
 	uint32_t top_byte[256];
-} m68k_opcode_hist_snapshot;
+	m68k_opcode_profile_entry top_exact[M68K_OPCODE_PROFILE_TOP_COUNT];
+} m68k_opcode_profile_snapshot;
 
-extern void m68k_opcode_hist_reset(void);
-extern int m68k_opcode_hist_get_snapshot(m68k_opcode_hist_snapshot *out, int reset);
+extern void m68k_opcode_profile_reset(void);
+extern int m68k_opcode_profile_get_snapshot(m68k_opcode_profile_snapshot *out, int reset);
 
 /* Get current instruction execution time */
 extern int m68k_cycles(void);
