@@ -142,11 +142,47 @@ static inline bool hasRomExt(const std::string& path) {
     for (auto &ch : ext)
         ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
 
-    return (ext == "nes" || ext == "gg" || ext == "sms" || ext == "sg" || ext == "sc" || ext == "col" || ext == "ngc" || ext == "ngp" || ext == "md" || ext == "ws" || ext == "wsc" || ext == "pce" || ext == "gb" || ext == "gbc" || ext == "lnx"
-#ifdef SNES_CORE_ENABLED
-            || ext == "sfc" || ext == "smc"
+    return (
+#ifdef NES_CORE_ENABLED
+            ext == "nes" ||
 #endif
-            || ext == "rom" || ext == "mx1" || ext == "a78" || ext == "a26" || ext == "cpr");
+#ifdef SMS_CORE_ENABLED
+            ext == "gg" || ext == "sms" || ext == "sg" || ext == "sc" || ext == "col" ||
+#endif
+#ifdef NGP_CORE_ENABLED
+            ext == "ngc" || ext == "ngp" ||
+#endif
+#ifdef MD_CORE_ENABLED
+            ext == "md" ||
+#endif
+#ifdef WS_CORE_ENABLED
+            ext == "ws" || ext == "wsc" ||
+#endif
+#ifdef PCE_CORE_ENABLED
+            ext == "pce" ||
+#endif
+#ifdef GB_CORE_ENABLED
+            ext == "gb" || ext == "gbc" ||
+#endif
+#ifdef LYNX_CORE_ENABLED
+            ext == "lnx" ||
+#endif
+#ifdef SNES_CORE_ENABLED
+            ext == "sfc" || ext == "smc" ||
+#endif
+#ifdef MSX_CORE_ENABLED
+            ext == "rom" || ext == "mx1" ||
+#endif
+#ifdef A7800_CORE_ENABLED
+            ext == "a78" ||
+#endif
+#ifdef A2600_CORE_ENABLED
+            ext == "a26" ||
+#endif
+#ifdef GX4000_CORE_ENABLED
+            ext == "cpr" ||
+#endif
+            false);
 }
 
 static inline int detectNeoGeoPocketFromRom(const uint8_t* rom, size_t size, const std::string& filepath)
@@ -193,38 +229,98 @@ RomType getRomType(const std::string& path) {
     for (auto& c : ext)
         c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
 
+#ifdef NES_CORE_ENABLED
     if (ext == "nes") return ROM_TYPE_NES;
+#endif
+#ifdef SMS_CORE_ENABLED
     if (ext == "sms") return ROM_TYPE_SMS;
     if (ext == "gg")  return ROM_TYPE_GAMEGEAR;
     if (ext == "sg" || ext == "sc") return ROM_TYPE_SG1000;
     if (ext == "col") return ROM_TYPE_COLECO;
+#endif
+#ifdef NGP_CORE_ENABLED
     if (ext == "ngc") return ROM_TYPE_NGP;
     if (ext == "ngp") return ROM_TYPE_NGP;
+#endif
+#ifdef MD_CORE_ENABLED
     if (ext == "md")  return ROM_TYPE_GENESIS;
+#endif
+#ifdef WS_CORE_ENABLED
     if (ext == "ws" )  return ROM_TYPE_WS;
     if (ext == "wsc")  return ROM_TYPE_WS;
+#endif
+#ifdef PCE_CORE_ENABLED
     if (ext == "pce")  return ROM_TYPE_PCE;
+#endif
+#ifdef GB_CORE_ENABLED
     if (ext == "gb" || ext == "gbc") return ROM_TYPE_GB;
+#endif
+#ifdef LYNX_CORE_ENABLED
     if (ext == "lnx") return ROM_TYPE_LYNX;
+#endif
 #ifdef SNES_CORE_ENABLED
     if (ext == "sfc") return ROM_TYPE_SNES;
     if (ext == "smc") return ROM_TYPE_SNES;
 #endif
+#ifdef MSX_CORE_ENABLED
     if (ext == "rom" || ext == "mx1") return ROM_TYPE_MSX;
+#endif
+#ifdef A7800_CORE_ENABLED
     if (ext == "a78") return ROM_TYPE_ATARI7800;
+#endif
+#ifdef A2600_CORE_ENABLED
     if (ext == "a26") return ROM_TYPE_ATARI2600;
+#endif
+#ifdef GX4000_CORE_ENABLED
     if (ext == "cpr") return ROM_TYPE_GX4000;
+#endif
 
     return ROM_TYPE_UNKNOWN;
 }
 
 static inline std::string getRomPath(SdService& sdService, CardputerView& display, CardputerInput& input, const std::string& initialFolder = "/", bool skipWelcome = false) {
     VerticalSelector verticalSelector(display, input);
-    std::vector<std::string> supportedExts = {".nes", ".gb", ".gbc",
+    std::vector<std::string> supportedExts = {
+#ifdef NES_CORE_ENABLED
+        ".nes",
+#endif
+#ifdef GB_CORE_ENABLED
+        ".gb", ".gbc",
+#endif
 #ifdef SNES_CORE_ENABLED
         ".sfc", ".smc",
 #endif
-        ".sms", ".gg", ".sg", ".md", ".col", ".ngp", ".ngc", ".ws", ".wsc", ".pce", ".lnx", ".mx1", ".a26", ".a78", ".cpr"};
+#ifdef SMS_CORE_ENABLED
+        ".sms", ".gg", ".sg", ".sc", ".col",
+#endif
+#ifdef MD_CORE_ENABLED
+        ".md",
+#endif
+#ifdef NGP_CORE_ENABLED
+        ".ngp", ".ngc",
+#endif
+#ifdef WS_CORE_ENABLED
+        ".ws", ".wsc",
+#endif
+#ifdef PCE_CORE_ENABLED
+        ".pce",
+#endif
+#ifdef LYNX_CORE_ENABLED
+        ".lnx",
+#endif
+#ifdef MSX_CORE_ENABLED
+        ".rom", ".mx1",
+#endif
+#ifdef A2600_CORE_ENABLED
+        ".a26",
+#endif
+#ifdef A7800_CORE_ENABLED
+        ".a78",
+#endif
+#ifdef GX4000_CORE_ENABLED
+        ".cpr",
+#endif
+    };
 
     display.initialize();
 

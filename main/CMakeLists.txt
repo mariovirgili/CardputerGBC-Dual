@@ -4,6 +4,18 @@ set(LIB_ROOT "${APP_ROOT}/lib")
 
 # Core inclusion switches. Disabled cores keep their source code in the tree,
 # but are not compiled, advertised, or launchable.
+set(ENABLE_NES_CORE ON)
+set(ENABLE_SMS_CORE ON)
+set(ENABLE_NGP_CORE ON)
+set(ENABLE_MD_CORE ON)
+set(ENABLE_WS_CORE ON)
+set(ENABLE_PCE_CORE ON)
+set(ENABLE_GB_CORE ON)
+set(ENABLE_LYNX_CORE ON)
+set(ENABLE_MSX_CORE ON)
+set(ENABLE_A7800_CORE ON)
+set(ENABLE_A2600_CORE ON)
+set(ENABLE_GX4000_CORE ON)
 set(ENABLE_SNES_CORE OFF)
 
 file(GLOB_RECURSE APP_SRCS
@@ -16,8 +28,28 @@ file(GLOB_RECURSE APP_SRCS
 list(FILTER APP_SRCS EXCLUDE REGEX ".*/examples/.*")
 list(FILTER APP_SRCS EXCLUDE REGEX ".*/tests/.*")
 list(FILTER APP_SRCS EXCLUDE REGEX ".*/docs/.*")
-if(NOT ENABLE_SNES_CORE)
-    list(FILTER APP_SRCS EXCLUDE REGEX ".*/src/snes/.*")
+
+macro(exclude_core_sources_if_disabled enable_var core_dir)
+    if(NOT ${enable_var})
+        list(FILTER APP_SRCS EXCLUDE REGEX ".*/src/${core_dir}/.*")
+    endif()
+endmacro()
+
+exclude_core_sources_if_disabled(ENABLE_NES_CORE nes)
+exclude_core_sources_if_disabled(ENABLE_SMS_CORE sms)
+exclude_core_sources_if_disabled(ENABLE_NGP_CORE ngp)
+exclude_core_sources_if_disabled(ENABLE_MD_CORE genesis)
+exclude_core_sources_if_disabled(ENABLE_WS_CORE ws)
+exclude_core_sources_if_disabled(ENABLE_PCE_CORE pce)
+exclude_core_sources_if_disabled(ENABLE_GB_CORE gbc)
+exclude_core_sources_if_disabled(ENABLE_LYNX_CORE lynx)
+exclude_core_sources_if_disabled(ENABLE_MSX_CORE msx)
+exclude_core_sources_if_disabled(ENABLE_A7800_CORE atari7800)
+exclude_core_sources_if_disabled(ENABLE_A2600_CORE atari2600)
+exclude_core_sources_if_disabled(ENABLE_GX4000_CORE gx4000)
+exclude_core_sources_if_disabled(ENABLE_SNES_CORE snes)
+if(NOT ENABLE_NES_CORE)
+    list(FILTER APP_SRCS EXCLUDE REGEX ".*/lib/arduino-nofrendo/.*")
 endif()
 
 # Local logging switches. Keep these here, not in platformio.ini, so toggling
@@ -242,8 +274,28 @@ foreach(header ${APP_HEADERS})
 endforeach()
 list(REMOVE_DUPLICATES APP_INCLUDE_DIRS)
 list(FILTER APP_INCLUDE_DIRS EXCLUDE REGEX ".*/compat/msvc$")
-if(NOT ENABLE_SNES_CORE)
-    list(FILTER APP_INCLUDE_DIRS EXCLUDE REGEX ".*/src/snes($|/.*)")
+
+macro(exclude_core_includes_if_disabled enable_var core_dir)
+    if(NOT ${enable_var})
+        list(FILTER APP_INCLUDE_DIRS EXCLUDE REGEX ".*/src/${core_dir}($|/.*)")
+    endif()
+endmacro()
+
+exclude_core_includes_if_disabled(ENABLE_NES_CORE nes)
+exclude_core_includes_if_disabled(ENABLE_SMS_CORE sms)
+exclude_core_includes_if_disabled(ENABLE_NGP_CORE ngp)
+exclude_core_includes_if_disabled(ENABLE_MD_CORE genesis)
+exclude_core_includes_if_disabled(ENABLE_WS_CORE ws)
+exclude_core_includes_if_disabled(ENABLE_PCE_CORE pce)
+exclude_core_includes_if_disabled(ENABLE_GB_CORE gbc)
+exclude_core_includes_if_disabled(ENABLE_LYNX_CORE lynx)
+exclude_core_includes_if_disabled(ENABLE_MSX_CORE msx)
+exclude_core_includes_if_disabled(ENABLE_A7800_CORE atari7800)
+exclude_core_includes_if_disabled(ENABLE_A2600_CORE atari2600)
+exclude_core_includes_if_disabled(ENABLE_GX4000_CORE gx4000)
+exclude_core_includes_if_disabled(ENABLE_SNES_CORE snes)
+if(NOT ENABLE_NES_CORE)
+    list(FILTER APP_INCLUDE_DIRS EXCLUDE REGEX ".*/lib/arduino-nofrendo($|/.*)")
 endif()
 
 idf_component_register(
@@ -276,6 +328,18 @@ function(add_private_define_if enable_var definition)
     endif()
 endfunction()
 
+add_private_define_if(ENABLE_NES_CORE NES_CORE_ENABLED=1)
+add_private_define_if(ENABLE_SMS_CORE SMS_CORE_ENABLED=1)
+add_private_define_if(ENABLE_NGP_CORE NGP_CORE_ENABLED=1)
+add_private_define_if(ENABLE_MD_CORE MD_CORE_ENABLED=1)
+add_private_define_if(ENABLE_WS_CORE WS_CORE_ENABLED=1)
+add_private_define_if(ENABLE_PCE_CORE PCE_CORE_ENABLED=1)
+add_private_define_if(ENABLE_GB_CORE GB_CORE_ENABLED=1)
+add_private_define_if(ENABLE_LYNX_CORE LYNX_CORE_ENABLED=1)
+add_private_define_if(ENABLE_MSX_CORE MSX_CORE_ENABLED=1)
+add_private_define_if(ENABLE_A7800_CORE A7800_CORE_ENABLED=1)
+add_private_define_if(ENABLE_A2600_CORE A2600_CORE_ENABLED=1)
+add_private_define_if(ENABLE_GX4000_CORE GX4000_CORE_ENABLED=1)
 add_private_define_if(ENABLE_SNES_CORE SNES_CORE_ENABLED=1)
 
 function(add_sd_off_define core_name definition)
@@ -285,44 +349,52 @@ function(add_sd_off_define core_name definition)
     endif()
 endfunction()
 
-add_sd_off_define(WS WS_SD_OFF_DURING_GAMEPLAY=1)
+if(ENABLE_WS_CORE)
+    add_sd_off_define(WS WS_SD_OFF_DURING_GAMEPLAY=1)
+endif()
 if(ENABLE_SNES_CORE)
     add_sd_off_define(SNES SNES_SD_OFF_DURING_GAMEPLAY=1)
 endif()
 
-# Race (NGP)
-add_private_define_if(ENABLE_NGP_USE_CZ80 USE_CZ80=1)
-add_private_define_if(ENABLE_NGP_CZ80 CZ80=1)
-add_private_define_if(ENABLE_NGP_USE_SDL USE_SDL=1)
-add_private_define_if(ENABLE_NGP_DISABLE_WATCHDOGS DISABLE_WATCHDOGS)
-# Race (NGP): Use a separate thread for color mapping to improve performance.
-add_private_define_if(ENABLE_NGP_THREADED_COLORMAPPING NGP_USE_THREADED_COLORMAPPING)
-# Race (NGP): Disables rendering of lines that are not visible due to scaling.
-add_private_define_if(ENABLE_NGP_ONLY_RENDER_VISIBLE_LINES NGP_ONLY_RENDER_VISIBLE_LINES)
-# Race (NGP): 16-bit reads with alignment check for native bus transactions.
-add_private_define_if(ENABLE_NGP_OPTIMIZATION_16BIT_READ NGP_OPTIMIZATION_16BIT_READ)
-
-# GWENESIS
-add_private_define_if(ENABLE_GNW_TARGET_MARIO_DEFINE GNW_TARGET_MARIO=0)
-add_private_define_if(ENABLE_GNW_TARGET_ZELDA_DEFINE GNW_TARGET_ZELDA=0)
-
-# Oswan
-if(NOT WS_TURN_OFF_IF_HEAP_LOW)
-    set(ENABLE_WS_TILE_ROW_CACHE OFF)
-    set(ENABLE_WS_RENDER_INLINE_FASTPATHS OFF)
-    set(ENABLE_WS_RENDER_TILE_SPLIT OFF)
+if(ENABLE_NGP_CORE)
+    # Race (NGP)
+    add_private_define_if(ENABLE_NGP_USE_CZ80 USE_CZ80=1)
+    add_private_define_if(ENABLE_NGP_CZ80 CZ80=1)
+    add_private_define_if(ENABLE_NGP_USE_SDL USE_SDL=1)
+    add_private_define_if(ENABLE_NGP_DISABLE_WATCHDOGS DISABLE_WATCHDOGS)
+    # Race (NGP): Use a separate thread for color mapping to improve performance.
+    add_private_define_if(ENABLE_NGP_THREADED_COLORMAPPING NGP_USE_THREADED_COLORMAPPING)
+    # Race (NGP): Disables rendering of lines that are not visible due to scaling.
+    add_private_define_if(ENABLE_NGP_ONLY_RENDER_VISIBLE_LINES NGP_ONLY_RENDER_VISIBLE_LINES)
+    # Race (NGP): 16-bit reads with alignment check for native bus transactions.
+    add_private_define_if(ENABLE_NGP_OPTIMIZATION_16BIT_READ NGP_OPTIMIZATION_16BIT_READ)
 endif()
 
-add_private_define_if(ENABLE_WS_SAVE WS_SAVE_ENABLED=1)
-add_private_define_if(ENABLE_WS_NO_SPLASH_SCREEN WS_NO_SPLASH_SCREEN=1)
-add_private_define_if(ENABLE_WS_PPU_IRAM WS_PPU_IRAM=1)
-# Oswan: guarded NEC polling wait-loop fast paths.
-add_private_define_if(ENABLE_WS_CPU_SAFE_POLL_WAIT_FASTPATH WS_CPU_SAFE_POLL_WAIT_FASTPATH=1)
-# Oswan: test only; keep 8 ms blocks, refill/check speaker queue twice as often.
-add_private_define_if(ENABLE_WS_AUDIO_POLL_MS WS_AUDIO_POLL_MS=4)
-add_private_define_if(ENABLE_WS_DIRECT_I2S_AUDIO WS_DIRECT_I2S_AUDIO=1)
-add_private_define_if(ENABLE_WS_RENDER_INLINE_FASTPATHS WS_RENDER_INLINE_FASTPATHS=1)
-add_private_define_if(ENABLE_WS_RENDER_TILE_SPLIT WS_RENDER_TILE_SPLIT=1)
+if(ENABLE_MD_CORE)
+    # GWENESIS
+    add_private_define_if(ENABLE_GNW_TARGET_MARIO_DEFINE GNW_TARGET_MARIO=0)
+    add_private_define_if(ENABLE_GNW_TARGET_ZELDA_DEFINE GNW_TARGET_ZELDA=0)
+endif()
+
+if(ENABLE_WS_CORE)
+    # Oswan
+    if(NOT WS_TURN_OFF_IF_HEAP_LOW)
+        set(ENABLE_WS_TILE_ROW_CACHE OFF)
+        set(ENABLE_WS_RENDER_INLINE_FASTPATHS OFF)
+        set(ENABLE_WS_RENDER_TILE_SPLIT OFF)
+    endif()
+
+    add_private_define_if(ENABLE_WS_SAVE WS_SAVE_ENABLED=1)
+    add_private_define_if(ENABLE_WS_NO_SPLASH_SCREEN WS_NO_SPLASH_SCREEN=1)
+    add_private_define_if(ENABLE_WS_PPU_IRAM WS_PPU_IRAM=1)
+    # Oswan: guarded NEC polling wait-loop fast paths.
+    add_private_define_if(ENABLE_WS_CPU_SAFE_POLL_WAIT_FASTPATH WS_CPU_SAFE_POLL_WAIT_FASTPATH=1)
+    # Oswan: test only; keep 8 ms blocks, refill/check speaker queue twice as often.
+    add_private_define_if(ENABLE_WS_AUDIO_POLL_MS WS_AUDIO_POLL_MS=4)
+    add_private_define_if(ENABLE_WS_DIRECT_I2S_AUDIO WS_DIRECT_I2S_AUDIO=1)
+    add_private_define_if(ENABLE_WS_RENDER_INLINE_FASTPATHS WS_RENDER_INLINE_FASTPATHS=1)
+    add_private_define_if(ENABLE_WS_RENDER_TILE_SPLIT WS_RENDER_TILE_SPLIT=1)
+endif()
 
 if(ENABLE_SNES_CORE)
     # SNES
@@ -351,83 +423,93 @@ add_private_define_if(ENABLE_CORE_DEBUG_LEVEL_DEFINE CORE_DEBUG_LEVEL=0)
 add_private_define_if(ENABLE_LOG_LOCAL_LEVEL_DEFINE LOG_LOCAL_LEVEL=ESP_LOG_WARN)
 add_private_define_if(ENABLE_REMOVE_PRINTF_DEFINE REMOVE_PRINTF)
 
-# Stella (Atari 2600)
-add_private_define_if(ENABLE_A2600_SOUND_SUPPORT SOUND_SUPPORT=1)
-add_private_define_if(ENABLE_A2600_JUMP_TABLES_IN_TEXT_SECTION JUMP_TABLES_IN_TEXT_SECTION=1)
-
-# ProSystem (Atari 7800): Drop built-in 7800 MD5 database (~5 KB flash);
-# headered ROMs still work.
-add_private_define_if(ENABLE_A7800_NO_DATABASE A7800_NO_DATABASE)
-
-# fMSX
-add_private_define_if(ENABLE_FMSX_LSB_FIRST LSB_FIRST)
-add_private_define_if(ENABLE_FMSX_BPP8 BPP8)
-add_private_define_if(ENABLE_FMSX_BPS16 BPS16)
-# fMSX: Disable MIDI logging tables (~12KB flash).
-add_private_define_if(ENABLE_FMSX_NO_MIDI NO_MIDI)
-# fMSX: Disable floppy/disk subsystem (ROM-only).
-add_private_define_if(ENABLE_FMSX_NO_FLOPPY NO_FLOPPY)
-# fMSX: Disable SHA1 ROM fingerprinting (no CARTS.SHA on SD).
-add_private_define_if(ENABLE_FMSX_NO_SHA1 NO_SHA1)
-# fMSX: Disable MCF cheat-file support.
-add_private_define_if(ENABLE_FMSX_NO_MCF NO_MCF)
-# fMSX: Disable RS232 i8251 runtime support.
-add_private_define_if(ENABLE_FMSX_NO_I8251 NO_I8251)
-
-# GX4000
-# GX4000: ESP32 is little-endian.
-add_private_define_if(ENABLE_GX4000_CPC_LSB_FIRST CPC_LSB_FIRST)
-# GX4000: Use pScreenLine-based address calc (no multiply per NOP).
-add_private_define_if(ENABLE_GX4000_LESS_MULTS LESS_MULTS)
-# GX4000: Strip out debugger UI code.
-add_private_define_if(ENABLE_GX4000_CPC_NODEBUGGER CPC_NODEBUGGER)
-# GX4000: Trim legacy CPC/KC hardware paths (GX4000 is CPC+ only).
-add_private_define_if(ENABLE_GX4000_TRIM_NONPLUS GX4000_TRIM_NONPLUS)
-# GX4000: Strip cassette/floppy/printer paths for cart-only GX4000.
-add_private_define_if(ENABLE_GX4000_CART_ONLY GX4000_CART_ONLY)
-
-if(ENABLE_WS_TILE_ROW_CACHE)
-    target_compile_definitions(${COMPONENT_LIB} PRIVATE
-        # Oswan: experimental; reduced decode calls but hurt frame time/heap.
-        WS_TILE_ROW_CACHE=1
-        WS_TILE_ROW_CACHE_ENTRIES=${WS_TILE_ROW_CACHE_ENTRIES}
-    )
+if(ENABLE_A2600_CORE)
+    # Stella (Atari 2600)
+    add_private_define_if(ENABLE_A2600_SOUND_SUPPORT SOUND_SUPPORT=1)
+    add_private_define_if(ENABLE_A2600_JUMP_TABLES_IN_TEXT_SECTION JUMP_TABLES_IN_TEXT_SECTION=1)
 endif()
 
-if(ENABLE_WS_APU_IRAM)
-    target_compile_definitions(${COMPONENT_LIB} PRIVATE WS_APU_IRAM=1)
+if(ENABLE_A7800_CORE)
+    # ProSystem (Atari 7800): Drop built-in 7800 MD5 database (~5 KB flash);
+    # headered ROMs still work.
+    add_private_define_if(ENABLE_A7800_NO_DATABASE A7800_NO_DATABASE)
 endif()
 
-if(ENABLE_WS_CORE_IRAM)
-    target_compile_definitions(${COMPONENT_LIB} PRIVATE WS_CORE_IRAM=1)
+if(ENABLE_MSX_CORE)
+    # fMSX
+    add_private_define_if(ENABLE_FMSX_LSB_FIRST LSB_FIRST)
+    add_private_define_if(ENABLE_FMSX_BPP8 BPP8)
+    add_private_define_if(ENABLE_FMSX_BPS16 BPS16)
+    # fMSX: Disable MIDI logging tables (~12KB flash).
+    add_private_define_if(ENABLE_FMSX_NO_MIDI NO_MIDI)
+    # fMSX: Disable floppy/disk subsystem (ROM-only).
+    add_private_define_if(ENABLE_FMSX_NO_FLOPPY NO_FLOPPY)
+    # fMSX: Disable SHA1 ROM fingerprinting (no CARTS.SHA on SD).
+    add_private_define_if(ENABLE_FMSX_NO_SHA1 NO_SHA1)
+    # fMSX: Disable MCF cheat-file support.
+    add_private_define_if(ENABLE_FMSX_NO_MCF NO_MCF)
+    # fMSX: Disable RS232 i8251 runtime support.
+    add_private_define_if(ENABLE_FMSX_NO_I8251 NO_I8251)
 endif()
 
-if(WS_AUDIO_PERIOD_MS)
-    target_compile_definitions(${COMPONENT_LIB} PRIVATE WS_AUDIO_PERIOD_MS=${WS_AUDIO_PERIOD_MS})
+if(ENABLE_GX4000_CORE)
+    # GX4000
+    # GX4000: ESP32 is little-endian.
+    add_private_define_if(ENABLE_GX4000_CPC_LSB_FIRST CPC_LSB_FIRST)
+    # GX4000: Use pScreenLine-based address calc (no multiply per NOP).
+    add_private_define_if(ENABLE_GX4000_LESS_MULTS LESS_MULTS)
+    # GX4000: Strip out debugger UI code.
+    add_private_define_if(ENABLE_GX4000_CPC_NODEBUGGER CPC_NODEBUGGER)
+    # GX4000: Trim legacy CPC/KC hardware paths (GX4000 is CPC+ only).
+    add_private_define_if(ENABLE_GX4000_TRIM_NONPLUS GX4000_TRIM_NONPLUS)
+    # GX4000: Strip cassette/floppy/printer paths for cart-only GX4000.
+    add_private_define_if(ENABLE_GX4000_CART_ONLY GX4000_CART_ONLY)
 endif()
 
-if(WS_DISPLAY_TASK_CORE)
-    target_compile_definitions(${COMPONENT_LIB} PRIVATE WS_DISPLAY_TASK_CORE=${WS_DISPLAY_TASK_CORE})
-endif()
+if(ENABLE_WS_CORE)
+    if(ENABLE_WS_TILE_ROW_CACHE)
+        target_compile_definitions(${COMPONENT_LIB} PRIVATE
+            # Oswan: experimental; reduced decode calls but hurt frame time/heap.
+            WS_TILE_ROW_CACHE=1
+            WS_TILE_ROW_CACHE_ENTRIES=${WS_TILE_ROW_CACHE_ENTRIES}
+        )
+    endif()
 
-if(WS_DISPLAY_TASK_PRIORITY)
-    target_compile_definitions(${COMPONENT_LIB} PRIVATE WS_DISPLAY_TASK_PRIORITY=${WS_DISPLAY_TASK_PRIORITY})
-endif()
+    if(ENABLE_WS_APU_IRAM)
+        target_compile_definitions(${COMPONENT_LIB} PRIVATE WS_APU_IRAM=1)
+    endif()
 
-if(WS_AUDIO_TASK_CORE)
-    target_compile_definitions(${COMPONENT_LIB} PRIVATE WS_AUDIO_TASK_CORE=${WS_AUDIO_TASK_CORE})
-endif()
+    if(ENABLE_WS_CORE_IRAM)
+        target_compile_definitions(${COMPONENT_LIB} PRIVATE WS_CORE_IRAM=1)
+    endif()
 
-if(WS_AUDIO_TASK_PRIORITY)
-    target_compile_definitions(${COMPONENT_LIB} PRIVATE WS_AUDIO_TASK_PRIORITY=${WS_AUDIO_TASK_PRIORITY})
-endif()
+    if(WS_AUDIO_PERIOD_MS)
+        target_compile_definitions(${COMPONENT_LIB} PRIVATE WS_AUDIO_PERIOD_MS=${WS_AUDIO_PERIOD_MS})
+    endif()
 
-if(WS_AUDIO_DMA_LEN)
-    target_compile_definitions(${COMPONENT_LIB} PRIVATE WS_AUDIO_DMA_LEN=${WS_AUDIO_DMA_LEN})
-endif()
+    if(WS_DISPLAY_TASK_CORE)
+        target_compile_definitions(${COMPONENT_LIB} PRIVATE WS_DISPLAY_TASK_CORE=${WS_DISPLAY_TASK_CORE})
+    endif()
 
-if(WS_AUDIO_DMA_COUNT)
-    target_compile_definitions(${COMPONENT_LIB} PRIVATE WS_AUDIO_DMA_COUNT=${WS_AUDIO_DMA_COUNT})
+    if(WS_DISPLAY_TASK_PRIORITY)
+        target_compile_definitions(${COMPONENT_LIB} PRIVATE WS_DISPLAY_TASK_PRIORITY=${WS_DISPLAY_TASK_PRIORITY})
+    endif()
+
+    if(WS_AUDIO_TASK_CORE)
+        target_compile_definitions(${COMPONENT_LIB} PRIVATE WS_AUDIO_TASK_CORE=${WS_AUDIO_TASK_CORE})
+    endif()
+
+    if(WS_AUDIO_TASK_PRIORITY)
+        target_compile_definitions(${COMPONENT_LIB} PRIVATE WS_AUDIO_TASK_PRIORITY=${WS_AUDIO_TASK_PRIORITY})
+    endif()
+
+    if(WS_AUDIO_DMA_LEN)
+        target_compile_definitions(${COMPONENT_LIB} PRIVATE WS_AUDIO_DMA_LEN=${WS_AUDIO_DMA_LEN})
+    endif()
+
+    if(WS_AUDIO_DMA_COUNT)
+        target_compile_definitions(${COMPONENT_LIB} PRIVATE WS_AUDIO_DMA_COUNT=${WS_AUDIO_DMA_COUNT})
+    endif()
 endif()
 
 function(add_source_compile_defs)
@@ -437,7 +519,8 @@ function(add_source_compile_defs)
     cmake_parse_arguments(SRCDEF "${options}" "${one_value_args}" "${multi_value_args}" ${ARGN})
 
     foreach(src ${SRCDEF_SOURCES})
-        if(EXISTS "${src}")
+        list(FIND APP_SRCS "${src}" _src_index)
+        if(EXISTS "${src}" AND NOT _src_index EQUAL -1)
             set_property(SOURCE "${src}" APPEND PROPERTY COMPILE_DEFINITIONS ${SRCDEF_DEFINITIONS})
         endif()
     endforeach()
@@ -450,7 +533,8 @@ function(add_source_compile_opts)
     cmake_parse_arguments(SRCOPT "${options}" "${one_value_args}" "${multi_value_args}" ${ARGN})
 
     foreach(src ${SRCOPT_SOURCES})
-        if(EXISTS "${src}")
+        list(FIND APP_SRCS "${src}" _src_index)
+        if(EXISTS "${src}" AND NOT _src_index EQUAL -1)
             set_property(SOURCE "${src}" APPEND PROPERTY COMPILE_OPTIONS ${SRCOPT_OPTIONS})
         endif()
     endforeach()
@@ -692,51 +776,51 @@ set(SNES_CPU_MEM_OFAST_SRCS
     "${SRC_ROOT}/snes/snes9x/src/getset.c"
 )
 
-if(ENABLE_GX4000_LTO)
+if(ENABLE_GX4000_CORE AND ENABLE_GX4000_LTO)
     add_source_compile_opts(OPTIONS -flto -ffat-lto-objects SOURCES ${GX4000_LTO_SRCS})
 endif()
 
-if(ENABLE_SMS_LTO)
+if(ENABLE_SMS_CORE AND ENABLE_SMS_LTO)
     add_source_compile_opts(OPTIONS -flto -ffat-lto-objects SOURCES ${SMS_LTO_SRCS})
 endif()
 
-if(ENABLE_NES_LTO)
+if(ENABLE_NES_CORE AND ENABLE_NES_LTO)
     add_source_compile_opts(OPTIONS -flto -ffat-lto-objects SOURCES ${NES_LTO_SRCS})
 endif()
 
-if(ENABLE_A2600_LTO)
+if(ENABLE_A2600_CORE AND ENABLE_A2600_LTO)
     add_source_compile_opts(OPTIONS -flto -ffat-lto-objects SOURCES ${A2600_LTO_SRCS})
 endif()
 
-if(ENABLE_A7800_LTO)
+if(ENABLE_A7800_CORE AND ENABLE_A7800_LTO)
     add_source_compile_opts(OPTIONS -flto -ffat-lto-objects SOURCES ${A7800_LTO_SRCS})
 endif()
 
-if(ENABLE_PCE_LTO)
+if(ENABLE_PCE_CORE AND ENABLE_PCE_LTO)
     add_source_compile_opts(OPTIONS -flto -ffat-lto-objects SOURCES ${PCE_LTO_SRCS})
 endif()
 
-if(ENABLE_GBC_LTO)
+if(ENABLE_GB_CORE AND ENABLE_GBC_LTO)
     add_source_compile_opts(OPTIONS -flto -ffat-lto-objects SOURCES ${GBC_LTO_SRCS})
 endif()
 
-if(ENABLE_LYNX_LTO)
+if(ENABLE_LYNX_CORE AND ENABLE_LYNX_LTO)
     add_source_compile_opts(OPTIONS -flto -ffat-lto-objects SOURCES ${LYNX_LTO_SRCS})
 endif()
 
-if(ENABLE_MSX_LTO)
+if(ENABLE_MSX_CORE AND ENABLE_MSX_LTO)
     add_source_compile_opts(OPTIONS -flto -ffat-lto-objects SOURCES ${MSX_LTO_SRCS})
 endif()
 
-if(ENABLE_WS_LTO)
+if(ENABLE_WS_CORE AND ENABLE_WS_LTO)
     add_source_compile_opts(OPTIONS -flto -ffat-lto-objects SOURCES ${WS_LTO_SRCS})
 endif()
 
-if(ENABLE_MD_LTO)
+if(ENABLE_MD_CORE AND ENABLE_MD_LTO)
     add_source_compile_opts(OPTIONS -flto -ffat-lto-objects SOURCES ${MD_LTO_SRCS})
 endif()
 
-if(ENABLE_NGP_LTO)
+if(ENABLE_NGP_CORE AND ENABLE_NGP_LTO)
     add_source_compile_opts(OPTIONS -flto -ffat-lto-objects SOURCES ${NGP_LTO_SRCS})
 endif()
 
@@ -760,7 +844,48 @@ if(ENABLE_SNES_CORE AND ENABLE_SNES_CPU_MEM_OFAST)
     add_source_compile_opts(OPTIONS -Ofast SOURCES ${SNES_CPU_MEM_OFAST_SRCS})
 endif()
 
-if(ENABLE_GX4000_LTO OR ENABLE_SMS_LTO OR ENABLE_NES_LTO OR ENABLE_A2600_LTO OR ENABLE_A7800_LTO OR ENABLE_PCE_LTO OR ENABLE_GBC_LTO OR ENABLE_LYNX_LTO OR ENABLE_MSX_LTO OR ENABLE_WS_LTO OR ENABLE_MD_LTO OR ENABLE_NGP_LTO OR (ENABLE_SNES_CORE AND ENABLE_SNES_LTO))
+set(ENABLE_ANY_LTO OFF)
+if(ENABLE_GX4000_CORE AND ENABLE_GX4000_LTO)
+    set(ENABLE_ANY_LTO ON)
+endif()
+if(ENABLE_SMS_CORE AND ENABLE_SMS_LTO)
+    set(ENABLE_ANY_LTO ON)
+endif()
+if(ENABLE_NES_CORE AND ENABLE_NES_LTO)
+    set(ENABLE_ANY_LTO ON)
+endif()
+if(ENABLE_A2600_CORE AND ENABLE_A2600_LTO)
+    set(ENABLE_ANY_LTO ON)
+endif()
+if(ENABLE_A7800_CORE AND ENABLE_A7800_LTO)
+    set(ENABLE_ANY_LTO ON)
+endif()
+if(ENABLE_PCE_CORE AND ENABLE_PCE_LTO)
+    set(ENABLE_ANY_LTO ON)
+endif()
+if(ENABLE_GB_CORE AND ENABLE_GBC_LTO)
+    set(ENABLE_ANY_LTO ON)
+endif()
+if(ENABLE_LYNX_CORE AND ENABLE_LYNX_LTO)
+    set(ENABLE_ANY_LTO ON)
+endif()
+if(ENABLE_MSX_CORE AND ENABLE_MSX_LTO)
+    set(ENABLE_ANY_LTO ON)
+endif()
+if(ENABLE_WS_CORE AND ENABLE_WS_LTO)
+    set(ENABLE_ANY_LTO ON)
+endif()
+if(ENABLE_MD_CORE AND ENABLE_MD_LTO)
+    set(ENABLE_ANY_LTO ON)
+endif()
+if(ENABLE_NGP_CORE AND ENABLE_NGP_LTO)
+    set(ENABLE_ANY_LTO ON)
+endif()
+if(ENABLE_SNES_CORE AND ENABLE_SNES_LTO)
+    set(ENABLE_ANY_LTO ON)
+endif()
+
+if(ENABLE_ANY_LTO)
     idf_build_set_property(LINK_OPTIONS "-flto" APPEND)
     idf_build_set_property(LINK_OPTIONS "-fuse-linker-plugin" APPEND)
     if(ENABLE_EXPLICIT_LTO_PLUGIN)
@@ -791,22 +916,22 @@ if(ENABLE_AUDIO_LOGS)
     add_source_compile_defs(DEFINITIONS EMU_LOGS_ENABLED AUDIO_LOGS SOURCES ${AUDIO_LOG_SRCS})
 endif()
 
-if(ENABLE_MD_LOGS)
+if(ENABLE_MD_CORE AND ENABLE_MD_LOGS)
     add_source_compile_defs(DEFINITIONS EMU_LOGS_ENABLED MD_LOGS SOURCES
         ${MD_AUDIO_LOG_SRCS}
         ${MD_RENDER_LOG_SRCS}
     )
 endif()
 
-if(ENABLE_MD_AUDIO_LOGS)
+if(ENABLE_MD_CORE AND ENABLE_MD_AUDIO_LOGS)
     add_source_compile_defs(DEFINITIONS EMU_LOGS_ENABLED MD_AUDIO_LOGS SOURCES ${MD_AUDIO_LOG_SRCS})
 endif()
 
-if(ENABLE_MD_RENDER_LOGS)
+if(ENABLE_MD_CORE AND ENABLE_MD_RENDER_LOGS)
     add_source_compile_defs(DEFINITIONS EMU_LOGS_ENABLED MD_RENDER_LOGS SOURCES ${MD_RENDER_LOG_SRCS})
 endif()
 
-if(ENABLE_MSX_LOGS)
+if(ENABLE_MSX_CORE AND ENABLE_MSX_LOGS)
     add_source_compile_defs(DEFINITIONS EMU_LOGS_ENABLED MSX_LOGS SOURCES ${MSX_LOG_SRCS})
 endif()
 
@@ -818,30 +943,30 @@ if(ENABLE_SNES_CORE AND ENABLE_SNES_DEEP_BENCH)
     add_source_compile_defs(DEFINITIONS EMU_LOGS_ENABLED SNES_DEEP_BENCH SOURCES ${SNES_DEEP_BENCH_SRCS})
 endif()
 
-if(ENABLE_NES_DIAG_LOGS)
+if(ENABLE_NES_CORE AND ENABLE_NES_DIAG_LOGS)
     add_source_compile_defs(DEFINITIONS EMU_LOGS_ENABLED NES_DIAG_LOGS SOURCES ${NES_LOG_SRCS})
 endif()
 
-if(ENABLE_NES_BENCHMARK_LOGS)
+if(ENABLE_NES_CORE AND ENABLE_NES_BENCHMARK_LOGS)
     add_source_compile_defs(DEFINITIONS EMU_LOGS_ENABLED NES_BENCHMARK_LOGS SOURCES ${NES_LOG_SRCS})
 endif()
 
-if(ENABLE_WS_LOGS)
+if(ENABLE_WS_CORE AND ENABLE_WS_LOGS)
     add_source_compile_defs(DEFINITIONS EMU_LOGS_ENABLED WS_LOGS_ENABLED SOURCES ${WS_LOG_SRCS})
 endif()
 
-if(ENABLE_WS_BENCHMARK_LOGS)
+if(ENABLE_WS_CORE AND ENABLE_WS_BENCHMARK_LOGS)
     add_source_compile_defs(DEFINITIONS EMU_LOGS_ENABLED WS_BENCHMARK_LOGS SOURCES ${WS_BENCHMARK_LOG_SRCS})
 endif()
 
-if(ENABLE_WS_MODEL_LOGS)
+if(ENABLE_WS_CORE AND ENABLE_WS_MODEL_LOGS)
     add_source_compile_defs(DEFINITIONS EMU_LOGS_ENABLED WS_MODEL_LOGS SOURCES
         "${SRC_ROOT}/ws/run_ws.cpp"
         "${SRC_ROOT}/ws/oswan/WSFileio.c"
     )
 endif()
 
-if(ENABLE_WS_RENDER_PROFILE)
+if(ENABLE_WS_CORE AND ENABLE_WS_RENDER_PROFILE)
     add_source_compile_defs(DEFINITIONS EMU_LOGS_ENABLED WS_BENCHMARK_LOGS WS_RENDER_PROFILE SOURCES
         "${SRC_ROOT}/ws/run_ws.cpp"
         "${SRC_ROOT}/ws/oswan/WS.c"
@@ -849,37 +974,39 @@ if(ENABLE_WS_RENDER_PROFILE)
     )
 endif()
 
-if(ENABLE_WS_CPU_PROFILE)
+if(ENABLE_WS_CORE AND ENABLE_WS_CPU_PROFILE)
     add_source_compile_defs(DEFINITIONS EMU_LOGS_ENABLED WS_BENCHMARK_LOGS WS_CPU_PROFILE SOURCES
         "${SRC_ROOT}/ws/run_ws.cpp"
         "${SRC_ROOT}/ws/oswan/cpu/nec.c"
     )
 endif()
 
-if(ENABLE_WS_CPU_BRANCH_PROFILE)
+if(ENABLE_WS_CORE AND ENABLE_WS_CPU_BRANCH_PROFILE)
     add_source_compile_defs(DEFINITIONS EMU_LOGS_ENABLED WS_BENCHMARK_LOGS WS_CPU_BRANCH_PROFILE SOURCES
         "${SRC_ROOT}/ws/run_ws.cpp"
         "${SRC_ROOT}/ws/oswan/cpu/nec.c"
     )
 endif()
 
-if(ENABLE_NGP_TRACE_LOGS)
+if(ENABLE_NGP_CORE AND ENABLE_NGP_TRACE_LOGS)
     add_source_compile_defs(DEFINITIONS EMU_LOGS_ENABLED NGP_TRACE_LOGS SOURCES ${NGP_TRACE_LOG_SRCS})
 endif()
 
-if(ENABLE_COLECO_DEBUG_LOGS)
+if(ENABLE_SMS_CORE AND ENABLE_COLECO_DEBUG_LOGS)
     add_source_compile_defs(DEFINITIONS EMU_LOGS_ENABLED COLECO_DEBUG_LOGS SOURCES ${COLECO_DEBUG_LOG_SRCS})
 endif()
 
-if(ENABLE_A7800_LOGS)
+if(ENABLE_A7800_CORE AND ENABLE_A7800_LOGS)
     add_source_compile_defs(DEFINITIONS EMU_LOGS_ENABLED A7800_LOGS SOURCES ${A7800_LOG_SRCS})
 endif()
 
 if(ENABLE_BENCHMARK_LOGS)
-    add_source_compile_defs(DEFINITIONS EMU_LOGS_ENABLED BENCHMARK_LOGS SOURCES
-        ${NES_LOG_SRCS}
-        ${WS_BENCHMARK_LOG_SRCS}
-    )
+    if(ENABLE_NES_CORE)
+        add_source_compile_defs(DEFINITIONS EMU_LOGS_ENABLED BENCHMARK_LOGS SOURCES ${NES_LOG_SRCS})
+    endif()
+    if(ENABLE_WS_CORE)
+        add_source_compile_defs(DEFINITIONS EMU_LOGS_ENABLED BENCHMARK_LOGS SOURCES ${WS_BENCHMARK_LOG_SRCS})
+    endif()
 endif()
 
 if(ENABLE_EMU_ALLOW_RAW_PRINTF)

@@ -12,24 +12,50 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#ifdef NES_CORE_ENABLED
 #include "nes/run_nes.h"
+#endif
+#ifdef SMS_CORE_ENABLED
 #include "sms/run_sms.h"
+#endif
+#ifdef NGP_CORE_ENABLED
 #include "ngp/run_ngp.h"
+#endif
+#ifdef WS_CORE_ENABLED
 #include "ws/run_ws.h"
+#endif
+#ifdef PCE_CORE_ENABLED
 #include "pce/run_pce.h"
+#endif
+#ifdef LYNX_CORE_ENABLED
 #include "lynx/run_lynx.h"
+#endif
+#ifdef MD_CORE_ENABLED
 #include "genesis/run_genesis.h"
+#endif
+#ifdef GB_CORE_ENABLED
 #include "gbc/run_gbc.h"
+#endif
+#ifdef MSX_CORE_ENABLED
 #include "msx/run_msx.h"
+#endif
 #ifdef SNES_CORE_ENABLED
 #include "snes/run_snes.h"
 #endif
+#ifdef A7800_CORE_ENABLED
 #include "atari7800/run_a7800.h"
+#endif
+#ifdef A2600_CORE_ENABLED
 #include "atari2600/run_a2600.h"
+#endif
+#ifdef GX4000_CORE_ENABLED
 #include "gx4000/run_gx4000.h"
+#endif
 #include "last_game.h"
+#ifdef NGP_CORE_ENABLED
 #define RETRO_COMPAT_IMPLEMENTATION
 #include "ngp/race/retro_compat.h"
+#endif
 #include "esp_task_wdt.h"
 #include "esp_heap_caps.h"
 #include "esp_system.h"
@@ -46,22 +72,48 @@ static constexpr size_t COLECO_BIOS_SIZE = 8192;
 #if EMU_LOG_MASTER_ENABLED
 static const char* emulatorNameForLog(RomType type) {
   switch (type) {
+#ifdef NES_CORE_ENABLED
     case ROM_TYPE_NES:       return "NES";
+#endif
+#ifdef SMS_CORE_ENABLED
     case ROM_TYPE_SMS:       return "SMS";
     case ROM_TYPE_GAMEGEAR:  return "Game Gear";
     case ROM_TYPE_SG1000:    return "SG-1000";
     case ROM_TYPE_COLECO:    return "ColecoVision";
+#endif
+#ifdef NGP_CORE_ENABLED
     case ROM_TYPE_NGP:       return "Neo Geo Pocket";
+#endif
+#ifdef MD_CORE_ENABLED
     case ROM_TYPE_GENESIS:   return "Mega Drive";
+#endif
+#ifdef WS_CORE_ENABLED
     case ROM_TYPE_WS:        return "WonderSwan";
+#endif
+#ifdef PCE_CORE_ENABLED
     case ROM_TYPE_PCE:       return "PC Engine";
+#endif
+#ifdef GB_CORE_ENABLED
     case ROM_TYPE_GB:        return "Game Boy";
+#endif
+#ifdef LYNX_CORE_ENABLED
     case ROM_TYPE_LYNX:      return "Lynx";
+#endif
+#ifdef SNES_CORE_ENABLED
     case ROM_TYPE_SNES:      return "SNES";
+#endif
+#ifdef MSX_CORE_ENABLED
     case ROM_TYPE_MSX:       return "MSX";
+#endif
+#ifdef A7800_CORE_ENABLED
     case ROM_TYPE_ATARI7800: return "Atari 7800";
+#endif
+#ifdef A2600_CORE_ENABLED
     case ROM_TYPE_ATARI2600: return "Atari 2600";
+#endif
+#ifdef GX4000_CORE_ENABLED
     case ROM_TYPE_GX4000:    return "GX4000";
+#endif
     case ROM_TYPE_UNKNOWN:
     default:                 return "Unknown";
   }
@@ -69,34 +121,62 @@ static const char* emulatorNameForLog(RomType type) {
 
 static const char* emulatorHelperCoresForLog(RomType type) {
   switch (type) {
+#ifdef NES_CORE_ENABLED
     case ROM_TYPE_NES:
       return "display=CPU0";
+#endif
+#ifdef SMS_CORE_ENABLED
     case ROM_TYPE_SMS:
     case ROM_TYPE_GAMEGEAR:
     case ROM_TYPE_SG1000:
     case ROM_TYPE_COLECO:
       return "audio=CPU0";
+#endif
+#ifdef NGP_CORE_ENABLED
     case ROM_TYPE_NGP:
       return "input/audio/video=CPU0";
+#endif
+#ifdef MD_CORE_ENABLED
     case ROM_TYPE_GENESIS:
       return "display/audio/save=CPU0";
+#endif
+#if defined(WS_CORE_ENABLED) || defined(PCE_CORE_ENABLED) || defined(LYNX_CORE_ENABLED) || defined(A7800_CORE_ENABLED) || defined(A2600_CORE_ENABLED) || defined(GX4000_CORE_ENABLED)
+#ifdef WS_CORE_ENABLED
     case ROM_TYPE_WS:
+#endif
+#ifdef PCE_CORE_ENABLED
     case ROM_TYPE_PCE:
+#endif
+#ifdef LYNX_CORE_ENABLED
     case ROM_TYPE_LYNX:
+#endif
+#ifdef A7800_CORE_ENABLED
     case ROM_TYPE_ATARI7800:
+#endif
+#ifdef A2600_CORE_ENABLED
     case ROM_TYPE_ATARI2600:
+#endif
+#ifdef GX4000_CORE_ENABLED
     case ROM_TYPE_GX4000:
+#endif
       return "display/audio=CPU0";
+#endif
+#ifdef GB_CORE_ENABLED
     case ROM_TYPE_GB:
       return "display/audio/save=CPU0";
+#endif
+#ifdef SNES_CORE_ENABLED
     case ROM_TYPE_SNES:
 #if defined(SNES_DISPLAY_ON_MAIN)
       return "display/input/save=main";
 #else
       return "display=CPU0,input/save=main";
 #endif
+#endif
+#ifdef MSX_CORE_ENABLED
     case ROM_TYPE_MSX:
       return "none";
+#endif
     case ROM_TYPE_UNKNOWN:
     default:
       return "unknown";
@@ -664,7 +744,10 @@ extern "C" void app_main(void) {
 
   // Show keymapping
   display.topBar("- + SOUND [ ] BRIGHT", false, false);
-  int numButtons = (ext == ROM_TYPE_GENESIS) ? 3 : 2;
+  int numButtons = 2;
+#ifdef MD_CORE_ENABLED
+  numButtons = (ext == ROM_TYPE_GENESIS) ? 3 : numButtons;
+#endif
 #ifdef SNES_CORE_ENABLED
   numButtons = (ext == ROM_TYPE_SNES) ? 6 : numButtons;
 #endif
@@ -720,12 +803,17 @@ extern "C" void app_main(void) {
   BOOT_LOG("EMU", "launch ext=%d name='%s'", (int)ext, romName.c_str());
 
   // Run the emulator
+  bool launched = false;
+#ifdef NES_CORE_ENABLED
   if (ext == ROM_TYPE_NES) {
       // --- NES ---
       romName = "/xip/" + romName;
       run_nes(romName.c_str());
+      launched = true;
   }
-  else if (ext == ROM_TYPE_GAMEGEAR || ext == ROM_TYPE_SMS || ext == ROM_TYPE_SG1000 || ext == ROM_TYPE_COLECO) {
+#endif
+#ifdef SMS_CORE_ENABLED
+  if (!launched && (ext == ROM_TYPE_GAMEGEAR || ext == ROM_TYPE_SMS || ext == ROM_TYPE_SG1000 || ext == ROM_TYPE_COLECO)) {
       // --- SMS family (SMS / GG / SG-1000 / ColecoVision) ---
       SmsConsoleMode mode = SMS_MODE_SMS;
       if (ext == ROM_TYPE_GAMEGEAR) mode = SMS_MODE_GG;
@@ -733,34 +821,54 @@ extern "C" void app_main(void) {
       else if (ext == ROM_TYPE_COLECO) mode = SMS_MODE_COLECO;
       run_sms(xipRomPtr, xipRunSize, mode, romName.c_str(),
               colecoBiosPtr, (ext == ROM_TYPE_COLECO) ? COLECO_BIOS_SIZE : 0);
+      launched = true;
   }
-  else if (ext == ROM_TYPE_NGP) {
+#endif
+#ifdef NGP_CORE_ENABLED
+  if (!launched && ext == ROM_TYPE_NGP) {
       // --- Neo Geo Pocket / Color ---
       int machine = detectNeoGeoPocketFromRom(get_rom_ptr(), get_rom_size(), romPath);
       run_ngp(get_rom_ptr(), get_rom_size(), romName.c_str(), machine);
+      launched = true;
   }
-  else if (ext == ROM_TYPE_GENESIS) {
+#endif
+#ifdef MD_CORE_ENABLED
+  if (!launched && ext == ROM_TYPE_GENESIS) {
       // --- Megadrive / Genesis ---
       run_genesis(get_rom_ptr(), get_rom_size(), romName.c_str());
+      launched = true;
   }
-  else if (ext == ROM_TYPE_WS) {
+#endif
+#ifdef WS_CORE_ENABLED
+  if (!launched && ext == ROM_TYPE_WS) {
       // --- WonderSwan / Color ---
       run_ws(get_rom_ptr(), get_rom_size(), romName.c_str(), detectWonderSwanFromRom(romPath));
+      launched = true;
   }
-  else if (ext == ROM_TYPE_PCE) {
+#endif
+#ifdef PCE_CORE_ENABLED
+  if (!launched && ext == ROM_TYPE_PCE) {
       // --- PC Engine / TurboGrafx-16 ---
       run_pce(get_rom_ptr(), get_rom_size(), romName.c_str());
+      launched = true;
   }
-  else if (ext == ROM_TYPE_GB) { 
+#endif
+#ifdef GB_CORE_ENABLED
+  if (!launched && ext == ROM_TYPE_GB) {
       // --- Game Boy / Color ---
       run_gbc(get_rom_ptr(), get_rom_size(), romName.c_str());
+      launched = true;
   }
-  else if (ext == ROM_TYPE_LYNX) {
+#endif
+#ifdef LYNX_CORE_ENABLED
+  if (!launched && ext == ROM_TYPE_LYNX) {
       // --- Lynx ---
       run_lynx(get_rom_ptr(), get_rom_size(), romName.c_str());
+      launched = true;
   }
+#endif
 #ifdef SNES_CORE_ENABLED
-  else if (ext == ROM_TYPE_SNES) {
+  if (!launched && ext == ROM_TYPE_SNES) {
       // --- SNES / Super Famicom ---
       display.displaySnesInfo();
       input.waitPress();
@@ -770,29 +878,42 @@ extern "C" void app_main(void) {
       logStartupHeap("after SNES SD close");
 #endif
       run_snes(get_rom_ptr(), get_rom_size(), romName.c_str(), snesInterlaceMode);
+      launched = true;
       BOOT_LOG("EMU", "SNES returned, restarting");
       esp_restart();
   }
 #endif
-  else if (ext == ROM_TYPE_MSX) {
+#ifdef MSX_CORE_ENABLED
+  if (!launched && ext == ROM_TYPE_MSX) {
       // --- MSX ---
       display.displayMsxInfo();
       input.waitPress();
       run_msx(get_rom_ptr(), get_rom_size(), romName.c_str(), romPath.c_str());
+      launched = true;
   }
-  else if (ext == ROM_TYPE_ATARI7800) {
+#endif
+#ifdef A7800_CORE_ENABLED
+  if (!launched && ext == ROM_TYPE_ATARI7800) {
       // --- Atari 7800 ---
       run_a7800(get_rom_ptr(), get_rom_size(), romName.c_str());
+      launched = true;
   }
-  else if (ext == ROM_TYPE_ATARI2600) {
+#endif
+#ifdef A2600_CORE_ENABLED
+  if (!launched && ext == ROM_TYPE_ATARI2600) {
       // --- Atari 2600 ---
       run_a2600(get_rom_ptr(), get_rom_size(), romName.c_str());
+      launched = true;
   }
-    else if (ext == ROM_TYPE_GX4000) {
+#endif
+#ifdef GX4000_CORE_ENABLED
+  if (!launched && ext == ROM_TYPE_GX4000) {
       // --- Amstrad GX4000 ---
       run_gx4000(get_rom_ptr(), get_rom_size(), romName.c_str());
+      launched = true;
     }
-  else {
+#endif
+  if (!launched) {
       display.topBar("ERROR", false, false);
       display.subMessage("Unsupported ROM type", 0);
       while (1) delay(1000);
