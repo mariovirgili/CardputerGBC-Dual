@@ -161,6 +161,7 @@ void gwenesis_vdp_reset() {
   hint_pending = 0;
   // _vcounter = 0;
   gwenesis_vdp_status = 0x3C00;
+  gwenesis_region_apply_vdp_status();
   // //line_counter_interrupt = 0;
   hvcounter_latched = 0;
 

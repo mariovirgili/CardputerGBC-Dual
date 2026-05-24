@@ -80,10 +80,67 @@ unsigned char* M68K_RAM = NULL;
 unsigned char* ZRAM = NULL; // Z80 RAM
 unsigned char TMSS[0x4];
 extern unsigned short gwenesis_vdp_status;
+static int s_region_pal = 0;
+static int s_region_refresh_rate = GWENESIS_REFRESH_RATE_NTSC;
+static int s_region_audio_rate = GWENESIS_AUDIO_FREQ_NTSC;
+static int s_region_audio_divisor = GWENESIS_AUDIO_DIVISOR_NTSC;
+static int s_region_lines_per_frame = LINES_PER_FRAME_NTSC;
+static const char *s_region_name = "NTSC-U";
 
 // TMSS
 int tmss_state = 0;
 int tmss_count = 0;
+
+static void apply_console_region(const char *name, int io_reg0, int pal)
+{
+  s_region_name = name;
+  s_region_pal = pal ? 1 : 0;
+  s_region_refresh_rate = s_region_pal ? GWENESIS_REFRESH_RATE_PAL : GWENESIS_REFRESH_RATE_NTSC;
+  s_region_audio_rate = s_region_pal ? GWENESIS_AUDIO_FREQ_PAL : GWENESIS_AUDIO_FREQ_NTSC;
+  s_region_audio_divisor = s_region_pal ? GWENESIS_AUDIO_DIVISOR_PAL : GWENESIS_AUDIO_DIVISOR_NTSC;
+  s_region_lines_per_frame = s_region_pal ? LINES_PER_FRAME_PAL : LINES_PER_FRAME_NTSC;
+  gwenesis_io_set_reg(0, io_reg0);
+  gwenesis_region_apply_vdp_status();
+}
+
+int gwenesis_region_is_pal(void)
+{
+  return s_region_pal;
+}
+
+int gwenesis_region_refresh_rate(void)
+{
+  return s_region_refresh_rate;
+}
+
+int gwenesis_region_audio_rate(void)
+{
+  return s_region_audio_rate;
+}
+
+int gwenesis_region_audio_divisor(void)
+{
+  return s_region_audio_divisor;
+}
+
+int gwenesis_region_lines_per_frame(void)
+{
+  return s_region_lines_per_frame;
+}
+
+const char *gwenesis_region_name(void)
+{
+  return s_region_name;
+}
+
+void gwenesis_region_apply_vdp_status(void)
+{
+  if (s_region_pal) {
+    gwenesis_vdp_status |= STATUS_PAL;
+  } else {
+    gwenesis_vdp_status &= (unsigned short)~STATUS_PAL;
+  }
+}
 
 /******************************************************************************
  *
@@ -192,18 +249,17 @@ void power_on() {
   // Initialize YM2612 chip
   YM2612Init();
   YM2612Config(9);
+  YM2612SetDivisor(s_region_audio_divisor);
   // Initialize PSG SN76489 chip
   //CLOCK_NTSC      = 3579545,
   //CLOCK_PAL       = 3546895,
  // CLOCK_NTSC_SMS1 = 3579527
 
-//  if (mode_pal) {
-//     gwenesis_SN76489_Init(3546895, GWENESIS_AUDIO_BUFFER_LENGTH_PAL*50,AUDIO_FREQ_DIVISOR);
-//   } else{
-//     gwenesis_SN76489_Init(3579545, GWENESIS_AUDIO_BUFFER_LENGTH_NTSC*60,AUDIO_FREQ_DIVISOR);
-//   }
-  
-  gwenesis_SN76489_Init(3579545, GWENESIS_AUDIO_FREQ_NTSC, AUDIO_FREQ_DIVISOR);
+  if (s_region_pal) {
+    gwenesis_SN76489_Init(3546895, s_region_audio_rate, s_region_audio_divisor);
+  } else {
+    gwenesis_SN76489_Init(3579545, s_region_audio_rate, s_region_audio_divisor);
+  }
 
 }
 
@@ -310,9 +366,7 @@ void set_region()
 #if EMU_LOG_MASTER_ENABLED && defined(MD_LOGS)
       EMU_LOG("Oversea-NTSC USA 60Hz\n");
 #endif
-      gwenesis_io_set_reg(0, 0x81);
-   //   gwenesis_vdp_status &= 0xFFFE;
-     // mode_pal = 0;
+      apply_console_region("NTSC-U", 0x81, 0);
       return;
     }
     /* EUROPE 50Hz */
@@ -320,9 +374,7 @@ void set_region()
 #if EMU_LOG_MASTER_ENABLED && defined(MD_LOGS)
       EMU_LOG("Oversea-PAL Europe 50Hz\n");
 #endif
-      gwenesis_io_set_reg(0, 0xC1);
-    //  gwenesis_vdp_status |= 0x1;
-      //mode_pal = 1;
+      apply_console_region("PAL-E", 0xC1, 1);
       return;
     }
     /* set Asia 60HZ */
@@ -330,17 +382,13 @@ void set_region()
 #if EMU_LOG_MASTER_ENABLED && defined(MD_LOGS)
       EMU_LOG("Domestic-NTSC Asia 60Hz\n");
 #endif
-      gwenesis_io_set_reg(0, 0x1);
-    //  gwenesis_vdp_status &= 0xFFFE;
-      //mode_pal = 0;
+      apply_console_region("NTSC-J", 0x01, 0);
       return;
     }
 #if EMU_LOG_MASTER_ENABLED && defined(MD_LOGS)
       EMU_LOG("Oversea-NTSC USA 60Hz no detection>> default mode\n");
 #endif
-      gwenesis_io_set_reg(0, 0x81);
-     // gwenesis_vdp_status &= 0xFFFE;
-     // mode_pal = 0;
+      apply_console_region("NTSC-U", 0x81, 0);
 
 }
 /******************************************************************************

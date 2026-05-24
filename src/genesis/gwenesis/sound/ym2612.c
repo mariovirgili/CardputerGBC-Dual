@@ -2244,6 +2244,11 @@ void YM2612Config(unsigned char dac_bits) //,unsigned int AUDIO_FREQ_DIVISOR)
   ym2612.divisor = AUDIO_FREQ_DIVISOR;
 }
 
+void YM2612SetDivisor(int divisor)
+{
+  ym2612.divisor = (divisor > 0) ? divisor : AUDIO_FREQ_DIVISOR;
+}
+
 void YM2612SaveRegs(uint8_t *regs)
 {
   memcpy(regs, OPNREGS, sizeof(OPNREGS));

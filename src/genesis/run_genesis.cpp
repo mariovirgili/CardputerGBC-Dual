@@ -314,7 +314,7 @@ static void run_one_frame() {
 #endif
   int cpu_deadline = 0;
   const unsigned h = screen_height ? screen_height : 224u;
-  const int lines_per_frame = (h >= 240u) ? 313 : 262;
+  const int lines_per_frame = gwenesis_region_lines_per_frame();
   int hint_counter = gwenesis_vdp_regs[10];
   scan_line = 0;
 
@@ -500,6 +500,27 @@ extern "C" void run_genesis(const uint8_t* rom, size_t len, const char* rom_name
   
   // Load the xip ROM into Gwenesis
   load_cartridge((unsigned char*)rom, len);
+  g_target_fps = gwenesis_region_refresh_rate();
+  #ifndef GENESIS_NO_SOUND
+    genesis_sound_configure_timing(g_target_fps,
+                                   gwenesis_region_audio_rate(),
+                                   gwenesis_region_audio_divisor(),
+                                   gwenesis_region_lines_per_frame());
+    const int mdCoreSamples = genesis_sound_get_core_samples_per_frame();
+    const int mdOutSamples = genesis_sound_get_output_samples_per_frame();
+  #else
+    const int mdCoreSamples = 0;
+    const int mdOutSamples = 0;
+  #endif
+  EMU_LOG("[MD][REGION] %s fps=%d lines=%d audio coreRate=%d divisor=%d coreSamples=%d outRate=%d outSamples=%d\n",
+          gwenesis_region_name(),
+          g_target_fps,
+          gwenesis_region_lines_per_frame(),
+          gwenesis_region_audio_rate(),
+          gwenesis_region_audio_divisor(),
+          mdCoreSamples,
+          AUDIO_SR,
+          mdOutSamples);
 
   // Save
   gwenesis_init_sram((uint8_t*)rom, (uint32_t)len);

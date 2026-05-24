@@ -14,6 +14,7 @@ extern "C" {
   void YM2612Init(void);
   void YM2612ResetChip(void);
   void YM2612Config(unsigned char dac_bits);
+  void YM2612SetDivisor(int divisor);
   void ym2612_run(int target);
   void gwenesis_ym2612_tables_alloc(void);
 }
@@ -46,6 +47,44 @@ static bool s_primed = false;
 static portMUX_TYPE g_ymMux = portMUX_INITIALIZER_UNLOCKED;
 static int16_t* s_buf[cardputer_audio::kRuntimeAudioBufferCount] = {};
 uint8_t genesis_audio_volume = 50;
+static int s_audioRefreshRate = GWENESIS_REFRESH_RATE_NTSC;
+static int s_audioCoreRate = GWENESIS_AUDIO_FREQ_NTSC;
+static int s_audioCoreDivisor = GWENESIS_AUDIO_DIVISOR_NTSC;
+static int s_audioCoreSamples = GWENESIS_AUDIO_BUFFER_LENGTH_NTSC;
+static int s_audioOutSamples = AUDIO_CHUNK_NTSC;
+
+void genesis_sound_configure_timing(int refresh_rate, int core_sample_rate, int core_divisor, int lines_per_frame)
+{
+  if (refresh_rate != GWENESIS_REFRESH_RATE_PAL) {
+    refresh_rate = GWENESIS_REFRESH_RATE_NTSC;
+  }
+  if (core_sample_rate <= 0) {
+    core_sample_rate = (refresh_rate == GWENESIS_REFRESH_RATE_PAL) ? GWENESIS_AUDIO_FREQ_PAL : GWENESIS_AUDIO_FREQ_NTSC;
+  }
+  if (core_divisor <= 0) {
+    core_divisor = (refresh_rate == GWENESIS_REFRESH_RATE_PAL) ? GWENESIS_AUDIO_DIVISOR_PAL : GWENESIS_AUDIO_DIVISOR_NTSC;
+  }
+  if (lines_per_frame <= 0) {
+    lines_per_frame = (refresh_rate == GWENESIS_REFRESH_RATE_PAL) ? LINES_PER_FRAME_PAL : LINES_PER_FRAME_NTSC;
+  }
+
+  s_audioRefreshRate = refresh_rate;
+  s_audioCoreRate = core_sample_rate;
+  s_audioCoreDivisor = core_divisor;
+  s_audioCoreSamples = ((lines_per_frame * VDP_CYCLES_PER_LINE) + core_divisor - 1) / core_divisor;
+  if (s_audioCoreSamples > AUDIO_CORE_CHUNK_CAP) {
+    s_audioCoreSamples = AUDIO_CORE_CHUNK_CAP;
+  }
+  s_audioOutSamples = (AUDIO_SR + refresh_rate / 2) / refresh_rate;
+  if (s_audioOutSamples > AUDIO_CHUNK_CAP) {
+    s_audioOutSamples = AUDIO_CHUNK_CAP;
+  }
+}
+
+int genesis_sound_get_refresh_rate(void) { return s_audioRefreshRate; }
+int genesis_sound_get_core_rate(void) { return s_audioCoreRate; }
+int genesis_sound_get_core_samples_per_frame(void) { return s_audioCoreSamples; }
+int genesis_sound_get_output_samples_per_frame(void) { return s_audioOutSamples; }
 
 // Audio config
 static constexpr uint8_t kChannel= 0;
@@ -150,12 +189,12 @@ static inline void md_audio_diag_log_if_due(bool force = false)
                (unsigned long)d.droppedBuffer,
                (unsigned long)d.depthMax,
                (unsigned long)d.emptyDepth,
-               AUDIO_CORE_SR,
+               s_audioCoreRate,
                AUDIO_SR,
                (unsigned long)coreMin,
                (unsigned long)coreAvg,
                (unsigned long)d.coreMax,
-               AUDIO_CHUNK,
+               s_audioOutSamples,
                (unsigned long)ymMin,
                (unsigned long)ymAvg,
                (unsigned long)d.ymMax,
@@ -201,16 +240,16 @@ static inline int16_t mix_sample_at(int idx, int ym_n, int psg_n) {
 void genesis_alloc_audio_buffers(void) {
   // FM / PSG
   gwenesis_sn76489_buffer = (int16_t*) heap_caps_calloc(
-    1024, sizeof(int16_t), MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA | MALLOC_CAP_8BIT);
+    AUDIO_CORE_CHUNK_CAP, sizeof(int16_t), MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA | MALLOC_CAP_8BIT);
   gwenesis_ym2612_buffer  = (int16_t*) heap_caps_calloc(
     2048, sizeof(int16_t), MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA | MALLOC_CAP_8BIT);
 
   // Pool audio
   s_audioPool = (int16_t*) heap_caps_calloc(
-      (size_t)AUDIO_POOL * (size_t)AUDIO_CHUNK, sizeof(int16_t),
+      (size_t)AUDIO_POOL * (size_t)AUDIO_CHUNK_CAP, sizeof(int16_t),
       MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
 
-  cardputer_audio::allocRuntimeAudioBuffers(s_buf, AUDIO_CHUNK, "genesis");
+  cardputer_audio::allocRuntimeAudioBuffers(s_buf, AUDIO_CHUNK_CAP, "genesis");
 
   // Storage queue YM
   s_ymQueueStorage = (uint8_t*) heap_caps_calloc(
@@ -251,9 +290,9 @@ void genesis_sound_submit_frame(void) {
 
   int n = ym_n > psg_n ? ym_n : psg_n;
   if (n <= 0) return;
-  if (n > AUDIO_CORE_CHUNK) n = AUDIO_CORE_CHUNK;
-  if (ym_n > AUDIO_CORE_CHUNK) ym_n = AUDIO_CORE_CHUNK;
-  if (psg_n > AUDIO_CORE_CHUNK) psg_n = AUDIO_CORE_CHUNK;
+  if (n > s_audioCoreSamples) n = s_audioCoreSamples;
+  if (ym_n > s_audioCoreSamples) ym_n = s_audioCoreSamples;
+  if (psg_n > s_audioCoreSamples) psg_n = s_audioCoreSamples;
 
   const size_t depth = M5Cardputer.Speaker.isPlaying(kChannel);
   md_audio_diag_samples(n, ym_n, psg_n, depth);
@@ -279,11 +318,11 @@ void genesis_sound_submit_frame(void) {
   int16_t *dst = s_buf[s_flip];
   if (n == 1) {
     int16_t sample = mix_sample_at(0, ym_n, psg_n);
-    for (int i = 0; i < AUDIO_CHUNK; ++i) dst[i] = sample;
+    for (int i = 0; i < s_audioOutSamples; ++i) dst[i] = sample;
   } else {
-    const uint32_t step = (uint32_t)(((uint64_t)(n - 1) << 16) / (AUDIO_CHUNK - 1));
+    const uint32_t step = (uint32_t)(((uint64_t)(n - 1) << 16) / (s_audioOutSamples - 1));
     uint32_t pos = 0;
-    for (int i = 0; i < AUDIO_CHUNK; ++i) {
+    for (int i = 0; i < s_audioOutSamples; ++i) {
       int idx = (int)(pos >> 16);
       uint32_t frac = pos & 0xFFFFu;
       int32_t a = mix_sample_at(idx, ym_n, psg_n);
@@ -299,7 +338,7 @@ void genesis_sound_submit_frame(void) {
   sn76489_index = 0;
   taskEXIT_CRITICAL(&g_ymMux);
 
-  if (cardputer_audio::queueRuntimeAudioBuffer(s_buf, s_flip, AUDIO_CHUNK, AUDIO_SR, AUDIO_STEREO, kChannel)) {
+  if (cardputer_audio::queueRuntimeAudioBuffer(s_buf, s_flip, s_audioOutSamples, AUDIO_SR, AUDIO_STEREO, kChannel)) {
 #if MD_AUDIO_LOGS_ENABLED
     ++s_mdAudioDiag.queued;
 #endif
@@ -327,6 +366,7 @@ extern "C" void genesis_sound_ym_init(void) {
   YM2612Init();
   YM2612ResetChip();
   YM2612Config(9);
+  YM2612SetDivisor(s_audioCoreDivisor);
 }
 
 /* Task for YM2612 audio processing */

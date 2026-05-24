@@ -39,6 +39,7 @@ __license__ = "GPLv3"
 
 #define GWENESIS_REFRESH_RATE_NTSC 60
 #define GWENESIS_AUDIO_FREQ_NTSC 53267
+#define GWENESIS_AUDIO_DIVISOR_NTSC 1009
 
 #define GWENESIS_REFRESH_RATE_PAL 50
 #define GWENESIS_AUDIO_FREQ_PAL 52781
@@ -49,9 +50,10 @@ __license__ = "GPLv3"
 #define VDP_CYCLES_PER_LINE 3420// VDP Cycles per Line
 #define SCREEN_WIDTH 320
 
-#define AUDIO_FREQ_DIVISOR 1009
+#define AUDIO_FREQ_DIVISOR GWENESIS_AUDIO_DIVISOR_NTSC
 #define GWENESIS_AUDIO_BUFFER_LENGTH_NTSC ((GWENESIS_AUDIO_FREQ_NTSC + GWENESIS_REFRESH_RATE_NTSC / 2) / GWENESIS_REFRESH_RATE_NTSC)
 #define GWENESIS_AUDIO_BUFFER_LENGTH_PAL ((GWENESIS_AUDIO_FREQ_PAL + GWENESIS_REFRESH_RATE_PAL / 2) / GWENESIS_REFRESH_RATE_PAL)
+#define GWENESIS_AUDIO_DIVISOR_PAL (((LINES_PER_FRAME_PAL * VDP_CYCLES_PER_LINE) + (GWENESIS_AUDIO_BUFFER_LENGTH_PAL / 2)) / GWENESIS_AUDIO_BUFFER_LENGTH_PAL)
 
 extern uint8_t *SRAM;
 extern uint8_t SRAM_ENABLED;
@@ -100,6 +102,10 @@ enum gwenesis_bus_pad_button
     PAD_S
 };
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #if GNW_TARGET_MARIO != 0 | GNW_TARGET_ZELDA != 0
 void load_cartridge();
 #else
@@ -109,9 +115,20 @@ void load_cartridge(unsigned char *buffer, size_t size);
 void power_on();
 void reset_emulation();
 void set_region();
+int gwenesis_region_is_pal(void);
+int gwenesis_region_refresh_rate(void);
+int gwenesis_region_audio_rate(void);
+int gwenesis_region_audio_divisor(void);
+int gwenesis_region_lines_per_frame(void);
+const char *gwenesis_region_name(void);
+void gwenesis_region_apply_vdp_status(void);
 
 void gwenesis_bus_save_state();
 void gwenesis_bus_load_state();
 void gwenesis_init_sram(uint8_t *rom, uint32_t rom_size);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif

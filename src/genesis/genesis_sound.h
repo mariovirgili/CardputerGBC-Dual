@@ -4,16 +4,17 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/queue.h"
+#include "genesis/gwenesis/bus/gwenesis_bus.h"
 
 // Constantes audio
-static constexpr int  AUDIO_SR      = 44000;   // Hz
-static constexpr int  AUDIO_FPS     = 60;
-static constexpr int  AUDIO_CORE_SR = 53267;
-static constexpr int  AUDIO_CORE_CHUNK = (AUDIO_CORE_SR + AUDIO_FPS / 2) / AUDIO_FPS;
-static constexpr bool AUDIO_STEREO  = false;
-static constexpr int  AUDIO_CHUNK   = (AUDIO_SR + AUDIO_FPS / 2) / AUDIO_FPS;
-static constexpr int  AUDIO_POOL    = 3; 
-static constexpr int  AUDIO_Q_DEPTH = 8;
+static constexpr int AUDIO_SR = 44000;   // Hz
+static constexpr bool AUDIO_STEREO = false;
+static constexpr int AUDIO_POOL = 3;
+static constexpr int AUDIO_Q_DEPTH = 8;
+static constexpr int AUDIO_CHUNK_NTSC = (AUDIO_SR + GWENESIS_REFRESH_RATE_NTSC / 2) / GWENESIS_REFRESH_RATE_NTSC;
+static constexpr int AUDIO_CHUNK_PAL = (AUDIO_SR + GWENESIS_REFRESH_RATE_PAL / 2) / GWENESIS_REFRESH_RATE_PAL;
+static constexpr int AUDIO_CHUNK_CAP = (AUDIO_CHUNK_PAL > AUDIO_CHUNK_NTSC) ? AUDIO_CHUNK_PAL : AUDIO_CHUNK_NTSC;
+static constexpr int AUDIO_CORE_CHUNK_CAP = ((LINES_PER_FRAME_PAL * VDP_CYCLES_PER_LINE) + GWENESIS_AUDIO_DIVISOR_PAL - 1) / GWENESIS_AUDIO_DIVISOR_PAL;
 
 typedef void (*GenesisAudioSink)(int16_t* pcm, size_t n_samples, int sample_rate);
 
@@ -46,6 +47,11 @@ extern volatile int g_ym_target_clock;
 extern uint8_t genesis_audio_volume;
 
 // API audio
+void genesis_sound_configure_timing(int refresh_rate, int core_sample_rate, int core_divisor, int lines_per_frame);
+int genesis_sound_get_refresh_rate(void);
+int genesis_sound_get_core_rate(void);
+int genesis_sound_get_core_samples_per_frame(void);
+int genesis_sound_get_output_samples_per_frame(void);
 void genesis_alloc_audio_buffers(void);
 void genesis_sound_init();
 void genesis_sound_submit_frame(void);
