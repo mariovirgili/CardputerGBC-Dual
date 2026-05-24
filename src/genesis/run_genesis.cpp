@@ -7,6 +7,7 @@
 #include "genesis_sound.h"
 #include "genesis_display.h"
 #include "genesis_save.h"
+#include "genesis/gwenesis/bus/gwenesis_bus.h"
 #include "share/utils.h"
 #include "share/emu_log_cpp.h"
 #include "compat/arduino_compat.h"
@@ -206,6 +207,9 @@ static inline void md_bench_log_if_due(bool force = false)
   const uint32_t renderLineAvg = d.renderedLinesTotal ? (uint32_t)(d.renderUsTotal / d.renderedLinesTotal) : 0;
   const float fps = elapsedMs ? ((float)d.frames * 1000.0f / (float)elapsedMs) : 0.0f;
 
+#if MD_BUS_PROBE_LOGS_ENABLED
+  gwenesis_bus_probe_log_and_reset();
+#endif
   MD_BENCH_LOG("fps=%.1f frames=%lu draw/nodraw=%lu/%lu late=%lu over=%lu frameUs min/avg/max=%lu/%lu/%lu cpu68kUs=%lu z80Us=%lu psgUs=%lu vdpCfgUs=%lu renderUs frame/line=%lu/%lu audioSubmitUs=%lu lines avg/max=%lu/%lu qFail b/e=%lu/%lu heap free/largest/min=%lu/%lu/%lu",
                fps,
                (unsigned long)d.frames,
@@ -490,6 +494,9 @@ extern "C" void run_genesis(const uint8_t* rom, size_t len, const char* rom_name
   M5Cardputer.Display.setSwapBytes(true);
   md_render_diag_reset();
   md_bench_reset();
+#if MD_BUS_PROBE_LOGS_ENABLED
+  gwenesis_bus_probe_reset();
+#endif
 
   // Allocate buffers
   genesis_alloc_core_buffers();

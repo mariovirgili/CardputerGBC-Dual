@@ -122,6 +122,8 @@ int gwenesis_region_audio_divisor(void);
 int gwenesis_region_lines_per_frame(void);
 const char *gwenesis_region_name(void);
 void gwenesis_region_apply_vdp_status(void);
+void gwenesis_bus_probe_reset(void);
+void gwenesis_bus_probe_log_and_reset(void);
 
 void gwenesis_bus_save_state();
 void gwenesis_bus_load_state();

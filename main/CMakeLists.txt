@@ -73,6 +73,8 @@ set(ENABLE_MD_LOGS ON)
 set(ENABLE_MD_AUDIO_LOGS ON)
 set(ENABLE_MD_RENDER_LOGS ON)
 set(ENABLE_MD_BENCHMARK_LOGS ON)
+# targeted 68k bus access mix probe; requires ENABLE_EMU_LOGS.
+set(ENABLE_MD_BUS_PROBE_LOGS ON)
 
 # FMSX: fMSX detail logs, requires ENABLE_EMU_LOGS.
 set(ENABLE_MSX_LOGS ON)
@@ -632,6 +634,11 @@ set(MD_BENCHMARK_LOG_SRCS
     "${SRC_ROOT}/genesis/genesis_display.cpp"
 )
 
+set(MD_BUS_PROBE_LOG_SRCS
+    "${SRC_ROOT}/genesis/run_genesis.cpp"
+    "${SRC_ROOT}/genesis/gwenesis/bus/gwenesis_bus.c"
+)
+
 set(MSX_LOG_SRCS
     "${SRC_ROOT}/msx/run_msx.cpp"
     "${SRC_ROOT}/msx/fMSX/MSX.c"
@@ -940,6 +947,10 @@ endif()
 
 if(ENABLE_MD_CORE AND ENABLE_MD_BENCHMARK_LOGS)
     add_source_compile_defs(DEFINITIONS EMU_LOGS_ENABLED MD_BENCHMARK_LOGS SOURCES ${MD_BENCHMARK_LOG_SRCS})
+endif()
+
+if(ENABLE_MD_CORE AND ENABLE_MD_BUS_PROBE_LOGS)
+    add_source_compile_defs(DEFINITIONS EMU_LOGS_ENABLED MD_BUS_PROBE_LOGS SOURCES ${MD_BUS_PROBE_LOG_SRCS})
 endif()
 
 if(ENABLE_MSX_CORE AND ENABLE_MSX_LOGS)

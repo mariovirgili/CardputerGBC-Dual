@@ -63,6 +63,133 @@ void bus_log(const char *subs, const char *fmt, ...) {
 	#define bus_log(...)  do {} while(0)
 #endif
 
+#if MD_BUS_PROBE_LOGS_ENABLED
+typedef struct MdBusProbeStats {
+  uint32_t readTotal;
+  uint32_t writeTotal;
+  uint32_t r8;
+  uint32_t r16;
+  uint32_t w8;
+  uint32_t w16;
+  uint32_t rom;
+  uint32_t ram;
+  uint32_t vdp;
+  uint32_t io;
+  uint32_t z80Ram;
+  uint32_t z80Ctrl;
+  uint32_t ym2612;
+  uint32_t psg;
+  uint32_t bank;
+  uint32_t tmss;
+  uint32_t none;
+  uint32_t fallbackRead16;
+  uint32_t fallbackWrite16;
+} MdBusProbeStats;
+
+static MdBusProbeStats s_mdBusProbe;
+
+void gwenesis_bus_probe_reset(void)
+{
+  memset(&s_mdBusProbe, 0, sizeof(s_mdBusProbe));
+}
+
+static inline void md_bus_probe_record(unsigned int mapped, int isWrite, int bits)
+{
+  if (isWrite) {
+    ++s_mdBusProbe.writeTotal;
+    if (bits == 8) ++s_mdBusProbe.w8;
+    else ++s_mdBusProbe.w16;
+  } else {
+    ++s_mdBusProbe.readTotal;
+    if (bits == 8) ++s_mdBusProbe.r8;
+    else ++s_mdBusProbe.r16;
+  }
+
+  switch (mapped) {
+  case ROM_ADDR:
+  case ROM_ADDR_MIRROR:
+    ++s_mdBusProbe.rom;
+    break;
+  case RAM_ADDR:
+    ++s_mdBusProbe.ram;
+    break;
+  case VDP_ADDR:
+    ++s_mdBusProbe.vdp;
+    break;
+  case IO_CTRL:
+    ++s_mdBusProbe.io;
+    break;
+  case Z80_RAM_ADDR:
+  case Z80_RAM_ADDR1K:
+    ++s_mdBusProbe.z80Ram;
+    break;
+  case Z80_CTRL:
+    ++s_mdBusProbe.z80Ctrl;
+    break;
+  case Z80_YM2612_ADDR:
+    ++s_mdBusProbe.ym2612;
+    break;
+  case Z80_SN76489_ADDR:
+    ++s_mdBusProbe.psg;
+    break;
+  case Z80_BANK_ADDR:
+    ++s_mdBusProbe.bank;
+    break;
+  case TMSS_CTRL:
+    ++s_mdBusProbe.tmss;
+    break;
+  default:
+    ++s_mdBusProbe.none;
+    break;
+  }
+}
+
+static inline void md_bus_probe_fallback_read16(void)
+{
+  ++s_mdBusProbe.fallbackRead16;
+}
+
+static inline void md_bus_probe_fallback_write16(void)
+{
+  ++s_mdBusProbe.fallbackWrite16;
+}
+
+void gwenesis_bus_probe_log_and_reset(void)
+{
+  const uint32_t total = s_mdBusProbe.readTotal + s_mdBusProbe.writeTotal;
+  if (total == 0) return;
+
+  MD_BUS_LOG("ops=%lu r/w=%lu/%lu r8/16=%lu/%lu w8/16=%lu/%lu area rom/ram/vdp/io=%lu/%lu/%lu/%lu z80 ram/ctrl/ym/psg/bank=%lu/%lu/%lu/%lu/%lu tmss/none=%lu/%lu fallback r16/w16=%lu/%lu",
+             (unsigned long)total,
+             (unsigned long)s_mdBusProbe.readTotal,
+             (unsigned long)s_mdBusProbe.writeTotal,
+             (unsigned long)s_mdBusProbe.r8,
+             (unsigned long)s_mdBusProbe.r16,
+             (unsigned long)s_mdBusProbe.w8,
+             (unsigned long)s_mdBusProbe.w16,
+             (unsigned long)s_mdBusProbe.rom,
+             (unsigned long)s_mdBusProbe.ram,
+             (unsigned long)s_mdBusProbe.vdp,
+             (unsigned long)s_mdBusProbe.io,
+             (unsigned long)s_mdBusProbe.z80Ram,
+             (unsigned long)s_mdBusProbe.z80Ctrl,
+             (unsigned long)s_mdBusProbe.ym2612,
+             (unsigned long)s_mdBusProbe.psg,
+             (unsigned long)s_mdBusProbe.bank,
+             (unsigned long)s_mdBusProbe.tmss,
+             (unsigned long)s_mdBusProbe.none,
+             (unsigned long)s_mdBusProbe.fallbackRead16,
+             (unsigned long)s_mdBusProbe.fallbackWrite16);
+  gwenesis_bus_probe_reset();
+}
+#else
+void gwenesis_bus_probe_reset(void) {}
+void gwenesis_bus_probe_log_and_reset(void) {}
+#define md_bus_probe_record(mapped, isWrite, bits) do { (void)(mapped); } while (0)
+#define md_bus_probe_fallback_read16() do {} while (0)
+#define md_bus_probe_fallback_write16() do {} while (0)
+#endif
+
 // Setup M68k memories ROM & RAM
 #if GNW_TARGET_MARIO != 0 | GNW_TARGET_ZELDA != 0
 
@@ -482,8 +609,10 @@ unsigned int gwenesis_bus_map_address(unsigned int address) {
  ******************************************************************************/
 static inline unsigned int gwenesis_bus_read_memory_8(unsigned int address) {
  bus_log(__FUNCTION__,"read8  %x", address);
+  const unsigned int mapped = gwenesis_bus_map_address(address);
+  md_bus_probe_record(mapped, 0, 8);
 
-  switch (gwenesis_bus_map_address(address)) {
+  switch (mapped) {
   
   case VDP_ADDR:
     return gwenesis_vdp_read_memory_8(address);
@@ -529,8 +658,10 @@ static inline unsigned int gwenesis_bus_read_memory_8(unsigned int address) {
 static inline unsigned int gwenesis_bus_read_memory_16(unsigned int address) {
    bus_log(__FUNCTION__,"read16 %x", address);
    unsigned int ret_value;
+   const unsigned int mapped = gwenesis_bus_map_address(address);
+   md_bus_probe_record(mapped, 0, 16);
 
-  switch (gwenesis_bus_map_address(address)) {
+  switch (mapped) {
 
   case VDP_ADDR:
     return gwenesis_vdp_read_memory_16(address);
@@ -567,6 +698,7 @@ static inline unsigned int gwenesis_bus_read_memory_16(unsigned int address) {
     return 0xff;
 
   default:
+    md_bus_probe_fallback_read16();
     bus_log(__FUNCTION__,"read mem 16 default %x", address);
     return (gwenesis_bus_read_memory_8(address) << 8) |
            gwenesis_bus_read_memory_8(address + 1);
@@ -583,8 +715,10 @@ static inline unsigned int gwenesis_bus_read_memory_16(unsigned int address) {
 static inline void gwenesis_bus_write_memory_8(unsigned int address,
                                               unsigned int value) {
   bus_log(__FUNCTION__,"write8  @%x:%x", address,value);
+  const unsigned int mapped = gwenesis_bus_map_address(address);
+  md_bus_probe_record(mapped, 1, 8);
 
-  switch (gwenesis_bus_map_address(address)) {
+  switch (mapped) {
 
   case VDP_ADDR:
     gwenesis_vdp_write_memory_16(address & ~1, (value << 8) | value);
@@ -643,8 +777,10 @@ static inline void gwenesis_bus_write_memory_8(unsigned int address,
 static inline void gwenesis_bus_write_memory_16(unsigned int address,
                                                unsigned int value) {
   bus_log(__FUNCTION__,"write16  @%x:%x", address,value);
+  const unsigned int mapped = gwenesis_bus_map_address(address);
+  md_bus_probe_record(mapped, 1, 16);
 
-  switch (gwenesis_bus_map_address(address)) {
+  switch (mapped) {
 
   case VDP_ADDR:
     gwenesis_vdp_write_memory_16(address, value);
@@ -678,6 +814,7 @@ static inline void gwenesis_bus_write_memory_16(unsigned int address,
     return;
 
   default:
+    md_bus_probe_fallback_write16();
     bus_log(__FUNCTION__,"write mem 16 default %x ", address);
     gwenesis_bus_write_memory_8(address, (value >> 8) & 0xff);
     gwenesis_bus_write_memory_8(address + 1, (value)&0xff);

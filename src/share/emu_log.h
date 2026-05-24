@@ -13,7 +13,8 @@
  *   BOOT_DIAG_LOGS
  *   HEAP_LOGS
  *   AUDIO_LOGS
- *   MD_LOGS, MD_AUDIO_LOGS, MD_RENDER_LOGS, MD_BENCHMARK_LOGS
+ *   MD_LOGS, MD_AUDIO_LOGS, MD_RENDER_LOGS, MD_BENCHMARK_LOGS,
+ *   MD_BUS_PROBE_LOGS
  *   MSX_LOGS
  *   SNES_LOGS
  *   NES_DIAG_LOGS, NES_BENCHMARK_LOGS
@@ -76,6 +77,12 @@
 #define MD_BENCHMARK_LOGS_ENABLED 0
 #endif
 
+#if EMU_LOG_MASTER_ENABLED && defined(MD_BUS_PROBE_LOGS)
+#define MD_BUS_PROBE_LOGS_ENABLED 1
+#else
+#define MD_BUS_PROBE_LOGS_ENABLED 0
+#endif
+
 #if EMU_LOG_MASTER_ENABLED && defined(BENCHMARK_LOGS)
 #ifndef NES_BENCHMARK_LOGS
 #define NES_BENCHMARK_LOGS 1
@@ -93,6 +100,7 @@
 #undef MD_AUDIO_LOGS
 #undef MD_RENDER_LOGS
 #undef MD_BENCHMARK_LOGS
+#undef MD_BUS_PROBE_LOGS
 #undef MSX_LOGS
 #undef BENCHMARK_LOGS
 #undef NES_BENCHMARK_LOGS
@@ -130,6 +138,12 @@
 #define MD_BENCH_LOG(fmt, ...) EMU_LOG("[MD][BENCH] " fmt "\n", ##__VA_ARGS__)
 #else
 #define MD_BENCH_LOG(fmt, ...) ((void)0)
+#endif
+
+#if MD_BUS_PROBE_LOGS_ENABLED
+#define MD_BUS_LOG(fmt, ...) EMU_LOG("[MD][BUS] " fmt "\n", ##__VA_ARGS__)
+#else
+#define MD_BUS_LOG(fmt, ...) ((void)0)
 #endif
 
 #if !defined(__cplusplus) && !defined(EMU_ALLOW_RAW_PRINTF)
