@@ -400,9 +400,9 @@ static void showColecoFlashError(CardputerView& display, ColecoFlashStatus st) {
 
 static void showRomLimitThenReturn(CardputerView& display) {
   for (int i = 0; i < 2; ++i) {
-    display.topBar("ROM IS TOO HEAVY", false, false);
-    display.subMessage("Copy ROM to flash failed", 1500);
-    display.subMessage("ROM limit is reached", 1500);
+    display.topBar("ROM WON'T WORK", false, false);
+    display.subMessage("This ROM won't work", 1500);
+    display.subMessage("Too large for layout", 1500);
   }
   display.topBar("LOAD ROM CARTRIDGE", false, false);
   display.subMessage("Returning to selector", 1000);
