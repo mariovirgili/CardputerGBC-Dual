@@ -223,6 +223,8 @@ set(ENABLE_SNES_GETSET_IRAM OFF)
 set(ENABLE_SNES_CPU_MEM_OFAST ON)
 # SNES experiment: start line buffers at normal width and grow for hi-res only.
 set(ENABLE_SNES_LAZY_LINE_BUFFERS ON)
+# MD experiment: try -Ofast only on a few measured hot paths.
+set(ENABLE_MD_HOT_OFAST ON)
 
 
 # Stella (Atari 2600)
@@ -828,6 +830,13 @@ set(SNES_CPU_MEM_OFAST_SRCS
     "${SRC_ROOT}/snes/snes9x/src/getset.c"
 )
 
+set(MD_HOT_OFAST_SRCS
+    "${SRC_ROOT}/genesis/gwenesis/cpus/M68K/m68kcpu.c"
+    "${SRC_ROOT}/genesis/gwenesis/bus/gwenesis_bus.c"
+    "${SRC_ROOT}/genesis/gwenesis/vdp/gwenesis_vdp_gfx.c"
+    "${SRC_ROOT}/genesis/gwenesis/sound/z80inst.c"
+)
+
 if(ENABLE_GX4000_CORE AND ENABLE_GX4000_LTO)
     add_source_compile_opts(OPTIONS -flto -ffat-lto-objects SOURCES ${GX4000_LTO_SRCS})
 endif()
@@ -870,6 +879,10 @@ endif()
 
 if(ENABLE_MD_CORE AND ENABLE_MD_LTO)
     add_source_compile_opts(OPTIONS -flto -ffat-lto-objects SOURCES ${MD_LTO_SRCS})
+endif()
+
+if(ENABLE_MD_CORE AND ENABLE_MD_HOT_OFAST)
+    add_source_compile_opts(OPTIONS -Ofast SOURCES ${MD_HOT_OFAST_SRCS})
 endif()
 
 if(ENABLE_NGP_CORE AND ENABLE_NGP_LTO)
