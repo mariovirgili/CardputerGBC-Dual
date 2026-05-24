@@ -32,6 +32,7 @@ static int s_xmap_roiX0 = -1, s_xmap_roiW = -1;
 static int s_roiX0 = 0, s_roiY0 = 0, s_roiW = 0, s_roiH = 0;
 
 int genesisZoomPercent = 110;
+bool fullscreenMode __attribute__((weak)) = true;
 
 #if MD_RENDER_LOGS_ENABLED
 struct MdDisplayDiagStats {
@@ -69,7 +70,7 @@ static inline void md_display_diag_log_if_due(bool force = false)
   md_display_diag_init_once();
   MdDisplayDiagStats& d = s_mdDisplayDiag;
   const uint64_t now = md_display_now_ms();
-  if (!force && (now - d.lastLogMs) < 2000ULL) return;
+  if (!force && (now - d.lastLogMs) < 1000ULL) return;
   if (d.beginRecv == 0 && d.endRecv == 0 && d.scanSent == 0 && d.scanRecv == 0) {
     d.lastLogMs = now;
     return;

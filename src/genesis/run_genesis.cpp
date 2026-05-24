@@ -84,7 +84,7 @@ static inline void md_render_diag_log_if_due(bool force = false)
 {
   MdFrameDiagStats& d = s_mdFrameDiag;
   const uint64_t now = md_render_now_ms();
-  if (!force && (now - d.lastLogMs) < 2000ULL) return;
+  if (!force && (now - d.lastLogMs) < 1000ULL) return;
   if (d.frames == 0) {
     d.lastLogMs = now;
     return;
@@ -120,6 +120,127 @@ static inline void md_render_diag_log_if_due(bool force = false)
 static inline void md_render_diag_reset() {}
 static inline void md_render_diag_record(bool, bool, bool, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t) {}
 static inline void md_render_diag_log_if_due(bool = false) {}
+#endif
+
+#if MD_BENCHMARK_LOGS_ENABLED
+struct MdBenchStats {
+  uint64_t lastLogUs = 0;
+  uint32_t frames = 0;
+  uint32_t drawFrames = 0;
+  uint32_t noDrawFrames = 0;
+  uint32_t lateFrames = 0;
+  uint32_t overBudget = 0;
+  uint32_t z80SkippedFrames = 0;
+  uint32_t beginSendFail = 0;
+  uint32_t endSendFail = 0;
+  uint32_t renderedLinesMax = 0;
+  uint64_t renderedLinesTotal = 0;
+  uint32_t frameUsMin = UINT32_MAX;
+  uint32_t frameUsMax = 0;
+  uint64_t frameUsTotal = 0;
+  uint64_t m68kUsTotal = 0;
+  uint64_t z80UsTotal = 0;
+  uint64_t psgUsTotal = 0;
+  uint64_t vdpConfigUsTotal = 0;
+  uint64_t renderUsTotal = 0;
+  uint64_t audioSubmitUsTotal = 0;
+};
+
+static MdBenchStats s_mdBench;
+
+static inline uint64_t md_bench_now_us()
+{
+  return (uint64_t)esp_timer_get_time();
+}
+
+static inline void md_bench_reset()
+{
+  s_mdBench = MdBenchStats{};
+  s_mdBench.lastLogUs = md_bench_now_us();
+}
+
+static inline uint32_t md_bench_delta_us(uint64_t startUs)
+{
+  return (uint32_t)(md_bench_now_us() - startUs);
+}
+
+static inline void md_bench_add_u64(uint64_t& dst, uint64_t startUs)
+{
+  dst += md_bench_delta_us(startUs);
+}
+
+static inline void md_bench_record_frame(bool drawFrame,
+                                         bool skipZ80,
+                                         bool lateSkip,
+                                         uint32_t renderedLines,
+                                         uint32_t frameUs,
+                                         uint32_t budgetUs)
+{
+  MdBenchStats& d = s_mdBench;
+  ++d.frames;
+  if (drawFrame) ++d.drawFrames; else ++d.noDrawFrames;
+  if (skipZ80) ++d.z80SkippedFrames;
+  if (lateSkip) ++d.lateFrames;
+  if (frameUs > budgetUs) ++d.overBudget;
+  if (renderedLines > d.renderedLinesMax) d.renderedLinesMax = renderedLines;
+  d.renderedLinesTotal += renderedLines;
+  if (frameUs < d.frameUsMin) d.frameUsMin = frameUs;
+  if (frameUs > d.frameUsMax) d.frameUsMax = frameUs;
+  d.frameUsTotal += frameUs;
+}
+
+static inline void md_bench_log_if_due(bool force = false)
+{
+  MdBenchStats& d = s_mdBench;
+  const uint64_t nowUs = md_bench_now_us();
+  if (!force && (nowUs - d.lastLogUs) < 1000000ULL) return;
+  if (d.frames == 0) {
+    d.lastLogUs = nowUs;
+    return;
+  }
+
+  const uint32_t elapsedMs = (uint32_t)((nowUs - d.lastLogUs) / 1000ULL);
+  const uint32_t frameMin = (d.frameUsMin == UINT32_MAX) ? 0 : d.frameUsMin;
+  const uint32_t frameAvg = (uint32_t)(d.frameUsTotal / d.frames);
+  const uint32_t linesAvg = (uint32_t)(d.renderedLinesTotal / d.frames);
+  const uint32_t renderLineAvg = d.renderedLinesTotal ? (uint32_t)(d.renderUsTotal / d.renderedLinesTotal) : 0;
+  const float fps = elapsedMs ? ((float)d.frames * 1000.0f / (float)elapsedMs) : 0.0f;
+
+  MD_BENCH_LOG("fps=%.1f frames=%lu draw/nodraw=%lu/%lu late=%lu over=%lu frameUs min/avg/max=%lu/%lu/%lu cpu68kUs=%lu z80Us=%lu psgUs=%lu vdpCfgUs=%lu renderUs frame/line=%lu/%lu audioSubmitUs=%lu lines avg/max=%lu/%lu qFail b/e=%lu/%lu heap free/largest/min=%lu/%lu/%lu",
+               fps,
+               (unsigned long)d.frames,
+               (unsigned long)d.drawFrames,
+               (unsigned long)d.noDrawFrames,
+               (unsigned long)d.lateFrames,
+               (unsigned long)d.overBudget,
+               (unsigned long)frameMin,
+               (unsigned long)frameAvg,
+               (unsigned long)d.frameUsMax,
+               (unsigned long)(d.m68kUsTotal / d.frames),
+               (unsigned long)(d.z80UsTotal / d.frames),
+               (unsigned long)(d.psgUsTotal / d.frames),
+               (unsigned long)(d.vdpConfigUsTotal / d.frames),
+               (unsigned long)(d.renderUsTotal / d.frames),
+               (unsigned long)renderLineAvg,
+               (unsigned long)(d.audioSubmitUsTotal / d.frames),
+               (unsigned long)linesAvg,
+               (unsigned long)d.renderedLinesMax,
+               (unsigned long)d.beginSendFail,
+               (unsigned long)d.endSendFail,
+               (unsigned long)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+               (unsigned long)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL),
+               (unsigned long)heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL));
+
+  d = MdBenchStats{};
+  d.lastLogUs = nowUs;
+}
+#else
+static inline void md_bench_reset() {}
+static inline uint64_t md_bench_now_us() { return 0; }
+static inline uint32_t md_bench_delta_us(uint64_t) { return 0; }
+static inline void md_bench_add_u64(uint64_t&, uint64_t) {}
+static inline void md_bench_record_frame(bool, bool, bool, uint32_t, uint32_t, uint32_t) {}
+static inline void md_bench_log_if_due(bool = false) {}
 #endif
 
 extern "C" {
@@ -184,7 +305,13 @@ static void run_one_frame() {
   #endif
 
   // VDP and CPU setup for the frame
+#if MD_BENCHMARK_LOGS_ENABLED
+  uint64_t t_probe = md_bench_now_us();
+#endif
   gwenesis_vdp_render_config();
+#if MD_BENCHMARK_LOGS_ENABLED
+  md_bench_add_u64(s_mdBench.vdpConfigUsTotal, t_probe);
+#endif
   int cpu_deadline = 0;
   const unsigned h = screen_height ? screen_height : 224u;
   const int lines_per_frame = (h >= 240u) ? 313 : 262;
@@ -197,27 +324,49 @@ static void run_one_frame() {
 #if MD_RENDER_LOGS_ENABLED
     const BaseType_t ok = xQueueSend(g_scanQ, &b, 0);
     if (ok != pdTRUE) ++s_mdFrameDiag.beginSendFail;
+#if MD_BENCHMARK_LOGS_ENABLED
+    if (ok != pdTRUE) ++s_mdBench.beginSendFail;
+#endif
+#elif MD_BENCHMARK_LOGS_ENABLED
+    const BaseType_t ok = xQueueSend(g_scanQ, &b, 0);
+    if (ok != pdTRUE) ++s_mdBench.beginSendFail;
 #else
     xQueueSend(g_scanQ, &b, 0);
 #endif
   }
 
   // Per line emulation loop
-#if MD_RENDER_LOGS_ENABLED
+#if MD_RENDER_LOGS_ENABLED || MD_BENCHMARK_LOGS_ENABLED
   uint32_t renderedLines = 0;
 #endif
   while (scan_line < lines_per_frame) {
     cpu_deadline += VDP_CYCLES_PER_LINE;
 
     // Run M68K CPU
+#if MD_BENCHMARK_LOGS_ENABLED
+    t_probe = md_bench_now_us();
+#endif
     m68k_run(cpu_deadline);
+#if MD_BENCHMARK_LOGS_ENABLED
+    md_bench_add_u64(s_mdBench.m68kUsTotal, t_probe);
+#endif
     
     // Run Z80 and update YM2612 clock for sound
     #ifndef GENESIS_NO_SOUND
       if (genesis_audio_volume > 0) {
         if (!skipZ80) {
+#if MD_BENCHMARK_LOGS_ENABLED
+          t_probe = md_bench_now_us();
+#endif
           z80_run(cpu_deadline);
+#if MD_BENCHMARK_LOGS_ENABLED
+          md_bench_add_u64(s_mdBench.z80UsTotal, t_probe);
+          t_probe = md_bench_now_us();
+#endif
           gwenesis_SN76489_run(cpu_deadline);
+#if MD_BENCHMARK_LOGS_ENABLED
+          md_bench_add_u64(s_mdBench.psgUsTotal, t_probe);
+#endif
           genesis_sound_ym_set_target_clock(cpu_deadline);
         }
       }
@@ -225,8 +374,14 @@ static void run_one_frame() {
     
     // VDP line rendering, if no frame skip and not the lines to skip
     if (drawFrame && (unsigned)scan_line < h && ((scan_line & 1) == g_field_ofs)) {
+#if MD_BENCHMARK_LOGS_ENABLED
+      t_probe = md_bench_now_us();
+#endif
       gwenesis_vdp_render_line(scan_line);
-#if MD_RENDER_LOGS_ENABLED
+#if MD_BENCHMARK_LOGS_ENABLED
+      md_bench_add_u64(s_mdBench.renderUsTotal, t_probe);
+#endif
+#if MD_RENDER_LOGS_ENABLED || MD_BENCHMARK_LOGS_ENABLED
       ++renderedLines;
 #endif
     }
@@ -274,17 +429,29 @@ static void run_one_frame() {
 #if MD_RENDER_LOGS_ENABLED
     const BaseType_t ok = xQueueSend(g_scanQ, &e, 0);
     if (ok != pdTRUE) ++s_mdFrameDiag.endSendFail;
+#if MD_BENCHMARK_LOGS_ENABLED
+    if (ok != pdTRUE) ++s_mdBench.endSendFail;
+#endif
+#elif MD_BENCHMARK_LOGS_ENABLED
+    const BaseType_t ok = xQueueSend(g_scanQ, &e, 0);
+    if (ok != pdTRUE) ++s_mdBench.endSendFail;
 #else
     xQueueSend(g_scanQ, &e, 0);
 #endif
   }
 
   // Run SN76489 and push sound samples for this frame
-  #ifndef GENESIS_NO_SOUND
+#ifndef GENESIS_NO_SOUND
     if (genesis_audio_volume > 0) {
+#if MD_BENCHMARK_LOGS_ENABLED
+      t_probe = md_bench_now_us();
+#endif
       gwenesis_SN76489_run(cpu_deadline);
       genesis_sound_submit_frame();
       genesis_sound_ym_set_target_clock(cpu_deadline);
+#if MD_BENCHMARK_LOGS_ENABLED
+      md_bench_add_u64(s_mdBench.audioSubmitUsTotal, t_probe);
+#endif
     }
   #endif
   
@@ -299,12 +466,16 @@ static void run_one_frame() {
   md_render_diag_record(drawFrame, skipZ80, lateSkip, renderedLines, elapsedUs, kFrameBudgetUs, h, (uint32_t)lines_per_frame);
   md_render_diag_log_if_due();
 #endif
+#if MD_BENCHMARK_LOGS_ENABLED
+  md_bench_record_frame(drawFrame, skipZ80, lateSkip, renderedLines, elapsedUs, kFrameBudgetUs);
+  md_bench_log_if_due();
+#endif
 
-#if EMU_LOG_MASTER_ENABLED
-  // FPS logging every 2 seconds
+#if EMU_LOG_MASTER_ENABLED && !MD_BENCHMARK_LOGS_ENABLED
+  // FPS logging every second when the MD benchmark probe is disabled.
   frame_count++;
   uint64_t now = millis();
-  if (now - last_fps_log_time >= 2000) {
+  if (now - last_fps_log_time >= 1000) {
     float fps = (frame_count * 1000.0f) / (now - last_fps_log_time);
     last_fps_log_time = now;
     frame_count = 0;
@@ -318,6 +489,7 @@ static void run_one_frame() {
 extern "C" void run_genesis(const uint8_t* rom, size_t len, const char* rom_name) {
   M5Cardputer.Display.setSwapBytes(true);
   md_render_diag_reset();
+  md_bench_reset();
 
   // Allocate buffers
   genesis_alloc_core_buffers();

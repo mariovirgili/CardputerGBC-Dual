@@ -4,18 +4,18 @@ set(LIB_ROOT "${APP_ROOT}/lib")
 
 # Core inclusion switches. Disabled cores keep their source code in the tree,
 # but are not compiled, advertised, or launchable.
-set(ENABLE_NES_CORE ON)
-set(ENABLE_SMS_CORE ON)
-set(ENABLE_NGP_CORE ON)
+set(ENABLE_NES_CORE OFF)
+set(ENABLE_SMS_CORE OFF)
+set(ENABLE_NGP_CORE OFF)
 set(ENABLE_MD_CORE ON)
-set(ENABLE_WS_CORE ON)
-set(ENABLE_PCE_CORE ON)
-set(ENABLE_GB_CORE ON)
-set(ENABLE_LYNX_CORE ON)
-set(ENABLE_MSX_CORE ON)
-set(ENABLE_A7800_CORE ON)
-set(ENABLE_A2600_CORE ON)
-set(ENABLE_GX4000_CORE ON)
+set(ENABLE_WS_CORE OFF)
+set(ENABLE_PCE_CORE OFF)
+set(ENABLE_GB_CORE OFF)
+set(ENABLE_LYNX_CORE OFF)
+set(ENABLE_MSX_CORE OFF)
+set(ENABLE_A7800_CORE OFF)
+set(ENABLE_A2600_CORE OFF)
+set(ENABLE_GX4000_CORE OFF)
 set(ENABLE_SNES_CORE OFF)
 
 file(GLOB_RECURSE APP_SRCS
@@ -72,6 +72,7 @@ set(ENABLE_EMU_ALLOW_RAW_PRINTF OFF)
 set(ENABLE_MD_LOGS ON)
 set(ENABLE_MD_AUDIO_LOGS ON)
 set(ENABLE_MD_RENDER_LOGS ON)
+set(ENABLE_MD_BENCHMARK_LOGS ON)
 
 # FMSX: fMSX detail logs, requires ENABLE_EMU_LOGS.
 set(ENABLE_MSX_LOGS ON)
@@ -625,6 +626,12 @@ set(MD_AUDIO_LOG_SRCS
     "${SRC_ROOT}/genesis/gwenesis/sound/ym2612.c"
 )
 
+set(MD_BENCHMARK_LOG_SRCS
+    "${SRC_ROOT}/genesis/run_genesis.cpp"
+    "${SRC_ROOT}/genesis/genesis_sound.cpp"
+    "${SRC_ROOT}/genesis/genesis_display.cpp"
+)
+
 set(MSX_LOG_SRCS
     "${SRC_ROOT}/msx/run_msx.cpp"
     "${SRC_ROOT}/msx/fMSX/MSX.c"
@@ -929,6 +936,10 @@ endif()
 
 if(ENABLE_MD_CORE AND ENABLE_MD_RENDER_LOGS)
     add_source_compile_defs(DEFINITIONS EMU_LOGS_ENABLED MD_RENDER_LOGS SOURCES ${MD_RENDER_LOG_SRCS})
+endif()
+
+if(ENABLE_MD_CORE AND ENABLE_MD_BENCHMARK_LOGS)
+    add_source_compile_defs(DEFINITIONS EMU_LOGS_ENABLED MD_BENCHMARK_LOGS SOURCES ${MD_BENCHMARK_LOG_SRCS})
 endif()
 
 if(ENABLE_MSX_CORE AND ENABLE_MSX_LOGS)

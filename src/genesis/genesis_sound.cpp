@@ -127,7 +127,7 @@ static inline void md_audio_diag_log_if_due(bool force = false)
 {
   MdAudioDiagStats& d = s_mdAudioDiag;
   const uint64_t now = md_audio_now_ms();
-  if (!force && (now - d.lastLogMs) < 2000ULL) return;
+  if (!force && (now - d.lastLogMs) < 1000ULL) return;
   if (d.frames == 0 && d.targetCount == 0) {
     d.lastLogMs = now;
     return;
@@ -143,7 +143,7 @@ static inline void md_audio_diag_log_if_due(bool force = false)
   const int targetMax = (d.targetMax == INT32_MIN) ? 0 : d.targetMax;
   const uint32_t targetAvg = d.targetCount ? (uint32_t)(d.targetTotal / d.targetCount) : 0;
 
-  MD_AUDIO_LOG("frames=%lu queued=%lu dropDepth=%lu dropBuf=%lu depthMax=%lu emptyDepth=%lu coreRate=%d outRate=%d coreSamples min/avg/max=%lu/%lu/%lu outSamples=%d ym=%lu/%lu/%lu psg=%lu/%lu/%lu target min/avg/max/last=%d/%lu/%d/%d clipped=%lu",
+  MD_AUDIO_LOG("frames=%lu queued=%lu loss depth/buf=%lu/%lu queueDepthMax=%lu underrunEmpty=%lu coreRate=%d outRate=%d coreSamples min/avg/max=%lu/%lu/%lu outSamples=%d ym=%lu/%lu/%lu psg=%lu/%lu/%lu target min/avg/max/last=%d/%lu/%d/%d clipped=%lu",
                (unsigned long)d.frames,
                (unsigned long)d.queued,
                (unsigned long)d.droppedDepth,
