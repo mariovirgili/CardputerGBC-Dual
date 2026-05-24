@@ -32,14 +32,14 @@ set(ENABLE_BOOT_DIAG_LOGS ON)
 set(ENABLE_HEAP_LOGS ON)
 set(ENABLE_AUDIO_LOGS OFF)
 # extra perf/detail logs, requires ENABLE_EMU_LOGS.
-set(ENABLE_BENCHMARK_LOGS OFF)
+set(ENABLE_BENCHMARK_LOGS ON)
 # allow raw printf while emu_log.h is forced-included.
 set(ENABLE_EMU_ALLOW_RAW_PRINTF OFF)
 
 # GWENESIS: Mega Drive render/audio detail logs, requires ENABLE_EMU_LOGS.
 set(ENABLE_MD_LOGS ON)
-set(ENABLE_MD_AUDIO_LOGS OFF)
-set(ENABLE_MD_RENDER_LOGS OFF)
+set(ENABLE_MD_AUDIO_LOGS ON)
+set(ENABLE_MD_RENDER_LOGS ON)
 
 # FMSX: fMSX detail logs, requires ENABLE_EMU_LOGS.
 set(ENABLE_MSX_LOGS ON)
@@ -54,8 +54,8 @@ set(ENABLE_NES_DIAG_LOGS OFF)
 set(ENABLE_NES_BENCHMARK_LOGS ON)
 
 # Oswan: WonderSwan detail logs, requires ENABLE_EMU_LOGS.
-set(ENABLE_WS_LOGS OFF)
-set(ENABLE_WS_BENCHMARK_LOGS OFF)
+set(ENABLE_WS_LOGS ON)
+set(ENABLE_WS_BENCHMARK_LOGS ON)
 # Oswan: temporary WS/WSC model and COLCTL diagnostics.
 set(ENABLE_WS_MODEL_LOGS OFF)
 # Oswan: temporary lightweight WS renderer section profiling.
