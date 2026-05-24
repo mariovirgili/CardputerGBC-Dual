@@ -83,7 +83,9 @@ static uint16_t ws_input_compute_state(int mode, uint32_t i2cPad)
 
 extern "C" void ws_input_start(void)
 {
+#ifndef WS_SD_OFF_DURING_GAMEPLAY
   share::setBeforeRestartCallback(ws_save_force_flush);
+#endif
   ws_input_tick();
 }
 
@@ -101,7 +103,9 @@ extern "C" void ws_input_tick(void)
   Keyboard_Class::KeysState status = M5Cardputer.Keyboard.keysState();
 
   if (M5Cardputer.BtnA.pressedFor(1000) && !quitFlushDone) {
+#ifndef WS_SD_OFF_DURING_GAMEPLAY
     ws_save_force_flush();
+#endif
     quitFlushDone = true;
   }
 

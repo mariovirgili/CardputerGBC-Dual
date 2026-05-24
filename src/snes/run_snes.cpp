@@ -13,6 +13,7 @@
 #include "snes_rom.h"
 #include "share/input.h"
 #include "share/sd_control.h"
+#include "share/sd_gameplay_guard.h"
 
 #include <ctype.h>
 #include <stdlib.h>
@@ -259,16 +260,13 @@ static void snes_enter_sd_off_gameplay()
     share::setRestartRequestMode(true);
     share::clearBeforeRestartCallback();
     snes_save_suspend_background();
-    if (share_sd_is_mounted())
-    {
-        snes_log_heap_step("pre SD close");
-        share_sd_close();
-        snes_log_heap_step("after SD close");
-    }
-    else
-    {
-        snes_log_heap_step("SD already off");
-    }
+#ifdef SNES_SD_OFF_DURING_GAMEPLAY
+    snes_log_heap_step("pre SD close");
+    share_sd_gameplay_close("SNES");
+    snes_log_heap_step("after SD close");
+#else
+    snes_log_heap_step("SD kept mounted");
+#endif
 }
 
 static void snes_alt_buffers_free()
@@ -325,7 +323,7 @@ static void snes_clean_teardown_and_save()
         snes_log_heap_step("core freed");
 
         snes_log_heap_step("pre SD begin");
-        if (share_sd_begin_retry())
+        if (share_sd_gameplay_mount("SNES", "save"))
         {
             snes_log_heap_step("after SD begin");
             snes_save_force_flush_buffer(sramSnapshot, sramSnapshotSize);
@@ -339,7 +337,7 @@ static void snes_clean_teardown_and_save()
     else if (hadSram)
     {
         snes_log_heap_step("pre SD begin");
-        if (share_sd_begin_retry())
+        if (share_sd_gameplay_mount("SNES", "save"))
         {
             snes_log_heap_step("after SD begin");
             snes_save_force_flush();
@@ -363,11 +361,10 @@ static void snes_clean_teardown_and_save()
     if (sramSnapshot)
         free(sramSnapshot);
 
-    if (share_sd_is_mounted())
-    {
-        share_sd_close();
-        snes_log_heap_step("SD reclosed");
-    }
+#ifdef SNES_SD_OFF_DURING_GAMEPLAY
+    share_sd_gameplay_close_if_mounted("SNES", "save");
+    snes_log_heap_step("SD reclosed");
+#endif
 
     snes_save_shutdown();
     snes_reset_quit_controls();
@@ -387,7 +384,7 @@ static void snes_load_sram_with_sd()
     if (!was_mounted)
     {
         snes_log_heap_step("pre SD load");
-        if (!share_sd_begin_retry())
+        if (!share_sd_gameplay_mount("SNES", "load"))
         {
             SNES_LOG("[SNES][SAVE] SD remount failed, SRAM load skipped\n");
             return;
@@ -397,12 +394,14 @@ static void snes_load_sram_with_sd()
 
     snes_save_load();
 
+#ifdef SNES_SD_OFF_DURING_GAMEPLAY
     if (!was_mounted)
     {
         snes_log_heap_step("pre SD close");
-        share_sd_close();
+        share_sd_gameplay_close_if_mounted("SNES", "load");
         snes_log_heap_step("after SD close");
     }
+#endif
 }
 
 #ifdef SNES_DEEP_BENCH

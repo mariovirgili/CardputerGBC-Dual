@@ -7,6 +7,7 @@ extern "C" {
 
 #include <M5Cardputer.h>
 #include "esp_timer.h"
+#include "esp_system.h"
 #include "freertos/task.h"
 #ifdef WS_BENCHMARK_LOGS
 #include "esp_heap_caps.h"
@@ -17,6 +18,11 @@ extern "C" {
 #include "ws_save.h"
 #include "ws_state.h"
 #include "share/emu_log_cpp.h"
+#include "share/input.h"
+#include "share/sd_control.h"
+#include "share/sd_gameplay_guard.h"
+
+#include <stdlib.h>
 
 #ifdef WS_LOGS_ENABLED
 #define WS_LOG(...) EMU_LOG(__VA_ARGS__)
@@ -30,6 +36,105 @@ extern "C" {
 #ifndef WS_AUDIO_TASK_CORE
 #define WS_AUDIO_TASK_CORE 0
 #endif
+
+static void ws_reset_quit_controls()
+{
+  share::setRestartRequestMode(false);
+  share::clearRestartRequest();
+  share::clearBeforeRestartCallback();
+}
+
+static void ws_enter_sd_off_gameplay()
+{
+#ifdef WS_SD_OFF_DURING_GAMEPLAY
+  share::clearRestartRequest();
+  share::setRestartRequestMode(true);
+  share::clearBeforeRestartCallback();
+  ws_save_suspend_background();
+
+  if (ws_save_uses_sd_backing()) {
+    WS_LOG("[WS][SD] keep SD mounted: SRAM backing active\n");
+    return;
+  }
+
+  share_sd_gameplay_close("WS");
+#else
+  share::setBeforeRestartCallback(ws_save_force_flush);
+#endif
+}
+
+static void ws_load_sram_with_sd()
+{
+  if (!ws_save_has_sram()) {
+    ws_save_load();
+    return;
+  }
+
+  const bool was_mounted = share_sd_is_mounted();
+  if (!was_mounted && !share_sd_gameplay_mount("WS", "load")) {
+    WS_LOG("[WS][SAVE] SD remount failed, SRAM load skipped\n");
+    return;
+  }
+
+  ws_save_load();
+
+#ifdef WS_SD_OFF_DURING_GAMEPLAY
+  if (!was_mounted && !ws_save_uses_sd_backing()) {
+    share_sd_gameplay_close_if_mounted("WS", "load");
+  }
+#endif
+}
+
+static void ws_clean_teardown_and_save()
+{
+  WS_LOG("[WS][QUIT] clean teardown start\n");
+  ws_save_suspend_background();
+
+  uint8_t* sramSnapshot = nullptr;
+  size_t sramSnapshotSize = 0;
+  const bool hadSram = ws_save_has_sram();
+  const bool sdBacked = ws_save_uses_sd_backing();
+  const bool haveSnapshot = hadSram && !sdBacked &&
+      ws_save_snapshot_sram(&sramSnapshot, &sramSnapshotSize);
+
+  if (hadSram && !sdBacked && !haveSnapshot) {
+    WS_LOG("[WS][SAVE] SRAM snapshot failed, using live-buffer fallback\n");
+  }
+
+  ws_input_stop();
+  ws_display_stop();
+  ws_sound_shutdown();
+
+  if (hadSram) {
+    if (share_sd_gameplay_mount("WS", "save")) {
+      if (haveSnapshot) {
+        ws_save_force_flush_buffer(sramSnapshot, sramSnapshotSize);
+      } else {
+        ws_save_force_flush();
+      }
+    } else {
+      WS_LOG("[WS][SAVE] SD remount failed, SRAM not saved\n");
+    }
+  } else {
+    WS_LOG("[WS][SD] no SRAM, skip SD remount/save\n");
+  }
+
+  if (sramSnapshot) {
+    free(sramSnapshot);
+  }
+
+  if (sdBacked) {
+    WsSramBackingClose();
+  }
+
+#ifdef WS_SD_OFF_DURING_GAMEPLAY
+  share_sd_gameplay_close_if_mounted("WS", "save");
+#endif
+
+  ws_save_shutdown();
+  ws_reset_quit_controls();
+  WS_LOG("[WS][QUIT] clean teardown done\n");
+}
 
 static void ws_update_adaptive_frameskip(uint32_t core_us, uint32_t frame_us)
 {
@@ -92,8 +197,9 @@ extern "C" void run_ws(const uint8_t* rom, size_t len, const char* rom_name, boo
 
   // SRAM save/load
   ws_save_init(rom_name);
-  ws_save_load();
+  ws_load_sram_with_sd();
   ws_state_init(rom_name);
+  ws_enter_sd_off_gameplay();
   ws_sound_start_task(WS_AUDIO_PERIOD_MS, WS_AUDIO_TASK_CORE);
   ws_input_start();
 #ifdef WS_BENCHMARK_LOGS
@@ -131,6 +237,9 @@ extern "C" void run_ws(const uint8_t* rom, size_t len, const char* rom_name, boo
   for (;;) {
     // Run one frame
     ws_input_tick();
+    if (share::restartRequested()) {
+      break;
+    }
     int64_t tRun0 = esp_timer_get_time();
     WsRun();
     uint32_t coreUs = (uint32_t)(esp_timer_get_time() - tRun0);
@@ -308,5 +417,10 @@ extern "C" void run_ws(const uint8_t* rom, size_t len, const char* rom_name, boo
     else if (remain > 0) ets_delay_us((uint32_t)remain);
     else next = esp_timer_get_time();
   }
+
+#ifdef WS_SD_OFF_DURING_GAMEPLAY
+  ws_clean_teardown_and_save();
+  esp_restart();
+#endif
 }
 

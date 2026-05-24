@@ -54,8 +54,8 @@ set(ENABLE_NES_DIAG_LOGS OFF)
 set(ENABLE_NES_BENCHMARK_LOGS ON)
 
 # Oswan: WonderSwan detail logs, requires ENABLE_EMU_LOGS.
-set(ENABLE_WS_LOGS ON)
-set(ENABLE_WS_BENCHMARK_LOGS ON)
+set(ENABLE_WS_LOGS OFF)
+set(ENABLE_WS_BENCHMARK_LOGS OFF)
 # Oswan: temporary WS/WSC model and COLCTL diagnostics.
 set(ENABLE_WS_MODEL_LOGS OFF)
 # Oswan: temporary lightweight WS renderer section profiling.
@@ -86,6 +86,9 @@ set(ENABLE_REMOVE_PRINTF_DEFINE ON)
 # Global speed/heap profile for RAM-expensive optimizations.
 # ON keeps the fast IRAM/inline paths; set OFF to recover heap/IRAM.
 set(TURN_OFF_IF_HEAP_LOW ON)
+# Cores listed here close the SD card after ROM/save load and remount it only
+# for explicit save work. Each core still owns its SRAM/runtime constraints.
+set(SD_OFF_DURING_GAMEPLAY_CORES SNES WS)
 
 # Race (NGP)
 set(ENABLE_NGP_USE_CZ80 ON)
@@ -274,6 +277,18 @@ function(add_private_define_if enable_var definition)
 endfunction()
 
 add_private_define_if(ENABLE_SNES_CORE SNES_CORE_ENABLED=1)
+
+function(add_sd_off_define core_name definition)
+    list(FIND SD_OFF_DURING_GAMEPLAY_CORES "${core_name}" _sd_off_index)
+    if(NOT _sd_off_index EQUAL -1)
+        target_compile_definitions(${COMPONENT_LIB} PRIVATE ${definition})
+    endif()
+endfunction()
+
+add_sd_off_define(WS WS_SD_OFF_DURING_GAMEPLAY=1)
+if(ENABLE_SNES_CORE)
+    add_sd_off_define(SNES SNES_SD_OFF_DURING_GAMEPLAY=1)
+endif()
 
 # Race (NGP)
 add_private_define_if(ENABLE_NGP_USE_CZ80 USE_CZ80=1)

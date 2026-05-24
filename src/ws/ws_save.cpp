@@ -1,5 +1,6 @@
 #include "ws_save.h"
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -44,6 +45,7 @@ static char*        g_save_path   = nullptr;
 static uint32_t     g_crc_last    = 0;
 static TickType_t   g_next_check  = 0;
 static bool         g_save_dirty  = false;
+static bool         g_save_suspended = false;
 
 // ====================== FS utils ======================
 static void ensure_dir(){ mkdir(WS_SAVE_DIR, 0777); }
@@ -201,6 +203,42 @@ static bool flush_now(){
   return true;
 }
 
+static bool flush_buffer_now(const uint8_t* data, size_t size){
+  if (!data || !size || !g_save_path || !g_save_path[0]) return false;
+  if (!share::gameSaveEnsureParentReady(WS_SAVE_DIR)) return false;
+
+  FILE* f = fopen(g_save_path, "r+b");
+  if (!f) f = fopen(g_save_path, "w+b");
+  if (!f) return false;
+
+  const size_t CHUNK = 512;
+  size_t remaining = size;
+  size_t offset = 0;
+  while (remaining > 0) {
+    size_t n = remaining < CHUNK ? remaining : CHUNK;
+    if (fwrite(data + offset, 1, n, f) != n) {
+      fclose(f);
+      WS_LOG("[WS][SAVE] snapshot write error saving %s\n", g_save_path);
+      return false;
+    }
+    offset += n;
+    remaining -= n;
+    taskYIELD();
+  }
+
+  fflush(f);
+  fsync(fileno(f));
+  fclose(f);
+
+  if (!g_sram_backed && size == g_sram_len) {
+    g_crc_last = share::gameSaveCrc32Update(0, data, size);
+  }
+  g_save_dirty = false;
+  WS_LOG("[WS][SAVE] wrote snapshot %u bytes -> %s\n",
+         (unsigned)size, g_save_path);
+  return true;
+}
+
 // ====================== API ======================
 void ws_save_init(const char* romPathOrName){
   bool is_eep  = (CartKind & CK_EEP) != 0;
@@ -328,6 +366,7 @@ void ws_save_load(void){
 
 void ws_save_tick(void){
   if ((!g_sram && !g_sram_backed) || !g_sram_len) return;
+  if (g_save_suspended) return;
   TickType_t now = xTaskGetTickCount();
   if (now < g_next_check) return;
   g_next_check = now + pdMS_TO_TICKS(CHECK_MS);
@@ -363,4 +402,67 @@ void ws_save_force_flush(void){
   if (!ok) {
     WS_LOG("[WS][SAVE] final save failed, will retry if requested\n");
   }
+}
+
+bool ws_save_has_sram(void){
+  return (g_sram || g_sram_backed) && g_sram_len != 0;
+}
+
+bool ws_save_uses_sd_backing(void){
+  return g_sram_backed;
+}
+
+bool ws_save_snapshot_sram(uint8_t** outData, size_t* outSize){
+  if (outData) *outData = nullptr;
+  if (outSize) *outSize = 0;
+  if (!outData || !outSize) return false;
+  if (!g_sram || !g_sram_len || g_sram_backed) return false;
+
+  uint8_t* copy = (uint8_t*)malloc(g_sram_len);
+  if (!copy) {
+    WS_LOG("[WS][SAVE] SRAM snapshot alloc failed (%u bytes)\n",
+           (unsigned)g_sram_len);
+    return false;
+  }
+
+  memcpy(copy, g_sram, g_sram_len);
+  *outData = copy;
+  *outSize = g_sram_len;
+  WS_LOG("[WS][SAVE] SRAM snapshot captured (%u bytes)\n",
+         (unsigned)g_sram_len);
+  return true;
+}
+
+bool ws_save_force_flush_buffer(const uint8_t* data, size_t size){
+  share::setGameIsSaving(true);
+  bool ok = flush_buffer_now(data, size);
+  share::setGameIsSaving(false);
+  if (!ok) {
+    WS_LOG("[WS][SAVE] snapshot save failed\n");
+  }
+  return ok;
+}
+
+void ws_save_suspend_background(void){
+  g_save_suspended = true;
+  WS_LOG("[WS][SAVE] background suspended\n");
+}
+
+void ws_save_resume_background(void){
+  g_save_suspended = false;
+  WS_LOG("[WS][SAVE] background resumed\n");
+}
+
+void ws_save_shutdown(void){
+  if (g_save_path) {
+    free(g_save_path);
+    g_save_path = nullptr;
+  }
+  g_sram = nullptr;
+  g_sram_len = 0;
+  g_sram_backed = false;
+  g_crc_last = 0;
+  g_next_check = 0;
+  g_save_dirty = false;
+  g_save_suspended = false;
 }

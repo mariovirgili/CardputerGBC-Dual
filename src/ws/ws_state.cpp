@@ -16,6 +16,8 @@ extern "C" {
 
 #include "share/emu_log_cpp.h"
 #include "share/game_save.h"
+#include "share/sd_control.h"
+#include "share/sd_gameplay_guard.h"
 #include "ws_sound.h"
 
 #ifdef WS_LOGS_ENABLED
@@ -98,8 +100,18 @@ void ws_state_request_load(void)
 bool ws_state_save_now(void)
 {
   if (!g_state_path || !g_state_path[0]) return false;
+#ifdef WS_SD_OFF_DURING_GAMEPLAY
+  const bool wasMounted = share_sd_is_mounted();
+  if (!wasMounted && !share_sd_gameplay_mount("WS", "state save")) {
+    WS_LOG("[WS][STATE] save skipped, storage remount failed\n");
+    return false;
+  }
+#endif
   if (!share::gameSaveEnsureParentReady(WS_STATE_DIR)) {
     WS_LOG("[WS][STATE] save skipped, storage not ready\n");
+#ifdef WS_SD_OFF_DURING_GAMEPLAY
+    if (!wasMounted) share_sd_gameplay_close_if_mounted("WS", "state save");
+#endif
     return false;
   }
 
@@ -136,20 +148,36 @@ bool ws_state_save_now(void)
   } else {
     WS_LOG("[WS][STATE] save failed %s\n", g_state_path);
   }
+#ifdef WS_SD_OFF_DURING_GAMEPLAY
+  if (!wasMounted) share_sd_gameplay_close_if_mounted("WS", "state save");
+#endif
   return ok;
 }
 
 bool ws_state_load_now(void)
 {
   if (!g_state_path || !g_state_path[0]) return false;
+#ifdef WS_SD_OFF_DURING_GAMEPLAY
+  const bool wasMounted = share_sd_is_mounted();
+  if (!wasMounted && !share_sd_gameplay_mount("WS", "state load")) {
+    WS_LOG("[WS][STATE] load skipped, storage remount failed\n");
+    return false;
+  }
+#endif
   if (!share::gameSaveEnsureParentReady(WS_STATE_DIR)) {
     WS_LOG("[WS][STATE] load skipped, storage not ready\n");
+#ifdef WS_SD_OFF_DURING_GAMEPLAY
+    if (!wasMounted) share_sd_gameplay_close_if_mounted("WS", "state load");
+#endif
     return false;
   }
 
   FILE* fp = fopen(g_state_path, "rb");
   if (!fp) {
     WS_LOG("[WS][STATE] no state file: %s\n", g_state_path);
+#ifdef WS_SD_OFF_DURING_GAMEPLAY
+    if (!wasMounted) share_sd_gameplay_close_if_mounted("WS", "state load");
+#endif
     return false;
   }
 
@@ -178,6 +206,9 @@ bool ws_state_load_now(void)
   } else {
     WS_LOG("[WS][STATE] load failed or incompatible: %s\n", g_state_path);
   }
+#ifdef WS_SD_OFF_DURING_GAMEPLAY
+  if (!wasMounted) share_sd_gameplay_close_if_mounted("WS", "state load");
+#endif
   return ok;
 }
 
