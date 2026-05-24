@@ -32,6 +32,12 @@ __license__ = "GPLv3"
   #pragma GCC optimize("Ofast")
 #endif
 
+#if defined(MD_Z80_IRAM_HELPERS)
+#define MD_Z80_IRAM IRAM_ATTR
+#else
+#define MD_Z80_IRAM
+#endif
+
 static int bus_ack = 0;
 static int reset = 0;
 static int reset_once = 0;
@@ -86,7 +92,7 @@ void z80_pulse_reset() {
 }
 static int current_timeslice = 0;
 
-void z80_run(int target) {
+void MD_Z80_IRAM z80_run(int target) {
 
   // we are in advance,nothind to do
 current_timeslice = 0;
@@ -218,14 +224,14 @@ unsigned int zbankreg_mem_r8(unsigned int address)
     return Z80_BANK;
 }
 
-static inline void zbankreg_mem_w8(unsigned int value) {
+static inline MD_Z80_IRAM void zbankreg_mem_w8(unsigned int value) {
   Z80_BANK >>= 1;
   Z80_BANK |= (value & 1) << 8;
   z80_log(__FUNCTION__,"Z80 bank points to: %06x", Z80_BANK << 15);
   return;
 }
 
-static inline unsigned int zbank_mem_r8(unsigned int address)
+static inline MD_Z80_IRAM unsigned int zbank_mem_r8(unsigned int address)
 {
     address &= 0x7FFF;
     address |= (Z80_BANK << 15);
@@ -234,7 +240,7 @@ static inline unsigned int zbank_mem_r8(unsigned int address)
     return m68k_read_memory_8(address);
 }
 
-static inline void zbank_mem_w8(unsigned int address, unsigned int value) {
+static inline MD_Z80_IRAM void zbank_mem_w8(unsigned int address, unsigned int value) {
   address &= 0x7FFF;
   address |= (Z80_BANK << 15);
 
@@ -265,7 +271,7 @@ word LoopZ80(register Z80 *R)
     return 0;
 }
 
-byte RdZ80(register word Addr) {
+byte MD_Z80_IRAM RdZ80(register word Addr) {
 
   if (Addr < 0x4000)
     return Z80_RAM[Addr & 0x1FFF];
@@ -285,7 +291,7 @@ byte RdZ80(register word Addr) {
 
 extern int system_clock;
 
-void WrZ80(register word Addr, register byte Value) {
+void MD_Z80_IRAM WrZ80(register word Addr, register byte Value) {
 
   // ZRAM & mirror
   if (Addr < 0x4000) {
