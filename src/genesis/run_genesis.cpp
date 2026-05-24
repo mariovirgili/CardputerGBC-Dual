@@ -16,6 +16,10 @@
 #include "compat/arduino_compat.h"
 #include <M5Cardputer.h>
 
+extern "C" {
+  #include "genesis/gwenesis/cpus/M68K/m68k.h"
+}
+
 #if EMU_LOG_MASTER_ENABLED
 static uint32_t frame_count = 0;
 static uint64_t last_fps_log_time = 0;
@@ -248,6 +252,99 @@ static inline uint32_t md_bench_delta_us(uint64_t) { return 0; }
 static inline void md_bench_add_u64(uint64_t&, uint64_t) {}
 static inline void md_bench_record_frame(bool, bool, bool, uint32_t, uint32_t, uint32_t) {}
 static inline void md_bench_log_if_due(bool = false) {}
+#endif
+
+#if MD_BENCHMARK_LOGS_ENABLED
+static uint64_t s_mdOpcodeHistLastLogUs = 0;
+
+static void md_opcode_hist_format_top_nibbles(const uint32_t* counts,
+                                              uint64_t total,
+                                              char* out,
+                                              size_t outSize)
+{
+  bool used[16] = {};
+  size_t pos = 0;
+  if (!outSize) return;
+  out[0] = '\0';
+  for (int rank = 0; rank < 4; ++rank) {
+    int bestIdx = -1;
+    uint32_t bestCount = 0;
+    for (int i = 0; i < 16; ++i) {
+      if (!used[i] && counts[i] > bestCount) {
+        bestIdx = i;
+        bestCount = counts[i];
+      }
+    }
+    if (bestIdx < 0 || bestCount == 0) break;
+    used[bestIdx] = true;
+    const unsigned long pct = total ? (unsigned long)((bestCount * 100ULL) / total) : 0UL;
+    const int wrote = snprintf(out + pos, outSize - pos, "%s%X:%lu%%",
+                               pos ? " " : "",
+                               bestIdx,
+                               pct);
+    if (wrote <= 0 || (size_t)wrote >= (outSize - pos)) break;
+    pos += (size_t)wrote;
+  }
+}
+
+static void md_opcode_hist_format_top_bytes(const uint32_t* counts,
+                                            uint64_t total,
+                                            char* out,
+                                            size_t outSize)
+{
+  bool used[256] = {};
+  size_t pos = 0;
+  if (!outSize) return;
+  out[0] = '\0';
+  for (int rank = 0; rank < 6; ++rank) {
+    int bestIdx = -1;
+    uint32_t bestCount = 0;
+    for (int i = 0; i < 256; ++i) {
+      if (!used[i] && counts[i] > bestCount) {
+        bestIdx = i;
+        bestCount = counts[i];
+      }
+    }
+    if (bestIdx < 0 || bestCount == 0) break;
+    used[bestIdx] = true;
+    const unsigned long pct = total ? (unsigned long)((bestCount * 100ULL) / total) : 0UL;
+    const int wrote = snprintf(out + pos, outSize - pos, "%s%02X:%lu%%",
+                               pos ? " " : "",
+                               bestIdx,
+                               pct);
+    if (wrote <= 0 || (size_t)wrote >= (outSize - pos)) break;
+    pos += (size_t)wrote;
+  }
+}
+
+static inline void md_opcode_hist_reset()
+{
+  s_mdOpcodeHistLastLogUs = md_bench_now_us();
+  m68k_opcode_hist_reset();
+}
+
+static inline void md_opcode_hist_log_if_due(bool force = false)
+{
+  const uint64_t nowUs = md_bench_now_us();
+  if (!force && (nowUs - s_mdOpcodeHistLastLogUs) < 1000000ULL) return;
+
+  m68k_opcode_hist_snapshot snap{};
+  const int hasData = m68k_opcode_hist_get_snapshot(&snap, 1);
+  s_mdOpcodeHistLastLogUs = nowUs;
+  if (!hasData || snap.total == 0) return;
+
+  char nibbleBuf[64];
+  char byteBuf[96];
+  md_opcode_hist_format_top_nibbles(snap.top_nibble, snap.total, nibbleBuf, sizeof(nibbleBuf));
+  md_opcode_hist_format_top_bytes(snap.top_byte, snap.total, byteBuf, sizeof(byteBuf));
+  EMU_LOG("[MD][OPHIST] total=%llu nib=%s byte=%s\n",
+          (unsigned long long)snap.total,
+          nibbleBuf[0] ? nibbleBuf : "-",
+          byteBuf[0] ? byteBuf : "-");
+}
+#else
+static inline void md_opcode_hist_reset() {}
+static inline void md_opcode_hist_log_if_due(bool = false) {}
 #endif
 
 extern "C" {
@@ -552,6 +649,7 @@ static void run_one_frame() {
   md_bench_record_frame(drawFrame, skipZ80, lateSkip, renderedLines, elapsedUs, kFrameBudgetUs);
   md_bench_log_if_due();
 #endif
+  md_opcode_hist_log_if_due();
 
 #if EMU_LOG_MASTER_ENABLED && !MD_BENCHMARK_LOGS_ENABLED
   // FPS logging every second when the MD benchmark probe is disabled.
@@ -572,6 +670,7 @@ extern "C" void run_genesis(const uint8_t* rom, size_t len, const char* rom_name
   M5Cardputer.Display.setSwapBytes(true);
   md_render_diag_reset();
   md_bench_reset();
+  md_opcode_hist_reset();
 #if MD_BUS_PROBE_LOGS_ENABLED
   gwenesis_bus_probe_reset();
 #endif
@@ -670,5 +769,12 @@ extern "C" void run_genesis(const uint8_t* rom, size_t len, const char* rom_name
     }
   }
 
+#if MD_RENDER_LOGS_ENABLED
+  md_render_diag_log_if_due(true);
+#endif
+#if MD_BENCHMARK_LOGS_ENABLED
+  md_bench_log_if_due(true);
+#endif
+  md_opcode_hist_log_if_due(true);
   md_clean_teardown_and_save();
 }

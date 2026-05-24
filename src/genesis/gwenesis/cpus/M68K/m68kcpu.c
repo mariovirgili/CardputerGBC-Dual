@@ -36,6 +36,63 @@ static int irq_latency;
 
 m68ki_cpu_core m68k;
 
+#ifndef MD_OPCODE_HISTOGRAM
+#define MD_OPCODE_HISTOGRAM 0
+#endif
+
+#ifndef MD_TOPBYTE_COMPRESSED_DISPATCH
+#define MD_TOPBYTE_COMPRESSED_DISPATCH 0
+#endif
+
+#if MD_OPCODE_HISTOGRAM
+static uint64_t s_m68k_opcode_total;
+static uint32_t s_m68k_opcode_top_nibble[16];
+static uint32_t s_m68k_opcode_top_byte[256];
+
+static inline void m68k_opcode_hist_record(uint16_t opcode)
+{
+  ++s_m68k_opcode_total;
+  ++s_m68k_opcode_top_nibble[(opcode >> 12) & 0x0f];
+  ++s_m68k_opcode_top_byte[(opcode >> 8) & 0xff];
+}
+#else
+static inline void m68k_opcode_hist_record(uint16_t opcode)
+{
+  (void)opcode;
+}
+#endif
+
+void m68k_opcode_hist_reset(void)
+{
+#if MD_OPCODE_HISTOGRAM
+  s_m68k_opcode_total = 0;
+  memset(s_m68k_opcode_top_nibble, 0, sizeof(s_m68k_opcode_top_nibble));
+  memset(s_m68k_opcode_top_byte, 0, sizeof(s_m68k_opcode_top_byte));
+#endif
+}
+
+int m68k_opcode_hist_get_snapshot(m68k_opcode_hist_snapshot *out, int reset)
+{
+#if MD_OPCODE_HISTOGRAM
+  const int has_data = (s_m68k_opcode_total != 0);
+  if (out)
+  {
+    out->total = s_m68k_opcode_total;
+    memcpy(out->top_nibble, s_m68k_opcode_top_nibble, sizeof(out->top_nibble));
+    memcpy(out->top_byte, s_m68k_opcode_top_byte, sizeof(out->top_byte));
+  }
+  if (reset)
+  {
+    m68k_opcode_hist_reset();
+  }
+  return has_data;
+#else
+  (void)out;
+  (void)reset;
+  return 0;
+#endif
+}
+
 
 /* ======================================================================== */
 /* =============================== CALLBACKS ============================== */
@@ -242,7 +299,12 @@ void m68k_set_irq_delay(unsigned int int_level)
       m68ki_trace_t1() /* auto-disable (see m68kcpu.h) */
       m68ki_use_data_space() /* auto-disable (see m68kcpu.h) */
       REG_IR = m68ki_read_imm_16();
+      m68k_opcode_hist_record((uint16_t)REG_IR);
+#if MD_TOPBYTE_COMPRESSED_DISPATCH && !defined(TABLES_FULL)
+      m68ki_dispatch_topbyte_dispatch((uint16_t)REG_IR);
+#else
       m68ki_instruction_jump_table[REG_IR]();
+#endif
       m68ki_exception_if_trace() /* auto-disable (see m68kcpu.h) */
       irq_latency = 0;
     }
@@ -305,11 +367,16 @@ void IRAM_ATTR m68k_run(unsigned int cycles)
 
     /* Decode next instruction */
     REG_IR = m68ki_read_imm_16();
+    m68k_opcode_hist_record((uint16_t)REG_IR);
 
 //    printf("PC=%x IR=%x CYCLES=%d \n",m68k.pc,REG_IR,CYC_INSTRUCTION[REG_IR]);
 
     /* Execute instruction */
+#if MD_TOPBYTE_COMPRESSED_DISPATCH && !defined(TABLES_FULL)
+    m68ki_dispatch_topbyte_dispatch((uint16_t)REG_IR);
+#else
     m68ki_instruction_jump_table[REG_IR]();
+#endif
     USE_CYCLES(CYC_INSTRUCTION[REG_IR]);
 
     /* Trace m68k_exception, if necessary */

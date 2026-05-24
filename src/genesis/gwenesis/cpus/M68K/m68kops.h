@@ -23670,10 +23670,18 @@ static void m68k_op_unlk_32(void)
 /* ========================= OPCODE TABLE BUILDER ========================= */
 /* ======================================================================== */
 
+#ifndef MD_TOPBYTE_COMPRESSED_DISPATCH
+#define MD_TOPBYTE_COMPRESSED_DISPATCH 0
+#endif
+
 #ifndef BUILD_TABLES
 
   #ifndef TABLES_FULL
-    #include "m68ki_instruction_jump_table.h"
+    #if MD_TOPBYTE_COMPRESSED_DISPATCH
+      #include "m68ki_dispatch_topbyte.h"
+    #else
+      #include "m68ki_instruction_jump_table.h"
+    #endif
   #else
     #include "m68ki_instruction_jump_table_full.h"
   #endif
