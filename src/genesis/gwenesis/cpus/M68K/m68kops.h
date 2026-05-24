@@ -23673,11 +23673,16 @@ static void m68k_op_unlk_32(void)
 #ifndef MD_TOPBYTE_COMPRESSED_DISPATCH
 #define MD_TOPBYTE_COMPRESSED_DISPATCH 0
 #endif
+#ifndef MD_HYBRID_TOPBYTE_DISPATCH
+#define MD_HYBRID_TOPBYTE_DISPATCH 0
+#endif
 
 #ifndef BUILD_TABLES
 
   #ifndef TABLES_FULL
-    #if MD_TOPBYTE_COMPRESSED_DISPATCH
+    #if MD_HYBRID_TOPBYTE_DISPATCH
+      #include "m68ki_dispatch_hybrid_topbyte.h"
+    #elif MD_TOPBYTE_COMPRESSED_DISPATCH
       #include "m68ki_dispatch_topbyte.h"
     #else
       #include "m68ki_instruction_jump_table.h"

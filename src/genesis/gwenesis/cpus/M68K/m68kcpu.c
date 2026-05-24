@@ -43,6 +43,9 @@ m68ki_cpu_core m68k;
 #ifndef MD_TOPBYTE_COMPRESSED_DISPATCH
 #define MD_TOPBYTE_COMPRESSED_DISPATCH 0
 #endif
+#ifndef MD_HYBRID_TOPBYTE_DISPATCH
+#define MD_HYBRID_TOPBYTE_DISPATCH 0
+#endif
 
 #if MD_OPCODE_HISTOGRAM
 static uint64_t s_m68k_opcode_total;
@@ -300,7 +303,9 @@ void m68k_set_irq_delay(unsigned int int_level)
       m68ki_use_data_space() /* auto-disable (see m68kcpu.h) */
       REG_IR = m68ki_read_imm_16();
       m68k_opcode_hist_record((uint16_t)REG_IR);
-#if MD_TOPBYTE_COMPRESSED_DISPATCH && !defined(TABLES_FULL)
+#if MD_HYBRID_TOPBYTE_DISPATCH && !defined(TABLES_FULL)
+      m68ki_dispatch_hybrid_topbyte_dispatch((uint16_t)REG_IR);
+#elif MD_TOPBYTE_COMPRESSED_DISPATCH && !defined(TABLES_FULL)
       m68ki_dispatch_topbyte_dispatch((uint16_t)REG_IR);
 #else
       m68ki_instruction_jump_table[REG_IR]();
@@ -372,7 +377,9 @@ void IRAM_ATTR m68k_run(unsigned int cycles)
 //    printf("PC=%x IR=%x CYCLES=%d \n",m68k.pc,REG_IR,CYC_INSTRUCTION[REG_IR]);
 
     /* Execute instruction */
-#if MD_TOPBYTE_COMPRESSED_DISPATCH && !defined(TABLES_FULL)
+#if MD_HYBRID_TOPBYTE_DISPATCH && !defined(TABLES_FULL)
+    m68ki_dispatch_hybrid_topbyte_dispatch((uint16_t)REG_IR);
+#elif MD_TOPBYTE_COMPRESSED_DISPATCH && !defined(TABLES_FULL)
     m68ki_dispatch_topbyte_dispatch((uint16_t)REG_IR);
 #else
     m68ki_instruction_jump_table[REG_IR]();
