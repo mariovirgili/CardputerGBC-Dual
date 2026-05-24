@@ -75,6 +75,9 @@ set(ENABLE_MD_RENDER_LOGS ON)
 set(ENABLE_MD_BENCHMARK_LOGS ON)
 # targeted 68k bus access mix probe; requires ENABLE_EMU_LOGS.
 set(ENABLE_MD_BUS_PROBE_LOGS OFF)
+# GWENESIS: conservative 68k/ROM hot-path optimizations with exact fallbacks.
+set(ENABLE_MD_PUBLIC_RAM_FASTPATH ON)
+set(ENABLE_MD_ROM_FETCH_FASTPATH ON)
 
 # FMSX: fMSX detail logs, requires ENABLE_EMU_LOGS.
 set(ENABLE_MSX_LOGS ON)
@@ -380,6 +383,8 @@ if(ENABLE_MD_CORE)
     # GWENESIS
     add_private_define_if(ENABLE_GNW_TARGET_MARIO_DEFINE GNW_TARGET_MARIO=0)
     add_private_define_if(ENABLE_GNW_TARGET_ZELDA_DEFINE GNW_TARGET_ZELDA=0)
+    add_private_define_if(ENABLE_MD_PUBLIC_RAM_FASTPATH MD_PUBLIC_RAM_FASTPATH=1)
+    add_private_define_if(ENABLE_MD_ROM_FETCH_FASTPATH MD_ROM_FETCH_FASTPATH=1)
 endif()
 
 if(ENABLE_WS_CORE)

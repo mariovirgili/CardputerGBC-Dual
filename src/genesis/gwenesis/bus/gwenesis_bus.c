@@ -199,6 +199,8 @@ unsigned char *M68K_RAM=(void *)(uint32_t)(0); // 68K RAM
 
 unsigned char *ROM_DATA; // 68K Main Program (uncompressed)
 unsigned int ROM_SIZE = 0;
+unsigned int ROM_ADDR_MASK = 0;
+unsigned int ROM_ADDR_IS_POW2 = 0;
 unsigned char* M68K_RAM = NULL;
 #endif
 
@@ -297,6 +299,8 @@ void load_cartridge()
 void load_cartridge(unsigned char *buffer, size_t size)
 {
     ROM_SIZE = (unsigned int)size;
+    ROM_ADDR_IS_POW2 = (ROM_SIZE != 0u) && ((ROM_SIZE & (ROM_SIZE - 1u)) == 0u);
+    ROM_ADDR_MASK = ROM_ADDR_IS_POW2 ? (ROM_SIZE - 1u) : 0u;
     (void)size; // pas nécessaire ici, gardé si tu veux l’utiliser plus tard
 
     // Clear RAMs volatiles
@@ -832,7 +836,9 @@ static inline void gwenesis_bus_write_memory_16(unsigned int address,
  ******************************************************************************/
 unsigned int m68k_read_memory_8(unsigned int address)
 {
-      //  if ((address &  0xFF0000 ) == 0xFF0000) return FETCH8RAM(address);
+#if MD_PUBLIC_RAM_FASTPATH
+    if ((address & 0xFF0000u) == 0xFF0000u) return FETCH8RAM(address);
+#endif
     return gwenesis_bus_read_memory_8(address);
 }
 
@@ -844,7 +850,9 @@ unsigned int m68k_read_memory_8(unsigned int address)
  ******************************************************************************/
  unsigned int m68k_read_memory_16(unsigned int address)
 {
-     //   if ((address &  0xFF0000 ) == 0xFF0000) return FETCH16RAM(address);
+#if MD_PUBLIC_RAM_FASTPATH
+    if ((address & 0xFF0000u) == 0xFF0000u) return FETCH16RAM(address);
+#endif
     return gwenesis_bus_read_memory_16(address);
 }
 
@@ -856,7 +864,9 @@ unsigned int m68k_read_memory_8(unsigned int address)
  ******************************************************************************/
  unsigned int m68k_read_memory_32(unsigned int address)
 {
-  //  if ((address &  0xFF0000 ) == 0xFF0000) return FETCH32RAM(address);
+#if MD_PUBLIC_RAM_FASTPATH
+    if ((address & 0xFF0000u) == 0xFF0000u) return FETCH32RAM(address);
+#endif
     return (gwenesis_bus_read_memory_16(address) << 16) | gwenesis_bus_read_memory_16(address + 2);
 }
 
@@ -867,10 +877,12 @@ unsigned int m68k_read_memory_8(unsigned int address)
  *
  ******************************************************************************/
 void m68k_write_memory_8(unsigned int address, unsigned int value) {
-  // if ((address & 0xFF0000) == 0xFF0000) {
-  //   WRITE8RAM(address, value);
-  //   return;
-  // }
+#if MD_PUBLIC_RAM_FASTPATH
+  if ((address & 0xFF0000u) == 0xFF0000u) {
+    WRITE8RAM(address, value);
+    return;
+  }
+#endif
   gwenesis_bus_write_memory_8(address, value);
   return;
 }
@@ -882,10 +894,12 @@ void m68k_write_memory_8(unsigned int address, unsigned int value) {
  *
  ******************************************************************************/
 void m68k_write_memory_16(unsigned int address, unsigned int value) {
-  // if ((address & 0xFF0000) == 0xFF0000) {
-  //   WRITE16RAM(address, value);
-  //   return;
-  // }
+#if MD_PUBLIC_RAM_FASTPATH
+  if ((address & 0xFF0000u) == 0xFF0000u) {
+    WRITE16RAM(address, value);
+    return;
+  }
+#endif
   gwenesis_bus_write_memory_16(address, value);
   return;
 }
@@ -897,10 +911,12 @@ void m68k_write_memory_16(unsigned int address, unsigned int value) {
  ******************************************************************************/
 void m68k_write_memory_32(unsigned int address, unsigned int value) {
 
-  // if ((address & 0xFF0000) == 0xFF0000) {
-  //   WRITE32RAM(address, value);
-  //   return;
-  // }
+#if MD_PUBLIC_RAM_FASTPATH
+  if ((address & 0xFF0000u) == 0xFF0000u) {
+    WRITE32RAM(address, value);
+    return;
+  }
+#endif
   gwenesis_bus_write_memory_16(address, (value >> 16) & 0xffff);
   gwenesis_bus_write_memory_16(address + 2, (value)&0xffff);
 
