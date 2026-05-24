@@ -150,17 +150,25 @@ static inline void compute_centered_roi(int srcW, int srcH) {
 }
 
 /* Ensure xmap ROI */
-static inline void ensure_xmap_roi(int srcW, int dstW, int roiX0, int roiW) {
+static inline bool ensure_xmap_roi(int srcW, int dstW, int roiX0, int roiW) {
   if (s_xmap &&
       s_xmap_srcW == srcW &&
       s_xmap_dstW == dstW &&
       s_xmap_roiX0 == roiX0 &&
       s_xmap_roiW  == roiW) {
-    return;
+    return true;
   }
   free(s_xmap);
-  s_xmap = (uint16_t*)heap_caps_malloc(dstW * sizeof(uint16_t),
-                                       MALLOC_CAP_8BIT | MALLOC_CAP_DMA);
+  s_xmap = (uint16_t*)heap_caps_malloc(dstW * sizeof(uint16_t), MALLOC_CAP_8BIT);
+  if (!s_xmap) {
+    s_xmap_srcW = -1;
+    s_xmap_dstW = -1;
+    s_xmap_roiX0 = -1;
+    s_xmap_roiW = -1;
+    MD_RENDER_LOG("xmap alloc failed dstW=%d", dstW);
+    return false;
+  }
+
   s_xmap_srcW = srcW;
   s_xmap_dstW = dstW;
   s_xmap_roiX0 = roiX0;
@@ -170,6 +178,7 @@ static inline void ensure_xmap_roi(int srcW, int dstW, int roiX0, int roiW) {
   for (int x = 0; x < dstW; ++x) {
     s_xmap[x] = (uint16_t)(roiX0 + (int)((int64_t)x * roiW / dstW));
   }
+  return true;
 }
 
 /* Allocate buffers for line rendering */
@@ -178,13 +187,19 @@ static inline void allocate_line_buffers() {
     free(s_lineImg);
     s_lineImg  = (uint16_t*)heap_caps_malloc(g_viewW * sizeof(uint16_t),
                                              MALLOC_CAP_DMA | MALLOC_CAP_8BIT);
-    s_capImg   = g_viewW;
+    s_capImg   = s_lineImg ? g_viewW : 0;
+    if (!s_lineImg) {
+      MD_RENDER_LOG("lineImg alloc failed width=%d", g_viewW);
+    }
   }
   if (g_dstW > s_capFull) {
     free(s_lineFull);
     s_lineFull = (uint16_t*)heap_caps_malloc(g_dstW * sizeof(uint16_t),
                                              MALLOC_CAP_DMA | MALLOC_CAP_8BIT);
-    s_capFull  = g_dstW;
+    s_capFull  = s_lineFull ? g_dstW : 0;
+    if (!s_lineFull) {
+      MD_RENDER_LOG("lineFull alloc failed width=%d", g_dstW);
+    }
   }
 }
 
@@ -255,6 +270,13 @@ void display_task(void* arg) {
       ensure_xmap_roi(/*srcW*/ m.w, /*dstW*/ g_viewW, /*roiX0*/ s_roiX0, /*roiW*/ s_roiW);
     }
 
+    if (!s_lineImg || !s_lineFull) {
+      allocate_line_buffers();
+      if (!s_lineImg || !s_lineFull) {
+        continue;
+      }
+    }
+
 #if MD_RENDER_LOGS_ENABLED
     ++s_mdDisplayDiag.scanRecv;
 #endif
@@ -264,7 +286,8 @@ void display_task(void* arg) {
     } else {
       const uint16_t *xmap = s_xmap;
       for (int x = 0; x < g_viewW; ++x) {
-        s_lineImg[x] = m.data[xmap[x]];
+        const int srcX = xmap ? xmap[x] : (s_roiX0 + (int)((int64_t)x * s_roiW / g_viewW));
+        s_lineImg[x] = m.data[srcX];
       }
     }
 
