@@ -10,6 +10,23 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
+#ifdef MD_DIRECT_I2S_AUDIO
+#include "driver/gpio.h"
+#ifndef I2S_PIN_NO_CHANGE
+#define I2S_PIN_NO_CHANGE (-1)
+#endif
+#if __has_include(<driver/i2s_std.h>)
+#include "driver/i2s_std.h"
+#define MD_DIRECT_I2S_STD 1
+#else
+#include "driver/i2s.h"
+#define MD_DIRECT_I2S_STD 0
+#ifndef I2S_COMM_FORMAT_STAND_I2S
+#define I2S_COMM_FORMAT_STAND_I2S I2S_COMM_FORMAT_I2S
+#endif
+#endif
+#endif
+
 extern "C" {
   void YM2612Init(void);
   void YM2612ResetChip(void);
@@ -34,9 +51,8 @@ volatile int  s_ym_target_clock   = 0;
 volatile int g_ym_target_clock = 0;
 static TaskHandle_t  s_audioTask = nullptr;
 static QueueHandle_t s_audioQ    = nullptr;
+static QueueHandle_t s_audioFreeQ = nullptr;
 static int16_t* s_audioPool = nullptr;  // AUDIO_POOL * AUDIO_CHUNK
-static volatile int s_poolWrite = 0;
-static volatile int s_poolRead  = 0;
 static StaticQueue_t s_ymQueueStruct;
 static uint8_t*      s_ymQueueStorage = nullptr;    // 128 * sizeof(YmWrite)
 static QueueHandle_t s_ymQ = nullptr;
@@ -90,6 +106,27 @@ int genesis_sound_get_output_samples_per_frame(void) { return s_audioOutSamples;
 static constexpr uint8_t kChannel= 0;
 static uint16_t s_psgGainQ15 = 32768;  // x1.0
 static uint16_t s_fmGainQ15  = 32768;  // x1.0
+
+#ifdef MD_DIRECT_I2S_AUDIO
+#ifndef MD_AUDIO_TASK_CORE
+#define MD_AUDIO_TASK_CORE 0
+#endif
+#ifndef MD_AUDIO_TASK_PRIORITY
+#define MD_AUDIO_TASK_PRIORITY 6
+#endif
+#ifndef MD_AUDIO_DMA_LEN
+#define MD_AUDIO_DMA_LEN 256
+#endif
+#ifndef MD_AUDIO_DMA_COUNT
+#define MD_AUDIO_DMA_COUNT 8
+#endif
+
+static int16_t* s_directOut = nullptr;
+static bool s_directReady = false;
+#if MD_DIRECT_I2S_STD
+static i2s_chan_handle_t s_i2sTx = nullptr;
+#endif
+#endif
 
 #if MD_AUDIO_LOGS_ENABLED
 struct MdAudioDiagStats {
@@ -236,6 +273,140 @@ static inline int16_t mix_sample_at(int idx, int ym_n, int psg_n) {
   return (int16_t)s;
 }
 
+#ifdef MD_DIRECT_I2S_AUDIO
+static bool md_direct_i2s_begin()
+{
+  if (s_directReady) {
+    return true;
+  }
+
+  M5Cardputer.Speaker.end();
+  vTaskDelay(pdMS_TO_TICKS(2));
+
+#if MD_DIRECT_I2S_STD
+  i2s_chan_config_t chan_cfg = I2S_CHANNEL_DEFAULT_CONFIG(I2S_NUM_1, I2S_ROLE_MASTER);
+  chan_cfg.dma_desc_num = MD_AUDIO_DMA_COUNT;
+  chan_cfg.dma_frame_num = MD_AUDIO_DMA_LEN;
+  chan_cfg.auto_clear = true;
+  esp_err_t err = i2s_new_channel(&chan_cfg, &s_i2sTx, nullptr);
+  if (err != ESP_OK) {
+    s_i2sTx = nullptr;
+    return false;
+  }
+
+  i2s_std_config_t i2s_config;
+  memset(&i2s_config, 0, sizeof(i2s_config));
+  i2s_config.clk_cfg = I2S_STD_CLK_DEFAULT_CONFIG((uint32_t)AUDIO_SR);
+  i2s_config.slot_cfg = I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG(I2S_DATA_BIT_WIDTH_16BIT,
+                                                            I2S_SLOT_MODE_MONO);
+  i2s_config.slot_cfg.slot_mask = I2S_STD_SLOT_BOTH;
+  i2s_config.gpio_cfg.bclk = (gpio_num_t)cardputer_audio::kSpeakerBck;
+  i2s_config.gpio_cfg.ws = (gpio_num_t)cardputer_audio::kSpeakerWs;
+  i2s_config.gpio_cfg.dout = (gpio_num_t)cardputer_audio::kSpeakerData;
+  i2s_config.gpio_cfg.din = (gpio_num_t)I2S_PIN_NO_CHANGE;
+  i2s_config.gpio_cfg.mclk = (gpio_num_t)I2S_PIN_NO_CHANGE;
+
+  err = i2s_channel_init_std_mode(s_i2sTx, &i2s_config);
+  if (err == ESP_OK) {
+    err = i2s_channel_enable(s_i2sTx);
+  }
+  if (err != ESP_OK) {
+    i2s_del_channel(s_i2sTx);
+    s_i2sTx = nullptr;
+    return false;
+  }
+#else
+  i2s_config_t i2s_config;
+  memset(&i2s_config, 0, sizeof(i2s_config));
+  i2s_config.mode = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_TX);
+  i2s_config.sample_rate = AUDIO_SR;
+  i2s_config.bits_per_sample = I2S_BITS_PER_SAMPLE_16BIT;
+  i2s_config.channel_format = I2S_CHANNEL_FMT_ONLY_RIGHT;
+  i2s_config.communication_format = I2S_COMM_FORMAT_STAND_I2S;
+  i2s_config.tx_desc_auto_clear = true;
+  i2s_config.dma_buf_count = MD_AUDIO_DMA_COUNT;
+  i2s_config.dma_buf_len = MD_AUDIO_DMA_LEN;
+
+  i2s_driver_uninstall(I2S_NUM_1);
+  esp_err_t err = i2s_driver_install(I2S_NUM_1, &i2s_config, 0, nullptr);
+  if (err != ESP_OK) {
+    return false;
+  }
+
+  i2s_pin_config_t pin_config;
+  memset(&pin_config, ~0u, sizeof(pin_config));
+  pin_config.bck_io_num = cardputer_audio::kSpeakerBck;
+  pin_config.ws_io_num = cardputer_audio::kSpeakerWs;
+  pin_config.data_out_num = cardputer_audio::kSpeakerData;
+  pin_config.data_in_num = I2S_PIN_NO_CHANGE;
+  err = i2s_set_pin(I2S_NUM_1, &pin_config);
+  if (err != ESP_OK) {
+    i2s_driver_uninstall(I2S_NUM_1);
+    return false;
+  }
+  i2s_start(I2S_NUM_1);
+#endif
+
+  s_directReady = true;
+  return true;
+}
+
+static void md_direct_i2s_end()
+{
+#if MD_DIRECT_I2S_STD
+  if (s_i2sTx) {
+    i2s_channel_disable(s_i2sTx);
+    i2s_del_channel(s_i2sTx);
+    s_i2sTx = nullptr;
+  }
+#else
+  i2s_stop(I2S_NUM_1);
+  i2s_driver_uninstall(I2S_NUM_1);
+#endif
+  s_directReady = false;
+}
+
+static inline int md_audio_pool_slot_from_ptr(const int16_t* pcm)
+{
+  if (!s_audioPool || !pcm) {
+    return -1;
+  }
+  ptrdiff_t samples = pcm - s_audioPool;
+  if (samples < 0) {
+    return -1;
+  }
+  const ptrdiff_t slot = samples / AUDIO_CHUNK_CAP;
+  if (slot < 0 || slot >= AUDIO_POOL) {
+    return -1;
+  }
+  return (int)slot;
+}
+
+static bool md_direct_i2s_write(const int16_t* pcm, size_t samples)
+{
+  if (!s_directReady || !s_directOut || !pcm || samples == 0 || samples > (size_t)AUDIO_CHUNK_CAP) {
+    return false;
+  }
+
+  const int volume = (int)genesis_audio_volume;
+  for (size_t i = 0; i < samples; ++i) {
+    int32_t sample = ((int32_t)pcm[i] * volume) / 255;
+    if (sample > 32767) sample = 32767;
+    if (sample < -32768) sample = -32768;
+    s_directOut[i] = (int16_t)sample;
+  }
+
+  size_t written = 0;
+  const size_t bytes = samples * sizeof(int16_t);
+#if MD_DIRECT_I2S_STD
+  const esp_err_t err = i2s_channel_write(s_i2sTx, s_directOut, bytes, &written, portMAX_DELAY);
+#else
+  const esp_err_t err = i2s_write(I2S_NUM_1, s_directOut, bytes, &written, portMAX_DELAY);
+#endif
+  return (err == ESP_OK) && (written == bytes);
+}
+#endif
+
 /* Allocate SN76489, YM2612 buffers and audio pool */
 void genesis_alloc_audio_buffers(void) {
   // FM / PSG
@@ -249,7 +420,9 @@ void genesis_alloc_audio_buffers(void) {
       (size_t)AUDIO_POOL * (size_t)AUDIO_CHUNK_CAP, sizeof(int16_t),
       MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
 
+#ifndef MD_DIRECT_I2S_AUDIO
   cardputer_audio::allocRuntimeAudioBuffers(s_buf, AUDIO_CHUNK_CAP, "genesis");
+#endif
 
   // Storage queue YM
   s_ymQueueStorage = (uint8_t*) heap_caps_calloc(
@@ -264,6 +437,25 @@ void genesis_alloc_audio_buffers(void) {
 
 /* Push mixed audio to cardputer speaker */
 static void audio_task(void*) {
+#ifdef MD_DIRECT_I2S_AUDIO
+  AudioMsg msg = {};
+  for (;;) {
+    if (xQueueReceive(s_audioQ, &msg, portMAX_DELAY) != pdTRUE) {
+      continue;
+    }
+    if (!msg.buf || msg.n == 0) {
+      break;
+    }
+
+    md_direct_i2s_write(msg.buf, msg.n);
+
+    const int slot = md_audio_pool_slot_from_ptr(msg.buf);
+    if (slot >= 0 && s_audioFreeQ) {
+      xQueueSend(s_audioFreeQ, &slot, 0);
+    }
+  }
+  s_audioTask = nullptr;
+#endif
   vTaskDelete(nullptr);
 }
 
@@ -272,11 +464,78 @@ void genesis_sound_init() {
   sn76489_index = sn76489_clock = 0;
   ym2612_index  = ym2612_clock  = 0;
 
+#ifdef MD_DIRECT_I2S_AUDIO
+  if (!s_audioQ) {
+    s_audioQ = xQueueCreate(AUDIO_Q_DEPTH, sizeof(AudioMsg));
+  }
+  if (!s_audioFreeQ) {
+    s_audioFreeQ = xQueueCreate(AUDIO_POOL, sizeof(int));
+  }
+  if (s_audioQ) {
+    xQueueReset(s_audioQ);
+  }
+  if (s_audioFreeQ) {
+    xQueueReset(s_audioFreeQ);
+    for (int i = 0; i < AUDIO_POOL; ++i) {
+      xQueueSend(s_audioFreeQ, &i, 0);
+    }
+  }
+  if (!s_directOut) {
+    s_directOut = static_cast<int16_t*>(
+        heap_caps_malloc((size_t)AUDIO_CHUNK_CAP * sizeof(int16_t),
+                         MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA | MALLOC_CAP_8BIT));
+  }
+  if (!s_audioTask && s_audioQ && s_audioFreeQ && s_directOut && md_direct_i2s_begin()) {
+    BaseType_t ok = xTaskCreatePinnedToCore(
+        audio_task, "MDAudioTask",
+        2048, nullptr, MD_AUDIO_TASK_PRIORITY, &s_audioTask,
+        MD_AUDIO_TASK_CORE);
+    if (ok != pdPASS) {
+      s_audioTask = nullptr;
+    }
+  }
+#else
   cardputer_audio::beginSpeaker(AUDIO_SR, AUDIO_STEREO, 512, 8, genesis_audio_volume, "genesis", 4, 0);
   M5Cardputer.Speaker.setVolume(genesis_audio_volume);
+#endif
 
   s_flip = 0;
   md_audio_diag_reset();
+}
+
+void genesis_sound_shutdown()
+{
+#ifdef MD_DIRECT_I2S_AUDIO
+  if (s_audioTask && s_audioQ) {
+    AudioMsg stop = {};
+    if (xQueueSend(s_audioQ, &stop, 0) != pdTRUE) {
+      xQueueReset(s_audioQ);
+      xQueueSend(s_audioQ, &stop, 0);
+    }
+    for (int i = 0; i < 20 && s_audioTask; ++i) {
+      vTaskDelay(pdMS_TO_TICKS(1));
+    }
+    if (s_audioTask) {
+      vTaskDelete(s_audioTask);
+      s_audioTask = nullptr;
+    }
+  }
+  md_direct_i2s_end();
+  if (s_audioQ) {
+    vQueueDelete(s_audioQ);
+    s_audioQ = nullptr;
+  }
+  if (s_audioFreeQ) {
+    vQueueDelete(s_audioFreeQ);
+    s_audioFreeQ = nullptr;
+  }
+  if (s_directOut) {
+    heap_caps_free(s_directOut);
+    s_directOut = nullptr;
+  }
+#endif
+  M5Cardputer.Speaker.stop(kChannel);
+  M5Cardputer.Speaker.end();
 }
 
 /* Submit a frame of audio to the cardputer speaker */
@@ -294,9 +553,29 @@ void genesis_sound_submit_frame(void) {
   if (ym_n > s_audioCoreSamples) ym_n = s_audioCoreSamples;
   if (psg_n > s_audioCoreSamples) psg_n = s_audioCoreSamples;
 
+#ifdef MD_DIRECT_I2S_AUDIO
+  const size_t depth = s_audioQ ? (size_t)uxQueueMessagesWaiting(s_audioQ) : 0;
+#else
   const size_t depth = M5Cardputer.Speaker.isPlaying(kChannel);
+#endif
   md_audio_diag_samples(n, ym_n, psg_n, depth);
 
+#ifdef MD_DIRECT_I2S_AUDIO
+  int poolSlot = -1;
+  if (!s_audioTask || !s_audioQ || !s_audioFreeQ || !s_audioPool ||
+      xQueueReceive(s_audioFreeQ, &poolSlot, 0) != pdTRUE) {
+#if MD_AUDIO_LOGS_ENABLED
+    ++s_mdAudioDiag.droppedBuffer;
+    md_audio_diag_log_if_due();
+#endif
+    taskENTER_CRITICAL(&g_ymMux);
+    ym2612_index  = 0;
+    sn76489_index = 0;
+    taskEXIT_CRITICAL(&g_ymMux);
+    return;
+  }
+  int16_t *dst = s_audioPool + ((size_t)poolSlot * (size_t)AUDIO_CHUNK_CAP);
+#else
   if (depth >= cardputer_audio::kRuntimeAudioQueueDepth ||
       !s_buf[0] || !s_buf[1] || !s_buf[2] || !s_buf[3]) {
 #if MD_AUDIO_LOGS_ENABLED
@@ -316,6 +595,7 @@ void genesis_sound_submit_frame(void) {
 
   // Mix at the core's native MD rate, then resample the frame to the I2S rate.
   int16_t *dst = s_buf[s_flip];
+#endif
   if (n == 1) {
     int16_t sample = mix_sample_at(0, ym_n, psg_n);
     for (int i = 0; i < s_audioOutSamples; ++i) dst[i] = sample;
@@ -338,11 +618,25 @@ void genesis_sound_submit_frame(void) {
   sn76489_index = 0;
   taskEXIT_CRITICAL(&g_ymMux);
 
+#ifdef MD_DIRECT_I2S_AUDIO
+  AudioMsg msg = { dst, (size_t)s_audioOutSamples };
+  if (xQueueSend(s_audioQ, &msg, 0) == pdTRUE) {
+#if MD_AUDIO_LOGS_ENABLED
+    ++s_mdAudioDiag.queued;
+#endif
+  } else {
+    xQueueSend(s_audioFreeQ, &poolSlot, 0);
+#if MD_AUDIO_LOGS_ENABLED
+    ++s_mdAudioDiag.droppedDepth;
+#endif
+  }
+#else
   if (cardputer_audio::queueRuntimeAudioBuffer(s_buf, s_flip, s_audioOutSamples, AUDIO_SR, AUDIO_STEREO, kChannel)) {
 #if MD_AUDIO_LOGS_ENABLED
     ++s_mdAudioDiag.queued;
 #endif
   }
+#endif
   md_audio_diag_log_if_due();
 }
 

@@ -349,8 +349,7 @@ static void md_clean_teardown_and_save()
 
   genesis_display_stop();
   genesis_sound_ym_stop();
-  M5Cardputer.Speaker.stop(0);
-  M5Cardputer.Speaker.end();
+  genesis_sound_shutdown();
 
   if (md_has_sram()) {
     if (share_sd_gameplay_mount("MD", "save")) {

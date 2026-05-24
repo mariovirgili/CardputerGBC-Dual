@@ -9,8 +9,8 @@
 // Constantes audio
 static constexpr int AUDIO_SR = 44000;   // Hz
 static constexpr bool AUDIO_STEREO = false;
-static constexpr int AUDIO_POOL = 3;
-static constexpr int AUDIO_Q_DEPTH = 8;
+static constexpr int AUDIO_POOL = 4;
+static constexpr int AUDIO_Q_DEPTH = 4;
 static constexpr int AUDIO_CHUNK_NTSC = (AUDIO_SR + GWENESIS_REFRESH_RATE_NTSC / 2) / GWENESIS_REFRESH_RATE_NTSC;
 static constexpr int AUDIO_CHUNK_PAL = (AUDIO_SR + GWENESIS_REFRESH_RATE_PAL / 2) / GWENESIS_REFRESH_RATE_PAL;
 static constexpr int AUDIO_CHUNK_CAP = (AUDIO_CHUNK_PAL > AUDIO_CHUNK_NTSC) ? AUDIO_CHUNK_PAL : AUDIO_CHUNK_NTSC;
@@ -55,6 +55,7 @@ int genesis_sound_get_output_samples_per_frame(void);
 void genesis_alloc_audio_buffers(void);
 void genesis_sound_init();
 void genesis_sound_submit_frame(void);
+void genesis_sound_shutdown(void);
 
 // API YM
 void genesis_sound_ym_init(void);
