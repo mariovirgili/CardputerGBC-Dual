@@ -621,7 +621,7 @@ extern "C" void run_genesis(const uint8_t* rom, size_t len, const char* rom_name
   EMU_LOG("[ROM] ptr=%p size=%u\n", rom, (unsigned)len);
   if (len >= 0x120) {
     EMU_LOG("[ROM] hdr[0x100..0x10F]= ");
-    for (int i=0; i<16; ++i) EMU_LOG("%02X ", rom[0x100+i]);
+    for (int i=0; i<16; ++i) EMU_LOG("%02X ", FETCH8ROM(0x100+i));
     EMU_LOG("\n");
   }
 

@@ -14,6 +14,7 @@ typedef void (*CopyProgressCallback)(size_t total, size_t current, void* user_ct
 const esp_partition_t* findRomPartition(const char* name);
 bool eraseRomPartition(const esp_partition_t* part, size_t bytes_to_write);
 bool copyFileToPartition(const char* srcPath, const esp_partition_t* part, size_t* outSize, CopyProgressCallback progressCb, void* progressCtx);
+bool copyFileToPartitionByteSwap16(const char* srcPath, const esp_partition_t* part, size_t* outSize, CopyProgressCallback progressCb, void* progressCtx);
 #ifdef __cplusplus
 }
 #endif

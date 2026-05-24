@@ -646,8 +646,16 @@ extern "C" void app_main(void) {
           CardputerView::copyProgress, &display);
       copiedToFlash = (colecoStatus == ColecoFlashStatus::Ok);
     } else {
+#if defined(MD_ROM_PREBYTE_SWAP_XIP) && MD_ROM_PREBYTE_SWAP_XIP
+      if (ext == ROM_TYPE_GENESIS) {
+        copiedToFlash = copyFileToPartitionByteSwap16(
+            romPath.c_str(), romPart, &mappedSize, CardputerView::copyProgress, &display);
+      } else
+#endif
+      {
       copiedToFlash = copyFileToPartition(
           romPath.c_str(), romPart, &mappedSize, CardputerView::copyProgress, &display);
+      }
       xipRomSize = mappedSize;
     }
     BOOT_LOG("FLASH", "copy done ok=%d mapped=%lu rom_offset=%lu rom_size=%lu status=%d",

@@ -173,6 +173,55 @@ static inline unsigned int gwenesis_rom_addr(unsigned int address)
 	return address % ROM_SIZE;
 }
 
+#ifndef MD_ROM_PREBYTE_SWAP_XIP
+#define MD_ROM_PREBYTE_SWAP_XIP 0
+#endif
+
+#if MD_ROM_PREBYTE_SWAP_XIP
+static inline unsigned char gwenesis_fetch8rom(unsigned int address)
+{
+	const unsigned int idx = gwenesis_rom_addr(address);
+	if (ROM_SIZE && (ROM_SIZE & 1u) && idx == (ROM_SIZE - 1u)) {
+		return ROM_DATA[idx];
+	}
+	return ROM_DATA[gwenesis_rom_addr(address ^ 1u)];
+}
+
+#define FETCH8ROM(A)    gwenesis_fetch8rom((unsigned int)(A))
+
+static inline uint16 gwenesis_fetch16rom_preswapped(unsigned int address)
+{
+	const unsigned int idx = gwenesis_rom_addr(address);
+	if (((address & 1u) == 0u) && ROM_SIZE && (idx + 1u) < ROM_SIZE) {
+		uint16 raw;
+		__builtin_memcpy(&raw, ROM_DATA + idx, sizeof(raw));
+		return raw;
+	}
+	return ((uint16)FETCH8ROM(address) << 8) |
+	       (uint16)FETCH8ROM(address + 1u);
+}
+
+static inline uint32 gwenesis_fetch32rom_preswapped(unsigned int address)
+{
+	const unsigned int idx = gwenesis_rom_addr(address);
+	if (((address & 1u) == 0u) && ROM_SIZE && (idx + 3u) < ROM_SIZE) {
+		uint16 hi;
+		uint16 lo;
+		__builtin_memcpy(&hi, ROM_DATA + idx, sizeof(hi));
+		__builtin_memcpy(&lo, ROM_DATA + idx + 2u, sizeof(lo));
+		return ((uint32)hi << 16) | (uint32)lo;
+	}
+	return ((uint32)FETCH8ROM(address) << 24) |
+	       ((uint32)FETCH8ROM(address + 1u) << 16) |
+	       ((uint32)FETCH8ROM(address + 2u) <<  8) |
+	       ((uint32)FETCH8ROM(address + 3u));
+}
+
+#define FETCH16ROM(A)   gwenesis_fetch16rom_preswapped((unsigned int)(A))
+#define FETCH32ROM(A)   gwenesis_fetch32rom_preswapped((unsigned int)(A))
+
+#else
+
 #define FETCH8ROM(A)    ( ROM_DATA[gwenesis_rom_addr((unsigned int)(A))] )
 
 #if MD_ROM_FETCH_FASTPATH
@@ -212,6 +261,8 @@ static inline uint32 gwenesis_fetch32rom(unsigned int address)
                           ((uint32_t)FETCH8ROM((A) + 1) << 16) | \
                           ((uint32_t)FETCH8ROM((A) + 2) <<  8) | \
                           ((uint32_t)FETCH8ROM((A) + 3)      ) )
+#endif
+
 #endif
                           
 #if GNW_TARGET_MARIO !=0 || GNW_TARGET_ZELDA!=0

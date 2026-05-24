@@ -966,12 +966,18 @@ void gwenesis_init_sram(uint8_t *rom, uint32_t rom_size) {
     return;
   }
 
-  if (rom[0x1B0] != 'R' || rom[0x1B1] != 'A') {
+  if (FETCH8ROM(0x1B0) != 'R' || FETCH8ROM(0x1B1) != 'A') {
     return;
   }
 
-  uint32_t start = be32_read(&rom[0x1B4]);
-  uint32_t end   = be32_read(&rom[0x1B8]);
+  uint32_t start = ((uint32_t)FETCH8ROM(0x1B4) << 24) |
+                   ((uint32_t)FETCH8ROM(0x1B5) << 16) |
+                   ((uint32_t)FETCH8ROM(0x1B6) <<  8) |
+                   ((uint32_t)FETCH8ROM(0x1B7));
+  uint32_t end   = ((uint32_t)FETCH8ROM(0x1B8) << 24) |
+                   ((uint32_t)FETCH8ROM(0x1B9) << 16) |
+                   ((uint32_t)FETCH8ROM(0x1BA) <<  8) |
+                   ((uint32_t)FETCH8ROM(0x1BB));
 
   if (end < start) {
     return;

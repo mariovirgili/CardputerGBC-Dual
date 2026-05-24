@@ -78,6 +78,9 @@ set(ENABLE_MD_BUS_PROBE_LOGS OFF)
 # GWENESIS: conservative 68k/ROM hot-path optimizations with exact fallbacks.
 set(ENABLE_MD_PUBLIC_RAM_FASTPATH ON)
 set(ENABLE_MD_ROM_FETCH_FASTPATH OFF)
+# Store MD ROM words byte-swapped in the XIP partition. FETCH16ROM can then
+# read aligned opcodes as native little-endian 16-bit words without bswap.
+set(ENABLE_MD_ROM_PREBYTE_SWAP_XIP OFF)
 # test only; bypass M5Unified playRaw queue and stream MD audio through a
 # dedicated direct-I2S worker on CPU0.
 set(ENABLE_MD_DIRECT_I2S_AUDIO ON)
@@ -392,6 +395,7 @@ if(ENABLE_MD_CORE)
     add_private_define_if(ENABLE_GNW_TARGET_ZELDA_DEFINE GNW_TARGET_ZELDA=0)
     add_private_define_if(ENABLE_MD_PUBLIC_RAM_FASTPATH MD_PUBLIC_RAM_FASTPATH=1)
     add_private_define_if(ENABLE_MD_ROM_FETCH_FASTPATH MD_ROM_FETCH_FASTPATH=1)
+    add_private_define_if(ENABLE_MD_ROM_PREBYTE_SWAP_XIP MD_ROM_PREBYTE_SWAP_XIP=1)
     if(ENABLE_MD_DIRECT_I2S_AUDIO)
         target_compile_definitions(${COMPONENT_LIB} PRIVATE
             MD_DIRECT_I2S_AUDIO=1
