@@ -137,6 +137,7 @@ struct MdAudioDiagStats {
   uint32_t droppedBuffer = 0;
   uint32_t clippedSamples = 0;
   uint32_t depthMax = 0;
+  uint64_t depthTotal = 0;
   uint32_t emptyDepth = 0;
   uint32_t coreMin = UINT32_MAX;
   uint32_t coreMax = 0;
@@ -152,9 +153,20 @@ struct MdAudioDiagStats {
   int targetLast = 0;
   uint64_t targetTotal = 0;
   uint32_t targetCount = 0;
+  uint32_t i2sWriteCalls = 0;
+  uint32_t i2sWriteOk = 0;
+  uint32_t i2sWriteShort = 0;
+  uint32_t i2sWriteFail = 0;
+  uint32_t i2sWriteUsMin = UINT32_MAX;
+  uint32_t i2sWriteUsMax = 0;
+  uint64_t i2sWriteUsTotal = 0;
+  uint32_t writerBacklogMax = 0;
+  uint64_t writerBacklogTotal = 0;
+  uint32_t writerBacklogCount = 0;
 };
 
 static MdAudioDiagStats s_mdAudioDiag;
+static portMUX_TYPE s_mdAudioDiagMux = portMUX_INITIALIZER_UNLOCKED;
 
 static inline uint64_t md_audio_now_ms()
 {
@@ -163,16 +175,20 @@ static inline uint64_t md_audio_now_ms()
 
 static inline void md_audio_diag_reset()
 {
+  taskENTER_CRITICAL(&s_mdAudioDiagMux);
   s_mdAudioDiag = MdAudioDiagStats{};
   s_mdAudioDiag.lastLogMs = md_audio_now_ms();
+  taskEXIT_CRITICAL(&s_mdAudioDiagMux);
 }
 
 static inline void md_audio_diag_samples(int core_n, int ym_n, int psg_n, size_t depth)
 {
+  taskENTER_CRITICAL(&s_mdAudioDiagMux);
   MdAudioDiagStats& d = s_mdAudioDiag;
   ++d.frames;
   if (depth == 0) ++d.emptyDepth;
   if (depth > d.depthMax) d.depthMax = (uint32_t)depth;
+  d.depthTotal += (uint32_t)depth;
 
   const uint32_t cn = core_n > 0 ? (uint32_t)core_n : 0;
   const uint32_t yn = ym_n > 0 ? (uint32_t)ym_n : 0;
@@ -187,70 +203,129 @@ static inline void md_audio_diag_samples(int core_n, int ym_n, int psg_n, size_t
   if (pn < d.psgMin) d.psgMin = pn;
   if (pn > d.psgMax) d.psgMax = pn;
   d.psgTotal += pn;
+  taskEXIT_CRITICAL(&s_mdAudioDiagMux);
 }
 
 static inline void md_audio_diag_target(int target)
 {
+  taskENTER_CRITICAL(&s_mdAudioDiagMux);
   MdAudioDiagStats& d = s_mdAudioDiag;
   d.targetLast = target;
   if (target < d.targetMin) d.targetMin = target;
   if (target > d.targetMax) d.targetMax = target;
   d.targetTotal += (uint32_t)(target > 0 ? target : 0);
   ++d.targetCount;
+  taskEXIT_CRITICAL(&s_mdAudioDiagMux);
+}
+
+static inline void md_audio_diag_direct_write(uint32_t writeUs,
+                                              bool ok,
+                                              bool shortWrite,
+                                              size_t backlogAfterReceive)
+{
+  taskENTER_CRITICAL(&s_mdAudioDiagMux);
+  MdAudioDiagStats& d = s_mdAudioDiag;
+  ++d.i2sWriteCalls;
+  if (ok) {
+    ++d.i2sWriteOk;
+  } else if (shortWrite) {
+    ++d.i2sWriteShort;
+  } else {
+    ++d.i2sWriteFail;
+  }
+  if (writeUs < d.i2sWriteUsMin) d.i2sWriteUsMin = writeUs;
+  if (writeUs > d.i2sWriteUsMax) d.i2sWriteUsMax = writeUs;
+  d.i2sWriteUsTotal += writeUs;
+  if (backlogAfterReceive > d.writerBacklogMax) {
+    d.writerBacklogMax = (uint32_t)backlogAfterReceive;
+  }
+  d.writerBacklogTotal += (uint32_t)backlogAfterReceive;
+  ++d.writerBacklogCount;
+  taskEXIT_CRITICAL(&s_mdAudioDiagMux);
 }
 
 static inline void md_audio_diag_log_if_due(bool force = false)
 {
-  MdAudioDiagStats& d = s_mdAudioDiag;
   const uint64_t now = md_audio_now_ms();
-  if (!force && (now - d.lastLogMs) < 1000ULL) return;
-  if (d.frames == 0 && d.targetCount == 0) {
-    d.lastLogMs = now;
+  MdAudioDiagStats snap;
+  bool shouldLog = false;
+
+  taskENTER_CRITICAL(&s_mdAudioDiagMux);
+  if (!force && (now - s_mdAudioDiag.lastLogMs) < 1000ULL) {
+    taskEXIT_CRITICAL(&s_mdAudioDiagMux);
+    return;
+  }
+  if (s_mdAudioDiag.frames == 0 &&
+      s_mdAudioDiag.targetCount == 0 &&
+      s_mdAudioDiag.i2sWriteCalls == 0) {
+    s_mdAudioDiag.lastLogMs = now;
+    taskEXIT_CRITICAL(&s_mdAudioDiagMux);
+    return;
+  }
+  snap = s_mdAudioDiag;
+  s_mdAudioDiag = MdAudioDiagStats{};
+  s_mdAudioDiag.lastLogMs = now;
+  shouldLog = true;
+  taskEXIT_CRITICAL(&s_mdAudioDiagMux);
+
+  if (!shouldLog) {
     return;
   }
 
-  const uint32_t coreMin = (d.coreMin == UINT32_MAX) ? 0 : d.coreMin;
-  const uint32_t ymMin = (d.ymMin == UINT32_MAX) ? 0 : d.ymMin;
-  const uint32_t psgMin = (d.psgMin == UINT32_MAX) ? 0 : d.psgMin;
-  const uint32_t coreAvg = d.frames ? (uint32_t)(d.coreTotal / d.frames) : 0;
-  const uint32_t ymAvg = d.frames ? (uint32_t)(d.ymTotal / d.frames) : 0;
-  const uint32_t psgAvg = d.frames ? (uint32_t)(d.psgTotal / d.frames) : 0;
-  const int targetMin = (d.targetMin == INT32_MAX) ? 0 : d.targetMin;
-  const int targetMax = (d.targetMax == INT32_MIN) ? 0 : d.targetMax;
-  const uint32_t targetAvg = d.targetCount ? (uint32_t)(d.targetTotal / d.targetCount) : 0;
+  const uint32_t coreMin = (snap.coreMin == UINT32_MAX) ? 0 : snap.coreMin;
+  const uint32_t ymMin = (snap.ymMin == UINT32_MAX) ? 0 : snap.ymMin;
+  const uint32_t psgMin = (snap.psgMin == UINT32_MAX) ? 0 : snap.psgMin;
+  const uint32_t coreAvg = snap.frames ? (uint32_t)(snap.coreTotal / snap.frames) : 0;
+  const uint32_t ymAvg = snap.frames ? (uint32_t)(snap.ymTotal / snap.frames) : 0;
+  const uint32_t psgAvg = snap.frames ? (uint32_t)(snap.psgTotal / snap.frames) : 0;
+  const uint32_t depthAvg = snap.frames ? (uint32_t)(snap.depthTotal / snap.frames) : 0;
+  const int targetMin = (snap.targetMin == INT32_MAX) ? 0 : snap.targetMin;
+  const int targetMax = (snap.targetMax == INT32_MIN) ? 0 : snap.targetMax;
+  const uint32_t targetAvg = snap.targetCount ? (uint32_t)(snap.targetTotal / snap.targetCount) : 0;
+  const uint32_t i2sWriteMin = (snap.i2sWriteUsMin == UINT32_MAX) ? 0 : snap.i2sWriteUsMin;
+  const uint32_t i2sWriteAvg = snap.i2sWriteCalls ? (uint32_t)(snap.i2sWriteUsTotal / snap.i2sWriteCalls) : 0;
+  const uint32_t writerBacklogAvg = snap.writerBacklogCount ? (uint32_t)(snap.writerBacklogTotal / snap.writerBacklogCount) : 0;
 
-  MD_AUDIO_LOG("frames=%lu queued=%lu loss depth/buf=%lu/%lu queueDepthMax=%lu underrunEmpty=%lu coreRate=%d outRate=%d coreSamples min/avg/max=%lu/%lu/%lu outSamples=%d ym=%lu/%lu/%lu psg=%lu/%lu/%lu target min/avg/max/last=%d/%lu/%d/%d clipped=%lu",
-               (unsigned long)d.frames,
-               (unsigned long)d.queued,
-               (unsigned long)d.droppedDepth,
-               (unsigned long)d.droppedBuffer,
-               (unsigned long)d.depthMax,
-               (unsigned long)d.emptyDepth,
+  MD_AUDIO_LOG("frames=%lu queued=%lu loss depth/buf=%lu/%lu queueDepth avg/max=%lu/%lu underrunEmpty=%lu coreRate=%d outRate=%d coreSamples min/avg/max=%lu/%lu/%lu outSamples=%d ym=%lu/%lu/%lu psg=%lu/%lu/%lu target min/avg/max/last=%d/%lu/%d/%d writerBacklog avg/max=%lu/%lu i2sWrite calls/ok/short/fail=%lu/%lu/%lu/%lu us min/avg/max=%lu/%lu/%lu clipped=%lu",
+               (unsigned long)snap.frames,
+               (unsigned long)snap.queued,
+               (unsigned long)snap.droppedDepth,
+               (unsigned long)snap.droppedBuffer,
+               (unsigned long)depthAvg,
+               (unsigned long)snap.depthMax,
+               (unsigned long)snap.emptyDepth,
                s_audioCoreRate,
                AUDIO_SR,
                (unsigned long)coreMin,
                (unsigned long)coreAvg,
-               (unsigned long)d.coreMax,
+               (unsigned long)snap.coreMax,
                s_audioOutSamples,
                (unsigned long)ymMin,
                (unsigned long)ymAvg,
-               (unsigned long)d.ymMax,
+               (unsigned long)snap.ymMax,
                (unsigned long)psgMin,
                (unsigned long)psgAvg,
-               (unsigned long)d.psgMax,
+               (unsigned long)snap.psgMax,
                targetMin,
                (unsigned long)targetAvg,
                targetMax,
-               d.targetLast,
-               (unsigned long)d.clippedSamples);
-
-  d = MdAudioDiagStats{};
-  d.lastLogMs = now;
+               snap.targetLast,
+               (unsigned long)writerBacklogAvg,
+               (unsigned long)snap.writerBacklogMax,
+               (unsigned long)snap.i2sWriteCalls,
+               (unsigned long)snap.i2sWriteOk,
+               (unsigned long)snap.i2sWriteShort,
+               (unsigned long)snap.i2sWriteFail,
+               (unsigned long)i2sWriteMin,
+               (unsigned long)i2sWriteAvg,
+               (unsigned long)snap.i2sWriteUsMax,
+               (unsigned long)snap.clippedSamples);
 }
 #else
 static inline void md_audio_diag_reset() {}
 static inline void md_audio_diag_samples(int, int, int, size_t) {}
 static inline void md_audio_diag_target(int) {}
+static inline void md_audio_diag_direct_write(uint32_t, bool, bool, size_t) {}
 static inline void md_audio_diag_log_if_due(bool = false) {}
 #endif
 
@@ -382,10 +457,17 @@ static inline int md_audio_pool_slot_from_ptr(const int16_t* pcm)
   return (int)slot;
 }
 
-static bool md_direct_i2s_write(const int16_t* pcm, size_t samples)
+struct MdDirectWriteResult {
+  bool ok = false;
+  bool shortWrite = false;
+  uint32_t writeUs = 0;
+};
+
+static MdDirectWriteResult md_direct_i2s_write(const int16_t* pcm, size_t samples)
 {
+  MdDirectWriteResult result;
   if (!s_directReady || !s_directOut || !pcm || samples == 0 || samples > (size_t)AUDIO_CHUNK_CAP) {
-    return false;
+    return result;
   }
 
   const int volume = (int)genesis_audio_volume;
@@ -398,12 +480,16 @@ static bool md_direct_i2s_write(const int16_t* pcm, size_t samples)
 
   size_t written = 0;
   const size_t bytes = samples * sizeof(int16_t);
+  const uint64_t t0 = (uint64_t)esp_timer_get_time();
 #if MD_DIRECT_I2S_STD
   const esp_err_t err = i2s_channel_write(s_i2sTx, s_directOut, bytes, &written, portMAX_DELAY);
 #else
   const esp_err_t err = i2s_write(I2S_NUM_1, s_directOut, bytes, &written, portMAX_DELAY);
 #endif
-  return (err == ESP_OK) && (written == bytes);
+  result.writeUs = (uint32_t)((uint64_t)esp_timer_get_time() - t0);
+  result.ok = (err == ESP_OK) && (written == bytes);
+  result.shortWrite = (written != bytes);
+  return result;
 }
 #endif
 
@@ -447,7 +533,12 @@ static void audio_task(void*) {
       break;
     }
 
-    md_direct_i2s_write(msg.buf, msg.n);
+    const size_t backlogAfterReceive = s_audioQ ? (size_t)uxQueueMessagesWaiting(s_audioQ) : 0;
+    const MdDirectWriteResult writeResult = md_direct_i2s_write(msg.buf, msg.n);
+    md_audio_diag_direct_write(writeResult.writeUs,
+                               writeResult.ok,
+                               writeResult.shortWrite,
+                               backlogAfterReceive);
 
     const int slot = md_audio_pool_slot_from_ptr(msg.buf);
     if (slot >= 0 && s_audioFreeQ) {

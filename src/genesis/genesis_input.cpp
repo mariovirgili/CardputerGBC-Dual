@@ -34,6 +34,12 @@ static inline void set_button(int idx, bool pressed) {
   else         gwenesis_io_pad_release_button(0, idx);
 }
 
+static inline uint8_t clamp_volume(int volume) {
+  if (volume < 0) return 0;
+  if (volume > 255) return 255;
+  return (uint8_t)volume;
+}
+
 /* Polling cardputer keyboard */
 extern "C" void genesis_controller_poll() {
 
@@ -46,7 +52,12 @@ extern "C" void genesis_controller_poll() {
     Keyboard_Class::KeysState ks = M5Cardputer.Keyboard.keysState();
 
     // ------ Common input (volume, brightness...) -------
+    const int volumeBefore = M5Cardputer.Speaker.getVolume();
     share::checkCommonInput(ks);
+    const int volumeAfter = M5Cardputer.Speaker.getVolume();
+    if (volumeAfter != volumeBefore) {
+        genesis_audio_volume = clamp_volume(volumeAfter);
+    }
 
     // --------- Cumulated I2C + keyboard ----------
     bool up      = false;

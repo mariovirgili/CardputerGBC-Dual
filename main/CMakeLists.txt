@@ -77,7 +77,14 @@ set(ENABLE_MD_BENCHMARK_LOGS ON)
 set(ENABLE_MD_BUS_PROBE_LOGS OFF)
 # GWENESIS: conservative 68k/ROM hot-path optimizations with exact fallbacks.
 set(ENABLE_MD_PUBLIC_RAM_FASTPATH ON)
-set(ENABLE_MD_ROM_FETCH_FASTPATH ON)
+set(ENABLE_MD_ROM_FETCH_FASTPATH OFF)
+# test only; bypass M5Unified playRaw queue and stream MD audio through a
+# dedicated direct-I2S worker on CPU0.
+set(ENABLE_MD_DIRECT_I2S_AUDIO ON)
+set(MD_AUDIO_TASK_CORE "0")
+set(MD_AUDIO_TASK_PRIORITY "6")
+set(MD_AUDIO_DMA_LEN "256")
+set(MD_AUDIO_DMA_COUNT "8")
 
 # FMSX: fMSX detail logs, requires ENABLE_EMU_LOGS.
 set(ENABLE_MSX_LOGS ON)
@@ -385,6 +392,15 @@ if(ENABLE_MD_CORE)
     add_private_define_if(ENABLE_GNW_TARGET_ZELDA_DEFINE GNW_TARGET_ZELDA=0)
     add_private_define_if(ENABLE_MD_PUBLIC_RAM_FASTPATH MD_PUBLIC_RAM_FASTPATH=1)
     add_private_define_if(ENABLE_MD_ROM_FETCH_FASTPATH MD_ROM_FETCH_FASTPATH=1)
+    if(ENABLE_MD_DIRECT_I2S_AUDIO)
+        target_compile_definitions(${COMPONENT_LIB} PRIVATE
+            MD_DIRECT_I2S_AUDIO=1
+            MD_AUDIO_TASK_CORE=${MD_AUDIO_TASK_CORE}
+            MD_AUDIO_TASK_PRIORITY=${MD_AUDIO_TASK_PRIORITY}
+            MD_AUDIO_DMA_LEN=${MD_AUDIO_DMA_LEN}
+            MD_AUDIO_DMA_COUNT=${MD_AUDIO_DMA_COUNT}
+        )
+    endif()
 endif()
 
 if(ENABLE_WS_CORE)
