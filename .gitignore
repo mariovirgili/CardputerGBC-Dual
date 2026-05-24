@@ -3,7 +3,7 @@
 .vscode/c_cpp_properties.json
 .vscode/launch.json
 .vscode/ipch
-.claude/settings.local.json
+.claude/
 Resources/awesome-megadrive-main.zip
 Resources/MD/Accolade_Sound_Document.pdf
 Resources/MD/Accolade_Z80_Document_-_1.pdf
@@ -17,4 +17,3 @@ Resources/MD/SegaGenesisQuickReference_1991-04-08.pdf
 Resources/MD/SegaGenesisSoftwareManual_1990-02-06.pdf
 Resources/MD/SNASM68K_Console_and_Z80_Notes.pdf
 Resources/MD/The_SN76489_Sound_Chip.pdf
-.claude/settings.local.json
