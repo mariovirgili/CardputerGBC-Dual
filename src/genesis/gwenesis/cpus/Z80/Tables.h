@@ -13,7 +13,14 @@
 /**     changes to this file.                               **/
 /*************************************************************/
 
-static const byte Cycles[256] =
+#if defined(MD_Z80_TABLES_DRAM)
+#include "esp_attr.h"
+#define MD_Z80_TABLE_STORAGE DRAM_ATTR static
+#else
+#define MD_Z80_TABLE_STORAGE static const
+#endif
+
+MD_Z80_TABLE_STORAGE byte Cycles[256] =
 {
    4,10, 7, 6, 4, 4, 7, 4, 4,11, 7, 6, 4, 4, 7, 4,
    8,10, 7, 6, 4, 4, 7, 4,12,11, 7, 6, 4, 4, 7, 4,
@@ -33,7 +40,7 @@ static const byte Cycles[256] =
    5,10,10, 4,10,11, 7,11, 5, 6,10, 4,10, 0, 7,11 
 };
 
-static const byte CyclesCB[256] =
+MD_Z80_TABLE_STORAGE byte CyclesCB[256] =
 {
    8, 8, 8, 8, 8, 8,15, 8, 8, 8, 8, 8, 8, 8,15, 8,
    8, 8, 8, 8, 8, 8,15, 8, 8, 8, 8, 8, 8, 8,15, 8,
@@ -53,7 +60,7 @@ static const byte CyclesCB[256] =
    8, 8, 8, 8, 8, 8,15, 8, 8, 8, 8, 8, 8, 8,15, 8 
 };
 
-static const byte CyclesED[256] =
+MD_Z80_TABLE_STORAGE byte CyclesED[256] =
 {
    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
@@ -73,7 +80,7 @@ static const byte CyclesED[256] =
    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
 };
 
-static const byte CyclesXX[256] =
+MD_Z80_TABLE_STORAGE byte CyclesXX[256] =
 {
    0, 0, 0, 0, 0, 0, 0, 0, 0,15, 0, 0, 0, 0, 0, 0,
    0, 0, 0, 0, 0, 0, 0, 0, 0,15, 0, 0, 0, 0, 0, 0,
@@ -93,7 +100,7 @@ static const byte CyclesXX[256] =
    0, 0, 0, 0, 0, 0, 0, 0, 0,10, 0, 0, 0, 0, 0, 0
 };
 
-static const byte CyclesXXCB[256] =
+MD_Z80_TABLE_STORAGE byte CyclesXXCB[256] =
 {
    0, 0, 0, 0, 0, 0,23, 0, 0, 0, 0, 0, 0, 0,23, 0,
    0, 0, 0, 0, 0, 0,23, 0, 0, 0, 0, 0, 0, 0,23, 0,
@@ -113,7 +120,7 @@ static const byte CyclesXXCB[256] =
    0, 0, 0, 0, 0, 0,23, 0, 0, 0, 0, 0, 0, 0,23, 0
 };
 
-static const byte ZSTable[256] =
+MD_Z80_TABLE_STORAGE byte ZSTable[256] =
 {
   Z_FLAG,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
   0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
@@ -141,7 +148,7 @@ static const byte ZSTable[256] =
   S_FLAG,S_FLAG,S_FLAG,S_FLAG,S_FLAG,S_FLAG,S_FLAG,S_FLAG
 };
 
-static const byte PZSTable[256] =
+MD_Z80_TABLE_STORAGE byte PZSTable[256] =
 {
   Z_FLAG|P_FLAG,0,0,P_FLAG,0,P_FLAG,P_FLAG,0,
   0,P_FLAG,P_FLAG,0,P_FLAG,0,0,P_FLAG,
