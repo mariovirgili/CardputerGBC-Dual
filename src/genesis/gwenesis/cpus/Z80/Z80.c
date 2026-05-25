@@ -20,7 +20,14 @@
 
 #include "Z80.h"
 #include "Tables.h"
+#include "esp_attr.h"
 #include <stdio.h>
+
+#if defined(MD_Z80_CORE_IRAM)
+#define MD_Z80_CORE_IRAM_ATTR IRAM_ATTR
+#else
+#define MD_Z80_CORE_IRAM_ATTR
+#endif
 
 /** INLINE ***************************************************/
 /** C99 standard has "inline", but older compilers used     **/
@@ -518,7 +525,7 @@ int GetRunCyclesZ80(register Z80 *R)
 {
   return(R->ICount - R->RunCycles);
 }
-int ExecZ80(register Z80 *R,register int RunCycles)
+int MD_Z80_CORE_IRAM_ATTR ExecZ80(register Z80 *R,register int RunCycles)
 {
   register byte I;
   register pair J;
@@ -574,7 +581,7 @@ int ExecZ80(register Z80 *R,register int RunCycles)
 /** IntZ80() *************************************************/
 /** This function will generate interrupt of given vector.  **/
 /*************************************************************/
-void IntZ80(Z80 *R,word Vector)
+void MD_Z80_CORE_IRAM_ATTR IntZ80(Z80 *R,word Vector)
 {
   /* If HALTed, take CPU off HALT instruction */
   if(R->IFF&IFF_HALT) { R->PC.W++;R->IFF&=~IFF_HALT; }
