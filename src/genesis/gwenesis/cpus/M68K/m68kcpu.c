@@ -493,7 +493,8 @@ int m68k_cycles_master(void)
 
 void m68k_init(void)
 {
-  m68k.memory_map = malloc(256 * sizeof(cpu_memory_map));
+  /* Legacy table-based memory_map path is disabled in this build. */
+  m68k.memory_map = NULL;
   
 #ifdef BUILD_TABLES
   static uint emulation_initialized = 0;

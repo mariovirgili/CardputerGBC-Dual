@@ -598,7 +598,7 @@ unsigned int gwenesis_bus_map_address(unsigned int address) {
 
   else if (range == 0xC0) // VDP ADDRESS 0xC00000 - 0xDFFFFFF
     return VDP_ADDR;
-  else if (range == 0xFF) // RAM ADDRESS 0xE00000 - 0xFFFFFFF
+  else if (range >= 0xE0) // RAM ADDRESS 0xE00000 - 0xFFFFFF
     return RAM_ADDR;
   // If not a valid address return 0
   bus_log(__FUNCTION__,"M68K > ?? unnmap address %x", address);
@@ -625,7 +625,7 @@ static inline unsigned int gwenesis_bus_read_memory_8(unsigned int address) {
     return FETCH8ROM(address);
   }
 
-  if (range == 0xFFu) {
+  if (range >= 0xE0u) {
     md_bus_probe_record(RAM_ADDR, 0, 8);
     return FETCH8RAM(address);
   }
@@ -732,7 +732,7 @@ static inline unsigned int gwenesis_bus_read_memory_16(unsigned int address) {
     return gwenesis_vdp_read_memory_16(address);
   }
 
-  if (range == 0xFFu) {
+  if (range >= 0xE0u) {
     md_bus_probe_record(RAM_ADDR, 0, 16);
     return FETCH16RAM(address);
   }
@@ -854,7 +854,7 @@ static inline void gwenesis_bus_write_memory_8(unsigned int address,
     return;
   }
 
-  if (range == 0xFFu) {
+  if (range >= 0xE0u) {
     md_bus_probe_record(RAM_ADDR, 1, 8);
     WRITE8RAM(address, value);
     return;
@@ -977,7 +977,7 @@ static inline void gwenesis_bus_write_memory_16(unsigned int address,
     return;
   }
 
-  if (range == 0xFFu) {
+  if (range >= 0xE0u) {
     md_bus_probe_record(RAM_ADDR, 1, 16);
     WRITE16RAM(address, value);
     return;
@@ -1090,7 +1090,7 @@ static inline void gwenesis_bus_write_memory_16(unsigned int address,
 unsigned int m68k_read_memory_8(unsigned int address)
 {
 #if MD_PUBLIC_RAM_FASTPATH
-    if ((address & 0xFF0000u) == 0xFF0000u) return FETCH8RAM(address);
+    if ((address & 0xE00000u) == 0xE00000u) return FETCH8RAM(address);
 #endif
     return gwenesis_bus_read_memory_8(address);
 }
@@ -1104,7 +1104,7 @@ unsigned int m68k_read_memory_8(unsigned int address)
  unsigned int m68k_read_memory_16(unsigned int address)
 {
 #if MD_PUBLIC_RAM_FASTPATH
-    if ((address & 0xFF0000u) == 0xFF0000u) return FETCH16RAM(address);
+    if ((address & 0xE00000u) == 0xE00000u) return FETCH16RAM(address);
 #endif
     return gwenesis_bus_read_memory_16(address);
 }
@@ -1118,7 +1118,7 @@ unsigned int m68k_read_memory_8(unsigned int address)
  unsigned int m68k_read_memory_32(unsigned int address)
 {
 #if MD_PUBLIC_RAM_FASTPATH
-    if ((address & 0xFF0000u) == 0xFF0000u) return FETCH32RAM(address);
+    if ((address & 0xE00000u) == 0xE00000u) return FETCH32RAM(address);
 #endif
     return (gwenesis_bus_read_memory_16(address) << 16) | gwenesis_bus_read_memory_16(address + 2);
 }
@@ -1131,7 +1131,7 @@ unsigned int m68k_read_memory_8(unsigned int address)
  ******************************************************************************/
 void m68k_write_memory_8(unsigned int address, unsigned int value) {
 #if MD_PUBLIC_RAM_FASTPATH
-  if ((address & 0xFF0000u) == 0xFF0000u) {
+  if ((address & 0xE00000u) == 0xE00000u) {
     WRITE8RAM(address, value);
     return;
   }
@@ -1148,7 +1148,7 @@ void m68k_write_memory_8(unsigned int address, unsigned int value) {
  ******************************************************************************/
 void m68k_write_memory_16(unsigned int address, unsigned int value) {
 #if MD_PUBLIC_RAM_FASTPATH
-  if ((address & 0xFF0000u) == 0xFF0000u) {
+  if ((address & 0xE00000u) == 0xE00000u) {
     WRITE16RAM(address, value);
     return;
   }
@@ -1165,7 +1165,7 @@ void m68k_write_memory_16(unsigned int address, unsigned int value) {
 void m68k_write_memory_32(unsigned int address, unsigned int value) {
 
 #if MD_PUBLIC_RAM_FASTPATH
-  if ((address & 0xFF0000u) == 0xFF0000u) {
+  if ((address & 0xE00000u) == 0xE00000u) {
     WRITE32RAM(address, value);
     return;
   }
