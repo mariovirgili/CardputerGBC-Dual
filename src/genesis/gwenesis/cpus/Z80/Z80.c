@@ -535,13 +535,6 @@ int MD_Z80_CORE_IRAM_ATTR ExecZ80(register Z80 *R,register int RunCycles)
   {
     while(R->ICount>0)
     {
-      if(R->IFF&IFF_HALT)
-      {
-        if((R->IRequest!=INT_NONE)&&(R->IRequest!=INT_QUIT)) IntZ80(R,R->IRequest);
-        R->ICount=0;
-        break;
-      }
-
 #ifdef DEBUG
       /* Turn tracing on when reached trap address */
       if(R->PC.W==R->Trap) R->Trace=1;
