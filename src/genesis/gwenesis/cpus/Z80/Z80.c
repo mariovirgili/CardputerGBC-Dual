@@ -345,7 +345,7 @@ enum CodesED
   DB_F8,DB_F9,DB_FA,DB_FB,DB_FC,DB_FD,DB_FE,DB_FF
 };
 
-static void CodesCB(register Z80 *R)
+static void MD_Z80_CORE_IRAM_ATTR CodesCB(register Z80 *R)
 {
   register byte I;
 
@@ -364,7 +364,7 @@ static void CodesCB(register Z80 *R)
   }
 }
 
-static void CodesDDCB(register Z80 *R)
+static void MD_Z80_CORE_IRAM_ATTR CodesDDCB(register Z80 *R)
 {
   register pair J;
   register byte I;
@@ -387,7 +387,7 @@ static void CodesDDCB(register Z80 *R)
 #undef XX
 }
 
-static void CodesFDCB(register Z80 *R)
+static void MD_Z80_CORE_IRAM_ATTR CodesFDCB(register Z80 *R)
 {
   register pair J;
   register byte I;
@@ -410,7 +410,7 @@ static void CodesFDCB(register Z80 *R)
 #undef XX
 }
 
-static void CodesED(register Z80 *R)
+static void MD_Z80_CORE_IRAM_ATTR CodesED(register Z80 *R)
 {
   register byte I;
   register pair J;
@@ -432,7 +432,7 @@ static void CodesED(register Z80 *R)
   }
 }
 
-static void CodesDD(register Z80 *R)
+static void MD_Z80_CORE_IRAM_ATTR CodesDD(register Z80 *R)
 {
   register byte I;
   register pair J;
@@ -459,7 +459,7 @@ static void CodesDD(register Z80 *R)
 #undef XX
 }
 
-static void CodesFD(register Z80 *R)
+static void MD_Z80_CORE_IRAM_ATTR CodesFD(register Z80 *R)
 {
   register byte I;
   register pair J;
