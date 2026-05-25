@@ -1269,6 +1269,12 @@ INLINE void m68ki_branch_16(uint offset)
   REG_PC += MAKE_INT_16(offset);
 }
 
+/* Taken 16-bit branches all share the same fetch/update sequence. */
+INLINE void m68ki_branch_imm_16(void)
+{
+  REG_PC += MAKE_INT_16(m68ki_read_imm_16()) - 2;
+}
+
 INLINE void m68ki_branch_32(uint offset)
 {
   REG_PC += offset;

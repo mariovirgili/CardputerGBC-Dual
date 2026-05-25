@@ -3,6 +3,13 @@
 /* ============== CYCLE-ACCURATE DIV/MUL EXECUTION ======================== */
 /* ======================================================================== */
 
+#if defined(MD_M68K_BRANCH_IRAM_HELPERS)
+#include "esp_attr.h"
+#define MD_M68K_BRANCH_IRAM IRAM_ATTR
+#else
+#define MD_M68K_BRANCH_IRAM
+#endif
+
 INLINE void UseDivuCycles(uint32 dst, uint32 src)
 {
   int i;
@@ -4197,7 +4204,7 @@ static void m68k_op_bcs_8(void)
 }
 
 
-static void m68k_op_bne_8(void)
+static void MD_M68K_BRANCH_IRAM m68k_op_bne_8(void)
 {
   if(COND_NE())
   {
@@ -4208,7 +4215,7 @@ static void m68k_op_bne_8(void)
 }
 
 
-static void m68k_op_beq_8(void)
+static void MD_M68K_BRANCH_IRAM m68k_op_beq_8(void)
 {
   if(COND_EQ())
   {
@@ -4311,9 +4318,7 @@ static void m68k_op_bhi_16(void)
 {
   if(COND_HI())
   {
-    uint offset = OPER_I_16();
-    REG_PC -= 2;
-    m68ki_branch_16(offset);
+    m68ki_branch_imm_16();
     return;
   }
   REG_PC += 2;
@@ -4325,9 +4330,7 @@ static void m68k_op_bls_16(void)
 {
   if(COND_LS())
   {
-    uint offset = OPER_I_16();
-    REG_PC -= 2;
-    m68ki_branch_16(offset);
+    m68ki_branch_imm_16();
     return;
   }
   REG_PC += 2;
@@ -4339,9 +4342,7 @@ static void m68k_op_bcc_16(void)
 {
   if(COND_CC())
   {
-    uint offset = OPER_I_16();
-    REG_PC -= 2;
-    m68ki_branch_16(offset);
+    m68ki_branch_imm_16();
     return;
   }
   REG_PC += 2;
@@ -4353,9 +4354,7 @@ static void m68k_op_bcs_16(void)
 {
   if(COND_CS())
   {
-    uint offset = OPER_I_16();
-    REG_PC -= 2;
-    m68ki_branch_16(offset);
+    m68ki_branch_imm_16();
     return;
   }
   REG_PC += 2;
@@ -4367,9 +4366,7 @@ static void m68k_op_bne_16(void)
 {
   if(COND_NE())
   {
-    uint offset = OPER_I_16();
-    REG_PC -= 2;
-    m68ki_branch_16(offset);
+    m68ki_branch_imm_16();
     return;
   }
   REG_PC += 2;
@@ -4377,13 +4374,11 @@ static void m68k_op_bne_16(void)
 }
 
 
-static void m68k_op_beq_16(void)
+static void MD_M68K_BRANCH_IRAM m68k_op_beq_16(void)
 {
   if(COND_EQ())
   {
-    uint offset = OPER_I_16();
-    REG_PC -= 2;
-    m68ki_branch_16(offset);
+    m68ki_branch_imm_16();
     return;
   }
   REG_PC += 2;
@@ -4395,9 +4390,7 @@ static void m68k_op_bvc_16(void)
 {
   if(COND_VC())
   {
-    uint offset = OPER_I_16();
-    REG_PC -= 2;
-    m68ki_branch_16(offset);
+    m68ki_branch_imm_16();
     return;
   }
   REG_PC += 2;
@@ -4409,9 +4402,7 @@ static void m68k_op_bvs_16(void)
 {
   if(COND_VS())
   {
-    uint offset = OPER_I_16();
-    REG_PC -= 2;
-    m68ki_branch_16(offset);
+    m68ki_branch_imm_16();
     return;
   }
   REG_PC += 2;
@@ -4423,9 +4414,7 @@ static void m68k_op_bpl_16(void)
 {
   if(COND_PL())
   {
-    uint offset = OPER_I_16();
-    REG_PC -= 2;
-    m68ki_branch_16(offset);
+    m68ki_branch_imm_16();
     return;
   }
   REG_PC += 2;
@@ -4437,9 +4426,7 @@ static void m68k_op_bmi_16(void)
 {
   if(COND_MI())
   {
-    uint offset = OPER_I_16();
-    REG_PC -= 2;
-    m68ki_branch_16(offset);
+    m68ki_branch_imm_16();
     return;
   }
   REG_PC += 2;
@@ -4451,9 +4438,7 @@ static void m68k_op_bge_16(void)
 {
   if(COND_GE())
   {
-    uint offset = OPER_I_16();
-    REG_PC -= 2;
-    m68ki_branch_16(offset);
+    m68ki_branch_imm_16();
     return;
   }
   REG_PC += 2;
@@ -4465,9 +4450,7 @@ static void m68k_op_blt_16(void)
 {
   if(COND_LT())
   {
-    uint offset = OPER_I_16();
-    REG_PC -= 2;
-    m68ki_branch_16(offset);
+    m68ki_branch_imm_16();
     return;
   }
   REG_PC += 2;
@@ -4479,9 +4462,7 @@ static void m68k_op_bgt_16(void)
 {
   if(COND_GT())
   {
-    uint offset = OPER_I_16();
-    REG_PC -= 2;
-    m68ki_branch_16(offset);
+    m68ki_branch_imm_16();
     return;
   }
   REG_PC += 2;
@@ -4493,9 +4474,7 @@ static void m68k_op_ble_16(void)
 {
   if(COND_LE())
   {
-    uint offset = OPER_I_16();
-    REG_PC -= 2;
-    m68ki_branch_16(offset);
+    m68ki_branch_imm_16();
     return;
   }
   REG_PC += 2;
@@ -5093,7 +5072,7 @@ static void m68k_op_bclr_8_s_al(void)
 }
 
 
-static void m68k_op_bra_8(void)
+static void MD_M68K_BRANCH_IRAM m68k_op_bra_8(void)
 {
   m68ki_branch_8(MASK_OUT_ABOVE_8(REG_IR));
 }
@@ -5101,9 +5080,7 @@ static void m68k_op_bra_8(void)
 
 static void m68k_op_bra_16(void)
 {
-  uint offset = OPER_I_16();
-  REG_PC -= 2;
-  m68ki_branch_16(offset);
+  m68ki_branch_imm_16();
 }
 
 
@@ -7225,7 +7202,7 @@ static void m68k_op_dbt_16(void)
 }
 
 
-static void m68k_op_dbf_16(void)
+static void MD_M68K_BRANCH_IRAM m68k_op_dbf_16(void)
 {
   uint* r_dst = &DY;
   uint res = MASK_OUT_ABOVE_16(*r_dst - 1);
@@ -7233,9 +7210,7 @@ static void m68k_op_dbf_16(void)
 
   if(res != 0xffff)
   {
-    uint offset = OPER_I_16();
-    REG_PC -= 2;
-    m68ki_branch_16(offset);
+    m68ki_branch_imm_16();
     USE_CYCLES(CYC_DBCC_F_NOEXP);
 
     /* reset idle loop detection */
@@ -7257,9 +7232,7 @@ static void m68k_op_dbhi_16(void)
     *r_dst = MASK_OUT_BELOW_16(*r_dst) | res;
     if(res != 0xffff)
     {
-      uint offset = OPER_I_16();
-      REG_PC -= 2;
-      m68ki_branch_16(offset);
+      m68ki_branch_imm_16();
       USE_CYCLES(CYC_DBCC_F_NOEXP);
 
       /* reset idle loop detection */
@@ -7284,9 +7257,7 @@ static void m68k_op_dbls_16(void)
     *r_dst = MASK_OUT_BELOW_16(*r_dst) | res;
     if(res != 0xffff)
     {
-      uint offset = OPER_I_16();
-      REG_PC -= 2;
-      m68ki_branch_16(offset);
+      m68ki_branch_imm_16();
       USE_CYCLES(CYC_DBCC_F_NOEXP);
 
       /* reset idle loop detection */
@@ -7311,9 +7282,7 @@ static void m68k_op_dbcc_16(void)
     *r_dst = MASK_OUT_BELOW_16(*r_dst) | res;
     if(res != 0xffff)
     {
-      uint offset = OPER_I_16();
-      REG_PC -= 2;
-      m68ki_branch_16(offset);
+      m68ki_branch_imm_16();
       USE_CYCLES(CYC_DBCC_F_NOEXP);
 
       /* reset idle loop detection */
@@ -7338,9 +7307,7 @@ static void m68k_op_dbcs_16(void)
     *r_dst = MASK_OUT_BELOW_16(*r_dst) | res;
     if(res != 0xffff)
     {
-      uint offset = OPER_I_16();
-      REG_PC -= 2;
-      m68ki_branch_16(offset);
+      m68ki_branch_imm_16();
       USE_CYCLES(CYC_DBCC_F_NOEXP);
 
       /* reset idle loop detection */
@@ -7365,9 +7332,7 @@ static void m68k_op_dbne_16(void)
     *r_dst = MASK_OUT_BELOW_16(*r_dst) | res;
     if(res != 0xffff)
     {
-      uint offset = OPER_I_16();
-      REG_PC -= 2;
-      m68ki_branch_16(offset);
+      m68ki_branch_imm_16();
       USE_CYCLES(CYC_DBCC_F_NOEXP);
 
       /* reset idle loop detection */
@@ -7392,9 +7357,7 @@ static void m68k_op_dbeq_16(void)
     *r_dst = MASK_OUT_BELOW_16(*r_dst) | res;
     if(res != 0xffff)
     {
-      uint offset = OPER_I_16();
-      REG_PC -= 2;
-      m68ki_branch_16(offset);
+      m68ki_branch_imm_16();
       USE_CYCLES(CYC_DBCC_F_NOEXP);
 
       /* reset idle loop detection */
@@ -7419,9 +7382,7 @@ static void m68k_op_dbvc_16(void)
     *r_dst = MASK_OUT_BELOW_16(*r_dst) | res;
     if(res != 0xffff)
     {
-      uint offset = OPER_I_16();
-      REG_PC -= 2;
-      m68ki_branch_16(offset);
+      m68ki_branch_imm_16();
       USE_CYCLES(CYC_DBCC_F_NOEXP);
 
       /* reset idle loop detection */
@@ -7446,9 +7407,7 @@ static void m68k_op_dbvs_16(void)
     *r_dst = MASK_OUT_BELOW_16(*r_dst) | res;
     if(res != 0xffff)
     {
-      uint offset = OPER_I_16();
-      REG_PC -= 2;
-      m68ki_branch_16(offset);
+      m68ki_branch_imm_16();
       USE_CYCLES(CYC_DBCC_F_NOEXP);
 
       /* reset idle loop detection */
@@ -7473,9 +7432,7 @@ static void m68k_op_dbpl_16(void)
     *r_dst = MASK_OUT_BELOW_16(*r_dst) | res;
     if(res != 0xffff)
     {
-      uint offset = OPER_I_16();
-      REG_PC -= 2;
-      m68ki_branch_16(offset);
+      m68ki_branch_imm_16();
       USE_CYCLES(CYC_DBCC_F_NOEXP);
 
       /* reset idle loop detection */
@@ -7500,9 +7457,7 @@ static void m68k_op_dbmi_16(void)
     *r_dst = MASK_OUT_BELOW_16(*r_dst) | res;
     if(res != 0xffff)
     {
-      uint offset = OPER_I_16();
-      REG_PC -= 2;
-      m68ki_branch_16(offset);
+      m68ki_branch_imm_16();
       USE_CYCLES(CYC_DBCC_F_NOEXP);
 
       /* reset idle loop detection */
@@ -7527,9 +7482,7 @@ static void m68k_op_dbge_16(void)
     *r_dst = MASK_OUT_BELOW_16(*r_dst) | res;
     if(res != 0xffff)
     {
-      uint offset = OPER_I_16();
-      REG_PC -= 2;
-      m68ki_branch_16(offset);
+      m68ki_branch_imm_16();
       USE_CYCLES(CYC_DBCC_F_NOEXP);
 
       /* reset idle loop detection */
@@ -7554,9 +7507,7 @@ static void m68k_op_dblt_16(void)
     *r_dst = MASK_OUT_BELOW_16(*r_dst) | res;
     if(res != 0xffff)
     {
-      uint offset = OPER_I_16();
-      REG_PC -= 2;
-      m68ki_branch_16(offset);
+      m68ki_branch_imm_16();
       USE_CYCLES(CYC_DBCC_F_NOEXP);
 
       /* reset idle loop detection */
@@ -7581,9 +7532,7 @@ static void m68k_op_dbgt_16(void)
     *r_dst = MASK_OUT_BELOW_16(*r_dst) | res;
     if(res != 0xffff)
     {
-      uint offset = OPER_I_16();
-      REG_PC -= 2;
-      m68ki_branch_16(offset);
+      m68ki_branch_imm_16();
       USE_CYCLES(CYC_DBCC_F_NOEXP);
 
       /* reset idle loop detection */
