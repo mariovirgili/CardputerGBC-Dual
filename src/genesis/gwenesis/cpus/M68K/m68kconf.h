@@ -58,11 +58,15 @@
 /* If ON, the CPU will emulate the 4-byte prefetch queue of a real 68000 */
 #define M68K_EMULATE_PREFETCH       OPT_OFF
 
+#ifndef MD_M68K_EMULATE_ADDRESS_ERROR
+#define MD_M68K_EMULATE_ADDRESS_ERROR OPT_ON
+#endif
+
 /* If ON, the CPU will generate address error exceptions if it tries to
  * access a word or longword at an odd address.
  * NOTE: This is only emulated properly for 68000 mode.
  */
-#define M68K_EMULATE_ADDRESS_ERROR  OPT_ON
+#define M68K_EMULATE_ADDRESS_ERROR  MD_M68K_EMULATE_ADDRESS_ERROR
 
 /* If ON and previous option is also ON, address error exceptions will
    also be checked when fetching instructions. Disabling this can help
