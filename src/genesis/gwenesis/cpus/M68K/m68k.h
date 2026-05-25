@@ -177,6 +177,10 @@ static inline unsigned int gwenesis_rom_addr(unsigned int address)
 #define MD_ROM_PREBYTE_SWAP_XIP 0
 #endif
 
+#ifndef MD_ROM_INDEXED_FETCH_FASTPATH
+#define MD_ROM_INDEXED_FETCH_FASTPATH 0
+#endif
+
 #if MD_ROM_PREBYTE_SWAP_XIP
 static inline unsigned char gwenesis_fetch8rom(unsigned int address)
 {
@@ -253,6 +257,46 @@ static inline uint32 gwenesis_fetch32rom(unsigned int address)
 
 #define FETCH16ROM(A)   gwenesis_fetch16rom((unsigned int)(A))
 #define FETCH32ROM(A)   gwenesis_fetch32rom((unsigned int)(A))
+#elif MD_ROM_INDEXED_FETCH_FASTPATH
+static inline uint16 gwenesis_fetch16rom_indexed(unsigned int address)
+{
+	const unsigned int idx = gwenesis_rom_addr(address);
+	if (ROM_SIZE && ROM_ADDR_IS_POW2) {
+		return ((uint16)ROM_DATA[idx] << 8) |
+		       (uint16)ROM_DATA[(idx + 1u) & ROM_ADDR_MASK];
+	}
+	if (ROM_SIZE && (idx + 1u) < ROM_SIZE) {
+		return ((uint16)ROM_DATA[idx] << 8) |
+		       (uint16)ROM_DATA[idx + 1u];
+	}
+	return ((uint16)ROM_DATA[idx] << 8) |
+	       (uint16)ROM_DATA[gwenesis_rom_addr(address + 1u)];
+}
+
+static inline uint32 gwenesis_fetch32rom_indexed(unsigned int address)
+{
+	const unsigned int idx = gwenesis_rom_addr(address);
+	if (ROM_SIZE && ROM_ADDR_IS_POW2) {
+		const unsigned int mask = ROM_ADDR_MASK;
+		return ((uint32)ROM_DATA[idx] << 24) |
+		       ((uint32)ROM_DATA[(idx + 1u) & mask] << 16) |
+		       ((uint32)ROM_DATA[(idx + 2u) & mask] <<  8) |
+		       (uint32)ROM_DATA[(idx + 3u) & mask];
+	}
+	if (ROM_SIZE && (idx + 3u) < ROM_SIZE) {
+		return ((uint32)ROM_DATA[idx] << 24) |
+		       ((uint32)ROM_DATA[idx + 1u] << 16) |
+		       ((uint32)ROM_DATA[idx + 2u] <<  8) |
+		       (uint32)ROM_DATA[idx + 3u];
+	}
+	return ((uint32)ROM_DATA[idx] << 24) |
+	       ((uint32)ROM_DATA[gwenesis_rom_addr(address + 1u)] << 16) |
+	       ((uint32)ROM_DATA[gwenesis_rom_addr(address + 2u)] <<  8) |
+	       (uint32)ROM_DATA[gwenesis_rom_addr(address + 3u)];
+}
+
+#define FETCH16ROM(A)   gwenesis_fetch16rom_indexed((unsigned int)(A))
+#define FETCH32ROM(A)   gwenesis_fetch32rom_indexed((unsigned int)(A))
 #else
 #define FETCH16ROM(A)   ( ((uint16_t)FETCH8ROM((A))     << 8) | \
                           ((uint16_t)FETCH8ROM((A) + 1)     ) )
