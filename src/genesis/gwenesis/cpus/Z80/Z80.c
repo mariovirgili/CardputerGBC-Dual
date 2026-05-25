@@ -29,6 +29,10 @@
 #define MD_Z80_CORE_IRAM_ATTR
 #endif
 
+#ifndef MD_Z80_FAST_NOIRQ_LOOP
+#define MD_Z80_FAST_NOIRQ_LOOP 0
+#endif
+
 /** INLINE ***************************************************/
 /** C99 standard has "inline", but older compilers used     **/
 /** __inline for the same purpose.                          **/
@@ -530,8 +534,52 @@ int MD_Z80_CORE_IRAM_ATTR ExecZ80(register Z80 *R,register int RunCycles)
   register byte I;
   register pair J;
   R->RunCycles = R->ICount;
+  R->ICount = RunCycles;
 
-  for(R->ICount=RunCycles;;)
+#if MD_Z80_FAST_NOIRQ_LOOP
+  if ((R->IRequest == INT_NONE) && !(R->IFF & IFF_EI))
+  {
+    while(R->ICount>0)
+    {
+#ifdef DEBUG
+      /* Turn tracing on when reached trap address */
+      if(R->PC.W==R->Trap) R->Trace=1;
+      /* Call single-step debugger, exit if requested */
+      // if(R->Trace)
+      //   if(!DebugZ80(R)) return(R->ICount);
+#endif
+
+      /* Read opcode and count cycles */
+      I=OpZ80(R->PC.W++);
+      /* Count cycles */
+      R->ICount-=Cycles[I];
+
+      /* Interpret opcode */
+      switch(I)
+      {
+#include "Codes.h"
+        case PFX_CB: CodesCB(R);break;
+        case PFX_ED: CodesED(R);break;
+        case PFX_FD: CodesFD(R);break;
+        case PFX_DD: CodesDD(R);break;
+      }
+
+      if(R->IFF&IFF_EI)
+      {
+        /* Preserve the original ExecZ80 AfterEI handling before falling back. */
+        R->IFF=(R->IFF&~IFF_EI)|IFF_1;
+        R->ICount+=R->IBackup-1;
+        goto full_irq_loop;
+      }
+    }
+
+    return(R->ICount);
+  }
+
+full_irq_loop:
+#endif
+
+  for(;;)
   {
     while(R->ICount>0)
     {
