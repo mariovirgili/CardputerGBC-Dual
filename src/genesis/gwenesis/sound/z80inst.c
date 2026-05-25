@@ -268,7 +268,7 @@ void zvdp_mem_w8(unsigned int address, unsigned int value)
 
 word LoopZ80(register Z80 *R)
 {
-    return 0;
+    return INT_NONE;
 }
 
 byte MD_Z80_IRAM RdZ80(register word Addr) {

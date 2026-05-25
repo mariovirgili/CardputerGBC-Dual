@@ -138,7 +138,6 @@ word RunZ80(register Z80 *R);
 /** They allow to control memory access.                    **/
 /************************************ TO BE WRITTEN BY USER **/
 void WrZ80(register word Addr,register byte Value);
-void WrZ80byM68k(register word Addr,register byte Value);
 byte RdZ80(register word Addr);
 
 /** InZ80()/OutZ80() *****************************************/
