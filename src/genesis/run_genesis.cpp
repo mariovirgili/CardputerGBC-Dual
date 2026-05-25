@@ -308,7 +308,7 @@ static void md_opcode_profile_format_top_bytes(const uint32_t* counts,
   size_t pos = 0;
   if (!outSize) return;
   out[0] = '\0';
-  for (int rank = 0; rank < 6; ++rank) {
+  for (int rank = 0; rank < 12; ++rank) {
     int bestIdx = -1;
     uint32_t bestCount = 0;
     for (int i = 0; i < 256; ++i) {
@@ -319,11 +319,13 @@ static void md_opcode_profile_format_top_bytes(const uint32_t* counts,
     }
     if (bestIdx < 0 || bestCount == 0) break;
     used[bestIdx] = true;
-    const unsigned long pct = total ? (unsigned long)((bestCount * 100ULL) / total) : 0UL;
-    const int wrote = snprintf(out + pos, outSize - pos, "%s%02X:%lu%%",
+    const unsigned long permille = total ? (unsigned long)((bestCount * 1000ULL) / total) : 0UL;
+    const int wrote = snprintf(out + pos, outSize - pos, "%s%02X:%lu.%lu%%(%lu)",
                                pos ? " " : "",
                                bestIdx,
-                               pct);
+                               permille / 10UL,
+                               permille % 10UL,
+                               (unsigned long)bestCount);
     if (wrote <= 0 || (size_t)wrote >= (outSize - pos)) break;
     pos += (size_t)wrote;
   }
@@ -367,7 +369,7 @@ static inline void md_opcode_profile_log_if_due(bool force = false)
 
   char exactBuf[128];
   char nibbleBuf[64];
-  char byteBuf[96];
+  char byteBuf[256];
   md_opcode_profile_format_top_exact(snap.top_exact, snap.sampled_total, exactBuf, sizeof(exactBuf));
   md_opcode_profile_format_top_nibbles(snap.top_nibble, snap.sampled_total, nibbleBuf, sizeof(nibbleBuf));
   md_opcode_profile_format_top_bytes(snap.top_byte, snap.sampled_total, byteBuf, sizeof(byteBuf));
