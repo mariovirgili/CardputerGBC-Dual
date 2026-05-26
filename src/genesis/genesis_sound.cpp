@@ -73,6 +73,12 @@ static int s_audioOutSamples = AUDIO_CHUNK_NTSC;
 #define MD_AUDIO_WALLCLOCK_SAMPLES 0
 #endif
 
+#ifndef MD_AUDIO_CONTINUOUS_RESAMPLER
+#define MD_AUDIO_CONTINUOUS_RESAMPLER 0
+#endif
+
+static uint32_t s_audioResamplePhaseQ16 = 0;
+
 void genesis_sound_configure_timing(int refresh_rate, int core_sample_rate, int core_divisor, int lines_per_frame)
 {
   if (refresh_rate != GWENESIS_REFRESH_RATE_PAL) {
@@ -99,6 +105,7 @@ void genesis_sound_configure_timing(int refresh_rate, int core_sample_rate, int 
   if (s_audioOutSamples > AUDIO_CHUNK_CAP) {
     s_audioOutSamples = AUDIO_CHUNK_CAP;
   }
+  s_audioResamplePhaseQ16 = 0;
 }
 
 int genesis_sound_get_refresh_rate(void) { return s_audioRefreshRate; }
@@ -625,6 +632,7 @@ void genesis_sound_init() {
 #endif
 
   s_flip = 0;
+  s_audioResamplePhaseQ16 = 0;
   md_audio_diag_reset();
 }
 
@@ -698,6 +706,7 @@ void genesis_sound_submit_frame(uint32_t frame_elapsed_us) {
     ym2612_index  = 0;
     sn76489_index = 0;
     taskEXIT_CRITICAL(&g_ymMux);
+    s_audioResamplePhaseQ16 = 0;
     return;
   }
   int16_t *dst = s_audioPool + ((size_t)poolSlot * (size_t)AUDIO_CHUNK_CAP);
@@ -716,6 +725,7 @@ void genesis_sound_submit_frame(uint32_t frame_elapsed_us) {
     ym2612_index  = 0;
     sn76489_index = 0;
     taskEXIT_CRITICAL(&g_ymMux);
+    s_audioResamplePhaseQ16 = 0;
     return;
   }
 
@@ -725,7 +735,34 @@ void genesis_sound_submit_frame(uint32_t frame_elapsed_us) {
   if (n == 1) {
     int16_t sample = mix_sample_at(0, ym_n, psg_n);
     for (int i = 0; i < outSamples; ++i) dst[i] = sample;
+    s_audioResamplePhaseQ16 = 0;
   } else {
+#if MD_AUDIO_CONTINUOUS_RESAMPLER
+    const uint32_t step = (outSamples > 0)
+        ? (uint32_t)((((uint64_t)n << 16) + (uint32_t)outSamples - 1u) / (uint32_t)outSamples)
+        : 0;
+    uint64_t pos = s_audioResamplePhaseQ16;
+    const uint32_t frameSpan = (uint32_t)n << 16;
+    if (frameSpan && pos >= frameSpan) {
+      pos %= frameSpan;
+    }
+    for (int i = 0; i < outSamples; ++i) {
+      int idx = (int)(pos >> 16);
+      uint32_t frac = pos & 0xFFFFu;
+      if (idx >= n - 1) {
+        idx = n - 1;
+        frac = 0;
+      }
+      int32_t a = mix_sample_at(idx, ym_n, psg_n);
+      int32_t b = mix_sample_at((idx + 1 < n) ? idx + 1 : idx, ym_n, psg_n);
+      dst[i] = (int16_t)(a + (int32_t)(((int64_t)(b - a) * (int64_t)frac) >> 16));
+      pos += step;
+    }
+    if (frameSpan) {
+      pos %= frameSpan;
+    }
+    s_audioResamplePhaseQ16 = (uint32_t)pos;
+#else
     const uint32_t step = (outSamples > 1)
         ? (uint32_t)(((uint64_t)(n - 1) << 16) / (outSamples - 1))
         : 0;
@@ -738,6 +775,7 @@ void genesis_sound_submit_frame(uint32_t frame_elapsed_us) {
       dst[i] = (int16_t)(a + (int32_t)(((int64_t)(b - a) * (int64_t)frac) >> 16));
       pos += step;
     }
+#endif
   }
 
   // Reset des index
