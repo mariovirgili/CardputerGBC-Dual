@@ -13,11 +13,20 @@
 /**     changes to this file.                               **/
 /*************************************************************/
 
-#if defined(MD_Z80_TABLES_DRAM)
+#if defined(MD_Z80_TABLES_DRAM) || defined(MD_Z80_DAA_TABLE_DRAM)
 #include "esp_attr.h"
+#endif
+
+#if defined(MD_Z80_TABLES_DRAM)
 #define MD_Z80_TABLE_STORAGE DRAM_ATTR static
 #else
 #define MD_Z80_TABLE_STORAGE static const
+#endif
+
+#if defined(MD_Z80_DAA_TABLE_DRAM)
+#define MD_Z80_DAA_TABLE_STORAGE DRAM_ATTR static
+#else
+#define MD_Z80_DAA_TABLE_STORAGE static const
 #endif
 
 MD_Z80_TABLE_STORAGE byte Cycles[256] =
@@ -193,7 +202,7 @@ MD_Z80_TABLE_STORAGE byte PZSTable[256] =
   S_FLAG|P_FLAG,S_FLAG,S_FLAG,S_FLAG|P_FLAG
 };
 
-static const word DAATable[2048] =
+MD_Z80_DAA_TABLE_STORAGE word DAATable[2048] =
 {
   0x0044,0x0100,0x0200,0x0304,0x0400,0x0504,0x0604,0x0700,
   0x0808,0x090C,0x1010,0x1114,0x1214,0x1310,0x1414,0x1510,
