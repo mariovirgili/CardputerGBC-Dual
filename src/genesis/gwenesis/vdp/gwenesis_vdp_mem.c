@@ -151,6 +151,7 @@ int m68k_irq_acked(int irq) {
 void gwenesis_vdp_reset() {
   memset(VRAM, 0, VRAM_MAX_SIZE);
   memset(SAT_CACHE, 0, SAT_CACHE_MAX_SIZE);
+  gwenesis_vdp_sprite_line_cache_mark_dirty();
   memset(CRAM, 0, sizeof(CRAM));
   memset(CRAM565, 0, sizeof(CRAM565));
   memset(VSRAM, 0, sizeof(VSRAM));
@@ -341,8 +342,10 @@ void gwenesis_vdp_vram_write(unsigned int address, unsigned int value)
 
   // Update internal SAT Cache
   // used in Castlevania Bloodlines
-  if (address >= REG5_SAT_ADDRESS && address < REG5_SAT_ADDRESS + REG5_SAT_SIZE)
+  if (address >= REG5_SAT_ADDRESS && address < REG5_SAT_ADDRESS + REG5_SAT_SIZE) {
     SAT_CACHE[address - REG5_SAT_ADDRESS] = value;
+    gwenesis_vdp_sprite_line_cache_mark_dirty();
+  }
 }
 
 static inline __attribute__((always_inline)) 
@@ -1026,6 +1029,7 @@ void gwenesis_vdp_mem_load_state() {
   saveGwenesisStateGetBuffer(state, "VRAM", VRAM, VRAM_MAX_SIZE);
   saveGwenesisStateGetBuffer(state, "CRAM", CRAM, sizeof(CRAM));
   saveGwenesisStateGetBuffer(state, "SAT_CACHE", SAT_CACHE, sizeof(SAT_CACHE));
+  gwenesis_vdp_sprite_line_cache_mark_dirty();
   saveGwenesisStateGetBuffer(state, "gwenesis_vdp_regs", gwenesis_vdp_regs, sizeof(gwenesis_vdp_regs));
   saveGwenesisStateGetBuffer(state, "fifo", fifo, sizeof(fifo));
   saveGwenesisStateGetBuffer(state, "CRAM565", CRAM565, sizeof(CRAM565));

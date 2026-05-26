@@ -132,6 +132,7 @@ void gwenesis_vdp_write_memory_16(unsigned int address, unsigned int value);
 void gwenesis_vdp_set_buffers(unsigned char *screen_buffer, unsigned char *scaled_buffer);
 void gwenesis_vdp_set_buffer(unsigned short *ptr_screen_buffer);
 void gwenesis_vdp_render_line(int line);
+void gwenesis_vdp_sprite_line_cache_mark_dirty(void);
 void gwenesis_vdp_allocate_buffers();
 
 void gwenesis_vdp_render_config();

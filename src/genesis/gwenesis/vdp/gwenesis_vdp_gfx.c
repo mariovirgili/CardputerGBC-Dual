@@ -34,6 +34,10 @@ extern void GWENESIS_PUSH_SCANLINE(int line, const uint16_t* src16, int w);
   #pragma GCC optimize("Ofast")
 #endif
 
+#ifndef MD_SPRITE_LINE_CACHE
+#define MD_SPRITE_LINE_CACHE 0
+#endif
+
 #if GNW_TARGET_MARIO != 0 | GNW_TARGET_ZELDA != 0
 
 typedef unsigned char uint8_t;
@@ -85,6 +89,25 @@ int gwenesis_H32upscaler;
 
 int sprite_overflow;
 bool sprite_collision;
+
+#if MD_SPRITE_LINE_CACHE
+#define MD_SPRITE_LINE_CACHE_MAX_LINES 240
+#define MD_SPRITE_LINE_CACHE_MAX_SPRITES 20
+static uint8_t sprite_line_cache_count[MD_SPRITE_LINE_CACHE_MAX_LINES];
+static uint8_t sprite_line_cache_index[MD_SPRITE_LINE_CACHE_MAX_LINES][MD_SPRITE_LINE_CACHE_MAX_SPRITES];
+static int sprite_line_cache_dirty = 1;
+static int sprite_line_cache_screen_width = 0;
+static int sprite_line_cache_sat_address = -1;
+static int sprite_line_cache_use_vram_sat = -1;
+static int sprite_line_cache_visible_lines = 0;
+#endif
+
+void gwenesis_vdp_sprite_line_cache_mark_dirty(void)
+{
+#if MD_SPRITE_LINE_CACHE
+    sprite_line_cache_dirty = 1;
+#endif
+}
 
 // Window Plane and A plane spearation
 static int base_w;
@@ -743,6 +766,68 @@ void draw_line_aw(int line) {
  *
  ******************************************************************************/
 
+#if MD_SPRITE_LINE_CACHE
+static void md_sprite_line_cache_rebuild(int use_vram_sat)
+{
+    memset(sprite_line_cache_count, 0, sizeof(sprite_line_cache_count));
+
+    uint8_t *start_table = VRAM + REG5_SAT_ADDRESS;
+    const int sprite_table_size = (screen_width == 320) ? 80 : 64;
+    const int visible_lines = REG1_PAL ? 240 : 224;
+
+    int sidx = 0;
+    for (int i = 0; (i < sprite_table_size) && sidx < sprite_table_size; ++i)
+    {
+        uint8_t *table = start_table + sidx * 8;
+        uint8_t *cache = use_vram_sat ? table : (SAT_CACHE + sidx * 8);
+
+        int sy = ((cache[0] & 0x3) << 8) | cache[1];
+        const int sh = BITS(cache[2], 0, 2) + 1;
+        const int link = BITS(cache[3], 0, 7);
+
+        sy -= 128;
+        int first_line = sy;
+        int last_line = sy + sh * 8;
+        if (first_line < 0) first_line = 0;
+        if (last_line > visible_lines) last_line = visible_lines;
+
+        for (int line = first_line; line < last_line; ++line)
+        {
+            uint8_t count = sprite_line_cache_count[line];
+            if (count < MD_SPRITE_LINE_CACHE_MAX_SPRITES)
+            {
+                sprite_line_cache_index[line][count] = (uint8_t)sidx;
+                sprite_line_cache_count[line] = count + 1;
+            }
+        }
+
+        if (link == 0) break;
+        sidx = link;
+    }
+
+    sprite_line_cache_dirty = 0;
+    sprite_line_cache_screen_width = screen_width;
+    sprite_line_cache_sat_address = REG5_SAT_ADDRESS;
+    sprite_line_cache_use_vram_sat = use_vram_sat;
+    sprite_line_cache_visible_lines = visible_lines;
+}
+
+static inline __attribute__((always_inline))
+void md_sprite_line_cache_ensure(int line, int use_vram_sat)
+{
+    const int visible_lines = REG1_PAL ? 240 : 224;
+    if (line < 0 || line >= MD_SPRITE_LINE_CACHE_MAX_LINES) return;
+    if (sprite_line_cache_dirty ||
+        sprite_line_cache_screen_width != screen_width ||
+        sprite_line_cache_sat_address != REG5_SAT_ADDRESS ||
+        sprite_line_cache_use_vram_sat != use_vram_sat ||
+        sprite_line_cache_visible_lines != visible_lines)
+    {
+        md_sprite_line_cache_rebuild(use_vram_sat);
+    }
+}
+#endif
+
 //__attribute__((optimize("unroll-loops")))
 static inline __attribute__((always_inline)) 
 void draw_sprites_over_planes(int line)
@@ -765,8 +850,19 @@ void draw_sprites_over_planes(int line)
 
     bool masking = false, one_sprite_nonzero = false; // overdraw = false;
     int sidx = 0, num_sprites = 0, num_pixels = 0;
+#if MD_SPRITE_LINE_CACHE
+    (void)SPRITE_TABLE_SIZE;
+    md_sprite_line_cache_ensure(line, 0);
+    const uint8_t *line_sprites = sprite_line_cache_index[line];
+    const int line_sprite_count = sprite_line_cache_count[line];
+    for (int i = 0; i < line_sprite_count; ++i)
+#else
     for (int i = 0; (i < SPRITE_TABLE_SIZE) && sidx < (SPRITE_TABLE_SIZE); ++i)
+#endif
     {
+#if MD_SPRITE_LINE_CACHE
+        sidx = line_sprites[i];
+#endif
         uint8_t *table = start_table + sidx*8;
         uint8_t *cache = SAT_CACHE + sidx*8;
         //uint8_t *cache = start_table + sidx*8;
@@ -845,8 +941,10 @@ void draw_sprites_over_planes(int line)
                 break;
         }
 
+#if !MD_SPRITE_LINE_CACHE
         if (link == 0) break;
         sidx = link;
+#endif
     }
 
   //  if (overdraw)
@@ -873,7 +971,16 @@ void draw_sprites(int line)
 
   bool masking = false, one_sprite_nonzero = false; // overdraw = false;
   int sidx = 0, num_sprites = 0, num_pixels = 0;
+#if MD_SPRITE_LINE_CACHE
+  (void)SPRITE_TABLE_SIZE;
+  md_sprite_line_cache_ensure(line, 1);
+  const uint8_t *line_sprites = sprite_line_cache_index[line];
+  const int line_sprite_count = sprite_line_cache_count[line];
+  for (int i = 0; i < line_sprite_count; ++i) {
+    sidx = line_sprites[i];
+#else
   for (int i = 0; i < SPRITE_TABLE_SIZE && sidx < SPRITE_TABLE_SIZE; ++i) {
+#endif
     uint8_t *table = start_table + sidx * 8;
     uint8_t *cache = start_table + sidx * 8;
 
@@ -944,9 +1051,11 @@ void draw_sprites(int line)
         break;
     }
 
+#if !MD_SPRITE_LINE_CACHE
     if (link == 0)
       break;
     sidx = link;
+#endif
     }
 
   //  if (overdraw)
