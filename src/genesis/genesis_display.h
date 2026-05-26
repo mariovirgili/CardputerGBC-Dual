@@ -23,14 +23,19 @@ typedef enum : uint8_t {
 } ScanMsgType;
 
 typedef struct {
+    uint8_t  idx[FB_W];      // 8-bit palette indexes for one scanline
+    uint16_t palette[64];    // RGB565 palette snapshot for this scanline
+} ScanMsgIndexLine;
+
+typedef struct {
     ScanMsgType type;
     uint16_t    line;      // pour MSG_SCANLINE
     uint16_t    w;         // largeur utile
     uint16_t    srcH;      // hauteur source
     uint8_t     format;    // SCANMSG_FORMAT_*
     union {
-        uint16_t data[FB_W]; // RGB565 payload ligne
-        uint8_t  idx[FB_W];  // 8-bit palette index payload
+        uint16_t         data[FB_W]; // RGB565 payload ligne
+        ScanMsgIndexLine indexed;    // 8-bit indexes + per-line palette snapshot
     };
 } ScanMsg;
 

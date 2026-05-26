@@ -284,16 +284,16 @@ void display_task(void* arg) {
 #endif
 
     if (m.format == SCANMSG_FORMAT_INDEX8) {
-      const uint16_t *palette = (const uint16_t *)CRAM565;
+      const uint16_t *palette = m.indexed.palette;
       if (m.w == g_viewW && s_roiX0 == 0 && s_roiW == m.w) {
         for (int x = 0; x < g_viewW; ++x) {
-          s_lineImg[x] = palette[m.idx[x] & 0x3F];
+          s_lineImg[x] = palette[m.indexed.idx[x] & 0x3F];
         }
       } else {
         const uint16_t *xmap = s_xmap;
         for (int x = 0; x < g_viewW; ++x) {
           const int srcX = xmap ? xmap[x] : (s_roiX0 + (int)((int64_t)x * s_roiW / g_viewW));
-          s_lineImg[x] = palette[m.idx[srcX] & 0x3F];
+          s_lineImg[x] = palette[m.indexed.idx[srcX] & 0x3F];
         }
       }
     } else if (m.w == g_viewW && s_roiX0 == 0 && s_roiW == m.w) {
@@ -417,7 +417,8 @@ extern "C" void IRAM_ATTR GWENESIS_PUSH_SCANLINE(int line, const uint16_t* src16
 #endif
 }
 
-/* Gwenesis push indexed scanline. Experimental: palette lookup is done on the display task. */
+/* Gwenesis push indexed scanline. The palette is snapshotted per line so the
+ * display task can lag safely behind VDP CRAM updates. */
 extern "C" void IRAM_ATTR GWENESIS_PUSH_SCANLINE_IDX(int line, const uint8_t* src8, int w) {
   if (!g_scanQ) return;
 
@@ -432,8 +433,13 @@ extern "C" void IRAM_ATTR GWENESIS_PUSH_SCANLINE_IDX(int line, const uint8_t* sr
   m.srcH = (uint16_t)srcH;
 
   int copyW = (w < FB_W) ? w : FB_W;
-  memcpy(m.idx, src8, copyW);
-  if (copyW < FB_W) memset(m.idx + copyW, 0, FB_W - copyW);
+  memcpy(m.indexed.idx, src8, copyW);
+  if (copyW < FB_W) memset(m.indexed.idx + copyW, 0, FB_W - copyW);
+  if (CRAM565) {
+    memcpy(m.indexed.palette, CRAM565, sizeof(m.indexed.palette));
+  } else {
+    memset(m.indexed.palette, 0, sizeof(m.indexed.palette));
+  }
 
 #if MD_RENDER_LOGS_ENABLED
   md_display_send_scan_msg(g_scanQ, &m, portMAX_DELAY);
