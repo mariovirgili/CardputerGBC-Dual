@@ -70,6 +70,10 @@ void genesis_save_mark_dirty_c(void);
 #define NULL ((void*)0)
 #endif
 
+#ifndef MD_ROM_IMM_FETCH_PAGE_CACHE
+#define MD_ROM_IMM_FETCH_PAGE_CACHE 0
+#endif
+
 /* ======================================================================== */
 /* ================================ MACROS ================================ */
 /* ======================================================================== */
@@ -798,6 +802,76 @@ INLINE void m68ki_check_interrupts(void);            /* ASG: check for interrupt
 /* Handles all immediate reads, does address error check, function code setting,
  * and prefetching if they are enabled in m68kconf.h
  */
+#if MD_ROM_IMM_FETCH_PAGE_CACHE && !MD_ROM_PREBYTE_SWAP_XIP && !M68K_EMULATE_PREFETCH
+#define M68KI_IMM_ROM_PAGE_BITS 12u
+#define M68KI_IMM_ROM_PAGE_SIZE (1u << M68KI_IMM_ROM_PAGE_BITS)
+#define M68KI_IMM_ROM_PAGE_MASK (M68KI_IMM_ROM_PAGE_SIZE - 1u)
+
+static unsigned char *m68ki_imm_rom_cache_data = NULL;
+static unsigned int m68ki_imm_rom_cache_page = 0xffffffffu;
+static unsigned int m68ki_imm_rom_cache_base = 0;
+
+INLINE uint m68ki_read_imm_rom_16_cached(uint pc)
+{
+  if (pc & 0x800000u) {
+    return m68k_read_immediate_16(pc);
+  }
+
+  const uint address = pc & 0x3fffffu;
+  const uint page = address & ~M68KI_IMM_ROM_PAGE_MASK;
+  const uint page_offset = address & M68KI_IMM_ROM_PAGE_MASK;
+  if (page_offset > (M68KI_IMM_ROM_PAGE_SIZE - 2u)) {
+    return m68k_read_immediate_16(pc);
+  }
+
+  if (m68ki_imm_rom_cache_data != ROM_DATA || m68ki_imm_rom_cache_page != page) {
+    const uint base = gwenesis_rom_addr(page);
+    if (ROM_SIZE && (base + M68KI_IMM_ROM_PAGE_SIZE) > ROM_SIZE) {
+      m68ki_imm_rom_cache_data = NULL;
+      m68ki_imm_rom_cache_page = 0xffffffffu;
+      return m68k_read_immediate_16(pc);
+    }
+    m68ki_imm_rom_cache_data = ROM_DATA;
+    m68ki_imm_rom_cache_page = page;
+    m68ki_imm_rom_cache_base = base;
+  }
+
+  const unsigned char *p = m68ki_imm_rom_cache_data + m68ki_imm_rom_cache_base + page_offset;
+  return ((uint)p[0] << 8) | (uint)p[1];
+}
+
+INLINE uint m68ki_read_imm_rom_32_cached(uint pc)
+{
+  if ((pc & 0x800000u) == 0u) {
+    const uint address = pc & 0x3fffffu;
+    const uint page = address & ~M68KI_IMM_ROM_PAGE_MASK;
+    const uint page_offset = address & M68KI_IMM_ROM_PAGE_MASK;
+    if (page_offset <= (M68KI_IMM_ROM_PAGE_SIZE - 4u)) {
+      if (m68ki_imm_rom_cache_data != ROM_DATA || m68ki_imm_rom_cache_page != page) {
+        const uint base = gwenesis_rom_addr(page);
+        if (!ROM_SIZE || (base + M68KI_IMM_ROM_PAGE_SIZE) <= ROM_SIZE) {
+          m68ki_imm_rom_cache_data = ROM_DATA;
+          m68ki_imm_rom_cache_page = page;
+          m68ki_imm_rom_cache_base = base;
+        } else {
+          m68ki_imm_rom_cache_data = NULL;
+          m68ki_imm_rom_cache_page = 0xffffffffu;
+          return m68k_read_immediate_32(pc);
+        }
+      }
+
+      const unsigned char *p = m68ki_imm_rom_cache_data + m68ki_imm_rom_cache_base + page_offset;
+      return ((uint)p[0] << 24) |
+             ((uint)p[1] << 16) |
+             ((uint)p[2] <<  8) |
+             (uint)p[3];
+    }
+  }
+
+  return m68k_read_immediate_32(pc);
+}
+#endif
+
 INLINE uint m68ki_read_imm_16(void)
 {
   m68ki_set_fc(FLAG_S | FUNCTION_CODE_USER_PROGRAM) /* auto-disable (see m68kcpu.h) */
@@ -815,7 +889,11 @@ INLINE uint m68ki_read_imm_16(void)
 #else
   uint pc = REG_PC;
   REG_PC += 2;
+#if MD_ROM_IMM_FETCH_PAGE_CACHE && !MD_ROM_PREBYTE_SWAP_XIP
+  return m68ki_read_imm_rom_16_cached(pc);
+#else
   return m68k_read_immediate_16(pc);
+#endif
 #endif /* M68K_EMULATE_PREFETCH */
 }
 
@@ -851,7 +929,11 @@ INLINE uint m68ki_read_imm_32(void)
 #endif
   uint pc = REG_PC;
   REG_PC += 4;
+#if MD_ROM_IMM_FETCH_PAGE_CACHE && !MD_ROM_PREBYTE_SWAP_XIP
+  return m68ki_read_imm_rom_32_cached(pc);
+#else
   return m68k_read_immediate_32(pc);
+#endif
 #endif /* M68K_EMULATE_PREFETCH */
 }
 
