@@ -47,6 +47,10 @@ extern void GWENESIS_PUSH_SCANLINE(int line, const uint16_t* src16, int w);
 #define MD_RENDER_PLANE_PROFILING 0
 #endif
 
+#ifndef MD_RENDER_PLANE_FASTPATH
+#define MD_RENDER_PLANE_FASTPATH 0
+#endif
+
 #if GNW_TARGET_MARIO != 0 | GNW_TARGET_ZELDA != 0
 
 typedef unsigned char uint8_t;
@@ -784,6 +788,79 @@ unsigned int get_hscroll_vram(int line)
 
     return table + idx*4;
 }
+
+#if MD_RENDER_PLANE_FASTPATH
+static inline __attribute__((always_inline))
+int md_window_span_for_line(int line)
+{
+  int window_first = Window_firstcol;
+  int window_last = Window_lastcol;
+  const int window_line = REG18_WINDOW_VPOS * 8;
+
+  if (gwenesis_vdp_regs[18] & 0x80) {
+    if (line > window_line) {
+      window_first = 0;
+      window_last = screen_width;
+    }
+  } else {
+    if (line < window_line) {
+      window_first = 0;
+      window_last = screen_width;
+    }
+  }
+
+  const int span = window_last - window_first;
+  return span > 0 ? span : 0;
+}
+
+static inline __attribute__((always_inline))
+void draw_line_b_no_column_scroll(int line)
+{
+  uint8_t *scr = &render_buffer[PIX_OVERFLOW];
+  uint8_t *end = scr + screen_width;
+  const unsigned int ntaddr = REG4_NAMETABLE_B;
+  uint16_t scrollx = FETCH16VRAM(get_hscroll_vram(line) + 2) & 0x3FF;
+  const uint16_t scrolly = VSRAM[1] + line;
+  const uint8_t row = (scrolly >> 3) & nth_mask;
+  const uint8_t paty = scrolly & 7;
+  const unsigned int nt = ntaddr + row * ntwidth_x2;
+
+  scrollx = -scrollx;
+  uint8_t col = (scrollx >> 3) & ntw_mask;
+  const uint8_t patx = scrollx & 7;
+
+  scr -= patx;
+  while (scr < end) {
+    draw_pattern_planeB(scr, FETCH16VRAM(nt + col * 2), paty);
+    col = (col + 1) & ntw_mask;
+    scr += 8;
+  }
+}
+
+static inline __attribute__((always_inline))
+void draw_line_a_no_window_no_column_scroll(int line)
+{
+  uint8_t *pos = &render_buffer[PIX_OVERFLOW];
+  uint8_t *end = pos + screen_width;
+  const unsigned int ntaddr = REG2_NAMETABLE_A;
+  uint16_t scrollx = FETCH16VRAM(get_hscroll_vram(line) + 0) & 0x3FF;
+  const uint16_t scrolly = VSRAM[0] + line;
+  const uint8_t row = (scrolly >> 3) & nth_mask;
+  const uint8_t paty = scrolly & 7;
+  const unsigned int nt = ntaddr + row * ntwidth_x2;
+
+  scrollx = -scrollx;
+  uint8_t col = (scrollx >> 3) & ntw_mask;
+  const uint8_t patx = scrollx & 7;
+
+  pos -= patx;
+  while (pos < end) {
+    draw_pattern_planeA(pos, FETCH16VRAM(nt + col * 2), paty);
+    col = (col + 1) & ntw_mask;
+    pos += 8;
+  }
+}
+#endif
 /******************************************************************************
  *
  *  Render PLANE B on screen line
@@ -1384,8 +1461,16 @@ void IRAM_ATTR gwenesis_vdp_render_line(int line)
 #endif
 
   // Planes
+#if MD_RENDER_PLANE_FASTPATH
+  if (((gwenesis_vdp_regs[11] & 0x4) == 0) && (md_window_span_for_line(line) == 0)) {
+    draw_line_b_no_column_scroll(line);
+    draw_line_a_no_window_no_column_scroll(line);
+  } else
+#endif
+  {
   draw_line_b(line);
   draw_line_aw(line);
+  }
 #if MD_RENDER_SECTION_PROFILING && EMU_LOG_MASTER_ENABLED
   const uint64_t t_after_planes = md_render_profile_now_us();
 #endif
