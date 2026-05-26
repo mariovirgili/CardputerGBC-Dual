@@ -77,6 +77,10 @@ static int s_audioOutSamples = AUDIO_CHUNK_NTSC;
 #define MD_AUDIO_CONTINUOUS_RESAMPLER 0
 #endif
 
+#ifndef MD_AUDIO_OVERWRITE_OLDEST
+#define MD_AUDIO_OVERWRITE_OLDEST 0
+#endif
+
 static uint32_t s_audioResamplePhaseQ16 = 0;
 
 void genesis_sound_configure_timing(int refresh_rate, int core_sample_rate, int core_divisor, int lines_per_frame)
@@ -498,6 +502,34 @@ static inline int md_audio_pool_slot_from_ptr(const int16_t* pcm)
   return (int)slot;
 }
 
+static bool md_audio_take_free_or_oldest_slot(int* poolSlot)
+{
+  if (!poolSlot || !s_audioFreeQ) {
+    return false;
+  }
+  if (xQueueReceive(s_audioFreeQ, poolSlot, 0) == pdTRUE) {
+    return true;
+  }
+
+#if MD_AUDIO_OVERWRITE_OLDEST
+  if (s_audioQ) {
+    AudioMsg old = {};
+    if (xQueueReceive(s_audioQ, &old, 0) == pdTRUE) {
+      const int oldSlot = md_audio_pool_slot_from_ptr(old.buf);
+      if (oldSlot >= 0) {
+        *poolSlot = oldSlot;
+#if MD_AUDIO_LOGS_ENABLED
+        ++s_mdAudioDiag.droppedDepth;
+#endif
+        return true;
+      }
+    }
+  }
+#endif
+
+  return false;
+}
+
 struct MdDirectWriteResult {
   bool ok = false;
   bool shortWrite = false;
@@ -697,7 +729,7 @@ void genesis_sound_submit_frame(uint32_t frame_elapsed_us) {
 #ifdef MD_DIRECT_I2S_AUDIO
   int poolSlot = -1;
   if (!s_audioTask || !s_audioQ || !s_audioFreeQ || !s_audioPool ||
-      xQueueReceive(s_audioFreeQ, &poolSlot, 0) != pdTRUE) {
+      !md_audio_take_free_or_oldest_slot(&poolSlot)) {
 #if MD_AUDIO_LOGS_ENABLED
     ++s_mdAudioDiag.droppedBuffer;
     md_audio_diag_log_if_due();
