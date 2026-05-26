@@ -124,6 +124,20 @@ int GetRunCyclesZ80(register Z80 *R);
 /*************************************************************/
 void IntZ80(register Z80 *R,register word Vector);
 
+typedef struct
+{
+  unsigned long long opcodes;
+  unsigned long long cb;
+  unsigned long long ed;
+  unsigned long long dd;
+  unsigned long long fd;
+  unsigned long long ddcb;
+  unsigned long long fdcb;
+} Z80PrefixProfile;
+
+void z80_prefix_profile_reset(void);
+int z80_prefix_profile_get_snapshot(Z80PrefixProfile *out, int reset);
+
 /** RunZ80() *************************************************/
 /** This function will run Z80 code until an LoopZ80() call **/
 /** returns INT_QUIT. It will return the PC at which        **/

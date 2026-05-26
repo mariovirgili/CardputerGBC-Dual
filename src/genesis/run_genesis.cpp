@@ -18,6 +18,7 @@
 
 extern "C" {
   #include "genesis/gwenesis/cpus/M68K/m68k.h"
+  #include "genesis/gwenesis/cpus/Z80/Z80.h"
 }
 
 #if EMU_LOG_MASTER_ENABLED
@@ -39,6 +40,10 @@ extern int genesisZoomPercent;
 
 #ifndef MD_M68K_NO_HINT_BATCH_LINES
 #define MD_M68K_NO_HINT_BATCH_LINES 8
+#endif
+
+#ifndef MD_Z80_PREFIX_PROFILING
+#define MD_Z80_PREFIX_PROFILING 0
 #endif
 
 #if MD_RENDER_LOGS_ENABLED
@@ -396,6 +401,51 @@ static inline void md_opcode_profile_reset() {}
 static inline void md_opcode_profile_log_if_due(bool = false) {}
 #endif
 
+#if MD_Z80_PREFIX_PROFILING
+static uint64_t s_mdZ80PrefixProfileLastLogUs = 0;
+
+static inline void md_z80_prefix_profile_reset()
+{
+  s_mdZ80PrefixProfileLastLogUs = md_bench_now_us();
+  z80_prefix_profile_reset();
+}
+
+static inline unsigned long md_z80_prefix_permille(unsigned long long part,
+                                                   unsigned long long total)
+{
+  return total ? (unsigned long)((part * 1000ULL) / total) : 0UL;
+}
+
+static inline void md_z80_prefix_profile_log_if_due(bool force = false)
+{
+  const uint64_t nowUs = md_bench_now_us();
+  if (!force && (nowUs - s_mdZ80PrefixProfileLastLogUs) < (uint64_t)MD_OPCODE_PROFILING_DUMP_MS * 1000ULL) return;
+
+  Z80PrefixProfile snap{};
+  const int hasData = z80_prefix_profile_get_snapshot(&snap, 1);
+  s_mdZ80PrefixProfileLastLogUs = nowUs;
+  if (!hasData || snap.opcodes == 0) return;
+
+  const unsigned long cb = md_z80_prefix_permille(snap.cb, snap.opcodes);
+  const unsigned long ed = md_z80_prefix_permille(snap.ed, snap.opcodes);
+  const unsigned long dd = md_z80_prefix_permille(snap.dd, snap.opcodes);
+  const unsigned long fd = md_z80_prefix_permille(snap.fd, snap.opcodes);
+  const unsigned long ddcb = md_z80_prefix_permille(snap.ddcb, snap.opcodes);
+  const unsigned long fdcb = md_z80_prefix_permille(snap.fdcb, snap.opcodes);
+  EMU_LOG("[MD][Z80PROF] ops=%llu cb=%llu:%lu.%lu%% ed=%llu:%lu.%lu%% dd=%llu:%lu.%lu%% fd=%llu:%lu.%lu%% ddcb=%llu:%lu.%lu%% fdcb=%llu:%lu.%lu%%\n",
+          snap.opcodes,
+          snap.cb, cb / 10UL, cb % 10UL,
+          snap.ed, ed / 10UL, ed % 10UL,
+          snap.dd, dd / 10UL, dd % 10UL,
+          snap.fd, fd / 10UL, fd % 10UL,
+          snap.ddcb, ddcb / 10UL, ddcb % 10UL,
+          snap.fdcb, fdcb / 10UL, fdcb % 10UL);
+}
+#else
+static inline void md_z80_prefix_profile_reset() {}
+static inline void md_z80_prefix_profile_log_if_due(bool = false) {}
+#endif
+
 extern "C" {
   #include "genesis/gwenesis/vdp/gwenesis_vdp.h"
   #include "genesis/gwenesis/cpus/M68K/m68k.h"
@@ -735,6 +785,7 @@ static void run_one_frame() {
   md_bench_log_if_due();
 #endif
   md_opcode_profile_log_if_due();
+  md_z80_prefix_profile_log_if_due();
 
 #if EMU_LOG_MASTER_ENABLED && !MD_BENCHMARK_LOGS_ENABLED
   // FPS logging every second when the MD benchmark probe is disabled.
@@ -756,6 +807,7 @@ extern "C" void run_genesis(const uint8_t* rom, size_t len, const char* rom_name
   md_render_diag_reset();
   md_bench_reset();
   md_opcode_profile_reset();
+  md_z80_prefix_profile_reset();
 #if MD_BUS_PROBE_LOGS_ENABLED
   gwenesis_bus_probe_reset();
 #endif
@@ -861,5 +913,6 @@ extern "C" void run_genesis(const uint8_t* rom, size_t len, const char* rom_name
   md_bench_log_if_due(true);
 #endif
   md_opcode_profile_log_if_due(true);
+  md_z80_prefix_profile_log_if_due(true);
   md_clean_teardown_and_save();
 }

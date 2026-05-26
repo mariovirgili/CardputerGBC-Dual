@@ -24,13 +24,77 @@
 #include <stdio.h>
 
 #if defined(MD_Z80_CORE_IRAM)
-#define MD_Z80_CORE_IRAM_ATTR IRAM_ATTR
+#define MD_Z80_EXEC_IRAM_ATTR IRAM_ATTR
+#if defined(MD_Z80_CB_IRAM)
+#define MD_Z80_CB_IRAM_ATTR IRAM_ATTR
 #else
-#define MD_Z80_CORE_IRAM_ATTR
+#define MD_Z80_CB_IRAM_ATTR
+#endif
+#if defined(MD_Z80_ED_IRAM)
+#define MD_Z80_ED_IRAM_ATTR IRAM_ATTR
+#else
+#define MD_Z80_ED_IRAM_ATTR
+#endif
+#if defined(MD_Z80_IXIY_IRAM)
+#define MD_Z80_IXIY_IRAM_ATTR IRAM_ATTR
+#else
+#define MD_Z80_IXIY_IRAM_ATTR
+#endif
+#else
+#define MD_Z80_EXEC_IRAM_ATTR
+#define MD_Z80_CB_IRAM_ATTR
+#define MD_Z80_ED_IRAM_ATTR
+#define MD_Z80_IXIY_IRAM_ATTR
 #endif
 
 #ifndef MD_Z80_FAST_NOIRQ_LOOP
 #define MD_Z80_FAST_NOIRQ_LOOP 0
+#endif
+
+#ifndef MD_Z80_PREFIX_PROFILING
+#define MD_Z80_PREFIX_PROFILING 0
+#endif
+
+#if MD_Z80_PREFIX_PROFILING
+static Z80PrefixProfile s_z80PrefixProfile;
+
+#define Z80_PROF_OP()      (++s_z80PrefixProfile.opcodes)
+#define Z80_PROF_CB()      (++s_z80PrefixProfile.cb)
+#define Z80_PROF_ED()      (++s_z80PrefixProfile.ed)
+#define Z80_PROF_DD()      (++s_z80PrefixProfile.dd)
+#define Z80_PROF_FD()      (++s_z80PrefixProfile.fd)
+#define Z80_PROF_DDCB()    (++s_z80PrefixProfile.ddcb)
+#define Z80_PROF_FDCB()    (++s_z80PrefixProfile.fdcb)
+
+void z80_prefix_profile_reset(void)
+{
+  s_z80PrefixProfile = (Z80PrefixProfile){0};
+}
+
+int z80_prefix_profile_get_snapshot(Z80PrefixProfile *out, int reset)
+{
+  if (!out) return 0;
+  *out = s_z80PrefixProfile;
+  if (reset) z80_prefix_profile_reset();
+  return out->opcodes != 0;
+}
+#else
+#define Z80_PROF_OP()      do {} while(0)
+#define Z80_PROF_CB()      do {} while(0)
+#define Z80_PROF_ED()      do {} while(0)
+#define Z80_PROF_DD()      do {} while(0)
+#define Z80_PROF_FD()      do {} while(0)
+#define Z80_PROF_DDCB()    do {} while(0)
+#define Z80_PROF_FDCB()    do {} while(0)
+
+void z80_prefix_profile_reset(void) {}
+
+int z80_prefix_profile_get_snapshot(Z80PrefixProfile *out, int reset)
+{
+  (void)out;
+  (void)reset;
+  return 0;
+}
 #endif
 
 /** INLINE ***************************************************/
@@ -349,7 +413,7 @@ enum CodesED
   DB_F8,DB_F9,DB_FA,DB_FB,DB_FC,DB_FD,DB_FE,DB_FF
 };
 
-static void MD_Z80_CORE_IRAM_ATTR CodesCB(register Z80 *R)
+static void MD_Z80_CB_IRAM_ATTR CodesCB(register Z80 *R)
 {
   register byte I;
 
@@ -368,7 +432,7 @@ static void MD_Z80_CORE_IRAM_ATTR CodesCB(register Z80 *R)
   }
 }
 
-static void MD_Z80_CORE_IRAM_ATTR CodesDDCB(register Z80 *R)
+static void MD_Z80_IXIY_IRAM_ATTR CodesDDCB(register Z80 *R)
 {
   register pair J;
   register byte I;
@@ -391,7 +455,7 @@ static void MD_Z80_CORE_IRAM_ATTR CodesDDCB(register Z80 *R)
 #undef XX
 }
 
-static void MD_Z80_CORE_IRAM_ATTR CodesFDCB(register Z80 *R)
+static void MD_Z80_IXIY_IRAM_ATTR CodesFDCB(register Z80 *R)
 {
   register pair J;
   register byte I;
@@ -414,7 +478,7 @@ static void MD_Z80_CORE_IRAM_ATTR CodesFDCB(register Z80 *R)
 #undef XX
 }
 
-static void MD_Z80_CORE_IRAM_ATTR CodesED(register Z80 *R)
+static void MD_Z80_ED_IRAM_ATTR CodesED(register Z80 *R)
 {
   register byte I;
   register pair J;
@@ -436,7 +500,7 @@ static void MD_Z80_CORE_IRAM_ATTR CodesED(register Z80 *R)
   }
 }
 
-static void MD_Z80_CORE_IRAM_ATTR CodesDD(register Z80 *R)
+static void MD_Z80_IXIY_IRAM_ATTR CodesDD(register Z80 *R)
 {
   register byte I;
   register pair J;
@@ -451,6 +515,7 @@ static void MD_Z80_CORE_IRAM_ATTR CodesDD(register Z80 *R)
     case PFX_DD:
       R->PC.W--;break;
     case PFX_CB:
+      Z80_PROF_DDCB();
       CodesDDCB(R);break;
     default:
       if(R->TrapBadOps)
@@ -463,7 +528,7 @@ static void MD_Z80_CORE_IRAM_ATTR CodesDD(register Z80 *R)
 #undef XX
 }
 
-static void MD_Z80_CORE_IRAM_ATTR CodesFD(register Z80 *R)
+static void MD_Z80_IXIY_IRAM_ATTR CodesFD(register Z80 *R)
 {
   register byte I;
   register pair J;
@@ -478,6 +543,7 @@ static void MD_Z80_CORE_IRAM_ATTR CodesFD(register Z80 *R)
     case PFX_DD:
       R->PC.W--;break;
     case PFX_CB:
+      Z80_PROF_FDCB();
       CodesFDCB(R);break;
     default:
         printf
@@ -529,7 +595,7 @@ int GetRunCyclesZ80(register Z80 *R)
 {
   return(R->ICount - R->RunCycles);
 }
-int MD_Z80_CORE_IRAM_ATTR ExecZ80(register Z80 *R,register int RunCycles)
+int MD_Z80_EXEC_IRAM_ATTR ExecZ80(register Z80 *R,register int RunCycles)
 {
   register byte I;
   register pair J;
@@ -551,6 +617,7 @@ int MD_Z80_CORE_IRAM_ATTR ExecZ80(register Z80 *R,register int RunCycles)
 
       /* Read opcode and count cycles */
       I=OpZ80(R->PC.W++);
+      Z80_PROF_OP();
       /* Count cycles */
       R->ICount-=Cycles[I];
 
@@ -558,10 +625,10 @@ int MD_Z80_CORE_IRAM_ATTR ExecZ80(register Z80 *R,register int RunCycles)
       switch(I)
       {
 #include "Codes.h"
-        case PFX_CB: CodesCB(R);break;
-        case PFX_ED: CodesED(R);break;
-        case PFX_FD: CodesFD(R);break;
-        case PFX_DD: CodesDD(R);break;
+        case PFX_CB: Z80_PROF_CB(); CodesCB(R);break;
+        case PFX_ED: Z80_PROF_ED(); CodesED(R);break;
+        case PFX_FD: Z80_PROF_FD(); CodesFD(R);break;
+        case PFX_DD: Z80_PROF_DD(); CodesDD(R);break;
       }
 
       if(R->IFF&IFF_EI)
@@ -593,6 +660,7 @@ full_irq_loop:
 
       /* Read opcode and count cycles */
       I=OpZ80(R->PC.W++);
+      Z80_PROF_OP();
       /* Count cycles */
       R->ICount-=Cycles[I];
 
@@ -600,10 +668,10 @@ full_irq_loop:
       switch(I)
       {
 #include "Codes.h"
-        case PFX_CB: CodesCB(R);break;
-        case PFX_ED: CodesED(R);break;
-        case PFX_FD: CodesFD(R);break;
-        case PFX_DD: CodesDD(R);break;
+        case PFX_CB: Z80_PROF_CB(); CodesCB(R);break;
+        case PFX_ED: Z80_PROF_ED(); CodesED(R);break;
+        case PFX_FD: Z80_PROF_FD(); CodesFD(R);break;
+        case PFX_DD: Z80_PROF_DD(); CodesDD(R);break;
       }
 
       /* Unless we have come here after EI, exit */
@@ -629,7 +697,7 @@ full_irq_loop:
 /** IntZ80() *************************************************/
 /** This function will generate interrupt of given vector.  **/
 /*************************************************************/
-void MD_Z80_CORE_IRAM_ATTR IntZ80(Z80 *R,word Vector)
+void MD_Z80_EXEC_IRAM_ATTR IntZ80(Z80 *R,word Vector)
 {
   /* If HALTed, take CPU off HALT instruction */
   if(R->IFF&IFF_HALT) { R->PC.W++;R->IFF&=~IFF_HALT; }
