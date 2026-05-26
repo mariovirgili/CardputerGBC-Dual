@@ -33,6 +33,14 @@ extern int genesisZoomPercent;
 #define MD_BENCH_NO_FRAME_SKIP 0
 #endif
 
+#ifndef MD_M68K_NO_HINT_BATCH_RUN
+#define MD_M68K_NO_HINT_BATCH_RUN 0
+#endif
+
+#ifndef MD_M68K_NO_HINT_BATCH_LINES
+#define MD_M68K_NO_HINT_BATCH_LINES 8
+#endif
+
 #if MD_RENDER_LOGS_ENABLED
 struct MdFrameDiagStats {
   uint64_t lastLogMs = 0;
@@ -542,6 +550,10 @@ static void run_one_frame() {
   const unsigned h = screen_height ? screen_height : 224u;
   const int lines_per_frame = gwenesis_region_lines_per_frame();
   int hint_counter = gwenesis_vdp_regs[10];
+#if MD_M68K_NO_HINT_BATCH_RUN
+  bool m68kNoHintBatch = (REG0_LINE_INTERRUPT == 0);
+  const int m68kBatchLines = (MD_M68K_NO_HINT_BATCH_LINES > 0) ? MD_M68K_NO_HINT_BATCH_LINES : 1;
+#endif
   scan_line = 0;
 
   // Notify start of frame to display task
@@ -568,13 +580,37 @@ static void run_one_frame() {
   while (scan_line < lines_per_frame) {
     cpu_deadline += VDP_CYCLES_PER_LINE;
 
-    // Run M68K CPU
+    // Run M68K CPU. When HINT is disabled, batch a few lines to reduce fixed
+    // per-call overhead while still flushing around VBlank and frame end.
+#if MD_M68K_NO_HINT_BATCH_RUN
+    const int next_scan_line = scan_line + 1;
+    bool runM68kNow = true;
+    if (m68kNoHintBatch) {
+      const bool vblankBoundary = (scan_line == (int)h) || (scan_line == (int)h + 1);
+      const bool frameBoundary = (next_scan_line >= lines_per_frame);
+      const bool batchBoundary = ((next_scan_line % m68kBatchLines) == 0);
+      runM68kNow = vblankBoundary || frameBoundary || batchBoundary;
+    }
+    if (runM68kNow) {
+#if MD_BENCHMARK_LOGS_ENABLED
+      t_probe = md_bench_now_us();
+#endif
+      m68k_run(cpu_deadline);
+#if MD_BENCHMARK_LOGS_ENABLED
+      md_bench_add_u64(s_mdBench.m68kUsTotal, t_probe);
+#endif
+      if (m68kNoHintBatch && REG0_LINE_INTERRUPT != 0) {
+        m68kNoHintBatch = false;
+      }
+    }
+#else
 #if MD_BENCHMARK_LOGS_ENABLED
     t_probe = md_bench_now_us();
 #endif
     m68k_run(cpu_deadline);
 #if MD_BENCHMARK_LOGS_ENABLED
     md_bench_add_u64(s_mdBench.m68kUsTotal, t_probe);
+#endif
 #endif
     
     // Run Z80 and update YM2612 clock for sound
