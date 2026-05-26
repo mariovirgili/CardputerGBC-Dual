@@ -20,7 +20,14 @@
 #define M68KI_CYCLES_TOPBYTE_SUBTABLE_COUNT 41
 #define M68KI_CYCLES_TOPBYTE_SUBTABLE_WIDTH 256
 
-static const uint8_t m68ki_cycles_topbyte_l1[240] =
+#if defined(MD_COMPRESSED_CYCLE_TABLE_DRAM)
+#include "esp_attr.h"
+#define M68KI_CYCLES_TOPBYTE_STORAGE DRAM_ATTR static
+#else
+#define M68KI_CYCLES_TOPBYTE_STORAGE static const
+#endif
+
+M68KI_CYCLES_TOPBYTE_STORAGE uint8_t m68ki_cycles_topbyte_l1[240] =
 {
     0, 1, 0, 1, 2, 1, 2, 1, 3, 1, 0, 1, 4, 1, 5, 1,
     6, 7, 6, 8, 6, 9, 6, 9, 6, 9, 6, 9, 6, 9, 6, 9,
@@ -39,7 +46,7 @@ static const uint8_t m68ki_cycles_topbyte_l1[240] =
     38, 38, 38, 38, 38, 38, 38, 38, 39, 39, 39, 39, 39, 39, 39, 40
 };
 
-static const uint8_t m68ki_cycles_topbyte_subtables[41][256] =
+M68KI_CYCLES_TOPBYTE_STORAGE uint8_t m68ki_cycles_topbyte_subtables[41][256] =
 {
     {
       8*7, 8*7, 8*7, 8*7, 8*7, 8*7, 8*7, 8*7, 0*7, 0*7, 0*7, 0*7, 0*7, 0*7, 0*7, 0*7,
