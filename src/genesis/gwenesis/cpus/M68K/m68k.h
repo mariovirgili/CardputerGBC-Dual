@@ -181,6 +181,10 @@ static inline unsigned int gwenesis_rom_addr(unsigned int address)
 #define MD_ROM_INDEXED_FETCH_FASTPATH 0
 #endif
 
+#ifndef MD_ROM_IMMEDIATE_SINGLE_ADDR_FETCH
+#define MD_ROM_IMMEDIATE_SINGLE_ADDR_FETCH 0
+#endif
+
 #if MD_ROM_PREBYTE_SWAP_XIP
 static inline unsigned char gwenesis_fetch8rom(unsigned int address)
 {
@@ -331,8 +335,41 @@ static inline uint32 gwenesis_fetch32rom_indexed(unsigned int address)
 
 #endif
 
+#if MD_ROM_IMMEDIATE_SINGLE_ADDR_FETCH && (GNW_TARGET_MARIO == 0) && (GNW_TARGET_ZELDA == 0)
+static inline uint16 gwenesis_read_immediate_rom16_single_addr(unsigned int address)
+{
+	if (ROM_ADDR_IS_POW2) {
+		const unsigned int mask = ROM_ADDR_MASK;
+		const unsigned int idx = address & mask;
+		return ((uint16)ROM_DATA[idx] << 8) |
+		       (uint16)ROM_DATA[(idx + 1u) & mask];
+	}
+	return FETCH16ROM(address);
+}
+
+static inline uint32 gwenesis_read_immediate_rom32_single_addr(unsigned int address)
+{
+	if (ROM_ADDR_IS_POW2) {
+		const unsigned int mask = ROM_ADDR_MASK;
+		const unsigned int idx = address & mask;
+		return ((uint32)ROM_DATA[idx] << 24) |
+		       ((uint32)ROM_DATA[(idx + 1u) & mask] << 16) |
+		       ((uint32)ROM_DATA[(idx + 2u) & mask] <<  8) |
+		       (uint32)ROM_DATA[(idx + 3u) & mask];
+	}
+	return FETCH32ROM(address);
+}
+
+#define m68k_read_immediate_16(A) \
+	( __builtin_expect((((A) & 0x800000) != 0), 0) ? \
+	  FETCH16RAM((A)) : gwenesis_read_immediate_rom16_single_addr((unsigned int)(A)) )
+#define m68k_read_immediate_32(A) \
+	( __builtin_expect((((A) & 0x800000) != 0), 0) ? \
+	  FETCH32RAM((A)) : gwenesis_read_immediate_rom32_single_addr((unsigned int)(A)) )
+#else
 #define m68k_read_immediate_16(A) ( ( (A) & 0x800000) ? FETCH16RAM((A)) : FETCH16ROM((A)) )
 #define m68k_read_immediate_32(A) ( ( (A) & 0x800000) ? FETCH32RAM((A)) : FETCH32ROM((A)) )
+#endif
 
 #define m68k_read_pcrelative_8(A) ( FETCH8ROM((A)) )
 #define m68k_read_pcrelative_16(A) ( FETCH16ROM((A)) )
