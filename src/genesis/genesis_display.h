@@ -13,6 +13,9 @@
 extern "C" {
 #endif
 
+#define SCANMSG_FORMAT_RGB565 0
+#define SCANMSG_FORMAT_INDEX8 1
+
 typedef enum : uint8_t {
     MSG_BEGIN_FRAME,
     MSG_SCANLINE,
@@ -24,7 +27,11 @@ typedef struct {
     uint16_t    line;      // pour MSG_SCANLINE
     uint16_t    w;         // largeur utile
     uint16_t    srcH;      // hauteur source
-    uint16_t    data[FB_W]; // payload ligne 
+    uint8_t     format;    // SCANMSG_FORMAT_*
+    union {
+        uint16_t data[FB_W]; // RGB565 payload ligne
+        uint8_t  idx[FB_W];  // 8-bit palette index payload
+    };
 } ScanMsg;
 
 // Shared globals
@@ -54,6 +61,7 @@ void genesis_display_begin_frame(uint16_t srcH);
 
 // Used by Gwenesis to push a scanline to the display task
 void GWENESIS_PUSH_SCANLINE(int line, const uint16_t* src16, int w);
+void GWENESIS_PUSH_SCANLINE_IDX(int line, const uint8_t* src8, int w);
 
 // End the current frame
 void genesis_display_end_frame(void);

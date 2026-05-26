@@ -30,6 +30,7 @@ __license__ = "GPLv3"
 //#include <assert.h>
 
 extern void GWENESIS_PUSH_SCANLINE(int line, const uint16_t* src16, int w);
+extern void GWENESIS_PUSH_SCANLINE_IDX(int line, const uint8_t* src8, int w);
 
 #if GNW_TARGET_MARIO !=0 || GNW_TARGET_ZELDA!=0
   #pragma GCC optimize("Ofast")
@@ -49,6 +50,10 @@ extern void GWENESIS_PUSH_SCANLINE(int line, const uint16_t* src16, int w);
 
 #ifndef MD_RENDER_PLANE_FASTPATH
 #define MD_RENDER_PLANE_FASTPATH 0
+#endif
+
+#ifndef MD_RENDER_INDEX_SCANLINE
+#define MD_RENDER_INDEX_SCANLINE 0
 #endif
 
 #if GNW_TARGET_MARIO != 0 | GNW_TARGET_ZELDA != 0
@@ -1487,6 +1492,21 @@ void IRAM_ATTR gwenesis_vdp_render_line(int line)
 
   /* Normal Mode */
   if (!shi_mode) {
+#if MD_RENDER_INDEX_SCANLINE
+    GWENESIS_PUSH_SCANLINE_IDX(line, pb, w);
+#if MD_RENDER_SECTION_PROFILING && EMU_LOG_MASTER_ENABLED
+    const uint64_t t_after_convert = md_render_profile_now_us();
+    const uint64_t t_after_push = t_after_convert;
+    md_render_profile_record(w,
+                             shi_mode,
+                             (uint32_t)(t_after_clear - t_start),
+                             (uint32_t)(t_after_planes - t_after_clear),
+                             (uint32_t)(t_after_sprites - t_after_planes),
+                             0,
+                             (uint32_t)(t_after_push - t_after_sprites));
+#endif
+    return;
+#else
     for (int x = 0; x < w; ++x) {
       const uint8_t idx = pb[x] & 0x3F;              // index palette 0..63
       line565[x] = CRAM565[idx];                     // direct RGB565
@@ -1506,6 +1526,7 @@ void IRAM_ATTR gwenesis_vdp_render_line(int line)
                              (uint32_t)(t_after_push - t_after_convert));
 #endif
     return;
+#endif
   }
   
   /* Mode Highlight/shadow is enabled */

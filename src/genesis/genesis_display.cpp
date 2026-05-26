@@ -10,6 +10,7 @@
 extern "C" {
   // Gwenesis VDP
   extern unsigned int screen_height;
+  extern unsigned short *CRAM565;
 }
 
 // Globals
@@ -282,7 +283,20 @@ void display_task(void* arg) {
     ++s_mdDisplayDiag.scanRecv;
 #endif
 
-    if (m.w == g_viewW && s_roiX0 == 0 && s_roiW == m.w) {
+    if (m.format == SCANMSG_FORMAT_INDEX8) {
+      const uint16_t *palette = (const uint16_t *)CRAM565;
+      if (m.w == g_viewW && s_roiX0 == 0 && s_roiW == m.w) {
+        for (int x = 0; x < g_viewW; ++x) {
+          s_lineImg[x] = palette[m.idx[x] & 0x3F];
+        }
+      } else {
+        const uint16_t *xmap = s_xmap;
+        for (int x = 0; x < g_viewW; ++x) {
+          const int srcX = xmap ? xmap[x] : (s_roiX0 + (int)((int64_t)x * s_roiW / g_viewW));
+          s_lineImg[x] = palette[m.idx[srcX] & 0x3F];
+        }
+      }
+    } else if (m.w == g_viewW && s_roiX0 == 0 && s_roiW == m.w) {
       memcpy16(s_lineImg, m.data, g_viewW);
     } else {
       const uint16_t *xmap = s_xmap;
@@ -369,7 +383,11 @@ extern "C" void genesis_display_begin_frame(uint16_t srcH) {
   if (!g_scanQ) return;
   // Reset cached ROI 
   s_roiX0 = 0; s_roiY0 = 0; s_roiW = FB_W; s_roiH = srcH;
-  ScanMsg b = { MSG_BEGIN_FRAME, 0, (uint16_t)FB_W, srcH, {0} };
+  ScanMsg b = {};
+  b.type = MSG_BEGIN_FRAME;
+  b.w = (uint16_t)FB_W;
+  b.srcH = srcH;
+  b.format = SCANMSG_FORMAT_RGB565;
   xQueueSend(g_scanQ, &b, portMAX_DELAY);
 }
 
@@ -381,6 +399,7 @@ extern "C" void IRAM_ATTR GWENESIS_PUSH_SCANLINE(int line, const uint16_t* src16
   m.type = MSG_SCANLINE;
   m.line = (uint16_t)line;
   m.w    = (uint16_t)w;
+  m.format = SCANMSG_FORMAT_RGB565;
 
   int srcH = (g_srcH_cached > 0) ? g_srcH_cached
                                  : (int)(screen_height ? screen_height : 224);
@@ -398,10 +417,39 @@ extern "C" void IRAM_ATTR GWENESIS_PUSH_SCANLINE(int line, const uint16_t* src16
 #endif
 }
 
+/* Gwenesis push indexed scanline. Experimental: palette lookup is done on the display task. */
+extern "C" void IRAM_ATTR GWENESIS_PUSH_SCANLINE_IDX(int line, const uint8_t* src8, int w) {
+  if (!g_scanQ) return;
+
+  ScanMsg m;
+  m.type = MSG_SCANLINE;
+  m.line = (uint16_t)line;
+  m.w    = (uint16_t)w;
+  m.format = SCANMSG_FORMAT_INDEX8;
+
+  int srcH = (g_srcH_cached > 0) ? g_srcH_cached
+                                 : (int)(screen_height ? screen_height : 224);
+  m.srcH = (uint16_t)srcH;
+
+  int copyW = (w < FB_W) ? w : FB_W;
+  memcpy(m.idx, src8, copyW);
+  if (copyW < FB_W) memset(m.idx + copyW, 0, FB_W - copyW);
+
+#if MD_RENDER_LOGS_ENABLED
+  md_display_send_scan_msg(g_scanQ, &m, portMAX_DELAY);
+#else
+  xQueueSend(g_scanQ, &m, portMAX_DELAY);
+#endif
+}
+
 /* End the current frame */
 extern "C" void genesis_display_end_frame(void) {
   if (!g_scanQ) return;
   uint16_t h = (uint16_t)(screen_height ? screen_height : 224u);
-  ScanMsg e = { MSG_END_FRAME, 0, (uint16_t)FB_W, h, {0} };
+  ScanMsg e = {};
+  e.type = MSG_END_FRAME;
+  e.w = (uint16_t)FB_W;
+  e.srcH = h;
+  e.format = SCANMSG_FORMAT_RGB565;
   xQueueSend(g_scanQ, &e, portMAX_DELAY);
 }

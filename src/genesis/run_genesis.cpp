@@ -608,7 +608,11 @@ static void run_one_frame() {
 
   // Notify start of frame to display task
   if (g_scanQ) {
-    ScanMsg b = { MSG_BEGIN_FRAME, 0, (uint16_t)FB_W, (uint16_t)h, {0} };
+    ScanMsg b = {};
+    b.type = MSG_BEGIN_FRAME;
+    b.w = (uint16_t)FB_W;
+    b.srcH = (uint16_t)h;
+    b.format = SCANMSG_FORMAT_RGB565;
 #if MD_RENDER_LOGS_ENABLED
     const BaseType_t ok = xQueueSend(g_scanQ, &b, 0);
     if (ok != pdTRUE) ++s_mdFrameDiag.beginSendFail;
@@ -737,7 +741,11 @@ static void run_one_frame() {
 
   // Notify end of frame to display task
   if (g_scanQ) {
-    ScanMsg e = { MSG_END_FRAME, 0, (uint16_t)FB_W, (uint16_t)h, {0} };
+    ScanMsg e = {};
+    e.type = MSG_END_FRAME;
+    e.w = (uint16_t)FB_W;
+    e.srcH = (uint16_t)h;
+    e.format = SCANMSG_FORMAT_RGB565;
 #if MD_RENDER_LOGS_ENABLED
     const BaseType_t ok = xQueueSend(g_scanQ, &e, 0);
     if (ok != pdTRUE) ++s_mdFrameDiag.endSendFail;
