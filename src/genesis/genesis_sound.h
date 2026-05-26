@@ -7,13 +7,21 @@
 #include "genesis/gwenesis/bus/gwenesis_bus.h"
 
 // Constantes audio
-static constexpr int AUDIO_SR = 44000;   // Hz
+#ifndef MD_AUDIO_SAMPLE_RATE
+#define MD_AUDIO_SAMPLE_RATE 44000
+#endif
+#ifndef MD_AUDIO_WALLCLOCK_CHUNK_CAP
+#define MD_AUDIO_WALLCLOCK_CHUNK_CAP 0
+#endif
+
+static constexpr int AUDIO_SR = MD_AUDIO_SAMPLE_RATE;   // Hz
 static constexpr bool AUDIO_STEREO = false;
 static constexpr int AUDIO_POOL = 4;
 static constexpr int AUDIO_Q_DEPTH = 4;
 static constexpr int AUDIO_CHUNK_NTSC = (AUDIO_SR + GWENESIS_REFRESH_RATE_NTSC / 2) / GWENESIS_REFRESH_RATE_NTSC;
 static constexpr int AUDIO_CHUNK_PAL = (AUDIO_SR + GWENESIS_REFRESH_RATE_PAL / 2) / GWENESIS_REFRESH_RATE_PAL;
-static constexpr int AUDIO_CHUNK_CAP = (AUDIO_CHUNK_PAL > AUDIO_CHUNK_NTSC) ? AUDIO_CHUNK_PAL : AUDIO_CHUNK_NTSC;
+static constexpr int AUDIO_CHUNK_NOMINAL_CAP = (AUDIO_CHUNK_PAL > AUDIO_CHUNK_NTSC) ? AUDIO_CHUNK_PAL : AUDIO_CHUNK_NTSC;
+static constexpr int AUDIO_CHUNK_CAP = (MD_AUDIO_WALLCLOCK_CHUNK_CAP > AUDIO_CHUNK_NOMINAL_CAP) ? MD_AUDIO_WALLCLOCK_CHUNK_CAP : AUDIO_CHUNK_NOMINAL_CAP;
 static constexpr int AUDIO_CORE_CHUNK_CAP = ((LINES_PER_FRAME_PAL * VDP_CYCLES_PER_LINE) + GWENESIS_AUDIO_DIVISOR_PAL - 1) / GWENESIS_AUDIO_DIVISOR_PAL;
 
 typedef void (*GenesisAudioSink)(int16_t* pcm, size_t n_samples, int sample_rate);
@@ -54,7 +62,7 @@ int genesis_sound_get_core_samples_per_frame(void);
 int genesis_sound_get_output_samples_per_frame(void);
 void genesis_alloc_audio_buffers(void);
 void genesis_sound_init();
-void genesis_sound_submit_frame(void);
+void genesis_sound_submit_frame(uint32_t frame_elapsed_us);
 void genesis_sound_shutdown(void);
 
 // API YM

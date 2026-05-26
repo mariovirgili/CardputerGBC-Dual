@@ -69,6 +69,10 @@ static int s_audioCoreDivisor = GWENESIS_AUDIO_DIVISOR_NTSC;
 static int s_audioCoreSamples = GWENESIS_AUDIO_BUFFER_LENGTH_NTSC;
 static int s_audioOutSamples = AUDIO_CHUNK_NTSC;
 
+#ifndef MD_AUDIO_WALLCLOCK_SAMPLES
+#define MD_AUDIO_WALLCLOCK_SAMPLES 0
+#endif
+
 void genesis_sound_configure_timing(int refresh_rate, int core_sample_rate, int core_divisor, int lines_per_frame)
 {
   if (refresh_rate != GWENESIS_REFRESH_RATE_PAL) {
@@ -142,6 +146,10 @@ struct MdAudioDiagStats {
   uint32_t coreMin = UINT32_MAX;
   uint32_t coreMax = 0;
   uint64_t coreTotal = 0;
+  uint32_t outMin = UINT32_MAX;
+  uint32_t outMax = 0;
+  uint64_t outTotal = 0;
+  uint32_t outLast = 0;
   uint32_t ymMin = UINT32_MAX;
   uint32_t ymMax = 0;
   uint64_t ymTotal = 0;
@@ -181,7 +189,7 @@ static inline void md_audio_diag_reset()
   taskEXIT_CRITICAL(&s_mdAudioDiagMux);
 }
 
-static inline void md_audio_diag_samples(int core_n, int ym_n, int psg_n, size_t depth)
+static inline void md_audio_diag_samples(int core_n, int ym_n, int psg_n, int out_n, size_t depth)
 {
   taskENTER_CRITICAL(&s_mdAudioDiagMux);
   MdAudioDiagStats& d = s_mdAudioDiag;
@@ -197,6 +205,11 @@ static inline void md_audio_diag_samples(int core_n, int ym_n, int psg_n, size_t
   if (cn < d.coreMin) d.coreMin = cn;
   if (cn > d.coreMax) d.coreMax = cn;
   d.coreTotal += cn;
+  const uint32_t on = out_n > 0 ? (uint32_t)out_n : 0;
+  if (on < d.outMin) d.outMin = on;
+  if (on > d.outMax) d.outMax = on;
+  d.outTotal += on;
+  d.outLast = on;
   if (yn < d.ymMin) d.ymMin = yn;
   if (yn > d.ymMax) d.ymMax = yn;
   d.ymTotal += yn;
@@ -273,9 +286,11 @@ static inline void md_audio_diag_log_if_due(bool force = false)
   }
 
   const uint32_t coreMin = (snap.coreMin == UINT32_MAX) ? 0 : snap.coreMin;
+  const uint32_t outMin = (snap.outMin == UINT32_MAX) ? 0 : snap.outMin;
   const uint32_t ymMin = (snap.ymMin == UINT32_MAX) ? 0 : snap.ymMin;
   const uint32_t psgMin = (snap.psgMin == UINT32_MAX) ? 0 : snap.psgMin;
   const uint32_t coreAvg = snap.frames ? (uint32_t)(snap.coreTotal / snap.frames) : 0;
+  const uint32_t outAvg = snap.frames ? (uint32_t)(snap.outTotal / snap.frames) : 0;
   const uint32_t ymAvg = snap.frames ? (uint32_t)(snap.ymTotal / snap.frames) : 0;
   const uint32_t psgAvg = snap.frames ? (uint32_t)(snap.psgTotal / snap.frames) : 0;
   const uint32_t depthAvg = snap.frames ? (uint32_t)(snap.depthTotal / snap.frames) : 0;
@@ -286,7 +301,7 @@ static inline void md_audio_diag_log_if_due(bool force = false)
   const uint32_t i2sWriteAvg = snap.i2sWriteCalls ? (uint32_t)(snap.i2sWriteUsTotal / snap.i2sWriteCalls) : 0;
   const uint32_t writerBacklogAvg = snap.writerBacklogCount ? (uint32_t)(snap.writerBacklogTotal / snap.writerBacklogCount) : 0;
 
-  MD_AUDIO_LOG("frames=%lu queued=%lu loss depth/buf=%lu/%lu queueDepth avg/max=%lu/%lu underrunEmpty=%lu coreRate=%d outRate=%d coreSamples min/avg/max=%lu/%lu/%lu outSamples=%d ym=%lu/%lu/%lu psg=%lu/%lu/%lu target min/avg/max/last=%d/%lu/%d/%d writerBacklog avg/max=%lu/%lu i2sWrite calls/ok/short/fail=%lu/%lu/%lu/%lu us min/avg/max=%lu/%lu/%lu clipped=%lu",
+  MD_AUDIO_LOG("frames=%lu queued=%lu loss depth/buf=%lu/%lu queueDepth avg/max=%lu/%lu underrunEmpty=%lu coreRate=%d outRate=%d coreSamples min/avg/max=%lu/%lu/%lu outSamples=%d dynOut min/avg/max/last=%lu/%lu/%lu/%lu ym=%lu/%lu/%lu psg=%lu/%lu/%lu target min/avg/max/last=%d/%lu/%d/%d writerBacklog avg/max=%lu/%lu i2sWrite calls/ok/short/fail=%lu/%lu/%lu/%lu us min/avg/max=%lu/%lu/%lu clipped=%lu",
                (unsigned long)snap.frames,
                (unsigned long)snap.queued,
                (unsigned long)snap.droppedDepth,
@@ -300,6 +315,10 @@ static inline void md_audio_diag_log_if_due(bool force = false)
                (unsigned long)coreAvg,
                (unsigned long)snap.coreMax,
                s_audioOutSamples,
+               (unsigned long)outMin,
+               (unsigned long)outAvg,
+               (unsigned long)snap.outMax,
+               (unsigned long)snap.outLast,
                (unsigned long)ymMin,
                (unsigned long)ymAvg,
                (unsigned long)snap.ymMax,
@@ -323,7 +342,7 @@ static inline void md_audio_diag_log_if_due(bool force = false)
 }
 #else
 static inline void md_audio_diag_reset() {}
-static inline void md_audio_diag_samples(int, int, int, size_t) {}
+static inline void md_audio_diag_samples(int, int, int, int, size_t) {}
 static inline void md_audio_diag_target(int) {}
 static inline void md_audio_diag_direct_write(uint32_t, bool, bool, size_t) {}
 static inline void md_audio_diag_log_if_due(bool = false) {}
@@ -346,6 +365,21 @@ static inline int16_t mix_sample_at(int idx, int ym_n, int psg_n) {
     s = -32768;
   }
   return (int16_t)s;
+}
+
+static inline int genesis_sound_output_samples_for_frame(uint32_t frame_elapsed_us)
+{
+#if MD_AUDIO_WALLCLOCK_SAMPLES
+  if (frame_elapsed_us > 0) {
+    int samples = (int)(((int64_t)AUDIO_SR * (int64_t)frame_elapsed_us + 500000LL) / 1000000LL);
+    if (samples < 1) samples = 1;
+    if (samples > AUDIO_CHUNK_CAP) samples = AUDIO_CHUNK_CAP;
+    return samples;
+  }
+#else
+  (void)frame_elapsed_us;
+#endif
+  return s_audioOutSamples;
 }
 
 #ifdef MD_DIRECT_I2S_AUDIO
@@ -630,7 +664,7 @@ void genesis_sound_shutdown()
 }
 
 /* Submit a frame of audio to the cardputer speaker */
-void genesis_sound_submit_frame(void) {
+void genesis_sound_submit_frame(uint32_t frame_elapsed_us) {
   // Snapshot des index 
   int ym_n, psg_n;
   taskENTER_CRITICAL(&g_ymMux);
@@ -643,13 +677,14 @@ void genesis_sound_submit_frame(void) {
   if (n > s_audioCoreSamples) n = s_audioCoreSamples;
   if (ym_n > s_audioCoreSamples) ym_n = s_audioCoreSamples;
   if (psg_n > s_audioCoreSamples) psg_n = s_audioCoreSamples;
+  const int outSamples = genesis_sound_output_samples_for_frame(frame_elapsed_us);
 
 #ifdef MD_DIRECT_I2S_AUDIO
   const size_t depth = s_audioQ ? (size_t)uxQueueMessagesWaiting(s_audioQ) : 0;
 #else
   const size_t depth = M5Cardputer.Speaker.isPlaying(kChannel);
 #endif
-  md_audio_diag_samples(n, ym_n, psg_n, depth);
+  md_audio_diag_samples(n, ym_n, psg_n, outSamples, depth);
 
 #ifdef MD_DIRECT_I2S_AUDIO
   int poolSlot = -1;
@@ -689,11 +724,13 @@ void genesis_sound_submit_frame(void) {
 #endif
   if (n == 1) {
     int16_t sample = mix_sample_at(0, ym_n, psg_n);
-    for (int i = 0; i < s_audioOutSamples; ++i) dst[i] = sample;
+    for (int i = 0; i < outSamples; ++i) dst[i] = sample;
   } else {
-    const uint32_t step = (uint32_t)(((uint64_t)(n - 1) << 16) / (s_audioOutSamples - 1));
+    const uint32_t step = (outSamples > 1)
+        ? (uint32_t)(((uint64_t)(n - 1) << 16) / (outSamples - 1))
+        : 0;
     uint32_t pos = 0;
-    for (int i = 0; i < s_audioOutSamples; ++i) {
+    for (int i = 0; i < outSamples; ++i) {
       int idx = (int)(pos >> 16);
       uint32_t frac = pos & 0xFFFFu;
       int32_t a = mix_sample_at(idx, ym_n, psg_n);
@@ -710,7 +747,7 @@ void genesis_sound_submit_frame(void) {
   taskEXIT_CRITICAL(&g_ymMux);
 
 #ifdef MD_DIRECT_I2S_AUDIO
-  AudioMsg msg = { dst, (size_t)s_audioOutSamples };
+  AudioMsg msg = { dst, (size_t)outSamples };
   if (xQueueSend(s_audioQ, &msg, 0) == pdTRUE) {
 #if MD_AUDIO_LOGS_ENABLED
     ++s_mdAudioDiag.queued;
@@ -722,7 +759,7 @@ void genesis_sound_submit_frame(void) {
 #endif
   }
 #else
-  if (cardputer_audio::queueRuntimeAudioBuffer(s_buf, s_flip, s_audioOutSamples, AUDIO_SR, AUDIO_STEREO, kChannel)) {
+  if (cardputer_audio::queueRuntimeAudioBuffer(s_buf, s_flip, outSamples, AUDIO_SR, AUDIO_STEREO, kChannel)) {
 #if MD_AUDIO_LOGS_ENABLED
     ++s_mdAudioDiag.queued;
 #endif

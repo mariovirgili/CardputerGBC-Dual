@@ -763,11 +763,12 @@ static void run_one_frame() {
   // Run SN76489 and push sound samples for this frame
 #ifndef GENESIS_NO_SOUND
     if (genesis_audio_volume > 0) {
+      const uint32_t audioFrameElapsedUs = (uint32_t)(micros() - t_start);
 #if MD_BENCHMARK_LOGS_ENABLED
       t_probe = md_bench_now_us();
 #endif
       gwenesis_SN76489_run(cpu_deadline);
-      genesis_sound_submit_frame();
+      genesis_sound_submit_frame(audioFrameElapsedUs);
       genesis_sound_ym_set_target_clock(cpu_deadline);
 #if MD_BENCHMARK_LOGS_ENABLED
       md_bench_add_u64(s_mdBench.audioSubmitUsTotal, t_probe);

@@ -115,6 +115,9 @@ set(ENABLE_MD_ROM_PREBYTE_SWAP_XIP OFF)
 # test only; bypass M5Unified playRaw queue and stream MD audio through a
 # dedicated direct-I2S worker on CPU0.
 set(ENABLE_MD_DIRECT_I2S_AUDIO ON)
+set(ENABLE_MD_AUDIO_WALLCLOCK_SAMPLES ON)
+set(MD_AUDIO_SAMPLE_RATE "44000")
+set(MD_AUDIO_WALLCLOCK_CHUNK_CAP "1320")
 set(MD_AUDIO_TASK_CORE "0")
 set(MD_AUDIO_TASK_PRIORITY "6")
 set(MD_AUDIO_DMA_LEN "256")
@@ -479,6 +482,11 @@ if(ENABLE_MD_CORE)
             MD_AUDIO_DMA_COUNT=${MD_AUDIO_DMA_COUNT}
         )
     endif()
+    add_private_define_if(ENABLE_MD_AUDIO_WALLCLOCK_SAMPLES MD_AUDIO_WALLCLOCK_SAMPLES=1)
+    target_compile_definitions(${COMPONENT_LIB} PRIVATE
+        MD_AUDIO_SAMPLE_RATE=${MD_AUDIO_SAMPLE_RATE}
+        MD_AUDIO_WALLCLOCK_CHUNK_CAP=${MD_AUDIO_WALLCLOCK_CHUNK_CAP}
+    )
 endif()
 
 if(ENABLE_WS_CORE)
