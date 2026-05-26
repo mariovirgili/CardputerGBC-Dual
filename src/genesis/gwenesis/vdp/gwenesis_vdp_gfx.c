@@ -19,6 +19,7 @@ __license__ = "GPLv3"
 #include <stdio.h>
 #include <string.h>
 #include <stdbool.h>
+#include "esp_timer.h"
 #include "m68k.h"
 #include "gwenesis_vdp.h"
 #include "gwenesis_io.h"
@@ -36,6 +37,14 @@ extern void GWENESIS_PUSH_SCANLINE(int line, const uint16_t* src16, int w);
 
 #ifndef MD_SPRITE_LINE_CACHE
 #define MD_SPRITE_LINE_CACHE 0
+#endif
+
+#ifndef MD_RENDER_SECTION_PROFILING
+#define MD_RENDER_SECTION_PROFILING 0
+#endif
+
+#ifndef MD_RENDER_PLANE_PROFILING
+#define MD_RENDER_PLANE_PROFILING 0
 #endif
 
 #if GNW_TARGET_MARIO != 0 | GNW_TARGET_ZELDA != 0
@@ -90,6 +99,74 @@ int gwenesis_H32upscaler;
 int sprite_overflow;
 bool sprite_collision;
 
+#if MD_RENDER_SECTION_PROFILING && EMU_LOG_MASTER_ENABLED
+typedef struct MdRenderSectionProfile {
+  uint64_t last_log_us;
+  uint64_t lines;
+  uint64_t shi_lines;
+  uint64_t clear_us;
+  uint64_t plane_us;
+  uint64_t sprite_us;
+  uint64_t convert_us;
+  uint64_t push_us;
+  uint64_t width_total;
+} MdRenderSectionProfile;
+
+static MdRenderSectionProfile s_md_render_profile;
+
+static inline uint64_t md_render_profile_now_us(void)
+{
+  return (uint64_t)esp_timer_get_time();
+}
+
+static void md_render_profile_record(int width,
+                                     int shi_mode,
+                                     uint32_t clear_us,
+                                     uint32_t plane_us,
+                                     uint32_t sprite_us,
+                                     uint32_t convert_us,
+                                     uint32_t push_us)
+{
+  const uint64_t now_us = md_render_profile_now_us();
+
+  if (s_md_render_profile.last_log_us == 0) {
+    s_md_render_profile.last_log_us = now_us;
+  }
+
+  s_md_render_profile.lines++;
+  s_md_render_profile.shi_lines += (uint64_t)(shi_mode != 0);
+  s_md_render_profile.clear_us += clear_us;
+  s_md_render_profile.plane_us += plane_us;
+  s_md_render_profile.sprite_us += sprite_us;
+  s_md_render_profile.convert_us += convert_us;
+  s_md_render_profile.push_us += push_us;
+  s_md_render_profile.width_total += (uint64_t)width;
+
+  if ((now_us - s_md_render_profile.last_log_us) < 1000000ULL) {
+    return;
+  }
+
+  const uint64_t lines = s_md_render_profile.lines ? s_md_render_profile.lines : 1;
+  EMU_LOG("[MD][RPROF] lines=%llu shi=%llu wAvg=%llu clearUs avg=%llu total=%llu planeUs avg=%llu total=%llu spriteUs avg=%llu total=%llu convertUs avg=%llu total=%llu pushUs avg=%llu total=%llu\n",
+          (unsigned long long)s_md_render_profile.lines,
+          (unsigned long long)s_md_render_profile.shi_lines,
+          (unsigned long long)(s_md_render_profile.width_total / lines),
+          (unsigned long long)(s_md_render_profile.clear_us / lines),
+          (unsigned long long)s_md_render_profile.clear_us,
+          (unsigned long long)(s_md_render_profile.plane_us / lines),
+          (unsigned long long)s_md_render_profile.plane_us,
+          (unsigned long long)(s_md_render_profile.sprite_us / lines),
+          (unsigned long long)s_md_render_profile.sprite_us,
+          (unsigned long long)(s_md_render_profile.convert_us / lines),
+          (unsigned long long)s_md_render_profile.convert_us,
+          (unsigned long long)(s_md_render_profile.push_us / lines),
+          (unsigned long long)s_md_render_profile.push_us);
+
+  s_md_render_profile = (MdRenderSectionProfile){0};
+  s_md_render_profile.last_log_us = now_us;
+}
+#endif
+
 #if MD_SPRITE_LINE_CACHE
 #define MD_SPRITE_LINE_CACHE_MAX_LINES 240
 #define MD_SPRITE_LINE_CACHE_MAX_SPRITES 20
@@ -116,6 +193,92 @@ static int PlanA_lastcol;
 
 static int Window_firstcol;
 static int Window_lastcol;
+
+#if MD_RENDER_PLANE_PROFILING && EMU_LOG_MASTER_ENABLED
+typedef struct MdRenderPlaneProfile {
+  uint64_t lines;
+  uint64_t h40_lines;
+  uint64_t hscroll_mode[4];
+  uint64_t column_scroll_lines;
+  uint64_t window_none_lines;
+  uint64_t window_partial_lines;
+  uint64_t window_full_lines;
+  uint64_t window_right_lines;
+  uint64_t window_down_lines;
+  uint64_t fast_candidate_lines;
+} MdRenderPlaneProfile;
+
+static MdRenderPlaneProfile s_md_plane_profile;
+
+static void md_render_plane_profile_record(int line)
+{
+  const int hscroll_mode = REG11_HSCROLL_MODE & 3;
+  const int column_scroll = (gwenesis_vdp_regs[11] & 0x4) != 0;
+  const int window_right = (gwenesis_vdp_regs[17] & 0x80) != 0;
+  const int window_down = (gwenesis_vdp_regs[18] & 0x80) != 0;
+  const int window_line = REG18_WINDOW_VPOS * 8;
+  int window_first = Window_firstcol;
+  int window_last = Window_lastcol;
+
+  if (window_down) {
+    if (line > window_line) {
+      window_first = 0;
+      window_last = screen_width;
+    }
+  } else {
+    if (line < window_line) {
+      window_first = 0;
+      window_last = screen_width;
+    }
+  }
+
+  int window_span = window_last - window_first;
+  if (window_span < 0) {
+    window_span = 0;
+  }
+
+  s_md_plane_profile.lines++;
+  s_md_plane_profile.h40_lines += (uint64_t)(screen_width == 320);
+  s_md_plane_profile.hscroll_mode[hscroll_mode]++;
+  s_md_plane_profile.column_scroll_lines += (uint64_t)column_scroll;
+  s_md_plane_profile.window_right_lines += (uint64_t)window_right;
+  s_md_plane_profile.window_down_lines += (uint64_t)window_down;
+
+  if (window_span == 0) {
+    s_md_plane_profile.window_none_lines++;
+  } else if (window_span >= screen_width) {
+    s_md_plane_profile.window_full_lines++;
+  } else {
+    s_md_plane_profile.window_partial_lines++;
+  }
+
+  if (hscroll_mode == 0 && !column_scroll && window_span == 0) {
+    s_md_plane_profile.fast_candidate_lines++;
+  }
+
+  if (s_md_plane_profile.lines < 8192) {
+    return;
+  }
+
+  EMU_LOG("[MD][PPROF] lines=%llu h40=%llu h32=%llu hscroll=0:%llu,1:%llu,2:%llu,3:%llu column=%llu win none/partial/full=%llu/%llu/%llu win right/down=%llu/%llu fastCandidate=%llu\n",
+          (unsigned long long)s_md_plane_profile.lines,
+          (unsigned long long)s_md_plane_profile.h40_lines,
+          (unsigned long long)(s_md_plane_profile.lines - s_md_plane_profile.h40_lines),
+          (unsigned long long)s_md_plane_profile.hscroll_mode[0],
+          (unsigned long long)s_md_plane_profile.hscroll_mode[1],
+          (unsigned long long)s_md_plane_profile.hscroll_mode[2],
+          (unsigned long long)s_md_plane_profile.hscroll_mode[3],
+          (unsigned long long)s_md_plane_profile.column_scroll_lines,
+          (unsigned long long)s_md_plane_profile.window_none_lines,
+          (unsigned long long)s_md_plane_profile.window_partial_lines,
+          (unsigned long long)s_md_plane_profile.window_full_lines,
+          (unsigned long long)s_md_plane_profile.window_right_lines,
+          (unsigned long long)s_md_plane_profile.window_down_lines,
+          (unsigned long long)s_md_plane_profile.fast_candidate_lines);
+
+  memset(&s_md_plane_profile, 0, sizeof(s_md_plane_profile));
+}
+#endif
 
 // 16 bits access to VRAM
 // #define FETCH16VRAM(A)  ({size_t addr = (A); (VRAM[addr+1]) | (VRAM[addr] << 8);})
@@ -1208,25 +1371,55 @@ void IRAM_ATTR gwenesis_vdp_render_line(int line)
   uint8_t* pb = &render_buffer[PIX_OVERFLOW];
   uint8_t* ps = &sprite_buffer[PIX_OVERFLOW];
 
+#if MD_RENDER_PLANE_PROFILING && EMU_LOG_MASTER_ENABLED
+  md_render_plane_profile_record(line);
+#endif
+
+#if MD_RENDER_SECTION_PROFILING && EMU_LOG_MASTER_ENABLED
+  const uint64_t t_start = md_render_profile_now_us();
+#endif
   if (MODE_SHI) memset(ps, 0, 320);
+#if MD_RENDER_SECTION_PROFILING && EMU_LOG_MASTER_ENABLED
+  const uint64_t t_after_clear = md_render_profile_now_us();
+#endif
 
   // Planes
   draw_line_b(line);
   draw_line_aw(line);
+#if MD_RENDER_SECTION_PROFILING && EMU_LOG_MASTER_ENABLED
+  const uint64_t t_after_planes = md_render_profile_now_us();
+#endif
 
   // Sprites
-  if (MODE_SHI)  draw_sprites(line);
+  const int shi_mode = MODE_SHI;
+  if (shi_mode)  draw_sprites(line);
   else           draw_sprites_over_planes(line);
+#if MD_RENDER_SECTION_PROFILING && EMU_LOG_MASTER_ENABLED
+  const uint64_t t_after_sprites = md_render_profile_now_us();
+#endif
 
   const int w = screen_width;
 
   /* Normal Mode */
-  if (!MODE_SHI) {
+  if (!shi_mode) {
     for (int x = 0; x < w; ++x) {
       const uint8_t idx = pb[x] & 0x3F;              // index palette 0..63
       line565[x] = CRAM565[idx];                     // direct RGB565
     }
+#if MD_RENDER_SECTION_PROFILING && EMU_LOG_MASTER_ENABLED
+    const uint64_t t_after_convert = md_render_profile_now_us();
+#endif
     GWENESIS_PUSH_SCANLINE(line, line565, w);
+#if MD_RENDER_SECTION_PROFILING && EMU_LOG_MASTER_ENABLED
+    const uint64_t t_after_push = md_render_profile_now_us();
+    md_render_profile_record(w,
+                             shi_mode,
+                             (uint32_t)(t_after_clear - t_start),
+                             (uint32_t)(t_after_planes - t_after_clear),
+                             (uint32_t)(t_after_sprites - t_after_planes),
+                             (uint32_t)(t_after_convert - t_after_sprites),
+                             (uint32_t)(t_after_push - t_after_convert));
+#endif
     return;
   }
   
@@ -1260,8 +1453,21 @@ void IRAM_ATTR gwenesis_vdp_render_line(int line)
 
     line565[x] = rgb;
   }
+#if MD_RENDER_SECTION_PROFILING && EMU_LOG_MASTER_ENABLED
+  const uint64_t t_after_convert = md_render_profile_now_us();
+#endif
 
   GWENESIS_PUSH_SCANLINE(line, line565, w);
+#if MD_RENDER_SECTION_PROFILING && EMU_LOG_MASTER_ENABLED
+  const uint64_t t_after_push = md_render_profile_now_us();
+  md_render_profile_record(w,
+                           shi_mode,
+                           (uint32_t)(t_after_clear - t_start),
+                           (uint32_t)(t_after_planes - t_after_clear),
+                           (uint32_t)(t_after_sprites - t_after_planes),
+                           (uint32_t)(t_after_convert - t_after_sprites),
+                           (uint32_t)(t_after_push - t_after_convert));
+#endif
 }
 
 void gwenesis_vdp_gfx_save_state() {
