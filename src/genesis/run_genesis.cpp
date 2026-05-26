@@ -677,14 +677,16 @@ static void run_one_frame() {
           z80_run(cpu_deadline);
 #if MD_BENCHMARK_LOGS_ENABLED
           md_bench_add_u64(s_mdBench.z80UsTotal, t_probe);
-          t_probe = md_bench_now_us();
 #endif
-          gwenesis_SN76489_run(cpu_deadline);
-#if MD_BENCHMARK_LOGS_ENABLED
-          md_bench_add_u64(s_mdBench.psgUsTotal, t_probe);
-#endif
-          genesis_sound_ym_set_target_clock(cpu_deadline);
         }
+#if MD_BENCHMARK_LOGS_ENABLED
+        t_probe = md_bench_now_us();
+#endif
+        gwenesis_SN76489_run(cpu_deadline);
+#if MD_BENCHMARK_LOGS_ENABLED
+        md_bench_add_u64(s_mdBench.psgUsTotal, t_probe);
+#endif
+        genesis_sound_ym_set_target_clock(cpu_deadline);
       }
     #endif
     
