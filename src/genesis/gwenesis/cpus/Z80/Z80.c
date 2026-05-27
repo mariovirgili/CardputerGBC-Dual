@@ -51,6 +51,10 @@
 #define MD_Z80_FAST_NOIRQ_LOOP 0
 #endif
 
+#ifndef MD_Z80_FAST_NOIRQ_SHARED_LOOP
+#define MD_Z80_FAST_NOIRQ_SHARED_LOOP 0
+#endif
+
 #ifndef MD_Z80_PREFIX_PROFILING
 #define MD_Z80_PREFIX_PROFILING 0
 #endif
@@ -602,7 +606,63 @@ int MD_Z80_EXEC_IRAM_ATTR ExecZ80(register Z80 *R,register int RunCycles)
   R->RunCycles = R->ICount;
   R->ICount = RunCycles;
 
-#if MD_Z80_FAST_NOIRQ_LOOP
+#if MD_Z80_FAST_NOIRQ_LOOP && MD_Z80_FAST_NOIRQ_SHARED_LOOP
+  byte fast_noirq_loop = ((R->IRequest == INT_NONE) && !(R->IFF & IFF_EI));
+
+  for(;;)
+  {
+    while(R->ICount>0)
+    {
+#ifdef DEBUG
+      /* Turn tracing on when reached trap address */
+      if(R->PC.W==R->Trap) R->Trace=1;
+      /* Call single-step debugger, exit if requested */
+      // if(R->Trace)
+      //   if(!DebugZ80(R)) return(R->ICount);
+#endif
+
+      /* Read opcode and count cycles */
+      I=OpZ80(R->PC.W++);
+      Z80_PROF_OP();
+      /* Count cycles */
+      R->ICount-=Cycles[I];
+
+      /* Interpret opcode */
+      switch(I)
+      {
+#include "Codes.h"
+        case PFX_CB: Z80_PROF_CB(); CodesCB(R);break;
+        case PFX_ED: Z80_PROF_ED(); CodesED(R);break;
+        case PFX_FD: Z80_PROF_FD(); CodesFD(R);break;
+        case PFX_DD: Z80_PROF_DD(); CodesDD(R);break;
+      }
+
+      if(fast_noirq_loop)
+      {
+        if(R->IFF&IFF_EI)
+        {
+          R->IFF=(R->IFF&~IFF_EI)|IFF_1;
+          R->ICount+=R->IBackup-1;
+          fast_noirq_loop = 0;
+        }
+      }
+      else if(!(R->IFF&IFF_EI))
+      {
+        /* Interrupt CPU if needed */
+        if((R->IRequest!=INT_NONE)&&(R->IRequest!=INT_QUIT)) IntZ80(R,R->IRequest);
+      }
+      else
+      {
+        /* Done with AfterEI state */
+        R->IFF=(R->IFF&~IFF_EI)|IFF_1;
+        /* Restore the ICount */
+        R->ICount+=R->IBackup-1;
+      }
+    }
+
+    return(R->ICount);
+  }
+#elif MD_Z80_FAST_NOIRQ_LOOP
   if ((R->IRequest == INT_NONE) && !(R->IFF & IFF_EI))
   {
     while(R->ICount>0)
