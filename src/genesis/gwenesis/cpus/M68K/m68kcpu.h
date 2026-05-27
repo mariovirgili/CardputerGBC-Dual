@@ -82,6 +82,10 @@ void genesis_save_mark_dirty_c(void);
 #define MD_M68K_PROFILE_SAMPLE_SHIFT 6
 #endif
 
+#ifndef MD_M68K_SRAM_AFTER_FASTPATH
+#define MD_M68K_SRAM_AFTER_FASTPATH 0
+#endif
+
 #if MD_M68K_CATEGORY_PROFILING
 #include "xtensa/core-macros.h"
 
@@ -1200,6 +1204,26 @@ INLINE uint m68ki_read_8(uint address)
 
   uint32_t a = ADDRESS_68K(address);
 
+#if MD_M68K_SRAM_AFTER_FASTPATH
+  if (a < 0x800000) {
+    if (SRAM_ENABLED && SRAM != NULL && a >= SRAM_START && a <= SRAM_END) {
+      uint32_t offset = a - SRAM_START;
+      if (offset < SRAM_SIZE) {
+        uint result = SRAM[offset];
+        m68k_cat_record_read(prof_start, 1u, M68K_CAT_MEM_SRAM);
+        return result;
+      }
+    }
+    uint result = FETCH8ROM(a);
+    m68k_cat_record_read(prof_start, 1u, M68K_CAT_MEM_ROM);
+    return result;
+  }
+  if (a >= 0xE00000) {
+    uint result = FETCH8RAM(a);
+    m68k_cat_record_read(prof_start, 1u, M68K_CAT_MEM_RAM);
+    return result;
+  }
+#else
   if (SRAM_ENABLED && SRAM != NULL && a >= SRAM_START && a <= SRAM_END) {
     uint32_t offset = a - SRAM_START;
     if (offset < SRAM_SIZE) {
@@ -1218,6 +1242,7 @@ INLINE uint m68ki_read_8(uint address)
     m68k_cat_record_read(prof_start, 1u, M68K_CAT_MEM_RAM);
     return result;
   }
+#endif
   uint result = m68k_read_memory_8(a);
   m68k_cat_record_read(prof_start, 1u, M68K_CAT_MEM_BUS);
   return result;
@@ -1230,6 +1255,26 @@ INLINE uint m68ki_read_16(uint address)
   m68ki_set_fc(FLAG_S | m68ki_get_address_space()) /* auto-disable (see m68kcpu.h) */
   uint32_t a = ADDRESS_68K(address);
 
+#if MD_M68K_SRAM_AFTER_FASTPATH
+  if (a < 0x800000) {
+    if (SRAM_ENABLED && SRAM != NULL && a >= SRAM_START && (a + 1u) <= SRAM_END) {
+      uint32_t offset = a - SRAM_START;
+      if ((offset + 1u) < SRAM_SIZE) {
+        uint result = ((uint)SRAM[offset] << 8) | (uint)SRAM[offset + 1u];
+        m68k_cat_record_read(prof_start, 2u, M68K_CAT_MEM_SRAM);
+        return result;
+      }
+    }
+    uint result = FETCH16ROM(a);
+    m68k_cat_record_read(prof_start, 2u, M68K_CAT_MEM_ROM);
+    return result;
+  }
+  if (a >= 0xE00000) {
+    uint result = FETCH16RAM(a);
+    m68k_cat_record_read(prof_start, 2u, M68K_CAT_MEM_RAM);
+    return result;
+  }
+#else
   if (SRAM_ENABLED && SRAM != NULL && a >= SRAM_START && (a + 1u) <= SRAM_END) {
     uint32_t offset = a - SRAM_START;
     if ((offset + 1u) < SRAM_SIZE) {
@@ -1249,6 +1294,7 @@ INLINE uint m68ki_read_16(uint address)
     m68k_cat_record_read(prof_start, 2u, M68K_CAT_MEM_RAM);
     return result;
   }
+#endif
   uint result = m68k_read_memory_16(a);
   m68k_cat_record_read(prof_start, 2u, M68K_CAT_MEM_BUS);
   return result;
@@ -1262,6 +1308,29 @@ INLINE uint m68ki_read_32(uint address)
   m68ki_set_fc(FLAG_S | m68ki_get_address_space()) /* auto-disable (see m68kcpu.h) */
   uint32_t a = ADDRESS_68K(address);
 
+#if MD_M68K_SRAM_AFTER_FASTPATH
+  if (a < 0x800000) {
+    if (SRAM_ENABLED && SRAM != NULL && a >= SRAM_START && (a + 3u) <= SRAM_END) {
+      uint32_t offset = a - SRAM_START;
+      if ((offset + 3u) < SRAM_SIZE) {
+        uint result = ((uint)SRAM[offset] << 24) |
+                      ((uint)SRAM[offset + 1u] << 16) |
+                      ((uint)SRAM[offset + 2u] << 8) |
+                      (uint)SRAM[offset + 3u];
+        m68k_cat_record_read(prof_start, 4u, M68K_CAT_MEM_SRAM);
+        return result;
+      }
+    }
+    uint result = FETCH32ROM(a);
+    m68k_cat_record_read(prof_start, 4u, M68K_CAT_MEM_ROM);
+    return result;
+  }
+  if (a >= 0xE00000) {
+    uint result = FETCH32RAM(a);
+    m68k_cat_record_read(prof_start, 4u, M68K_CAT_MEM_RAM);
+    return result;
+  }
+#else
   if (SRAM_ENABLED && SRAM != NULL && a >= SRAM_START && (a + 3u) <= SRAM_END) {
     uint32_t offset = a - SRAM_START;
     if ((offset + 3u) < SRAM_SIZE) {
@@ -1284,6 +1353,7 @@ INLINE uint m68ki_read_32(uint address)
     m68k_cat_record_read(prof_start, 4u, M68K_CAT_MEM_RAM);
     return result;
   }
+#endif
   uint result = m68k_read_memory_32(a);
   m68k_cat_record_read(prof_start, 4u, M68K_CAT_MEM_BUS);
   return result;
@@ -1296,6 +1366,13 @@ INLINE void m68ki_write_8(uint address, uint value)
 
   uint32_t a = ADDRESS_68K(address);
 
+#if MD_M68K_SRAM_AFTER_FASTPATH
+  if (a >= 0xE00000) {
+    WRITE8RAM(a, value);
+    m68k_cat_record_write(prof_start, 1u, M68K_CAT_MEM_RAM);
+    return;
+  }
+#else
   if (SRAM_ENABLED && SRAM != NULL && a >= SRAM_START && a <= SRAM_END) {
     uint32_t offset = a - SRAM_START;
     if (offset < SRAM_SIZE) {
@@ -1311,6 +1388,18 @@ INLINE void m68ki_write_8(uint address, uint value)
     m68k_cat_record_write(prof_start, 1u, M68K_CAT_MEM_RAM);
     return;
   }
+#endif
+#if MD_M68K_SRAM_AFTER_FASTPATH
+  if (SRAM_ENABLED && SRAM != NULL && a >= SRAM_START && a <= SRAM_END) {
+    uint32_t offset = a - SRAM_START;
+    if (offset < SRAM_SIZE) {
+      SRAM[offset] = value & 0xFF;
+      genesis_save_mark_dirty_c();
+      m68k_cat_record_write(prof_start, 1u, M68K_CAT_MEM_SRAM);
+      return;
+    }
+  }
+#endif
 
   m68k_write_memory_8(a, value);
   m68k_cat_record_write(prof_start, 1u, M68K_CAT_MEM_BUS);
@@ -1323,6 +1412,13 @@ INLINE void m68ki_write_16(uint address, uint value)
 
   uint32_t a = ADDRESS_68K(address);
 
+#if MD_M68K_SRAM_AFTER_FASTPATH
+  if (a >= 0xE00000) {
+    WRITE16RAM(a, value);
+    m68k_cat_record_write(prof_start, 2u, M68K_CAT_MEM_RAM);
+    return;
+  }
+#else
   if (SRAM_ENABLED && SRAM != NULL && a >= SRAM_START && (a + 1) <= SRAM_END) {
     uint32_t offset = a - SRAM_START;
     if ((offset + 1) < SRAM_SIZE) {
@@ -1339,6 +1435,19 @@ INLINE void m68ki_write_16(uint address, uint value)
     m68k_cat_record_write(prof_start, 2u, M68K_CAT_MEM_RAM);
     return;
   }
+#endif
+#if MD_M68K_SRAM_AFTER_FASTPATH
+  if (SRAM_ENABLED && SRAM != NULL && a >= SRAM_START && (a + 1) <= SRAM_END) {
+    uint32_t offset = a - SRAM_START;
+    if ((offset + 1) < SRAM_SIZE) {
+      SRAM[offset]     = (value >> 8) & 0xFF;
+      SRAM[offset + 1] = value & 0xFF;
+      genesis_save_mark_dirty_c();
+      m68k_cat_record_write(prof_start, 2u, M68K_CAT_MEM_SRAM);
+      return;
+    }
+  }
+#endif
 
   m68k_write_memory_16(a, value);
   m68k_cat_record_write(prof_start, 2u, M68K_CAT_MEM_BUS);
@@ -1351,6 +1460,13 @@ INLINE void m68ki_write_32(uint address, uint value)
   m68ki_set_fc(FLAG_S | FUNCTION_CODE_USER_DATA) /* auto-disable (see m68kcpu.h) */
   uint32_t a = ADDRESS_68K(address);
 
+#if MD_M68K_SRAM_AFTER_FASTPATH
+  if (a >= 0xE00000) {
+    WRITE32RAM(a, value);
+    m68k_cat_record_write(prof_start, 4u, M68K_CAT_MEM_RAM);
+    return;
+  }
+#else
   if (SRAM_ENABLED && SRAM != NULL && a >= SRAM_START && (a + 3u) <= SRAM_END) {
     uint32_t offset = a - SRAM_START;
     if ((offset + 3u) < SRAM_SIZE) {
@@ -1369,6 +1485,21 @@ INLINE void m68ki_write_32(uint address, uint value)
     m68k_cat_record_write(prof_start, 4u, M68K_CAT_MEM_RAM);
     return;
   }
+#endif
+#if MD_M68K_SRAM_AFTER_FASTPATH
+  if (SRAM_ENABLED && SRAM != NULL && a >= SRAM_START && (a + 3u) <= SRAM_END) {
+    uint32_t offset = a - SRAM_START;
+    if ((offset + 3u) < SRAM_SIZE) {
+      SRAM[offset]       = (value >> 24) & 0xFF;
+      SRAM[offset + 1u]  = (value >> 16) & 0xFF;
+      SRAM[offset + 2u]  = (value >> 8) & 0xFF;
+      SRAM[offset + 3u]  = value & 0xFF;
+      genesis_save_mark_dirty_c();
+      m68k_cat_record_write(prof_start, 4u, M68K_CAT_MEM_SRAM);
+      return;
+    }
+  }
+#endif
 
   m68k_write_memory_32(a, value);
   m68k_cat_record_write(prof_start, 4u, M68K_CAT_MEM_BUS);

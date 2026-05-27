@@ -21,6 +21,7 @@ __license__ = "GPLv3"
 #include <string.h>
 #include <assert.h>
 #include <ctype.h>
+#include "esp_heap_caps.h"
 
 #include "m68k.h"
 
@@ -1347,10 +1348,13 @@ void gwenesis_init_sram(uint8_t *rom, uint32_t rom_size) {
     return;
   }
 
-  SRAM = (uint8_t*)calloc(1, size);
+  SRAM = (uint8_t*)heap_caps_calloc(1, size, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
   if (SRAM == NULL) {
 #if EMU_LOG_MASTER_ENABLED && defined(MD_LOGS)
-    EMU_LOG("SRAM alloc failed: %u\n", (unsigned)size);
+    EMU_LOG("SRAM alloc failed: %u free=%u largest=%u\n",
+            (unsigned)size,
+            (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+            (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
 #endif
     return;
   }

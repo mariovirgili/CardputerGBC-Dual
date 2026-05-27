@@ -13,6 +13,15 @@
 #ifndef MD_AUDIO_WALLCLOCK_CHUNK_CAP
 #define MD_AUDIO_WALLCLOCK_CHUNK_CAP 0
 #endif
+#ifndef MD_AUDIO_SRAM_SAMPLE_RATE
+#define MD_AUDIO_SRAM_SAMPLE_RATE 32000
+#endif
+#ifndef MD_AUDIO_SRAM_WALLCLOCK_CHUNK_CAP
+#define MD_AUDIO_SRAM_WALLCLOCK_CHUNK_CAP 800
+#endif
+#ifndef MD_AUDIO_SRAM_POOL
+#define MD_AUDIO_SRAM_POOL 2
+#endif
 
 static constexpr int AUDIO_SR = MD_AUDIO_SAMPLE_RATE;   // Hz
 static constexpr bool AUDIO_STEREO = false;
@@ -56,11 +65,16 @@ extern uint8_t genesis_audio_volume;
 
 // API audio
 void genesis_sound_configure_timing(int refresh_rate, int core_sample_rate, int core_divisor, int lines_per_frame);
+void genesis_sound_set_sram_profile(bool enabled);
 int genesis_sound_get_refresh_rate(void);
 int genesis_sound_get_core_rate(void);
+int genesis_sound_get_output_rate(void);
+int genesis_sound_get_chunk_cap(void);
+int genesis_sound_get_pool_slots(void);
 int genesis_sound_get_core_samples_per_frame(void);
 int genesis_sound_get_output_samples_per_frame(void);
 void genesis_alloc_audio_buffers(void);
+void genesis_free_audio_buffers(void);
 void genesis_sound_init();
 void genesis_sound_submit_frame(uint32_t frame_elapsed_us);
 void genesis_sound_shutdown(void);

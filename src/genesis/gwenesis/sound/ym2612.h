@@ -38,6 +38,7 @@ extern int YM2612SaveContext(unsigned char *state);
 //extern void YM2612SaveRegs(uint8_t *regs);
 
 void gwenesis_ym2612_tables_alloc(void);
+void gwenesis_ym2612_tables_free(void);
 void gwenesis_ym2612_save_state();
 void gwenesis_ym2612_load_state();
 

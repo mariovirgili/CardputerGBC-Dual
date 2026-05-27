@@ -17,6 +17,7 @@ __license__ = "GPLv3"
 
 */
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <stdbool.h>
 #include "esp_timer.h"
@@ -362,6 +363,45 @@ void gwenesis_vdp_allocate_buffers() {
         line565 = (uint16_t *)malloc((SCREEN_WIDTH + PIX_OVERFLOW*2) * sizeof(uint16_t));
         if (line565)
             memset(line565, 0, (SCREEN_WIDTH + PIX_OVERFLOW*2) * sizeof(uint16_t));
+    }
+}
+
+void gwenesis_vdp_free_buffers() {
+    if (SAT_CACHE) {
+        free(SAT_CACHE);
+        SAT_CACHE = NULL;
+    }
+    if (CRAM) {
+        free(CRAM);
+        CRAM = NULL;
+    }
+    if (CRAM565) {
+        free(CRAM565);
+        CRAM565 = NULL;
+    }
+    if (VSRAM) {
+        free(VSRAM);
+        VSRAM = NULL;
+    }
+    if (CRAM565_SH) {
+        free(CRAM565_SH);
+        CRAM565_SH = NULL;
+    }
+    if (CRAM565_HI) {
+        free(CRAM565_HI);
+        CRAM565_HI = NULL;
+    }
+    if (render_buffer) {
+        free(render_buffer);
+        render_buffer = NULL;
+    }
+    if (sprite_buffer) {
+        free(sprite_buffer);
+        sprite_buffer = NULL;
+    }
+    if (line565) {
+        free(line565);
+        line565 = NULL;
     }
 }
 

@@ -133,6 +133,7 @@
 #endif
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <math.h>
 
@@ -2371,4 +2372,29 @@ void gwenesis_ym2612_tables_alloc(void) {
     // if (!lfo_pm_table) {
     //     lfo_pm_table = (INT32*) calloc(128 * 8 * 32, sizeof(INT32));
     // }
+}
+
+void gwenesis_ym2612_tables_free(void) {
+    if (tl_tab) {
+        free(tl_tab);
+        tl_tab = NULL;
+    }
+    if (sin_tab) {
+        free(sin_tab);
+        sin_tab = NULL;
+    }
+#if GW_TARGET
+    if (lfo_pm_table) {
+        free(lfo_pm_table);
+        lfo_pm_table = NULL;
+    }
+#endif
+    if (OPNREGS) {
+        free(OPNREGS);
+        OPNREGS = NULL;
+    }
+    if (g_ym2612) {
+        free(g_ym2612);
+        g_ym2612 = NULL;
+    }
 }

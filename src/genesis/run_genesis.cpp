@@ -784,12 +784,44 @@ static inline void ensure_alloc(void** p, size_t bytes, const char* name) {
   }
 }
 
-/* Allocate core buffers: VRAM, M68K RAM, Z80 RAM, VDP buffers */
-static void genesis_alloc_core_buffers(void) {
-  ensure_alloc((void**)&VRAM, VRAM_MAX_SIZE, "VRAM");          // 64 KiB
+/* Allocate buffers needed before cartridge header/SRAM probing. */
+static void genesis_alloc_cpu_buffers(void) {
   ensure_alloc((void**)&M68K_RAM, MAX_RAM_SIZE, "M68K RAM");   // 64K main RAM
   ensure_alloc((void**)&ZRAM, MAX_Z80_RAM_SIZE, "Z80 RAM");    // 8K Z80 RAM
+}
+
+/* Allocate VRAM after SRAM has claimed its contiguous block. */
+static void genesis_alloc_vram_buffer(void) {
+  ensure_alloc((void**)&VRAM, VRAM_MAX_SIZE, "VRAM");          // 64 KiB
+}
+
+static void genesis_alloc_vdp_buffers(void) {
   gwenesis_vdp_allocate_buffers();
+}
+
+static void md_log_heap_step(const char* step)
+{
+  EMU_LOG("[MD][HEAP] %-18s free=%lu largest=%lu min=%lu\n",
+          step ? step : "",
+          (unsigned long)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+          (unsigned long)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL),
+          (unsigned long)heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL));
+}
+
+static void genesis_free_core_runtime_buffers(void) {
+  gwenesis_vdp_free_buffers();
+  if (VRAM) {
+    heap_caps_free(VRAM);
+    VRAM = nullptr;
+  }
+  if (M68K_RAM) {
+    heap_caps_free(M68K_RAM);
+    M68K_RAM = nullptr;
+  }
+  if (ZRAM) {
+    heap_caps_free(ZRAM);
+    ZRAM = nullptr;
+  }
 }
 
 static bool md_has_sram()
@@ -843,14 +875,23 @@ static void md_clean_teardown_and_save()
 {
   EMU_LOG("[MD][QUIT] clean teardown start\n");
   genesis_save_suspend_background();
+  md_log_heap_step("quit start");
 
   genesis_display_stop();
-  genesis_sound_ym_stop();
-  genesis_sound_shutdown();
+#ifndef GENESIS_NO_SOUND
+  genesis_free_audio_buffers();
+#endif
+  md_log_heap_step("tasks stopped");
+
+  genesis_free_core_runtime_buffers();
+  md_log_heap_step("core freed");
 
   if (md_has_sram()) {
+    md_log_heap_step("pre SD begin");
     if (share_sd_gameplay_mount("MD", "save")) {
+      md_log_heap_step("after SD begin");
       genesis_save_force_flush();
+      md_log_heap_step("after save");
     } else {
       EMU_LOG("[GEN][SAVE] SD remount failed, SRAM not saved\n");
     }
@@ -1139,26 +1180,34 @@ extern "C" void run_genesis(const uint8_t* rom, size_t len, const char* rom_name
   gwenesis_bus_probe_reset();
 #endif
 
-  // Allocate buffers
-  genesis_alloc_core_buffers();
-  #ifndef GENESIS_NO_SOUND
-    genesis_alloc_audio_buffers();
-  #endif
-
-  
-  // Load the xip ROM into Gwenesis
+  // Load the XIP ROM into Gwenesis after the CPU RAMs exist.
+  genesis_alloc_cpu_buffers();
   load_cartridge((unsigned char*)rom, len);
   g_target_fps = gwenesis_region_refresh_rate();
+
+  // Save
+  gwenesis_init_sram((uint8_t*)rom, (uint32_t)len);
+  EMU_LOG("[SRAM] enabled=%d start=%08lX end=%08lX\n",
+          SRAM_ENABLED,
+          (unsigned long)SRAM_START,
+          (unsigned long)SRAM_END);
   #ifndef GENESIS_NO_SOUND
+    genesis_sound_set_sram_profile(md_has_sram());
     genesis_sound_configure_timing(g_target_fps,
                                    gwenesis_region_audio_rate(),
                                    gwenesis_region_audio_divisor(),
                                    gwenesis_region_lines_per_frame());
     const int mdCoreSamples = genesis_sound_get_core_samples_per_frame();
     const int mdOutSamples = genesis_sound_get_output_samples_per_frame();
+    const int mdOutRate = genesis_sound_get_output_rate();
+    const int mdChunkCap = genesis_sound_get_chunk_cap();
+    const int mdPoolSlots = genesis_sound_get_pool_slots();
   #else
     const int mdCoreSamples = 0;
     const int mdOutSamples = 0;
+    const int mdOutRate = 0;
+    const int mdChunkCap = 0;
+    const int mdPoolSlots = 0;
   #endif
   EMU_LOG("[MD][REGION] %s fps=%d lines=%d audio coreRate=%d divisor=%d coreSamples=%d outRate=%d outSamples=%d\n",
           gwenesis_region_name(),
@@ -1167,18 +1216,23 @@ extern "C" void run_genesis(const uint8_t* rom, size_t len, const char* rom_name
           gwenesis_region_audio_rate(),
           gwenesis_region_audio_divisor(),
           mdCoreSamples,
-          AUDIO_SR,
+          mdOutRate,
           mdOutSamples);
-
-  // Save
-  gwenesis_init_sram((uint8_t*)rom, (uint32_t)len);
-  EMU_LOG("[SRAM] enabled=%d start=%08lX end=%08lX\n",
-          SRAM_ENABLED,
-          (unsigned long)SRAM_START,
-          (unsigned long)SRAM_END);
+  EMU_LOG("[MD][AUDIOPROFILE] sram=%d outRate=%d chunkCap=%d pool=%d\n",
+          md_has_sram() ? 1 : 0,
+          mdOutRate,
+          mdChunkCap,
+          mdPoolSlots);
   genesis_save_init(rom_name);
   md_load_sram_with_sd();
   md_enter_sd_off_gameplay();
+
+  // SRAM ROMs use a smaller audio profile after VRAM keeps its 64 KiB block.
+  genesis_alloc_vram_buffer();
+  #ifndef GENESIS_NO_SOUND
+    genesis_alloc_audio_buffers();
+  #endif
+  genesis_alloc_vdp_buffers();
 
   // header ASCII "SEGA"0x100
   EMU_LOG("[ROM] ptr=%p size=%u\n", rom, (unsigned)len);
