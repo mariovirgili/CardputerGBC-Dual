@@ -75,6 +75,14 @@ extern int genesisZoomPercent;
 #define MD_M68K_CATEGORY_PROFILING_DUMP 0
 #endif
 
+#ifndef MD_VDP_STATUS_POLL_DIAG
+#define MD_VDP_STATUS_POLL_DIAG 0
+#endif
+
+#if MD_VDP_STATUS_POLL_DIAG
+extern "C" void gwenesis_vdp_status_poll_diag_log_and_reset(void);
+#endif
+
 #ifndef MD_XTENSA_PERF_COUNTERS
 #define MD_XTENSA_PERF_COUNTERS 0
 #endif
@@ -278,6 +286,9 @@ static inline void md_bench_log_if_due(bool force = false)
 
 #if MD_BUS_PROBE_LOGS_ENABLED
   gwenesis_bus_probe_log_and_reset();
+#endif
+#if MD_VDP_STATUS_POLL_DIAG
+  gwenesis_vdp_status_poll_diag_log_and_reset();
 #endif
   MD_BENCH_LOG("fps=%.1f frames=%lu draw/nodraw=%lu/%lu late=%lu over=%lu frameUs min/avg/max=%lu/%lu/%lu cpu68kUs=%lu z80Us=%lu psgUs=%lu vdpCfgUs=%lu renderUs frame/line=%lu/%lu audioSubmitUs=%lu lines avg/max=%lu/%lu qFail b/e=%lu/%lu heap free/largest/min=%lu/%lu/%lu",
                fps,

@@ -125,6 +125,7 @@ void gwenesis_vdp_set_reg(int reg, unsigned char value);
 
 unsigned int gwenesis_vdp_read_memory_8(unsigned int address);
 unsigned int gwenesis_vdp_read_memory_16(unsigned int address);
+void gwenesis_vdp_status_poll_diag_log_and_reset(void);
 
 void gwenesis_vdp_write_memory_8(unsigned int address, unsigned int value);
 void gwenesis_vdp_write_memory_16(unsigned int address, unsigned int value);

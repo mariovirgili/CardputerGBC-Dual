@@ -31,6 +31,37 @@ __license__ = "GPLv3"
 
 #include <assert.h>
 
+#ifndef MD_VDP_STATUS_READ_FASTPATH
+#define MD_VDP_STATUS_READ_FASTPATH 0
+#endif
+
+#ifndef MD_VDP_STATUS_POLL_SKIP
+#define MD_VDP_STATUS_POLL_SKIP 0
+#endif
+
+#ifndef MD_VDP_STATUS_POLL_DIAG
+#define MD_VDP_STATUS_POLL_DIAG 0
+#endif
+
+#ifndef MD_VDP_STATUS_POLL_SKIP_MIN_STREAK
+#define MD_VDP_STATUS_POLL_SKIP_MIN_STREAK 2
+#endif
+
+#ifndef MD_VDP_STATUS_POLL_SKIP_MIN_WINDOW_READS
+#define MD_VDP_STATUS_POLL_SKIP_MIN_WINDOW_READS 0
+#endif
+
+#ifndef MD_VDP_STATUS_POLL_SKIP_DEADLINE_GUARD_CYCLES
+#define MD_VDP_STATUS_POLL_SKIP_DEADLINE_GUARD_CYCLES 8
+#endif
+
+#if MD_VDP_STATUS_READ_FASTPATH || MD_VDP_STATUS_POLL_SKIP
+#include "esp_attr.h"
+#define MD_VDP_STATUS_HOT_ATTR IRAM_ATTR
+#else
+#define MD_VDP_STATUS_HOT_ATTR
+#endif
+
 #if GNW_TARGET_MARIO !=0 || GNW_TARGET_ZELDA!=0
   #pragma GCC optimize("Ofast")
 #endif
@@ -98,6 +129,55 @@ static int hvcounter_latched = 0;
 
 int hint_pending;
 
+#if MD_VDP_STATUS_POLL_DIAG
+typedef struct
+{
+  uint64_t status_reads;
+  uint64_t command_pending_reads;
+  uint64_t repeat_pc_reads;
+  uint64_t armed_reads;
+  uint64_t skip_candidates;
+  uint64_t skip_applied;
+  uint64_t skip_cycles;
+  uint64_t streak_blocked;
+  uint64_t read_gate_blocked;
+  uint last_pc;
+  uint max_step;
+  uint max_streak;
+} vdp_status_poll_diag_t;
+
+static vdp_status_poll_diag_t s_vdp_status_poll_diag;
+
+static inline void gwenesis_vdp_status_poll_diag_reset(void)
+{
+  memset(&s_vdp_status_poll_diag, 0, sizeof(s_vdp_status_poll_diag));
+}
+
+void gwenesis_vdp_status_poll_diag_log_and_reset(void)
+{
+  if (s_vdp_status_poll_diag.status_reads == 0)
+    return;
+
+  EMU_LOG("[MD][VDPSTAT] reads=%llu cmdPending=%llu repeatPc=%llu armed=%llu skipCand=%llu skipApply=%llu skipCycles=%llu streakBlock=%llu readGateBlock=%llu maxStep=%lu maxStreak=%lu lastPc=%06lx\n",
+          (unsigned long long)s_vdp_status_poll_diag.status_reads,
+          (unsigned long long)s_vdp_status_poll_diag.command_pending_reads,
+          (unsigned long long)s_vdp_status_poll_diag.repeat_pc_reads,
+          (unsigned long long)s_vdp_status_poll_diag.armed_reads,
+          (unsigned long long)s_vdp_status_poll_diag.skip_candidates,
+          (unsigned long long)s_vdp_status_poll_diag.skip_applied,
+          (unsigned long long)s_vdp_status_poll_diag.skip_cycles,
+          (unsigned long long)s_vdp_status_poll_diag.streak_blocked,
+          (unsigned long long)s_vdp_status_poll_diag.read_gate_blocked,
+          (unsigned long)s_vdp_status_poll_diag.max_step,
+          (unsigned long)s_vdp_status_poll_diag.max_streak,
+          (unsigned long)s_vdp_status_poll_diag.last_pc);
+  gwenesis_vdp_status_poll_diag_reset();
+}
+#else
+static inline void gwenesis_vdp_status_poll_diag_reset(void) {}
+void gwenesis_vdp_status_poll_diag_log_and_reset(void) {}
+#endif
+
 
 // Define VIDEO MODE
 extern int mode_pal;
@@ -163,6 +243,7 @@ void gwenesis_vdp_reset() {
   // _vcounter = 0;
   gwenesis_vdp_status = 0x3C00;
   gwenesis_region_apply_vdp_status();
+  gwenesis_vdp_status_poll_diag_reset();
   // //line_counter_interrupt = 0;
   hvcounter_latched = 0;
 
@@ -348,9 +429,92 @@ void gwenesis_vdp_vram_write(unsigned int address, unsigned int value)
   }
 }
 
+static inline __attribute__((always_inline))
+void gwenesis_vdp_status_poll_observe(void)
+{
+#if MD_VDP_STATUS_POLL_DIAG
+    ++s_vdp_status_poll_diag.status_reads;
+#endif
+#if MD_VDP_STATUS_POLL_SKIP || MD_VDP_STATUS_POLL_DIAG
+    if (command_word_pending)
+    {
+#if MD_VDP_STATUS_POLL_DIAG
+        ++s_vdp_status_poll_diag.command_pending_reads;
+#endif
+        return;
+    }
+
+    const uint pc = m68k.pc;
+    const uint now = m68k.cycles;
+
+    if (m68k.poll.pc == pc && now >= m68k.poll.cycle && now < m68k.cycle_end)
+    {
+#if MD_VDP_STATUS_POLL_DIAG
+        ++s_vdp_status_poll_diag.repeat_pc_reads;
+        s_vdp_status_poll_diag.last_pc = pc;
+#endif
+        if (m68k.poll.detected < 255u)
+            m68k.poll.detected++;
+#if MD_VDP_STATUS_POLL_DIAG
+        if (m68k.poll.detected > s_vdp_status_poll_diag.max_streak)
+            s_vdp_status_poll_diag.max_streak = m68k.poll.detected;
+#endif
+
+        if (m68k.poll.detected >= 2u)
+        {
+#if MD_VDP_STATUS_POLL_DIAG
+            ++s_vdp_status_poll_diag.armed_reads;
+#endif
+            if (m68k.poll.detected < (uint)MD_VDP_STATUS_POLL_SKIP_MIN_STREAK)
+            {
+#if MD_VDP_STATUS_POLL_DIAG
+                ++s_vdp_status_poll_diag.streak_blocked;
+#endif
+                return;
+            }
+
+#if MD_VDP_STATUS_POLL_DIAG
+            if (s_vdp_status_poll_diag.status_reads < (uint64_t)MD_VDP_STATUS_POLL_SKIP_MIN_WINDOW_READS)
+            {
+                ++s_vdp_status_poll_diag.read_gate_blocked;
+                return;
+            }
+#endif
+
+            const uint remaining = m68k.cycle_end - now;
+            const uint guard = (uint)MD_VDP_STATUS_POLL_SKIP_DEADLINE_GUARD_CYCLES;
+            const uint step = (remaining > guard) ? (remaining - guard) : 0u;
+            if (step > 0u)
+            {
+#if MD_VDP_STATUS_POLL_DIAG
+                ++s_vdp_status_poll_diag.skip_candidates;
+                s_vdp_status_poll_diag.skip_cycles += step;
+                if (step > s_vdp_status_poll_diag.max_step)
+                    s_vdp_status_poll_diag.max_step = step;
+#endif
+#if MD_VDP_STATUS_POLL_SKIP
+                m68k.cycles = now + step;
+#if MD_VDP_STATUS_POLL_DIAG
+                ++s_vdp_status_poll_diag.skip_applied;
+#endif
+#endif
+            }
+        }
+    }
+    else
+    {
+        m68k.poll.pc = pc;
+        m68k.poll.cycle = now;
+        m68k.poll.detected = 0;
+    }
+#endif
+}
+
 static inline __attribute__((always_inline)) 
 unsigned short status_register_r(void)
 {
+    gwenesis_vdp_status_poll_observe();
+
     unsigned short status = gwenesis_vdp_status; // & 0xF800;
    // unsigned short status = gwenesis_vdp_status;// & 0xFC00;
 
@@ -941,11 +1105,16 @@ unsigned int gwenesis_vdp_read_memory_8(unsigned int address)
  *
  ******************************************************************************/
  //static inline 
-unsigned int gwenesis_vdp_read_memory_16(unsigned int address)
+unsigned int MD_VDP_STATUS_HOT_ATTR gwenesis_vdp_read_memory_16(unsigned int address)
 {
     
     address &= 0x1F;
     
+#if MD_VDP_STATUS_READ_FASTPATH
+    if ((address & 0x1Cu) == 0x04u)
+      return status_register_r();
+#endif
+
     if (address < 0X4)
       return gwenesis_vdp_read_data_port_16();
     else if (address < 0x8)

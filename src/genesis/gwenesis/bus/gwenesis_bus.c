@@ -706,9 +706,6 @@ unsigned int gwenesis_bus_map_address(unsigned int address) {
 #define MD_DIRECT_BUS_DISPATCH 0
 #endif
 
-#ifndef MD_VDP_STATUS_READ_FASTPATH
-#define MD_VDP_STATUS_READ_FASTPATH 0
-#endif
 /******************************************************************************
  *
  *   Main read address routine
@@ -1213,16 +1210,6 @@ unsigned int m68k_read_memory_8(unsigned int address)
 {
 #if MD_PUBLIC_RAM_FASTPATH
     if ((address & 0xE00000u) == 0xE00000u) return FETCH16RAM(address);
-#endif
-#if MD_VDP_STATUS_READ_FASTPATH
-    if (((address >> 16) & 0xFFu) == 0xC0u) {
-      const unsigned int port = address & 0x0Eu;
-      if (port == 0x04u || port == 0x06u) {
-        md_bus_probe_record(VDP_ADDR, 0, 16);
-        md_bus_probe_vdp_port(address, 0);
-        return gwenesis_vdp_read_memory_16(address);
-      }
-    }
 #endif
     return gwenesis_bus_read_memory_16(address);
 }

@@ -5416,13 +5416,13 @@ static void m68k_op_btst_8_r_i(void)
 }
 
 
-static void m68k_op_btst_32_s_d(void)
+static void MD_M68K_HOT_IRAM m68k_op_btst_32_s_d(void)
 {
   FLAG_Z = DY & (1 << (OPER_I_8() & 0x1f));
 }
 
 
-static void m68k_op_btst_8_s_ai(void)
+static void MD_M68K_HOT_IRAM m68k_op_btst_8_s_ai(void)
 {
   uint bit = OPER_I_8() & 7;
 
@@ -5430,7 +5430,7 @@ static void m68k_op_btst_8_s_ai(void)
 }
 
 
-static void m68k_op_btst_8_s_pi(void)
+static void MD_M68K_HOT_IRAM m68k_op_btst_8_s_pi(void)
 {
   uint bit = OPER_I_8() & 7;
 
@@ -5438,7 +5438,7 @@ static void m68k_op_btst_8_s_pi(void)
 }
 
 
-static void m68k_op_btst_8_s_pi7(void)
+static void MD_M68K_HOT_IRAM m68k_op_btst_8_s_pi7(void)
 {
   uint bit = OPER_I_8() & 7;
 
@@ -5446,7 +5446,7 @@ static void m68k_op_btst_8_s_pi7(void)
 }
 
 
-static void m68k_op_btst_8_s_pd(void)
+static void MD_M68K_HOT_IRAM m68k_op_btst_8_s_pd(void)
 {
   uint bit = OPER_I_8() & 7;
 
@@ -5454,7 +5454,7 @@ static void m68k_op_btst_8_s_pd(void)
 }
 
 
-static void m68k_op_btst_8_s_pd7(void)
+static void MD_M68K_HOT_IRAM m68k_op_btst_8_s_pd7(void)
 {
   uint bit = OPER_I_8() & 7;
 
@@ -5462,7 +5462,7 @@ static void m68k_op_btst_8_s_pd7(void)
 }
 
 
-static void m68k_op_btst_8_s_di(void)
+static void MD_M68K_HOT_IRAM m68k_op_btst_8_s_di(void)
 {
   uint bit = OPER_I_8() & 7;
 
@@ -5470,7 +5470,7 @@ static void m68k_op_btst_8_s_di(void)
 }
 
 
-static void m68k_op_btst_8_s_ix(void)
+static void MD_M68K_HOT_IRAM m68k_op_btst_8_s_ix(void)
 {
   uint bit = OPER_I_8() & 7;
 
@@ -5478,7 +5478,7 @@ static void m68k_op_btst_8_s_ix(void)
 }
 
 
-static void m68k_op_btst_8_s_aw(void)
+static void MD_M68K_HOT_IRAM m68k_op_btst_8_s_aw(void)
 {
   uint bit = OPER_I_8() & 7;
 
@@ -5486,7 +5486,7 @@ static void m68k_op_btst_8_s_aw(void)
 }
 
 
-static void m68k_op_btst_8_s_al(void)
+static void MD_M68K_HOT_IRAM m68k_op_btst_8_s_al(void)
 {
   uint bit = OPER_I_8() & 7;
 
@@ -5494,7 +5494,7 @@ static void m68k_op_btst_8_s_al(void)
 }
 
 
-static void m68k_op_btst_8_s_pcdi(void)
+static void MD_M68K_HOT_IRAM m68k_op_btst_8_s_pcdi(void)
 {
   uint bit = OPER_I_8() & 7;
 
@@ -5502,7 +5502,7 @@ static void m68k_op_btst_8_s_pcdi(void)
 }
 
 
-static void m68k_op_btst_8_s_pcix(void)
+static void MD_M68K_HOT_IRAM m68k_op_btst_8_s_pcix(void)
 {
   uint bit = OPER_I_8() & 7;
 
@@ -9176,7 +9176,7 @@ static void m68k_op_exg_32_da(void)
 }
 
 
-static void m68k_op_ext_16(void)
+static void MD_M68K_HOT_IRAM m68k_op_ext_16(void)
 {
   uint* r_dst = &DY;
 
@@ -9189,7 +9189,7 @@ static void m68k_op_ext_16(void)
 }
 
 
-static void m68k_op_ext_32(void)
+static void MD_M68K_HOT_IRAM m68k_op_ext_32(void)
 {
   uint* r_dst = &DY;
 
@@ -18445,7 +18445,7 @@ static void m68k_op_ori_16_tos(void)
 }
 
 
-static void m68k_op_pea_32_ai(void)
+static void MD_M68K_HOT_IRAM m68k_op_pea_32_ai(void)
 {
   uint ea = EA_AY_AI_32();
 
@@ -18453,7 +18453,7 @@ static void m68k_op_pea_32_ai(void)
 }
 
 
-static void m68k_op_pea_32_di(void)
+static void MD_M68K_HOT_IRAM m68k_op_pea_32_di(void)
 {
   uint ea = EA_AY_DI_32();
 
@@ -18461,7 +18461,7 @@ static void m68k_op_pea_32_di(void)
 }
 
 
-static void m68k_op_pea_32_ix(void)
+static void MD_M68K_HOT_IRAM m68k_op_pea_32_ix(void)
 {
   uint ea = EA_AY_IX_32();
 
@@ -18469,7 +18469,7 @@ static void m68k_op_pea_32_ix(void)
 }
 
 
-static void m68k_op_pea_32_aw(void)
+static void MD_M68K_HOT_IRAM m68k_op_pea_32_aw(void)
 {
   uint ea = EA_AW_32();
 
@@ -18477,7 +18477,7 @@ static void m68k_op_pea_32_aw(void)
 }
 
 
-static void m68k_op_pea_32_al(void)
+static void MD_M68K_HOT_IRAM m68k_op_pea_32_al(void)
 {
   uint ea = EA_AL_32();
 
@@ -18485,7 +18485,7 @@ static void m68k_op_pea_32_al(void)
 }
 
 
-static void m68k_op_pea_32_pcdi(void)
+static void MD_M68K_HOT_IRAM m68k_op_pea_32_pcdi(void)
 {
   uint ea = EA_PCDI_32();
 
@@ -18493,7 +18493,7 @@ static void m68k_op_pea_32_pcdi(void)
 }
 
 
-static void m68k_op_pea_32_pcix(void)
+static void MD_M68K_HOT_IRAM m68k_op_pea_32_pcix(void)
 {
   uint ea = EA_PCIX_32();
 
@@ -23116,7 +23116,7 @@ static void m68k_op_subx_32_mm(void)
 }
 
 
-static void m68k_op_swap_32(void)
+static void MD_M68K_HOT_IRAM m68k_op_swap_32(void)
 {
   uint* r_dst = &DY;
 
