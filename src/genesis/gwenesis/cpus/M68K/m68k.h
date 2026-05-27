@@ -653,6 +653,10 @@ typedef struct m68k_category_profile_snapshot
 	uint64_t run_total_cycles;
 	uint64_t run_loop_cycles;
 	uint64_t handler_cycles;
+	uint64_t handler_imm_cycles;
+	uint64_t handler_read_cycles;
+	uint64_t handler_write_cycles;
+	uint64_t ea_cycles;
 	uint64_t imm_cycles;
 	uint64_t data_read_cycles;
 	uint64_t data_write_cycles;

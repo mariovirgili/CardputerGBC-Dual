@@ -90,6 +90,10 @@ typedef struct m68k_category_profile_state
   m68k_category_profile_snapshot snap;
   uint32_t sample_active;
   uint32_t handler_start;
+  uint32_t ea_start;
+  uint64_t ea_imm_base;
+  uint64_t ea_read_base;
+  uint64_t ea_write_base;
 } m68k_category_profile_state;
 
 enum
@@ -189,14 +193,24 @@ static inline void m68k_cat_record_imm16(uint32_t start)
 {
   if (!start) return;
   s_m68k_category_profile.snap.imm16_count++;
-  m68k_cat_add_cycles(&s_m68k_category_profile.snap.imm_cycles, start);
+  const uint32_t cycles = (uint32_t)(m68k_cat_ccount() - start);
+  s_m68k_category_profile.snap.imm_cycles += cycles;
+  if (s_m68k_category_profile.handler_start)
+  {
+    s_m68k_category_profile.snap.handler_imm_cycles += cycles;
+  }
 }
 
 static inline void m68k_cat_record_imm32(uint32_t start)
 {
   if (!start) return;
   s_m68k_category_profile.snap.imm32_count++;
-  m68k_cat_add_cycles(&s_m68k_category_profile.snap.imm_cycles, start);
+  const uint32_t cycles = (uint32_t)(m68k_cat_ccount() - start);
+  s_m68k_category_profile.snap.imm_cycles += cycles;
+  if (s_m68k_category_profile.handler_start)
+  {
+    s_m68k_category_profile.snap.handler_imm_cycles += cycles;
+  }
 }
 
 static inline void m68k_cat_record_read(uint32_t start, uint32_t size, uint32_t category)
@@ -210,7 +224,12 @@ static inline void m68k_cat_record_read(uint32_t start, uint32_t size, uint32_t 
   else if (category == M68K_CAT_MEM_RAM) s_m68k_category_profile.snap.read_ram_count++;
   else if (category == M68K_CAT_MEM_SRAM) s_m68k_category_profile.snap.read_sram_count++;
   else s_m68k_category_profile.snap.read_bus_count++;
-  m68k_cat_add_cycles(&s_m68k_category_profile.snap.data_read_cycles, start);
+  const uint32_t cycles = (uint32_t)(m68k_cat_ccount() - start);
+  s_m68k_category_profile.snap.data_read_cycles += cycles;
+  if (s_m68k_category_profile.handler_start)
+  {
+    s_m68k_category_profile.snap.handler_read_cycles += cycles;
+  }
 }
 
 static inline void m68k_cat_record_write(uint32_t start, uint32_t size, uint32_t category)
@@ -223,15 +242,42 @@ static inline void m68k_cat_record_write(uint32_t start, uint32_t size, uint32_t
   if (category == M68K_CAT_MEM_RAM) s_m68k_category_profile.snap.write_ram_count++;
   else if (category == M68K_CAT_MEM_SRAM) s_m68k_category_profile.snap.write_sram_count++;
   else s_m68k_category_profile.snap.write_bus_count++;
-  m68k_cat_add_cycles(&s_m68k_category_profile.snap.data_write_cycles, start);
+  const uint32_t cycles = (uint32_t)(m68k_cat_ccount() - start);
+  s_m68k_category_profile.snap.data_write_cycles += cycles;
+  if (s_m68k_category_profile.handler_start)
+  {
+    s_m68k_category_profile.snap.handler_write_cycles += cycles;
+  }
 }
 
-static inline void m68k_cat_record_ea_di(void) { if (s_m68k_category_profile.sample_active) s_m68k_category_profile.snap.ea_di_count++; }
-static inline void m68k_cat_record_ea_ix(void) { if (s_m68k_category_profile.sample_active) s_m68k_category_profile.snap.ea_ix_count++; }
-static inline void m68k_cat_record_ea_aw(void) { if (s_m68k_category_profile.sample_active) s_m68k_category_profile.snap.ea_aw_count++; }
-static inline void m68k_cat_record_ea_al(void) { if (s_m68k_category_profile.sample_active) s_m68k_category_profile.snap.ea_al_count++; }
-static inline void m68k_cat_record_ea_pcdi(void) { if (s_m68k_category_profile.sample_active) s_m68k_category_profile.snap.ea_pcdi_count++; }
-static inline void m68k_cat_record_ea_pcix(void) { if (s_m68k_category_profile.sample_active) s_m68k_category_profile.snap.ea_pcix_count++; }
+static inline uint32_t m68k_cat_ea_begin(void)
+{
+  if (!s_m68k_category_profile.sample_active) return 0u;
+  s_m68k_category_profile.ea_imm_base = s_m68k_category_profile.snap.handler_imm_cycles;
+  s_m68k_category_profile.ea_read_base = s_m68k_category_profile.snap.handler_read_cycles;
+  s_m68k_category_profile.ea_write_base = s_m68k_category_profile.snap.handler_write_cycles;
+  s_m68k_category_profile.ea_start = m68k_cat_ccount();
+  return s_m68k_category_profile.ea_start;
+}
+
+static inline void m68k_cat_record_ea_cycles(uint32_t start)
+{
+  if (!start) return;
+  const uint32_t raw = (uint32_t)(m68k_cat_ccount() - start);
+  const uint64_t sub =
+    (s_m68k_category_profile.snap.handler_imm_cycles - s_m68k_category_profile.ea_imm_base) +
+    (s_m68k_category_profile.snap.handler_read_cycles - s_m68k_category_profile.ea_read_base) +
+    (s_m68k_category_profile.snap.handler_write_cycles - s_m68k_category_profile.ea_write_base);
+  s_m68k_category_profile.snap.ea_cycles += (raw > sub) ? (raw - sub) : 0u;
+  s_m68k_category_profile.ea_start = 0;
+}
+
+static inline void m68k_cat_record_ea_di(uint32_t start) { if (s_m68k_category_profile.sample_active) s_m68k_category_profile.snap.ea_di_count++; m68k_cat_record_ea_cycles(start); }
+static inline void m68k_cat_record_ea_ix(uint32_t start) { if (s_m68k_category_profile.sample_active) s_m68k_category_profile.snap.ea_ix_count++; m68k_cat_record_ea_cycles(start); }
+static inline void m68k_cat_record_ea_aw(uint32_t start) { if (s_m68k_category_profile.sample_active) s_m68k_category_profile.snap.ea_aw_count++; m68k_cat_record_ea_cycles(start); }
+static inline void m68k_cat_record_ea_al(uint32_t start) { if (s_m68k_category_profile.sample_active) s_m68k_category_profile.snap.ea_al_count++; m68k_cat_record_ea_cycles(start); }
+static inline void m68k_cat_record_ea_pcdi(uint32_t start) { if (s_m68k_category_profile.sample_active) s_m68k_category_profile.snap.ea_pcdi_count++; m68k_cat_record_ea_cycles(start); }
+static inline void m68k_cat_record_ea_pcix(uint32_t start) { if (s_m68k_category_profile.sample_active) s_m68k_category_profile.snap.ea_pcix_count++; m68k_cat_record_ea_cycles(start); }
 #else
 #define m68k_cat_instruction_begin(PC) ((void)0)
 #define m68k_cat_instruction_opcode(OP) ((void)0)
@@ -247,12 +293,13 @@ static inline void m68k_cat_record_ea_pcix(void) { if (s_m68k_category_profile.s
 #define m68k_cat_record_imm32(START) ((void)0)
 #define m68k_cat_record_read(START, SIZE, CATEGORY) ((void)0)
 #define m68k_cat_record_write(START, SIZE, CATEGORY) ((void)0)
-#define m68k_cat_record_ea_di() ((void)0)
-#define m68k_cat_record_ea_ix() ((void)0)
-#define m68k_cat_record_ea_aw() ((void)0)
-#define m68k_cat_record_ea_al() ((void)0)
-#define m68k_cat_record_ea_pcdi() ((void)0)
-#define m68k_cat_record_ea_pcix() ((void)0)
+#define m68k_cat_ea_begin() (0u)
+#define m68k_cat_record_ea_di(START) ((void)0)
+#define m68k_cat_record_ea_ix(START) ((void)0)
+#define m68k_cat_record_ea_aw(START) ((void)0)
+#define m68k_cat_record_ea_al(START) ((void)0)
+#define m68k_cat_record_ea_pcdi(START) ((void)0)
+#define m68k_cat_record_ea_pcix(START) ((void)0)
 #define M68K_CAT_MEM_ROM 0u
 #define M68K_CAT_MEM_RAM 1u
 #define M68K_CAT_MEM_SRAM 2u
@@ -560,7 +607,7 @@ static inline void m68k_cat_record_ea_pcix(void) { if (s_m68k_category_profile.s
 #define EA_AY_PD_8()   (--AY)                                /* predecrement (size = byte) */
 #define EA_AY_PD_16()  (AY-=2)                               /* predecrement (size = word) */
 #define EA_AY_PD_32()  (AY-=4)                               /* predecrement (size = long) */
-#define EA_AY_DI_8()   (m68k_cat_record_ea_di(), AY+MAKE_INT_16(m68ki_read_imm_16())) /* displacement */
+#define EA_AY_DI_8()   ({ uint32_t _cat_ea = m68k_cat_ea_begin(); uint _ea = AY+MAKE_INT_16(m68ki_read_imm_16()); m68k_cat_record_ea_di(_cat_ea); _ea; }) /* displacement */
 #define EA_AY_DI_16()  EA_AY_DI_8()
 #define EA_AY_DI_32()  EA_AY_DI_8()
 #define EA_AY_IX_8()   m68ki_get_ea_ix(AY)                   /* indirect + index */
@@ -576,7 +623,7 @@ static inline void m68k_cat_record_ea_pcix(void) { if (s_m68k_category_profile.s
 #define EA_AX_PD_8()   (--AX)
 #define EA_AX_PD_16()  (AX-=2)
 #define EA_AX_PD_32()  (AX-=4)
-#define EA_AX_DI_8()   (m68k_cat_record_ea_di(), AX+MAKE_INT_16(m68ki_read_imm_16()))
+#define EA_AX_DI_8()   ({ uint32_t _cat_ea = m68k_cat_ea_begin(); uint _ea = AX+MAKE_INT_16(m68ki_read_imm_16()); m68k_cat_record_ea_di(_cat_ea); _ea; })
 #define EA_AX_DI_16()  EA_AX_DI_8()
 #define EA_AX_DI_32()  EA_AX_DI_8()
 #define EA_AX_IX_8()   m68ki_get_ea_ix(AX)
@@ -586,10 +633,10 @@ static inline void m68k_cat_record_ea_pcix(void) { if (s_m68k_category_profile.s
 #define EA_A7_PI_8()   ((REG_A[7]+=2)-2)
 #define EA_A7_PD_8()   (REG_A[7]-=2)
 
-#define EA_AW_8()      (m68k_cat_record_ea_aw(), MAKE_INT_16(m68ki_read_imm_16()))      /* absolute word */
+#define EA_AW_8()      ({ uint32_t _cat_ea = m68k_cat_ea_begin(); uint _ea = MAKE_INT_16(m68ki_read_imm_16()); m68k_cat_record_ea_aw(_cat_ea); _ea; })      /* absolute word */
 #define EA_AW_16()     EA_AW_8()
 #define EA_AW_32()     EA_AW_8()
-#define EA_AL_8()      (m68k_cat_record_ea_al(), m68ki_read_imm_32())                   /* absolute long */
+#define EA_AL_8()      ({ uint32_t _cat_ea = m68k_cat_ea_begin(); uint _ea = m68ki_read_imm_32(); m68k_cat_record_ea_al(_cat_ea); _ea; })                   /* absolute long */
 #define EA_AL_16()     EA_AL_8()
 #define EA_AL_32()     EA_AL_8()
 #define EA_PCDI_8()    m68ki_get_ea_pcdi()                   /* pc indirect + displacement */
@@ -1449,18 +1496,27 @@ INLINE void m68ki_write_32(uint address, uint value)
  */
 INLINE uint m68ki_get_ea_pcdi(void)
 {
-  m68k_cat_record_ea_pcdi();
+  const uint32_t cat_ea = m68k_cat_ea_begin();
   uint old_pc = REG_PC;
   m68ki_use_program_space() /* auto-disable */
-  return old_pc + MAKE_INT_16(m68ki_read_imm_16());
+  const uint ea = old_pc + MAKE_INT_16(m68ki_read_imm_16());
+  m68k_cat_record_ea_pcdi(cat_ea);
+  return ea;
 }
 
 
 INLINE uint m68ki_get_ea_pcix(void)
 {
-  m68k_cat_record_ea_pcix();
+  const uint32_t cat_ea = m68k_cat_ea_begin();
+  const uint old_pc = REG_PC;
   m68ki_use_program_space() /* auto-disable */
-  return m68ki_get_ea_ix(REG_PC);
+  const uint extension = m68ki_read_imm_16();
+  uint Xn = REG_DA[extension>>12];
+  if(!BIT_B(extension))
+    Xn = MAKE_INT_16(Xn);
+  const uint ea = old_pc + Xn + MAKE_INT_8(extension);
+  m68k_cat_record_ea_pcix(cat_ea);
+  return ea;
 }
 
 /* Indexed addressing modes are encoded as follows:
@@ -1507,7 +1563,7 @@ INLINE uint m68ki_get_ea_pcix(void)
  */
 INLINE uint m68ki_get_ea_ix(uint An)
 {
-  m68k_cat_record_ea_ix();
+  const uint32_t cat_ea = m68k_cat_ea_begin();
   /* An = base register */
   uint extension = m68ki_read_imm_16();
 
@@ -1519,7 +1575,9 @@ INLINE uint m68ki_get_ea_ix(uint An)
     Xn = MAKE_INT_16(Xn);
 
   /* Add base register and displacement and return */
-  return An + Xn + MAKE_INT_8(extension);
+  const uint ea = An + Xn + MAKE_INT_8(extension);
+  m68k_cat_record_ea_ix(cat_ea);
+  return ea;
 }
 
 

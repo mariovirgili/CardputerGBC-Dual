@@ -21,6 +21,11 @@ extern "C" {
   #include "genesis/gwenesis/cpus/Z80/Z80.h"
 }
 
+#if MD_XTENSA_PERF_COUNTERS
+#include "xtensa_perfmon_access.h"
+#include "xtensa/xt_perf_consts.h"
+#endif
+
 #if EMU_LOG_MASTER_ENABLED
 static uint32_t frame_count = 0;
 static uint64_t last_fps_log_time = 0;
@@ -32,6 +37,26 @@ extern int genesisZoomPercent;
 
 #ifndef MD_BENCH_NO_FRAME_SKIP
 #define MD_BENCH_NO_FRAME_SKIP 0
+#endif
+
+#ifndef MD_DETERMINISTIC_BENCH
+#define MD_DETERMINISTIC_BENCH 0
+#endif
+
+#ifndef MD_DETERMINISTIC_BENCH_EXIT_ON_LIMIT
+#define MD_DETERMINISTIC_BENCH_EXIT_ON_LIMIT 0
+#endif
+
+#ifndef MD_DETERMINISTIC_BENCH_FRAMES
+#define MD_DETERMINISTIC_BENCH_FRAMES 0
+#endif
+
+#ifndef MD_DETERMINISTIC_BENCH_START_AT_FRAME
+#define MD_DETERMINISTIC_BENCH_START_AT_FRAME 0
+#endif
+
+#ifndef MD_DETERMINISTIC_BENCH_START_HOLD_FRAMES
+#define MD_DETERMINISTIC_BENCH_START_HOLD_FRAMES 0
 #endif
 
 #ifndef MD_M68K_NO_HINT_BATCH_RUN
@@ -49,6 +74,22 @@ extern int genesisZoomPercent;
 #ifndef MD_M68K_CATEGORY_PROFILING_DUMP
 #define MD_M68K_CATEGORY_PROFILING_DUMP 0
 #endif
+
+#ifndef MD_XTENSA_PERF_COUNTERS
+#define MD_XTENSA_PERF_COUNTERS 0
+#endif
+
+#if MD_DETERMINISTIC_BENCH
+static uint32_t s_mdDeterministicBenchFrame = 0;
+static uint8_t s_mdDeterministicBenchLimitLogged = 0;
+
+extern "C" uint32_t md_deterministic_bench_frame(void)
+{
+  return s_mdDeterministicBenchFrame;
+}
+#endif
+
+static inline void md_xtensa_perf_log_and_rotate();
 
 #if MD_RENDER_LOGS_ENABLED
 struct MdFrameDiagStats {
@@ -262,6 +303,7 @@ static inline void md_bench_log_if_due(bool force = false)
                (unsigned long)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
                (unsigned long)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL),
                (unsigned long)heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL));
+  md_xtensa_perf_log_and_rotate();
 
   d = MdBenchStats{};
   d.lastLogUs = nowUs;
@@ -273,6 +315,96 @@ static inline uint32_t md_bench_delta_us(uint64_t) { return 0; }
 static inline void md_bench_add_u64(uint64_t&, uint64_t) {}
 static inline void md_bench_record_frame(bool, bool, bool, uint32_t, uint32_t, uint32_t) {}
 static inline void md_bench_log_if_due(bool = false) {}
+#endif
+
+#if MD_XTENSA_PERF_COUNTERS
+struct MdXtensaPerfEvent {
+  uint16_t select;
+  uint16_t mask;
+  const char* name;
+};
+
+static const MdXtensaPerfEvent s_mdXtensaPerfEvents[] = {
+  { XTPERF_CNT_I_STALL, XTPERF_MASK_I_STALL_CACHE_MISS, "iStallCacheMiss" },
+  { XTPERF_CNT_I_MEM, XTPERF_MASK_I_MEM_CACHE_MISSES, "iMemCacheMiss" },
+  { XTPERF_CNT_D_STALL, XTPERF_MASK_D_STALL_CACHE_MISS, "dStallCacheMiss" },
+  { XTPERF_CNT_D_LOAD_U1, XTPERF_MASK_D_LOAD_CACHE_MISSES, "dLoadCacheMiss" },
+  { XTPERF_CNT_INSN, XTPERF_MASK_INSN_ALL, "insn" },
+};
+
+struct MdXtensaPerfStats {
+  uint32_t eventIndex = 0;
+  uint32_t configured = 0;
+  uint64_t calls = 0;
+  uint64_t cycles = 0;
+  uint64_t event = 0;
+};
+
+static MdXtensaPerfStats s_mdXtensaPerf;
+
+static inline void md_xtensa_perf_configure_current()
+{
+  const MdXtensaPerfEvent& e = s_mdXtensaPerfEvents[s_mdXtensaPerf.eventIndex];
+  xtensa_perfmon_stop();
+  xtensa_perfmon_init(0, XTPERF_CNT_CYCLES, XTPERF_MASK_CYCLES, 0, 15);
+  xtensa_perfmon_init(1, e.select, e.mask, 0, 15);
+  s_mdXtensaPerf.configured = 1;
+}
+
+static inline void md_xtensa_perf_reset()
+{
+  xtensa_perfmon_stop();
+  s_mdXtensaPerf = MdXtensaPerfStats{};
+  md_xtensa_perf_configure_current();
+}
+
+static inline void md_xtensa_perf_rotate()
+{
+  xtensa_perfmon_stop();
+  s_mdXtensaPerf.eventIndex =
+    (s_mdXtensaPerf.eventIndex + 1u) %
+    (uint32_t)(sizeof(s_mdXtensaPerfEvents) / sizeof(s_mdXtensaPerfEvents[0]));
+  s_mdXtensaPerf.calls = 0;
+  s_mdXtensaPerf.cycles = 0;
+  s_mdXtensaPerf.event = 0;
+  md_xtensa_perf_configure_current();
+}
+
+static inline void md_xtensa_perf_m68k_run(unsigned int cpuDeadline)
+{
+  if (!s_mdXtensaPerf.configured)
+  {
+    md_xtensa_perf_configure_current();
+  }
+  xtensa_perfmon_reset(0);
+  xtensa_perfmon_reset(1);
+  xtensa_perfmon_start();
+  m68k_run(cpuDeadline);
+  xtensa_perfmon_stop();
+  s_mdXtensaPerf.cycles += xtensa_perfmon_value(0);
+  s_mdXtensaPerf.event += xtensa_perfmon_value(1);
+  s_mdXtensaPerf.calls++;
+}
+
+static inline void md_xtensa_perf_log_and_rotate()
+{
+  const MdXtensaPerfEvent& e = s_mdXtensaPerfEvents[s_mdXtensaPerf.eventIndex];
+  const unsigned long pct10 = s_mdXtensaPerf.cycles ?
+    (unsigned long)((s_mdXtensaPerf.event * 1000ULL) / s_mdXtensaPerf.cycles) : 0UL;
+  EMU_LOG("[MD][XPERF] scope=m68k_run event=%s calls=%llu cycles=%llu value=%llu value/call=%llu pctCycles=%lu.%lu%%\n",
+          e.name,
+          (unsigned long long)s_mdXtensaPerf.calls,
+          (unsigned long long)s_mdXtensaPerf.cycles,
+          (unsigned long long)s_mdXtensaPerf.event,
+          s_mdXtensaPerf.calls ? (unsigned long long)(s_mdXtensaPerf.event / s_mdXtensaPerf.calls) : 0ULL,
+          pct10 / 10UL,
+          pct10 % 10UL);
+  md_xtensa_perf_rotate();
+}
+#else
+static inline void md_xtensa_perf_reset() {}
+static inline void md_xtensa_perf_m68k_run(unsigned int cpuDeadline) { m68k_run(cpuDeadline); }
+static inline void md_xtensa_perf_log_and_rotate() {}
 #endif
 
 #ifndef MD_OPCODE_PROFILING_DUMP
@@ -475,6 +607,11 @@ static inline unsigned long long md_m68k_category_avg(uint64_t value, uint64_t c
   return count ? (unsigned long long)(value / count) : 0ULL;
 }
 
+static inline uint64_t md_m68k_category_sub_or_zero(uint64_t value, uint64_t sub)
+{
+  return (value > sub) ? (value - sub) : 0ULL;
+}
+
 static inline void md_m68k_category_profile_reset()
 {
   s_mdM68kCategoryProfileLastLogUs = (uint64_t)esp_timer_get_time();
@@ -496,7 +633,14 @@ static inline void md_m68k_category_profile_log_if_due(bool force = false)
   md_m68k_category_format_top_nibbles(snap.top_nibble, snap.sampled_instructions, nibbleBuf, sizeof(nibbleBuf));
   md_m68k_category_format_top_bytes(snap.top_byte, snap.sampled_instructions, byteBuf, sizeof(byteBuf));
 
-  EMU_LOG("[MD][68KCAT] instr=%llu sampled=%llu stride=1/%lu run calls=%llu early=%llu stopped=%llu cyc/call total=%llu loop=%llu cyc/sample handler=%llu imm=%llu rd=%llu wr=%llu pc rom/ram=%lu/%lu nib=%s byte=%s\n",
+  const uint64_t handlerSub =
+    snap.handler_imm_cycles +
+    snap.handler_read_cycles +
+    snap.handler_write_cycles +
+    snap.ea_cycles;
+  const uint64_t handlerExclusive = md_m68k_category_sub_or_zero(snap.handler_cycles, handlerSub);
+
+  EMU_LOG("[MD][68KCAT] instr=%llu sampled=%llu stride=1/%lu run calls=%llu early=%llu stopped=%llu cyc/call total=%llu loop=%llu cyc/sample handler=%llu ex=%llu ea=%llu himm=%llu hrd=%llu hwr=%llu imm=%llu rd=%llu wr=%llu pc rom/ram=%lu/%lu nib=%s byte=%s\n",
           (unsigned long long)snap.instructions,
           (unsigned long long)snap.sampled_instructions,
           (unsigned long)(1u << snap.sample_shift),
@@ -506,6 +650,11 @@ static inline void md_m68k_category_profile_log_if_due(bool force = false)
           md_m68k_category_avg(snap.run_total_cycles, snap.run_calls),
           md_m68k_category_avg(snap.run_loop_cycles, snap.run_calls),
           md_m68k_category_avg(snap.handler_cycles, snap.sampled_instructions),
+          md_m68k_category_avg(handlerExclusive, snap.sampled_instructions),
+          md_m68k_category_avg(snap.ea_cycles, snap.sampled_instructions),
+          md_m68k_category_avg(snap.handler_imm_cycles, snap.sampled_instructions),
+          md_m68k_category_avg(snap.handler_read_cycles, snap.sampled_instructions),
+          md_m68k_category_avg(snap.handler_write_cycles, snap.sampled_instructions),
           md_m68k_category_avg(snap.imm_cycles, snap.sampled_instructions),
           md_m68k_category_avg(snap.data_read_cycles, snap.sampled_instructions),
           md_m68k_category_avg(snap.data_write_cycles, snap.sampled_instructions),
@@ -790,7 +939,7 @@ static void run_one_frame() {
 #if MD_BENCHMARK_LOGS_ENABLED
       t_probe = md_bench_now_us();
 #endif
-      m68k_run(cpu_deadline);
+      md_xtensa_perf_m68k_run(cpu_deadline);
 #if MD_BENCHMARK_LOGS_ENABLED
       md_bench_add_u64(s_mdBench.m68kUsTotal, t_probe);
 #endif
@@ -802,7 +951,7 @@ static void run_one_frame() {
 #if MD_BENCHMARK_LOGS_ENABLED
     t_probe = md_bench_now_us();
 #endif
-    m68k_run(cpu_deadline);
+    md_xtensa_perf_m68k_run(cpu_deadline);
 #if MD_BENCHMARK_LOGS_ENABLED
     md_bench_add_u64(s_mdBench.m68kUsTotal, t_probe);
 #endif
@@ -940,6 +1089,10 @@ static void run_one_frame() {
   md_m68k_category_profile_log_if_due();
   md_z80_prefix_profile_log_if_due();
 
+#if MD_DETERMINISTIC_BENCH
+  ++s_mdDeterministicBenchFrame;
+#endif
+
 #if EMU_LOG_MASTER_ENABLED && !MD_BENCHMARK_LOGS_ENABLED
   // FPS logging every second when the MD benchmark probe is disabled.
   frame_count++;
@@ -959,9 +1112,18 @@ extern "C" void run_genesis(const uint8_t* rom, size_t len, const char* rom_name
   M5Cardputer.Display.setSwapBytes(true);
   md_render_diag_reset();
   md_bench_reset();
+  md_xtensa_perf_reset();
   md_opcode_profile_reset();
   md_m68k_category_profile_reset();
   md_z80_prefix_profile_reset();
+#if MD_DETERMINISTIC_BENCH
+  s_mdDeterministicBenchFrame = 0;
+  s_mdDeterministicBenchLimitLogged = 0;
+  EMU_LOG("[MD][DETBENCH] enabled frames=%lu startAt=%lu startHold=%lu\n",
+          (unsigned long)MD_DETERMINISTIC_BENCH_FRAMES,
+          (unsigned long)MD_DETERMINISTIC_BENCH_START_AT_FRAME,
+          (unsigned long)MD_DETERMINISTIC_BENCH_START_HOLD_FRAMES);
+#endif
 #if MD_BUS_PROBE_LOGS_ENABLED
   gwenesis_bus_probe_reset();
 #endif
@@ -1039,6 +1201,19 @@ extern "C" void run_genesis(const uint8_t* rom, size_t len, const char* rom_name
 
     // Emulate one frame
     run_one_frame();
+#if MD_DETERMINISTIC_BENCH && (MD_DETERMINISTIC_BENCH_FRAMES > 0)
+    if (s_mdDeterministicBenchFrame >= (uint32_t)MD_DETERMINISTIC_BENCH_FRAMES) {
+      if (!s_mdDeterministicBenchLimitLogged) {
+        EMU_LOG("[MD][DETBENCH] frame marker reached frame=%lu exit=%u\n",
+                (unsigned long)s_mdDeterministicBenchFrame,
+                (unsigned)MD_DETERMINISTIC_BENCH_EXIT_ON_LIMIT);
+        s_mdDeterministicBenchLimitLogged = 1;
+      }
+#if MD_DETERMINISTIC_BENCH_EXIT_ON_LIMIT
+      break;
+#endif
+    }
+#endif
     if (share::restartRequested()) {
       break;
     }

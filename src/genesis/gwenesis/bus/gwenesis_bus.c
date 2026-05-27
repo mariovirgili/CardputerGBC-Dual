@@ -82,6 +82,35 @@ typedef struct MdBusProbeStats {
   uint32_t bank;
   uint32_t tmss;
   uint32_t none;
+  uint32_t readRom;
+  uint32_t readRam;
+  uint32_t readVdp;
+  uint32_t readIo;
+  uint32_t readZ80Ram;
+  uint32_t readZ80Ctrl;
+  uint32_t readYm2612;
+  uint32_t readPsg;
+  uint32_t readBank;
+  uint32_t readTmss;
+  uint32_t readNone;
+  uint32_t writeRom;
+  uint32_t writeRam;
+  uint32_t writeVdp;
+  uint32_t writeIo;
+  uint32_t writeZ80Ram;
+  uint32_t writeZ80Ctrl;
+  uint32_t writeYm2612;
+  uint32_t writePsg;
+  uint32_t writeBank;
+  uint32_t writeTmss;
+  uint32_t writeNone;
+  uint32_t vdpDataRead;
+  uint32_t vdpCtrlRead;
+  uint32_t vdpHvRead;
+  uint32_t vdpOtherRead;
+  uint32_t vdpDataWrite;
+  uint32_t vdpCtrlWrite;
+  uint32_t vdpOtherWrite;
   uint32_t fallbackRead16;
   uint32_t fallbackWrite16;
 } MdBusProbeStats;
@@ -109,38 +138,75 @@ static inline void md_bus_probe_record(unsigned int mapped, int isWrite, int bit
   case ROM_ADDR:
   case ROM_ADDR_MIRROR:
     ++s_mdBusProbe.rom;
+    if (isWrite) ++s_mdBusProbe.writeRom;
+    else ++s_mdBusProbe.readRom;
     break;
   case RAM_ADDR:
     ++s_mdBusProbe.ram;
+    if (isWrite) ++s_mdBusProbe.writeRam;
+    else ++s_mdBusProbe.readRam;
     break;
   case VDP_ADDR:
     ++s_mdBusProbe.vdp;
+    if (isWrite) ++s_mdBusProbe.writeVdp;
+    else ++s_mdBusProbe.readVdp;
     break;
   case IO_CTRL:
     ++s_mdBusProbe.io;
+    if (isWrite) ++s_mdBusProbe.writeIo;
+    else ++s_mdBusProbe.readIo;
     break;
   case Z80_RAM_ADDR:
   case Z80_RAM_ADDR1K:
     ++s_mdBusProbe.z80Ram;
+    if (isWrite) ++s_mdBusProbe.writeZ80Ram;
+    else ++s_mdBusProbe.readZ80Ram;
     break;
   case Z80_CTRL:
     ++s_mdBusProbe.z80Ctrl;
+    if (isWrite) ++s_mdBusProbe.writeZ80Ctrl;
+    else ++s_mdBusProbe.readZ80Ctrl;
     break;
   case Z80_YM2612_ADDR:
     ++s_mdBusProbe.ym2612;
+    if (isWrite) ++s_mdBusProbe.writeYm2612;
+    else ++s_mdBusProbe.readYm2612;
     break;
   case Z80_SN76489_ADDR:
     ++s_mdBusProbe.psg;
+    if (isWrite) ++s_mdBusProbe.writePsg;
+    else ++s_mdBusProbe.readPsg;
     break;
   case Z80_BANK_ADDR:
     ++s_mdBusProbe.bank;
+    if (isWrite) ++s_mdBusProbe.writeBank;
+    else ++s_mdBusProbe.readBank;
     break;
   case TMSS_CTRL:
     ++s_mdBusProbe.tmss;
+    if (isWrite) ++s_mdBusProbe.writeTmss;
+    else ++s_mdBusProbe.readTmss;
     break;
   default:
     ++s_mdBusProbe.none;
+    if (isWrite) ++s_mdBusProbe.writeNone;
+    else ++s_mdBusProbe.readNone;
     break;
+  }
+}
+
+static inline void md_bus_probe_vdp_port(unsigned int address, int isWrite)
+{
+  const unsigned int port = address & 0x0Eu;
+  if (isWrite) {
+    if (port == 0x00u || port == 0x02u) ++s_mdBusProbe.vdpDataWrite;
+    else if (port == 0x04u || port == 0x06u) ++s_mdBusProbe.vdpCtrlWrite;
+    else ++s_mdBusProbe.vdpOtherWrite;
+  } else {
+    if (port == 0x00u || port == 0x02u) ++s_mdBusProbe.vdpDataRead;
+    else if (port == 0x04u || port == 0x06u) ++s_mdBusProbe.vdpCtrlRead;
+    else if (port == 0x08u || port == 0x0Au) ++s_mdBusProbe.vdpHvRead;
+    else ++s_mdBusProbe.vdpOtherRead;
   }
 }
 
@@ -159,7 +225,7 @@ void gwenesis_bus_probe_log_and_reset(void)
   const uint32_t total = s_mdBusProbe.readTotal + s_mdBusProbe.writeTotal;
   if (total == 0) return;
 
-  MD_BUS_LOG("ops=%lu r/w=%lu/%lu r8/16=%lu/%lu w8/16=%lu/%lu area rom/ram/vdp/io=%lu/%lu/%lu/%lu z80 ram/ctrl/ym/psg/bank=%lu/%lu/%lu/%lu/%lu tmss/none=%lu/%lu fallback r16/w16=%lu/%lu",
+  MD_BUS_LOG("ops=%lu r/w=%lu/%lu r8/16=%lu/%lu w8/16=%lu/%lu area rom/ram/vdp/io=%lu/%lu/%lu/%lu z80 ram/ctrl/ym/psg/bank=%lu/%lu/%lu/%lu/%lu tmss/none=%lu/%lu rd rom/ram/vdp/io=%lu/%lu/%lu/%lu z80 ram/ctrl/ym/psg/bank=%lu/%lu/%lu/%lu/%lu tmss/none=%lu/%lu wr rom/ram/vdp/io=%lu/%lu/%lu/%lu z80 ram/ctrl/ym/psg/bank=%lu/%lu/%lu/%lu/%lu tmss/none=%lu/%lu vdp rd data/ctrl/hv/other=%lu/%lu/%lu/%lu wr data/ctrl/other=%lu/%lu/%lu fallback r16/w16=%lu/%lu",
              (unsigned long)total,
              (unsigned long)s_mdBusProbe.readTotal,
              (unsigned long)s_mdBusProbe.writeTotal,
@@ -178,6 +244,35 @@ void gwenesis_bus_probe_log_and_reset(void)
              (unsigned long)s_mdBusProbe.bank,
              (unsigned long)s_mdBusProbe.tmss,
              (unsigned long)s_mdBusProbe.none,
+             (unsigned long)s_mdBusProbe.readRom,
+             (unsigned long)s_mdBusProbe.readRam,
+             (unsigned long)s_mdBusProbe.readVdp,
+             (unsigned long)s_mdBusProbe.readIo,
+             (unsigned long)s_mdBusProbe.readZ80Ram,
+             (unsigned long)s_mdBusProbe.readZ80Ctrl,
+             (unsigned long)s_mdBusProbe.readYm2612,
+             (unsigned long)s_mdBusProbe.readPsg,
+             (unsigned long)s_mdBusProbe.readBank,
+             (unsigned long)s_mdBusProbe.readTmss,
+             (unsigned long)s_mdBusProbe.readNone,
+             (unsigned long)s_mdBusProbe.writeRom,
+             (unsigned long)s_mdBusProbe.writeRam,
+             (unsigned long)s_mdBusProbe.writeVdp,
+             (unsigned long)s_mdBusProbe.writeIo,
+             (unsigned long)s_mdBusProbe.writeZ80Ram,
+             (unsigned long)s_mdBusProbe.writeZ80Ctrl,
+             (unsigned long)s_mdBusProbe.writeYm2612,
+             (unsigned long)s_mdBusProbe.writePsg,
+             (unsigned long)s_mdBusProbe.writeBank,
+             (unsigned long)s_mdBusProbe.writeTmss,
+             (unsigned long)s_mdBusProbe.writeNone,
+             (unsigned long)s_mdBusProbe.vdpDataRead,
+             (unsigned long)s_mdBusProbe.vdpCtrlRead,
+             (unsigned long)s_mdBusProbe.vdpHvRead,
+             (unsigned long)s_mdBusProbe.vdpOtherRead,
+             (unsigned long)s_mdBusProbe.vdpDataWrite,
+             (unsigned long)s_mdBusProbe.vdpCtrlWrite,
+             (unsigned long)s_mdBusProbe.vdpOtherWrite,
              (unsigned long)s_mdBusProbe.fallbackRead16,
              (unsigned long)s_mdBusProbe.fallbackWrite16);
   gwenesis_bus_probe_reset();
@@ -186,6 +281,7 @@ void gwenesis_bus_probe_log_and_reset(void)
 void gwenesis_bus_probe_reset(void) {}
 void gwenesis_bus_probe_log_and_reset(void) {}
 #define md_bus_probe_record(mapped, isWrite, bits) do { (void)(mapped); } while (0)
+#define md_bus_probe_vdp_port(address, isWrite) do { (void)(address); } while (0)
 #define md_bus_probe_fallback_read16() do {} while (0)
 #define md_bus_probe_fallback_write16() do {} while (0)
 #endif
@@ -609,6 +705,10 @@ unsigned int gwenesis_bus_map_address(unsigned int address) {
 #ifndef MD_DIRECT_BUS_DISPATCH
 #define MD_DIRECT_BUS_DISPATCH 0
 #endif
+
+#ifndef MD_VDP_STATUS_READ_FASTPATH
+#define MD_VDP_STATUS_READ_FASTPATH 0
+#endif
 /******************************************************************************
  *
  *   Main read address routine
@@ -632,6 +732,7 @@ static inline unsigned int gwenesis_bus_read_memory_8(unsigned int address) {
 
   if (range == 0xC0u) {
     md_bus_probe_record(VDP_ADDR, 0, 8);
+    md_bus_probe_vdp_port(address, 0);
     return gwenesis_vdp_read_memory_8(address);
   }
 
@@ -680,6 +781,7 @@ static inline unsigned int gwenesis_bus_read_memory_8(unsigned int address) {
   switch (mapped) {
   
   case VDP_ADDR:
+    md_bus_probe_vdp_port(address, 0);
     return gwenesis_vdp_read_memory_8(address);
 
   case ROM_ADDR:
@@ -729,6 +831,7 @@ static inline unsigned int gwenesis_bus_read_memory_16(unsigned int address) {
 
   if (range == 0xC0u) {
     md_bus_probe_record(VDP_ADDR, 0, 16);
+    md_bus_probe_vdp_port(address, 0);
     return gwenesis_vdp_read_memory_16(address);
   }
 
@@ -793,6 +896,7 @@ static inline unsigned int gwenesis_bus_read_memory_16(unsigned int address) {
   switch (mapped) {
 
   case VDP_ADDR:
+    md_bus_probe_vdp_port(address, 0);
     return gwenesis_vdp_read_memory_16(address);
 
   case RAM_ADDR:
@@ -850,6 +954,7 @@ static inline void gwenesis_bus_write_memory_8(unsigned int address,
 
   if (range == 0xC0u) {
     md_bus_probe_record(VDP_ADDR, 1, 8);
+    md_bus_probe_vdp_port(address, 1);
     gwenesis_vdp_write_memory_16(address & ~1u, (value << 8) | value);
     return;
   }
@@ -911,6 +1016,7 @@ static inline void gwenesis_bus_write_memory_8(unsigned int address,
   switch (mapped) {
 
   case VDP_ADDR:
+    md_bus_probe_vdp_port(address, 1);
     gwenesis_vdp_write_memory_16(address & ~1, (value << 8) | value);
     return;
 
@@ -973,6 +1079,7 @@ static inline void gwenesis_bus_write_memory_16(unsigned int address,
 
   if (range == 0xC0u) {
     md_bus_probe_record(VDP_ADDR, 1, 16);
+    md_bus_probe_vdp_port(address, 1);
     gwenesis_vdp_write_memory_16(address, value);
     return;
   }
@@ -1039,6 +1146,7 @@ static inline void gwenesis_bus_write_memory_16(unsigned int address,
   switch (mapped) {
 
   case VDP_ADDR:
+    md_bus_probe_vdp_port(address, 1);
     gwenesis_vdp_write_memory_16(address, value);
     return;
 
@@ -1105,6 +1213,16 @@ unsigned int m68k_read_memory_8(unsigned int address)
 {
 #if MD_PUBLIC_RAM_FASTPATH
     if ((address & 0xE00000u) == 0xE00000u) return FETCH16RAM(address);
+#endif
+#if MD_VDP_STATUS_READ_FASTPATH
+    if (((address >> 16) & 0xFFu) == 0xC0u) {
+      const unsigned int port = address & 0x0Eu;
+      if (port == 0x04u || port == 0x06u) {
+        md_bus_probe_record(VDP_ADDR, 0, 16);
+        md_bus_probe_vdp_port(address, 0);
+        return gwenesis_vdp_read_memory_16(address);
+      }
+    }
 #endif
     return gwenesis_bus_read_memory_16(address);
 }

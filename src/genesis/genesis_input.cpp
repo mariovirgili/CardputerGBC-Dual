@@ -11,6 +11,26 @@ extern "C" {
   void gwenesis_io_get_buttons(void);
 }
 
+#ifndef MD_DETERMINISTIC_BENCH
+#define MD_DETERMINISTIC_BENCH 0
+#endif
+
+#ifndef MD_DETERMINISTIC_BENCH_LOCK_INPUT
+#define MD_DETERMINISTIC_BENCH_LOCK_INPUT 0
+#endif
+
+#ifndef MD_DETERMINISTIC_BENCH_START_AT_FRAME
+#define MD_DETERMINISTIC_BENCH_START_AT_FRAME 0
+#endif
+
+#ifndef MD_DETERMINISTIC_BENCH_START_HOLD_FRAMES
+#define MD_DETERMINISTIC_BENCH_START_HOLD_FRAMES 0
+#endif
+
+#if MD_DETERMINISTIC_BENCH_LOCK_INPUT
+extern "C" uint32_t md_deterministic_bench_frame(void);
+#endif
+
 // Shared state
 extern bool fullscreenMode;
 extern uint8_t genesis_audio_volume;
@@ -34,6 +54,18 @@ static inline void set_button(int idx, bool pressed) {
   else         gwenesis_io_pad_release_button(0, idx);
 }
 
+static inline void set_all_buttons(bool up, bool down, bool left, bool right,
+                                   bool btnA, bool btnB, bool btnC, bool btnStart) {
+  set_button(BTN_UP,    up);
+  set_button(BTN_DOWN,  down);
+  set_button(BTN_LEFT,  left);
+  set_button(BTN_RIGHT, right);
+  set_button(BTN_A,     btnA);
+  set_button(BTN_B,     btnB);
+  set_button(BTN_C,     btnC);
+  set_button(BTN_START, btnStart);
+}
+
 static inline uint8_t clamp_volume(int volume) {
   if (volume < 0) return 0;
   if (volume > 255) return 255;
@@ -43,6 +75,17 @@ static inline uint8_t clamp_volume(int volume) {
 /* Polling cardputer keyboard */
 extern "C" void genesis_controller_poll() {
 
+#if MD_DETERMINISTIC_BENCH_LOCK_INPUT
+    const uint32_t frame = md_deterministic_bench_frame();
+    const uint32_t startAt = (uint32_t)MD_DETERMINISTIC_BENCH_START_AT_FRAME;
+    const uint32_t startHold = (uint32_t)MD_DETERMINISTIC_BENCH_START_HOLD_FRAMES;
+    const bool start =
+        (startHold > 0u) &&
+        (frame >= startAt) &&
+        (frame < (startAt + startHold));
+    set_all_buttons(false, false, false, false, false, false, false, start);
+    return;
+#else
     // limit polling rate
     if (share::shouldPollInput() == false) {
         return;
@@ -145,14 +188,8 @@ extern "C" void genesis_controller_poll() {
     btnStart= btnStart|| btnStartKey;
 
     // Push states to Gwenesis
-    set_button(BTN_UP,    up);
-    set_button(BTN_DOWN,  down);
-    set_button(BTN_LEFT,  left);
-    set_button(BTN_RIGHT, right);
-    set_button(BTN_A,     btnA);
-    set_button(BTN_B,     btnB);
-    set_button(BTN_C,     btnC);
-    set_button(BTN_START, btnStart);
+    set_all_buttons(up, down, left, right, btnA, btnB, btnC, btnStart);
+#endif
 }
 
 /* Called by Gwenesis to poll button states */
