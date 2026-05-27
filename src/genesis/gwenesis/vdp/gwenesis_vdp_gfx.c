@@ -26,6 +26,7 @@ __license__ = "GPLv3"
 #include "gwenesis_bus.h"
 #include "gwenesis_savestate.h"
 #include "esp_attr.h"
+#include "esp_heap_caps.h"
 
 //#include <assert.h>
 
@@ -54,6 +55,10 @@ extern void GWENESIS_PUSH_SCANLINE_IDX(int line, const uint8_t* src8, int w);
 
 #ifndef MD_RENDER_INDEX_SCANLINE
 #define MD_RENDER_INDEX_SCANLINE 0
+#endif
+
+#ifndef MD_VDP_BUFFERS_INTERNAL_DRAM
+#define MD_VDP_BUFFERS_INTERNAL_DRAM 0
 #endif
 
 #if GNW_TARGET_MARIO != 0 | GNW_TARGET_ZELDA != 0
@@ -94,6 +99,15 @@ enum { PIX_OVERFLOW = 32 };
 static uint16_t *line565 = NULL;
 static uint8_t *render_buffer = NULL;
 static uint8_t *sprite_buffer = NULL;
+
+static inline void *md_vdp_alloc(size_t size)
+{
+#if MD_VDP_BUFFERS_INTERNAL_DRAM
+    void *p = heap_caps_malloc(size, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    if (p) return p;
+#endif
+    return malloc(size);
+}
 
 // Define VIDEO MODE
 static int mode_h40;
@@ -332,34 +346,34 @@ void gwenesis_vdp_set_buffer(unsigned short *ptr_screen_buffer)
 }
 
 void gwenesis_vdp_allocate_buffers() {
-    SAT_CACHE = (unsigned char*)malloc(SAT_CACHE_MAX_SIZE * sizeof(unsigned char));
+    SAT_CACHE = (unsigned char*)md_vdp_alloc(SAT_CACHE_MAX_SIZE * sizeof(unsigned char));
     memset(SAT_CACHE, 0, SAT_CACHE_MAX_SIZE * sizeof(unsigned char));
-    CRAM = (unsigned short*)malloc(CRAM_MAX_SIZE * sizeof(unsigned short));
+    CRAM = (unsigned short*)md_vdp_alloc(CRAM_MAX_SIZE * sizeof(unsigned short));
     memset(CRAM, 0, CRAM_MAX_SIZE * sizeof(unsigned short));
-    CRAM565 = (unsigned short*)malloc(CRAM_MAX_SIZE * 4 * sizeof(unsigned short));
+    CRAM565 = (unsigned short*)md_vdp_alloc(CRAM_MAX_SIZE * 4 * sizeof(unsigned short));
     memset(CRAM565, 0, CRAM_MAX_SIZE * 4 * sizeof(unsigned short));
-    VSRAM = (unsigned short*)malloc(VSRAM_MAX_SIZE * sizeof(unsigned short));
+    VSRAM = (unsigned short*)md_vdp_alloc(VSRAM_MAX_SIZE * sizeof(unsigned short));
     memset(VSRAM, 0, VSRAM_MAX_SIZE * sizeof(unsigned short));
-    CRAM565_SH = (uint16_t*)malloc(64 * sizeof(uint16_t));
+    CRAM565_SH = (uint16_t*)md_vdp_alloc(64 * sizeof(uint16_t));
     memset(CRAM565_SH, 0, 64 * sizeof(uint16_t));
-    CRAM565_HI = (uint16_t*)malloc(64 * sizeof(uint16_t));
+    CRAM565_HI = (uint16_t*)md_vdp_alloc(64 * sizeof(uint16_t));
     memset(CRAM565_HI, 0, 64 * sizeof(uint16_t));
 
     size_t buffer_size = SCREEN_WIDTH + PIX_OVERFLOW*2;
     if (!render_buffer) {
-        render_buffer =  malloc(buffer_size);
+        render_buffer = (uint8_t*)md_vdp_alloc(buffer_size);
         if (render_buffer)
             memset(render_buffer, 0, buffer_size);
     }
 
     if (!sprite_buffer) {
-        sprite_buffer = malloc(buffer_size);
+        sprite_buffer = (uint8_t*)md_vdp_alloc(buffer_size);
         if (sprite_buffer)
             memset(sprite_buffer, 0, buffer_size);
     }
 
     if (!line565) {
-        line565 = (uint16_t *)malloc((SCREEN_WIDTH + PIX_OVERFLOW*2) * sizeof(uint16_t));
+        line565 = (uint16_t *)md_vdp_alloc((SCREEN_WIDTH + PIX_OVERFLOW*2) * sizeof(uint16_t));
         if (line565)
             memset(line565, 0, (SCREEN_WIDTH + PIX_OVERFLOW*2) * sizeof(uint16_t));
     }
