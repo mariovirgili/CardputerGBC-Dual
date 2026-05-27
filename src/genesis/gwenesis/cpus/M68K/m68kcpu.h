@@ -74,6 +74,191 @@ void genesis_save_mark_dirty_c(void);
 #define MD_ROM_IMM_FETCH_PAGE_CACHE 0
 #endif
 
+#ifndef MD_M68K_CATEGORY_PROFILING
+#define MD_M68K_CATEGORY_PROFILING 0
+#endif
+
+#ifndef MD_M68K_PROFILE_SAMPLE_SHIFT
+#define MD_M68K_PROFILE_SAMPLE_SHIFT 6
+#endif
+
+#if MD_M68K_CATEGORY_PROFILING
+#include "xtensa/core-macros.h"
+
+typedef struct m68k_category_profile_state
+{
+  m68k_category_profile_snapshot snap;
+  uint32_t sample_active;
+  uint32_t handler_start;
+} m68k_category_profile_state;
+
+enum
+{
+  M68K_CAT_MEM_ROM = 0,
+  M68K_CAT_MEM_RAM = 1,
+  M68K_CAT_MEM_SRAM = 2,
+  M68K_CAT_MEM_BUS = 3
+};
+
+static m68k_category_profile_state s_m68k_category_profile;
+
+static inline uint32_t m68k_cat_ccount(void)
+{
+  return XTHAL_GET_CCOUNT();
+}
+
+static inline uint32_t m68k_cat_begin_timed(void)
+{
+  return s_m68k_category_profile.sample_active ? m68k_cat_ccount() : 0u;
+}
+
+static inline void m68k_cat_add_cycles(uint64_t *dst, uint32_t start)
+{
+  if (start)
+  {
+    *dst += (uint32_t)(m68k_cat_ccount() - start);
+  }
+}
+
+static inline void m68k_cat_instruction_begin(uint32_t pc)
+{
+  m68k_category_profile_snapshot *snap = &s_m68k_category_profile.snap;
+  snap->instructions++;
+  s_m68k_category_profile.sample_active =
+    (((snap->instructions - 1ULL) & ((1ULL << MD_M68K_PROFILE_SAMPLE_SHIFT) - 1ULL)) == 0ULL);
+  if (!s_m68k_category_profile.sample_active) return;
+
+  snap->sampled_instructions++;
+  if (pc & 0x800000u)
+    snap->pc_ram_count++;
+  else
+    snap->pc_rom_count++;
+}
+
+static inline void m68k_cat_instruction_opcode(uint16_t opcode)
+{
+  if (!s_m68k_category_profile.sample_active) return;
+  s_m68k_category_profile.snap.top_nibble[(opcode >> 12) & 0x0f]++;
+  s_m68k_category_profile.snap.top_byte[(opcode >> 8) & 0xff]++;
+}
+
+static inline void m68k_cat_handler_begin(void)
+{
+  s_m68k_category_profile.handler_start = m68k_cat_begin_timed();
+}
+
+static inline void m68k_cat_handler_end(void)
+{
+  m68k_cat_add_cycles(&s_m68k_category_profile.snap.handler_cycles,
+                      s_m68k_category_profile.handler_start);
+  s_m68k_category_profile.handler_start = 0;
+}
+
+static inline uint32_t m68k_cat_run_begin(void)
+{
+  s_m68k_category_profile.snap.run_calls++;
+  return m68k_cat_ccount();
+}
+
+static inline void m68k_cat_run_early(uint32_t start)
+{
+  s_m68k_category_profile.snap.run_early_returns++;
+  s_m68k_category_profile.snap.run_total_cycles += (uint32_t)(m68k_cat_ccount() - start);
+}
+
+static inline void m68k_cat_run_stopped(uint32_t start)
+{
+  s_m68k_category_profile.snap.run_stopped_returns++;
+  s_m68k_category_profile.snap.run_total_cycles += (uint32_t)(m68k_cat_ccount() - start);
+}
+
+static inline uint32_t m68k_cat_run_loop_begin(uint32_t start)
+{
+  (void)start;
+  return m68k_cat_ccount();
+}
+
+static inline void m68k_cat_run_end(uint32_t start, uint32_t loop_start)
+{
+  const uint32_t end = m68k_cat_ccount();
+  s_m68k_category_profile.snap.run_total_cycles += (uint32_t)(end - start);
+  s_m68k_category_profile.snap.run_loop_cycles += (uint32_t)(end - loop_start);
+}
+
+static inline void m68k_cat_record_imm16(uint32_t start)
+{
+  if (!start) return;
+  s_m68k_category_profile.snap.imm16_count++;
+  m68k_cat_add_cycles(&s_m68k_category_profile.snap.imm_cycles, start);
+}
+
+static inline void m68k_cat_record_imm32(uint32_t start)
+{
+  if (!start) return;
+  s_m68k_category_profile.snap.imm32_count++;
+  m68k_cat_add_cycles(&s_m68k_category_profile.snap.imm_cycles, start);
+}
+
+static inline void m68k_cat_record_read(uint32_t start, uint32_t size, uint32_t category)
+{
+  if (!start) return;
+  if (size == 1u) s_m68k_category_profile.snap.read8_count++;
+  else if (size == 2u) s_m68k_category_profile.snap.read16_count++;
+  else s_m68k_category_profile.snap.read32_count++;
+
+  if (category == M68K_CAT_MEM_ROM) s_m68k_category_profile.snap.read_rom_count++;
+  else if (category == M68K_CAT_MEM_RAM) s_m68k_category_profile.snap.read_ram_count++;
+  else if (category == M68K_CAT_MEM_SRAM) s_m68k_category_profile.snap.read_sram_count++;
+  else s_m68k_category_profile.snap.read_bus_count++;
+  m68k_cat_add_cycles(&s_m68k_category_profile.snap.data_read_cycles, start);
+}
+
+static inline void m68k_cat_record_write(uint32_t start, uint32_t size, uint32_t category)
+{
+  if (!start) return;
+  if (size == 1u) s_m68k_category_profile.snap.write8_count++;
+  else if (size == 2u) s_m68k_category_profile.snap.write16_count++;
+  else s_m68k_category_profile.snap.write32_count++;
+
+  if (category == M68K_CAT_MEM_RAM) s_m68k_category_profile.snap.write_ram_count++;
+  else if (category == M68K_CAT_MEM_SRAM) s_m68k_category_profile.snap.write_sram_count++;
+  else s_m68k_category_profile.snap.write_bus_count++;
+  m68k_cat_add_cycles(&s_m68k_category_profile.snap.data_write_cycles, start);
+}
+
+static inline void m68k_cat_record_ea_di(void) { if (s_m68k_category_profile.sample_active) s_m68k_category_profile.snap.ea_di_count++; }
+static inline void m68k_cat_record_ea_ix(void) { if (s_m68k_category_profile.sample_active) s_m68k_category_profile.snap.ea_ix_count++; }
+static inline void m68k_cat_record_ea_aw(void) { if (s_m68k_category_profile.sample_active) s_m68k_category_profile.snap.ea_aw_count++; }
+static inline void m68k_cat_record_ea_al(void) { if (s_m68k_category_profile.sample_active) s_m68k_category_profile.snap.ea_al_count++; }
+static inline void m68k_cat_record_ea_pcdi(void) { if (s_m68k_category_profile.sample_active) s_m68k_category_profile.snap.ea_pcdi_count++; }
+static inline void m68k_cat_record_ea_pcix(void) { if (s_m68k_category_profile.sample_active) s_m68k_category_profile.snap.ea_pcix_count++; }
+#else
+#define m68k_cat_instruction_begin(PC) ((void)0)
+#define m68k_cat_instruction_opcode(OP) ((void)0)
+#define m68k_cat_handler_begin() ((void)0)
+#define m68k_cat_handler_end() ((void)0)
+#define m68k_cat_run_begin() (0u)
+#define m68k_cat_run_early(START) ((void)0)
+#define m68k_cat_run_stopped(START) ((void)0)
+#define m68k_cat_run_loop_begin(START) (0u)
+#define m68k_cat_run_end(START, LOOP_START) ((void)0)
+#define m68k_cat_begin_timed() (0u)
+#define m68k_cat_record_imm16(START) ((void)0)
+#define m68k_cat_record_imm32(START) ((void)0)
+#define m68k_cat_record_read(START, SIZE, CATEGORY) ((void)0)
+#define m68k_cat_record_write(START, SIZE, CATEGORY) ((void)0)
+#define m68k_cat_record_ea_di() ((void)0)
+#define m68k_cat_record_ea_ix() ((void)0)
+#define m68k_cat_record_ea_aw() ((void)0)
+#define m68k_cat_record_ea_al() ((void)0)
+#define m68k_cat_record_ea_pcdi() ((void)0)
+#define m68k_cat_record_ea_pcix() ((void)0)
+#define M68K_CAT_MEM_ROM 0u
+#define M68K_CAT_MEM_RAM 1u
+#define M68K_CAT_MEM_SRAM 2u
+#define M68K_CAT_MEM_BUS 3u
+#endif
+
 /* ======================================================================== */
 /* ================================ MACROS ================================ */
 /* ======================================================================== */
@@ -375,7 +560,7 @@ void genesis_save_mark_dirty_c(void);
 #define EA_AY_PD_8()   (--AY)                                /* predecrement (size = byte) */
 #define EA_AY_PD_16()  (AY-=2)                               /* predecrement (size = word) */
 #define EA_AY_PD_32()  (AY-=4)                               /* predecrement (size = long) */
-#define EA_AY_DI_8()   (AY+MAKE_INT_16(m68ki_read_imm_16())) /* displacement */
+#define EA_AY_DI_8()   (m68k_cat_record_ea_di(), AY+MAKE_INT_16(m68ki_read_imm_16())) /* displacement */
 #define EA_AY_DI_16()  EA_AY_DI_8()
 #define EA_AY_DI_32()  EA_AY_DI_8()
 #define EA_AY_IX_8()   m68ki_get_ea_ix(AY)                   /* indirect + index */
@@ -391,7 +576,7 @@ void genesis_save_mark_dirty_c(void);
 #define EA_AX_PD_8()   (--AX)
 #define EA_AX_PD_16()  (AX-=2)
 #define EA_AX_PD_32()  (AX-=4)
-#define EA_AX_DI_8()   (AX+MAKE_INT_16(m68ki_read_imm_16()))
+#define EA_AX_DI_8()   (m68k_cat_record_ea_di(), AX+MAKE_INT_16(m68ki_read_imm_16()))
 #define EA_AX_DI_16()  EA_AX_DI_8()
 #define EA_AX_DI_32()  EA_AX_DI_8()
 #define EA_AX_IX_8()   m68ki_get_ea_ix(AX)
@@ -401,10 +586,10 @@ void genesis_save_mark_dirty_c(void);
 #define EA_A7_PI_8()   ((REG_A[7]+=2)-2)
 #define EA_A7_PD_8()   (REG_A[7]-=2)
 
-#define EA_AW_8()      MAKE_INT_16(m68ki_read_imm_16())      /* absolute word */
+#define EA_AW_8()      (m68k_cat_record_ea_aw(), MAKE_INT_16(m68ki_read_imm_16()))      /* absolute word */
 #define EA_AW_16()     EA_AW_8()
 #define EA_AW_32()     EA_AW_8()
-#define EA_AL_8()      m68ki_read_imm_32()                   /* absolute long */
+#define EA_AL_8()      (m68k_cat_record_ea_al(), m68ki_read_imm_32())                   /* absolute long */
 #define EA_AL_16()     EA_AL_8()
 #define EA_AL_32()     EA_AL_8()
 #define EA_PCDI_8()    m68ki_get_ea_pcdi()                   /* pc indirect + displacement */
@@ -874,31 +1059,39 @@ INLINE uint m68ki_read_imm_rom_32_cached(uint pc)
 
 INLINE uint m68ki_read_imm_16(void)
 {
+  const uint32_t prof_start = m68k_cat_begin_timed();
   m68ki_set_fc(FLAG_S | FUNCTION_CODE_USER_PROGRAM) /* auto-disable (see m68kcpu.h) */
 #if M68K_CHECK_PC_ADDRESS_ERROR
   m68ki_check_address_error(REG_PC, MODE_READ, FLAG_S | FUNCTION_CODE_USER_PROGRAM) /* auto-disable (see m68kcpu.h) */
 #endif
 #if M68K_EMULATE_PREFETCH
+  uint result;
   if(MASK_OUT_BELOW_2(REG_PC) != CPU_PREF_ADDR)
   {
     CPU_PREF_ADDR = MASK_OUT_BELOW_2(REG_PC);
     CPU_PREF_DATA = m68k_read_immediate_32(CPU_PREF_ADDR);
   }
   REG_PC += 2;
-  return MASK_OUT_ABOVE_16(CPU_PREF_DATA >> ((2-((REG_PC-2)&2))<<3));
+  result = MASK_OUT_ABOVE_16(CPU_PREF_DATA >> ((2-((REG_PC-2)&2))<<3));
+  m68k_cat_record_imm16(prof_start);
+  return result;
 #else
   uint pc = REG_PC;
+  uint result;
   REG_PC += 2;
 #if MD_ROM_IMM_FETCH_PAGE_CACHE && !MD_ROM_PREBYTE_SWAP_XIP
-  return m68ki_read_imm_rom_16_cached(pc);
+  result = m68ki_read_imm_rom_16_cached(pc);
 #else
-  return m68k_read_immediate_16(pc);
+  result = m68k_read_immediate_16(pc);
 #endif
+  m68k_cat_record_imm16(prof_start);
+  return result;
 #endif /* M68K_EMULATE_PREFETCH */
 }
 
 INLINE uint m68ki_read_imm_32(void)
 {
+  const uint32_t prof_start = m68k_cat_begin_timed();
 #if M68K_EMULATE_PREFETCH
   uint temp_val;
 
@@ -921,6 +1114,7 @@ INLINE uint m68ki_read_imm_32(void)
   }
   REG_PC += 2;
 
+  m68k_cat_record_imm32(prof_start);
   return temp_val;
 #else
   m68ki_set_fc(FLAG_S | FUNCTION_CODE_USER_PROGRAM) /* auto-disable (see m68kcpu.h) */
@@ -928,12 +1122,15 @@ INLINE uint m68ki_read_imm_32(void)
   m68ki_check_address_error(REG_PC, MODE_READ, FLAG_S | FUNCTION_CODE_USER_PROGRAM) /* auto-disable (see m68kcpu.h) */
 #endif
   uint pc = REG_PC;
+  uint result;
   REG_PC += 4;
 #if MD_ROM_IMM_FETCH_PAGE_CACHE && !MD_ROM_PREBYTE_SWAP_XIP
-  return m68ki_read_imm_rom_32_cached(pc);
+  result = m68ki_read_imm_rom_32_cached(pc);
 #else
-  return m68k_read_immediate_32(pc);
+  result = m68k_read_immediate_32(pc);
 #endif
+  m68k_cat_record_imm32(prof_start);
+  return result;
 #endif /* M68K_EMULATE_PREFETCH */
 }
 
@@ -951,6 +1148,7 @@ INLINE uint m68ki_read_imm_32(void)
 
 INLINE uint m68ki_read_8(uint address)
 {
+  const uint32_t prof_start = m68k_cat_begin_timed();
   m68ki_set_fc(FLAG_S | m68ki_get_address_space()) /* auto-disable (see m68kcpu.h) */
 
   uint32_t a = ADDRESS_68K(address);
@@ -958,56 +1156,95 @@ INLINE uint m68ki_read_8(uint address)
   if (SRAM_ENABLED && SRAM != NULL && a >= SRAM_START && a <= SRAM_END) {
     uint32_t offset = a - SRAM_START;
     if (offset < SRAM_SIZE) {
-      return SRAM[offset];
+      uint result = SRAM[offset];
+      m68k_cat_record_read(prof_start, 1u, M68K_CAT_MEM_SRAM);
+      return result;
     }
   }
-  if (a < 0x800000) return FETCH8ROM(a);
-  if (a >= 0xE00000) return FETCH8RAM(a);
-  return m68k_read_memory_8(a);
+  if (a < 0x800000) {
+    uint result = FETCH8ROM(a);
+    m68k_cat_record_read(prof_start, 1u, M68K_CAT_MEM_ROM);
+    return result;
+  }
+  if (a >= 0xE00000) {
+    uint result = FETCH8RAM(a);
+    m68k_cat_record_read(prof_start, 1u, M68K_CAT_MEM_RAM);
+    return result;
+  }
+  uint result = m68k_read_memory_8(a);
+  m68k_cat_record_read(prof_start, 1u, M68K_CAT_MEM_BUS);
+  return result;
 }
 
 INLINE uint m68ki_read_16(uint address)
 {
 
+  const uint32_t prof_start = m68k_cat_begin_timed();
   m68ki_set_fc(FLAG_S | m68ki_get_address_space()) /* auto-disable (see m68kcpu.h) */
   uint32_t a = ADDRESS_68K(address);
 
   if (SRAM_ENABLED && SRAM != NULL && a >= SRAM_START && (a + 1u) <= SRAM_END) {
     uint32_t offset = a - SRAM_START;
     if ((offset + 1u) < SRAM_SIZE) {
-      return ((uint)SRAM[offset] << 8) | (uint)SRAM[offset + 1u];
+      uint result = ((uint)SRAM[offset] << 8) | (uint)SRAM[offset + 1u];
+      m68k_cat_record_read(prof_start, 2u, M68K_CAT_MEM_SRAM);
+      return result;
     }
   }
 
-  if (a < 0x800000) return FETCH16ROM(a);
-  if (a >= 0xE00000) return FETCH16RAM(a);
-  return m68k_read_memory_16(a);
+  if (a < 0x800000) {
+    uint result = FETCH16ROM(a);
+    m68k_cat_record_read(prof_start, 2u, M68K_CAT_MEM_ROM);
+    return result;
+  }
+  if (a >= 0xE00000) {
+    uint result = FETCH16RAM(a);
+    m68k_cat_record_read(prof_start, 2u, M68K_CAT_MEM_RAM);
+    return result;
+  }
+  uint result = m68k_read_memory_16(a);
+  m68k_cat_record_read(prof_start, 2u, M68K_CAT_MEM_BUS);
+  return result;
 
 }
 
 INLINE uint m68ki_read_32(uint address)
 {
 
+  const uint32_t prof_start = m68k_cat_begin_timed();
   m68ki_set_fc(FLAG_S | m68ki_get_address_space()) /* auto-disable (see m68kcpu.h) */
   uint32_t a = ADDRESS_68K(address);
 
   if (SRAM_ENABLED && SRAM != NULL && a >= SRAM_START && (a + 3u) <= SRAM_END) {
     uint32_t offset = a - SRAM_START;
     if ((offset + 3u) < SRAM_SIZE) {
-      return ((uint)SRAM[offset] << 24) |
-             ((uint)SRAM[offset + 1u] << 16) |
-             ((uint)SRAM[offset + 2u] << 8) |
-             (uint)SRAM[offset + 3u];
+      uint result = ((uint)SRAM[offset] << 24) |
+                    ((uint)SRAM[offset + 1u] << 16) |
+                    ((uint)SRAM[offset + 2u] << 8) |
+                    (uint)SRAM[offset + 3u];
+      m68k_cat_record_read(prof_start, 4u, M68K_CAT_MEM_SRAM);
+      return result;
     }
   }
 
-  if (a < 0x800000) return FETCH32ROM(a);
-  if (a >= 0xE00000) return FETCH32RAM(a);
-  return m68k_read_memory_32(a);
+  if (a < 0x800000) {
+    uint result = FETCH32ROM(a);
+    m68k_cat_record_read(prof_start, 4u, M68K_CAT_MEM_ROM);
+    return result;
+  }
+  if (a >= 0xE00000) {
+    uint result = FETCH32RAM(a);
+    m68k_cat_record_read(prof_start, 4u, M68K_CAT_MEM_RAM);
+    return result;
+  }
+  uint result = m68k_read_memory_32(a);
+  m68k_cat_record_read(prof_start, 4u, M68K_CAT_MEM_BUS);
+  return result;
 }
 
 INLINE void m68ki_write_8(uint address, uint value)
 {
+  const uint32_t prof_start = m68k_cat_begin_timed();
   m68ki_set_fc(FLAG_S | FUNCTION_CODE_USER_DATA) /* auto-disable (see m68kcpu.h) */
 
   uint32_t a = ADDRESS_68K(address);
@@ -1017,20 +1254,24 @@ INLINE void m68ki_write_8(uint address, uint value)
     if (offset < SRAM_SIZE) {
       SRAM[offset] = value & 0xFF;
       genesis_save_mark_dirty_c();
+      m68k_cat_record_write(prof_start, 1u, M68K_CAT_MEM_SRAM);
       return;
     }
   }
 
   if (a >= 0xE00000) {
     WRITE8RAM(a, value);
+    m68k_cat_record_write(prof_start, 1u, M68K_CAT_MEM_RAM);
     return;
   }
 
   m68k_write_memory_8(a, value);
+  m68k_cat_record_write(prof_start, 1u, M68K_CAT_MEM_BUS);
 }
 
 INLINE void m68ki_write_16(uint address, uint value)
 {
+  const uint32_t prof_start = m68k_cat_begin_timed();
   m68ki_set_fc(FLAG_S | FUNCTION_CODE_USER_DATA) /* auto-disable (see m68kcpu.h) */
 
   uint32_t a = ADDRESS_68K(address);
@@ -1041,21 +1282,25 @@ INLINE void m68ki_write_16(uint address, uint value)
       SRAM[offset]     = (value >> 8) & 0xFF;
       SRAM[offset + 1] = value & 0xFF;
       genesis_save_mark_dirty_c();
+      m68k_cat_record_write(prof_start, 2u, M68K_CAT_MEM_SRAM);
       return;
     }
   }
 
   if (a >= 0xE00000) {
     WRITE16RAM(a, value);
+    m68k_cat_record_write(prof_start, 2u, M68K_CAT_MEM_RAM);
     return;
   }
 
   m68k_write_memory_16(a, value);
+  m68k_cat_record_write(prof_start, 2u, M68K_CAT_MEM_BUS);
 }
 
 INLINE void m68ki_write_32(uint address, uint value)
 {
 
+  const uint32_t prof_start = m68k_cat_begin_timed();
   m68ki_set_fc(FLAG_S | FUNCTION_CODE_USER_DATA) /* auto-disable (see m68kcpu.h) */
   uint32_t a = ADDRESS_68K(address);
 
@@ -1067,16 +1312,19 @@ INLINE void m68ki_write_32(uint address, uint value)
       SRAM[offset + 2u]  = (value >> 8) & 0xFF;
       SRAM[offset + 3u]  = value & 0xFF;
       genesis_save_mark_dirty_c();
+      m68k_cat_record_write(prof_start, 4u, M68K_CAT_MEM_SRAM);
       return;
     }
   }
 
   if (a >= 0xE00000) {
     WRITE32RAM(a, value);
+    m68k_cat_record_write(prof_start, 4u, M68K_CAT_MEM_RAM);
     return;
   }
 
   m68k_write_memory_32(a, value);
+  m68k_cat_record_write(prof_start, 4u, M68K_CAT_MEM_BUS);
 }
 
 
@@ -1201,6 +1449,7 @@ INLINE void m68ki_write_32(uint address, uint value)
  */
 INLINE uint m68ki_get_ea_pcdi(void)
 {
+  m68k_cat_record_ea_pcdi();
   uint old_pc = REG_PC;
   m68ki_use_program_space() /* auto-disable */
   return old_pc + MAKE_INT_16(m68ki_read_imm_16());
@@ -1209,6 +1458,7 @@ INLINE uint m68ki_get_ea_pcdi(void)
 
 INLINE uint m68ki_get_ea_pcix(void)
 {
+  m68k_cat_record_ea_pcix();
   m68ki_use_program_space() /* auto-disable */
   return m68ki_get_ea_ix(REG_PC);
 }
@@ -1257,6 +1507,7 @@ INLINE uint m68ki_get_ea_pcix(void)
  */
 INLINE uint m68ki_get_ea_ix(uint An)
 {
+  m68k_cat_record_ea_ix();
   /* An = base register */
   uint extension = m68ki_read_imm_16();
 

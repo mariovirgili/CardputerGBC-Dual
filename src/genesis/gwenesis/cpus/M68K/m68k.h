@@ -641,6 +641,51 @@ typedef struct m68k_opcode_profile_snapshot
 extern void m68k_opcode_profile_reset(void);
 extern int m68k_opcode_profile_get_snapshot(m68k_opcode_profile_snapshot *out, int reset);
 
+typedef struct m68k_category_profile_snapshot
+{
+	uint64_t instructions;
+	uint64_t sampled_instructions;
+	uint32_t sample_shift;
+	uint32_t reserved;
+	uint64_t run_calls;
+	uint64_t run_early_returns;
+	uint64_t run_stopped_returns;
+	uint64_t run_total_cycles;
+	uint64_t run_loop_cycles;
+	uint64_t handler_cycles;
+	uint64_t imm_cycles;
+	uint64_t data_read_cycles;
+	uint64_t data_write_cycles;
+	uint32_t imm16_count;
+	uint32_t imm32_count;
+	uint32_t read_rom_count;
+	uint32_t read_ram_count;
+	uint32_t read_sram_count;
+	uint32_t read_bus_count;
+	uint32_t read8_count;
+	uint32_t read16_count;
+	uint32_t read32_count;
+	uint32_t write_ram_count;
+	uint32_t write_sram_count;
+	uint32_t write_bus_count;
+	uint32_t write8_count;
+	uint32_t write16_count;
+	uint32_t write32_count;
+	uint32_t ea_di_count;
+	uint32_t ea_ix_count;
+	uint32_t ea_aw_count;
+	uint32_t ea_al_count;
+	uint32_t ea_pcdi_count;
+	uint32_t ea_pcix_count;
+	uint32_t pc_rom_count;
+	uint32_t pc_ram_count;
+	uint32_t top_nibble[16];
+	uint32_t top_byte[256];
+} m68k_category_profile_snapshot;
+
+extern void m68k_category_profile_reset(void);
+extern int m68k_category_profile_get_snapshot(m68k_category_profile_snapshot *out, int reset);
+
 /* Get current instruction execution time */
 extern int m68k_cycles(void);
 

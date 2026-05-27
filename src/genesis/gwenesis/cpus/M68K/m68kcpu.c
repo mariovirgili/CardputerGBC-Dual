@@ -32,6 +32,7 @@ extern int vdp_68k_irq_ack(int int_level);
 #include "m68kops.h"
 #include "gwenesis_savestate.h"
 #include "esp_attr.h"
+#include <string.h>
 /* ======================================================================== */
 /* ================================= DATA ================================= */
 /* ======================================================================== */
@@ -172,6 +173,35 @@ int m68k_opcode_profile_get_snapshot(m68k_opcode_profile_snapshot *out, int rese
   if (reset)
   {
     m68k_opcode_profile_reset();
+  }
+  return has_data;
+#else
+  (void)out;
+  (void)reset;
+  return 0;
+#endif
+}
+
+void m68k_category_profile_reset(void)
+{
+#if MD_M68K_CATEGORY_PROFILING
+  memset(&s_m68k_category_profile, 0, sizeof(s_m68k_category_profile));
+  s_m68k_category_profile.snap.sample_shift = MD_M68K_PROFILE_SAMPLE_SHIFT;
+#endif
+}
+
+int m68k_category_profile_get_snapshot(m68k_category_profile_snapshot *out, int reset)
+{
+#if MD_M68K_CATEGORY_PROFILING
+  const int has_data = (s_m68k_category_profile.snap.instructions != 0);
+  if (out)
+  {
+    *out = s_m68k_category_profile.snap;
+    out->sample_shift = MD_M68K_PROFILE_SAMPLE_SHIFT;
+  }
+  if (reset)
+  {
+    m68k_category_profile_reset();
   }
   return has_data;
 #else
@@ -386,8 +416,11 @@ void m68k_set_irq_delay(unsigned int int_level)
       irq_latency = 1;
       m68ki_trace_t1() /* auto-disable (see m68kcpu.h) */
       m68ki_use_data_space() /* auto-disable (see m68kcpu.h) */
+      m68k_cat_instruction_begin(REG_PC);
       REG_IR = m68ki_read_imm_16();
+      m68k_cat_instruction_opcode((uint16_t)REG_IR);
       m68k_opcode_profile_record((uint16_t)REG_IR);
+      m68k_cat_handler_begin();
 #if MD_HYBRID_TOPBYTE_DISPATCH && !defined(TABLES_FULL)
       m68ki_dispatch_hybrid_topbyte_dispatch((uint16_t)REG_IR);
 #elif MD_TOPBYTE_COMPRESSED_DISPATCH && !defined(TABLES_FULL)
@@ -395,6 +428,7 @@ void m68k_set_irq_delay(unsigned int int_level)
 #else
       m68ki_instruction_jump_table[REG_IR]();
 #endif
+      m68k_cat_handler_end();
       m68ki_exception_if_trace() /* auto-disable (see m68kcpu.h) */
       irq_latency = 0;
     }
@@ -411,13 +445,15 @@ void m68k_set_irq_delay(unsigned int int_level)
   m68ki_check_interrupts(); /* Level triggered (IRQ) */
 }
 
-void IRAM_ATTR m68k_run(unsigned int cycles) 
+void IRAM_ATTR m68k_run(unsigned int cycles)
 {
+  const uint32_t prof_run_start = m68k_cat_run_begin();
     //  printf("m68K_run current_cycles=%d add=%d STOP=%x\n",m68k.cycles,cycles,CPU_STOPPED);
 
   /* Make sure CPU is not already ahead */
   if (m68k.cycles >= cycles)
   {
+    m68k_cat_run_early(prof_run_start);
     return;
   }
 
@@ -428,6 +464,7 @@ void IRAM_ATTR m68k_run(unsigned int cycles)
   if (CPU_STOPPED)
   {
     m68k.cycles = cycles;
+    m68k_cat_run_stopped(prof_run_start);
     return;
   }
 
@@ -441,6 +478,7 @@ void IRAM_ATTR m68k_run(unsigned int cycles)
   error("[%d][%d] m68k run to %d cycles (%x), irq mask = %x (%x)\n", v_counter, m68k.cycles, cycles, m68k.pc,FLAG_INT_MASK, CPU_INT_LEVEL);
 #endif
 
+  const uint32_t prof_loop_start = m68k_cat_run_loop_begin(prof_run_start);
   while (m68k.cycles < cycles)
   {
     /* Set tracing accodring to T1. */
@@ -456,12 +494,15 @@ void IRAM_ATTR m68k_run(unsigned int cycles)
 #endif
 
     /* Decode next instruction */
+    m68k_cat_instruction_begin(REG_PC);
     REG_IR = m68ki_read_imm_16();
+    m68k_cat_instruction_opcode((uint16_t)REG_IR);
     m68k_opcode_profile_record((uint16_t)REG_IR);
 
 //    printf("PC=%x IR=%x CYCLES=%d \n",m68k.pc,REG_IR,CYC_INSTRUCTION(REG_IR));
 
     /* Execute instruction */
+    m68k_cat_handler_begin();
 #if MD_HYBRID_TOPBYTE_DISPATCH && !defined(TABLES_FULL)
     m68ki_dispatch_hybrid_topbyte_dispatch((uint16_t)REG_IR);
 #elif MD_TOPBYTE_COMPRESSED_DISPATCH && !defined(TABLES_FULL)
@@ -469,11 +510,13 @@ void IRAM_ATTR m68k_run(unsigned int cycles)
 #else
     m68ki_instruction_jump_table[REG_IR]();
 #endif
+    m68k_cat_handler_end();
     USE_CYCLES(CYC_INSTRUCTION(REG_IR));
 
     /* Trace m68k_exception, if necessary */
     m68ki_exception_if_trace(); /* auto-disable (see m68kcpu.h) */
   }
+  m68k_cat_run_end(prof_run_start, prof_loop_start);
 }
 
 int m68k_cycles(void)

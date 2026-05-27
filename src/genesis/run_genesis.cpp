@@ -46,6 +46,10 @@ extern int genesisZoomPercent;
 #define MD_Z80_PREFIX_PROFILING 0
 #endif
 
+#ifndef MD_M68K_CATEGORY_PROFILING_DUMP
+#define MD_M68K_CATEGORY_PROFILING_DUMP 0
+#endif
+
 #if MD_RENDER_LOGS_ENABLED
 struct MdFrameDiagStats {
   uint64_t lastLogMs = 0;
@@ -399,6 +403,143 @@ static inline void md_opcode_profile_log_if_due(bool force = false)
 #else
 static inline void md_opcode_profile_reset() {}
 static inline void md_opcode_profile_log_if_due(bool = false) {}
+#endif
+
+#if MD_M68K_CATEGORY_PROFILING_DUMP
+static uint64_t s_mdM68kCategoryProfileLastLogUs = 0;
+
+static void md_m68k_category_format_top_bytes(const uint32_t* counts,
+                                              uint64_t total,
+                                              char* out,
+                                              size_t outSize)
+{
+  bool used[256] = {};
+  size_t pos = 0;
+  if (!outSize) return;
+  out[0] = '\0';
+  for (int rank = 0; rank < 8; ++rank) {
+    int bestIdx = -1;
+    uint32_t bestCount = 0;
+    for (int i = 0; i < 256; ++i) {
+      if (!used[i] && counts[i] > bestCount) {
+        bestIdx = i;
+        bestCount = counts[i];
+      }
+    }
+    if (bestIdx < 0 || bestCount == 0) break;
+    used[bestIdx] = true;
+    const unsigned long permille = total ? (unsigned long)((bestCount * 1000ULL) / total) : 0UL;
+    const int wrote = snprintf(out + pos, outSize - pos, "%s%02X:%lu.%lu%%",
+                               pos ? " " : "",
+                               bestIdx,
+                               permille / 10UL,
+                               permille % 10UL);
+    if (wrote <= 0 || (size_t)wrote >= (outSize - pos)) break;
+    pos += (size_t)wrote;
+  }
+}
+
+static void md_m68k_category_format_top_nibbles(const uint32_t* counts,
+                                                uint64_t total,
+                                                char* out,
+                                                size_t outSize)
+{
+  bool used[16] = {};
+  size_t pos = 0;
+  if (!outSize) return;
+  out[0] = '\0';
+  for (int rank = 0; rank < 6; ++rank) {
+    int bestIdx = -1;
+    uint32_t bestCount = 0;
+    for (int i = 0; i < 16; ++i) {
+      if (!used[i] && counts[i] > bestCount) {
+        bestIdx = i;
+        bestCount = counts[i];
+      }
+    }
+    if (bestIdx < 0 || bestCount == 0) break;
+    used[bestIdx] = true;
+    const unsigned long permille = total ? (unsigned long)((bestCount * 1000ULL) / total) : 0UL;
+    const int wrote = snprintf(out + pos, outSize - pos, "%s%X:%lu.%lu%%",
+                               pos ? " " : "",
+                               bestIdx,
+                               permille / 10UL,
+                               permille % 10UL);
+    if (wrote <= 0 || (size_t)wrote >= (outSize - pos)) break;
+    pos += (size_t)wrote;
+  }
+}
+
+static inline unsigned long long md_m68k_category_avg(uint64_t value, uint64_t count)
+{
+  return count ? (unsigned long long)(value / count) : 0ULL;
+}
+
+static inline void md_m68k_category_profile_reset()
+{
+  s_mdM68kCategoryProfileLastLogUs = (uint64_t)esp_timer_get_time();
+  m68k_category_profile_reset();
+}
+
+static inline void md_m68k_category_profile_log_if_due(bool force = false)
+{
+  const uint64_t nowUs = (uint64_t)esp_timer_get_time();
+  if (!force && (nowUs - s_mdM68kCategoryProfileLastLogUs) < (uint64_t)MD_OPCODE_PROFILING_DUMP_MS * 1000ULL) return;
+
+  m68k_category_profile_snapshot snap{};
+  const int hasData = m68k_category_profile_get_snapshot(&snap, 1);
+  s_mdM68kCategoryProfileLastLogUs = nowUs;
+  if (!hasData || snap.instructions == 0 || snap.sampled_instructions == 0) return;
+
+  char nibbleBuf[64];
+  char byteBuf[160];
+  md_m68k_category_format_top_nibbles(snap.top_nibble, snap.sampled_instructions, nibbleBuf, sizeof(nibbleBuf));
+  md_m68k_category_format_top_bytes(snap.top_byte, snap.sampled_instructions, byteBuf, sizeof(byteBuf));
+
+  EMU_LOG("[MD][68KCAT] instr=%llu sampled=%llu stride=1/%lu run calls=%llu early=%llu stopped=%llu cyc/call total=%llu loop=%llu cyc/sample handler=%llu imm=%llu rd=%llu wr=%llu pc rom/ram=%lu/%lu nib=%s byte=%s\n",
+          (unsigned long long)snap.instructions,
+          (unsigned long long)snap.sampled_instructions,
+          (unsigned long)(1u << snap.sample_shift),
+          (unsigned long long)snap.run_calls,
+          (unsigned long long)snap.run_early_returns,
+          (unsigned long long)snap.run_stopped_returns,
+          md_m68k_category_avg(snap.run_total_cycles, snap.run_calls),
+          md_m68k_category_avg(snap.run_loop_cycles, snap.run_calls),
+          md_m68k_category_avg(snap.handler_cycles, snap.sampled_instructions),
+          md_m68k_category_avg(snap.imm_cycles, snap.sampled_instructions),
+          md_m68k_category_avg(snap.data_read_cycles, snap.sampled_instructions),
+          md_m68k_category_avg(snap.data_write_cycles, snap.sampled_instructions),
+          (unsigned long)snap.pc_rom_count,
+          (unsigned long)snap.pc_ram_count,
+          nibbleBuf[0] ? nibbleBuf : "-",
+          byteBuf[0] ? byteBuf : "-");
+  EMU_LOG("[MD][68KMEM] imm16/32=%lu/%lu rd rom/ram/sram/bus=%lu/%lu/%lu/%lu rd8/16/32=%lu/%lu/%lu wr ram/sram/bus=%lu/%lu/%lu wr8/16/32=%lu/%lu/%lu\n",
+          (unsigned long)snap.imm16_count,
+          (unsigned long)snap.imm32_count,
+          (unsigned long)snap.read_rom_count,
+          (unsigned long)snap.read_ram_count,
+          (unsigned long)snap.read_sram_count,
+          (unsigned long)snap.read_bus_count,
+          (unsigned long)snap.read8_count,
+          (unsigned long)snap.read16_count,
+          (unsigned long)snap.read32_count,
+          (unsigned long)snap.write_ram_count,
+          (unsigned long)snap.write_sram_count,
+          (unsigned long)snap.write_bus_count,
+          (unsigned long)snap.write8_count,
+          (unsigned long)snap.write16_count,
+          (unsigned long)snap.write32_count);
+  EMU_LOG("[MD][68KEA] di=%lu ix=%lu aw=%lu al=%lu pcdi=%lu pcix=%lu\n",
+          (unsigned long)snap.ea_di_count,
+          (unsigned long)snap.ea_ix_count,
+          (unsigned long)snap.ea_aw_count,
+          (unsigned long)snap.ea_al_count,
+          (unsigned long)snap.ea_pcdi_count,
+          (unsigned long)snap.ea_pcix_count);
+}
+#else
+static inline void md_m68k_category_profile_reset() {}
+static inline void md_m68k_category_profile_log_if_due(bool = false) {}
 #endif
 
 #if MD_Z80_PREFIX_PROFILING
@@ -796,6 +937,7 @@ static void run_one_frame() {
   md_bench_log_if_due();
 #endif
   md_opcode_profile_log_if_due();
+  md_m68k_category_profile_log_if_due();
   md_z80_prefix_profile_log_if_due();
 
 #if EMU_LOG_MASTER_ENABLED && !MD_BENCHMARK_LOGS_ENABLED
@@ -818,6 +960,7 @@ extern "C" void run_genesis(const uint8_t* rom, size_t len, const char* rom_name
   md_render_diag_reset();
   md_bench_reset();
   md_opcode_profile_reset();
+  md_m68k_category_profile_reset();
   md_z80_prefix_profile_reset();
 #if MD_BUS_PROBE_LOGS_ENABLED
   gwenesis_bus_probe_reset();
@@ -924,6 +1067,7 @@ extern "C" void run_genesis(const uint8_t* rom, size_t len, const char* rom_name
   md_bench_log_if_due(true);
 #endif
   md_opcode_profile_log_if_due(true);
+  md_m68k_category_profile_log_if_due(true);
   md_z80_prefix_profile_log_if_due(true);
   md_clean_teardown_and_save();
 }
