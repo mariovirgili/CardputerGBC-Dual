@@ -9,6 +9,14 @@
 #define SCANLINE_QUEUE_DEPTH 16
 #endif
 
+#ifndef MD_DISPLAY_SCANLINE_RING
+#define MD_DISPLAY_SCANLINE_RING 0
+#endif
+
+#ifndef MD_RENDER_INDEX_UNROLL
+#define MD_RENDER_INDEX_UNROLL 0
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -27,16 +35,30 @@ typedef struct {
     uint16_t palette[64];    // RGB565 palette snapshot for this scanline
 } ScanMsgIndexLine;
 
+#if MD_DISPLAY_SCANLINE_RING
+typedef struct {
+    uint8_t     format;      // SCANMSG_FORMAT_*
+    union {
+        uint16_t         data[FB_W];
+        ScanMsgIndexLine indexed;
+    };
+} ScanLineSlot;
+#endif
+
 typedef struct {
     ScanMsgType type;
     uint16_t    line;      // pour MSG_SCANLINE
     uint16_t    w;         // largeur utile
     uint16_t    srcH;      // hauteur source
     uint8_t     format;    // SCANMSG_FORMAT_*
+#if MD_DISPLAY_SCANLINE_RING
+    uint8_t     slot;      // index into the scanline ring for MSG_SCANLINE
+#else
     union {
         uint16_t         data[FB_W]; // RGB565 payload ligne
         ScanMsgIndexLine indexed;    // 8-bit indexes + per-line palette snapshot
     };
+#endif
 } ScanMsg;
 
 // Shared globals

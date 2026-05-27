@@ -16,6 +16,10 @@ extern "C" {
 // Globals
 QueueHandle_t g_scanQ = nullptr;
 TaskHandle_t  g_displayTaskHandle = nullptr;
+#if MD_DISPLAY_SCANLINE_RING
+static QueueHandle_t g_scanFreeQ = nullptr;
+static ScanLineSlot *s_scanSlots = nullptr;
+#endif
 int g_dstW, g_dstH;
 int g_viewX0, g_viewY0;
 int g_viewW, g_viewH;
@@ -114,6 +118,27 @@ static inline BaseType_t md_display_send_scan_msg(QueueHandle_t q, const ScanMsg
   if (ok != pdTRUE) ++s_mdDisplayDiag.sendFail;
   md_display_diag_log_if_due();
   return ok;
+}
+#endif
+
+#if MD_DISPLAY_SCANLINE_RING
+static inline bool md_display_take_scan_slot(uint8_t *slot)
+{
+  return g_scanFreeQ &&
+         xQueueReceive(g_scanFreeQ, slot, portMAX_DELAY) == pdTRUE;
+}
+
+static inline void md_display_release_scan_slot(uint8_t slot)
+{
+  if (g_scanFreeQ && slot < SCANLINE_QUEUE_DEPTH) {
+    xQueueSend(g_scanFreeQ, &slot, 0);
+  }
+}
+
+static inline ScanLineSlot *md_display_msg_slot(const ScanMsg& m)
+{
+  if (!s_scanSlots || m.slot >= SCANLINE_QUEUE_DEPTH) return nullptr;
+  return &s_scanSlots[m.slot];
 }
 #endif
 
@@ -275,6 +300,9 @@ void display_task(void* arg) {
     if (!s_lineImg || !s_lineFull) {
       allocate_line_buffers();
       if (!s_lineImg || !s_lineFull) {
+#if MD_DISPLAY_SCANLINE_RING
+        md_display_release_scan_slot(m.slot);
+#endif
         continue;
       }
     }
@@ -284,25 +312,86 @@ void display_task(void* arg) {
 #endif
 
     if (m.format == SCANMSG_FORMAT_INDEX8) {
+#if MD_DISPLAY_SCANLINE_RING
+      ScanLineSlot *slot = md_display_msg_slot(m);
+      if (!slot) {
+        md_display_release_scan_slot(m.slot);
+        continue;
+      }
+      const uint8_t *idx = slot->indexed.idx;
+      const uint16_t *palette = slot->indexed.palette;
+#else
+      const uint8_t *idx = m.indexed.idx;
       const uint16_t *palette = m.indexed.palette;
+#endif
       if (m.w == g_viewW && s_roiX0 == 0 && s_roiW == m.w) {
-        for (int x = 0; x < g_viewW; ++x) {
-          s_lineImg[x] = palette[m.indexed.idx[x] & 0x3F];
+#if MD_RENDER_INDEX_UNROLL
+        int x = 0;
+        for (; x + 3 < g_viewW; x += 4) {
+          s_lineImg[x + 0] = palette[idx[x + 0] & 0x3F];
+          s_lineImg[x + 1] = palette[idx[x + 1] & 0x3F];
+          s_lineImg[x + 2] = palette[idx[x + 2] & 0x3F];
+          s_lineImg[x + 3] = palette[idx[x + 3] & 0x3F];
         }
+        for (; x < g_viewW; ++x) {
+          s_lineImg[x] = palette[idx[x] & 0x3F];
+        }
+#else
+        for (int x = 0; x < g_viewW; ++x) {
+          s_lineImg[x] = palette[idx[x] & 0x3F];
+        }
+#endif
       } else {
         const uint16_t *xmap = s_xmap;
+#if MD_RENDER_INDEX_UNROLL
+        int x = 0;
+        for (; x + 3 < g_viewW; x += 4) {
+          const int srcX0 = xmap ? xmap[x + 0] : (s_roiX0 + (int)((int64_t)(x + 0) * s_roiW / g_viewW));
+          const int srcX1 = xmap ? xmap[x + 1] : (s_roiX0 + (int)((int64_t)(x + 1) * s_roiW / g_viewW));
+          const int srcX2 = xmap ? xmap[x + 2] : (s_roiX0 + (int)((int64_t)(x + 2) * s_roiW / g_viewW));
+          const int srcX3 = xmap ? xmap[x + 3] : (s_roiX0 + (int)((int64_t)(x + 3) * s_roiW / g_viewW));
+          s_lineImg[x + 0] = palette[idx[srcX0] & 0x3F];
+          s_lineImg[x + 1] = palette[idx[srcX1] & 0x3F];
+          s_lineImg[x + 2] = palette[idx[srcX2] & 0x3F];
+          s_lineImg[x + 3] = palette[idx[srcX3] & 0x3F];
+        }
+        for (; x < g_viewW; ++x) {
+          const int srcX = xmap ? xmap[x] : (s_roiX0 + (int)((int64_t)x * s_roiW / g_viewW));
+          s_lineImg[x] = palette[idx[srcX] & 0x3F];
+        }
+#else
         for (int x = 0; x < g_viewW; ++x) {
           const int srcX = xmap ? xmap[x] : (s_roiX0 + (int)((int64_t)x * s_roiW / g_viewW));
-          s_lineImg[x] = palette[m.indexed.idx[srcX] & 0x3F];
+          s_lineImg[x] = palette[idx[srcX] & 0x3F];
         }
+#endif
       }
     } else if (m.w == g_viewW && s_roiX0 == 0 && s_roiW == m.w) {
+#if MD_DISPLAY_SCANLINE_RING
+      ScanLineSlot *slot = md_display_msg_slot(m);
+      if (!slot) {
+        md_display_release_scan_slot(m.slot);
+        continue;
+      }
+      memcpy16(s_lineImg, slot->data, g_viewW);
+#else
       memcpy16(s_lineImg, m.data, g_viewW);
+#endif
     } else {
       const uint16_t *xmap = s_xmap;
+#if MD_DISPLAY_SCANLINE_RING
+      ScanLineSlot *slot = md_display_msg_slot(m);
+      if (!slot) {
+        md_display_release_scan_slot(m.slot);
+        continue;
+      }
+      const uint16_t *src = slot->data;
+#else
+      const uint16_t *src = m.data;
+#endif
       for (int x = 0; x < g_viewW; ++x) {
         const int srcX = xmap ? xmap[x] : (s_roiX0 + (int)((int64_t)x * s_roiW / g_viewW));
-        s_lineImg[x] = m.data[srcX];
+        s_lineImg[x] = src[srcX];
       }
     }
 
@@ -341,15 +430,48 @@ void display_task(void* arg) {
 
     // Yield
     if ((m.line & 31) == 31) vTaskDelay(0);
+
+#if MD_DISPLAY_SCANLINE_RING
+    md_display_release_scan_slot(m.slot);
+#endif
   }
 }
 
 /* Start the display task */
 extern "C" void genesis_display_start(void) {
+#if MD_DISPLAY_SCANLINE_RING
+  if (!s_scanSlots) {
+    s_scanSlots = (ScanLineSlot*)heap_caps_calloc(SCANLINE_QUEUE_DEPTH,
+                                                  sizeof(ScanLineSlot),
+                                                  MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    if (!s_scanSlots) {
+      EMU_LOG("[GENESIS][VIDEO] scanline ring alloc failed\n");
+      return;
+    }
+  }
+  if (!g_scanFreeQ) {
+    g_scanFreeQ = xQueueCreate(SCANLINE_QUEUE_DEPTH, sizeof(uint8_t));
+    if (!g_scanFreeQ) {
+      EMU_LOG("[GENESIS][VIDEO] free queue create failed\n");
+      free(s_scanSlots);
+      s_scanSlots = nullptr;
+      return;
+    }
+    for (uint8_t i = 0; i < SCANLINE_QUEUE_DEPTH; ++i) {
+      xQueueSend(g_scanFreeQ, &i, 0);
+    }
+  }
+#endif
   if (!g_scanQ) {
     g_scanQ = xQueueCreate(SCANLINE_QUEUE_DEPTH, sizeof(ScanMsg));
     if (!g_scanQ) {
       EMU_LOG("[GENESIS][VIDEO] queue create failed\n");
+#if MD_DISPLAY_SCANLINE_RING
+      vQueueDelete(g_scanFreeQ);
+      g_scanFreeQ = nullptr;
+      free(s_scanSlots);
+      s_scanSlots = nullptr;
+#endif
       return;
     }
   }
@@ -362,6 +484,10 @@ extern "C" void genesis_display_start(void) {
     if (ok != pdPASS) {
       EMU_LOG("[GENESIS][VIDEO] task create failed\n");
       vQueueDelete(g_scanQ); g_scanQ = nullptr;
+#if MD_DISPLAY_SCANLINE_RING
+      vQueueDelete(g_scanFreeQ); g_scanFreeQ = nullptr;
+      free(s_scanSlots); s_scanSlots = nullptr;
+#endif
     }
   }
 }
@@ -376,6 +502,14 @@ extern "C" void genesis_display_stop(void) {
     vQueueDelete(g_scanQ);
     g_scanQ = nullptr;
   }
+#if MD_DISPLAY_SCANLINE_RING
+  if (g_scanFreeQ) {
+    vQueueDelete(g_scanFreeQ);
+    g_scanFreeQ = nullptr;
+  }
+  free(s_scanSlots);
+  s_scanSlots = nullptr;
+#endif
 }
 
 /* Begin a new frame */
@@ -405,15 +539,30 @@ extern "C" void IRAM_ATTR GWENESIS_PUSH_SCANLINE(int line, const uint16_t* src16
                                  : (int)(screen_height ? screen_height : 224);
   m.srcH = (uint16_t)srcH;
 
-  // Copie ligne
   int copyW = (w < FB_W) ? w : FB_W;
+#if MD_DISPLAY_SCANLINE_RING
+  uint8_t slot = 0;
+  if (!md_display_take_scan_slot(&slot)) return;
+  ScanLineSlot *scan = &s_scanSlots[slot];
+  scan->format = SCANMSG_FORMAT_RGB565;
+  memcpy(scan->data, src16, copyW * sizeof(uint16_t));
+  if (copyW < FB_W) memset(scan->data + copyW, 0, (FB_W - copyW) * sizeof(uint16_t));
+  m.slot = slot;
+#else
+  // Copie ligne
   memcpy(m.data, src16, copyW * sizeof(uint16_t));
   if (copyW < FB_W) memset(m.data + copyW, 0, (FB_W - copyW) * sizeof(uint16_t));
+#endif
 
 #if MD_RENDER_LOGS_ENABLED
-  md_display_send_scan_msg(g_scanQ, &m, portMAX_DELAY);
+  const BaseType_t ok = md_display_send_scan_msg(g_scanQ, &m, portMAX_DELAY);
 #else
-  xQueueSend(g_scanQ, &m, portMAX_DELAY);
+  const BaseType_t ok = xQueueSend(g_scanQ, &m, portMAX_DELAY);
+#endif
+#if MD_DISPLAY_SCANLINE_RING
+  if (ok != pdTRUE) {
+    md_display_release_scan_slot(slot);
+  }
 #endif
 }
 
@@ -433,6 +582,20 @@ extern "C" void IRAM_ATTR GWENESIS_PUSH_SCANLINE_IDX(int line, const uint8_t* sr
   m.srcH = (uint16_t)srcH;
 
   int copyW = (w < FB_W) ? w : FB_W;
+#if MD_DISPLAY_SCANLINE_RING
+  uint8_t slot = 0;
+  if (!md_display_take_scan_slot(&slot)) return;
+  ScanLineSlot *scan = &s_scanSlots[slot];
+  scan->format = SCANMSG_FORMAT_INDEX8;
+  memcpy(scan->indexed.idx, src8, copyW);
+  if (copyW < FB_W) memset(scan->indexed.idx + copyW, 0, FB_W - copyW);
+  if (CRAM565) {
+    memcpy(scan->indexed.palette, CRAM565, sizeof(scan->indexed.palette));
+  } else {
+    memset(scan->indexed.palette, 0, sizeof(scan->indexed.palette));
+  }
+  m.slot = slot;
+#else
   memcpy(m.indexed.idx, src8, copyW);
   if (copyW < FB_W) memset(m.indexed.idx + copyW, 0, FB_W - copyW);
   if (CRAM565) {
@@ -440,11 +603,17 @@ extern "C" void IRAM_ATTR GWENESIS_PUSH_SCANLINE_IDX(int line, const uint8_t* sr
   } else {
     memset(m.indexed.palette, 0, sizeof(m.indexed.palette));
   }
+#endif
 
 #if MD_RENDER_LOGS_ENABLED
-  md_display_send_scan_msg(g_scanQ, &m, portMAX_DELAY);
+  const BaseType_t ok = md_display_send_scan_msg(g_scanQ, &m, portMAX_DELAY);
 #else
-  xQueueSend(g_scanQ, &m, portMAX_DELAY);
+  const BaseType_t ok = xQueueSend(g_scanQ, &m, portMAX_DELAY);
+#endif
+#if MD_DISPLAY_SCANLINE_RING
+  if (ok != pdTRUE) {
+    md_display_release_scan_slot(slot);
+  }
 #endif
 }
 
