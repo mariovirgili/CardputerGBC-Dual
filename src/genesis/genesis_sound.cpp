@@ -86,6 +86,7 @@ static int s_audioPoolSlots = AUDIO_POOL;
 #endif
 
 static uint32_t s_audioResamplePhaseQ16 = 0;
+static int s_audioOutputSampleRemainder = 0;
 
 static int md_audio_nominal_chunk_cap_for_rate(int sample_rate)
 {
@@ -100,6 +101,7 @@ static void md_audio_recompute_output_samples()
   if (s_audioOutSamples > s_audioChunkCap) {
     s_audioOutSamples = s_audioChunkCap;
   }
+  s_audioOutputSampleRemainder = 0;
 }
 
 void genesis_sound_set_sram_profile(bool enabled)
@@ -429,6 +431,17 @@ static inline int genesis_sound_output_samples_for_frame(uint32_t frame_elapsed_
   }
 #else
   (void)frame_elapsed_us;
+  if (s_audioRefreshRate > 0) {
+    int samples = s_audioOutputRate / s_audioRefreshRate;
+    if (samples < 1) samples = 1;
+    s_audioOutputSampleRemainder += s_audioOutputRate % s_audioRefreshRate;
+    if (s_audioOutputSampleRemainder >= s_audioRefreshRate) {
+      ++samples;
+      s_audioOutputSampleRemainder -= s_audioRefreshRate;
+    }
+    if (samples > s_audioChunkCap) samples = s_audioChunkCap;
+    return samples;
+  }
 #endif
   return s_audioOutSamples;
 }
