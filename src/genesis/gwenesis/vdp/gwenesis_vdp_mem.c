@@ -129,6 +129,17 @@ static int hvcounter_latched = 0;
 
 int hint_pending;
 
+#if MD_VDP_STATUS_POLL_SKIP || MD_VDP_STATUS_POLL_DIAG
+static uint32_t s_vdp_status_poll_window_reads;
+
+static inline void gwenesis_vdp_status_poll_runtime_reset(void)
+{
+  s_vdp_status_poll_window_reads = 0;
+}
+#else
+static inline void gwenesis_vdp_status_poll_runtime_reset(void) {}
+#endif
+
 #if MD_VDP_STATUS_POLL_DIAG
 typedef struct
 {
@@ -243,6 +254,7 @@ void gwenesis_vdp_reset() {
   // _vcounter = 0;
   gwenesis_vdp_status = 0x3C00;
   gwenesis_region_apply_vdp_status();
+  gwenesis_vdp_status_poll_runtime_reset();
   gwenesis_vdp_status_poll_diag_reset();
   // //line_counter_interrupt = 0;
   hvcounter_latched = 0;
@@ -432,6 +444,9 @@ void gwenesis_vdp_vram_write(unsigned int address, unsigned int value)
 static inline __attribute__((always_inline))
 void gwenesis_vdp_status_poll_observe(void)
 {
+#if MD_VDP_STATUS_POLL_SKIP || MD_VDP_STATUS_POLL_DIAG
+    ++s_vdp_status_poll_window_reads;
+#endif
 #if MD_VDP_STATUS_POLL_DIAG
     ++s_vdp_status_poll_diag.status_reads;
 #endif
@@ -473,13 +488,13 @@ void gwenesis_vdp_status_poll_observe(void)
                 return;
             }
 
-#if MD_VDP_STATUS_POLL_DIAG
-            if (s_vdp_status_poll_diag.status_reads < (uint64_t)MD_VDP_STATUS_POLL_SKIP_MIN_WINDOW_READS)
+            if (s_vdp_status_poll_window_reads < (uint32_t)MD_VDP_STATUS_POLL_SKIP_MIN_WINDOW_READS)
             {
+#if MD_VDP_STATUS_POLL_DIAG
                 ++s_vdp_status_poll_diag.read_gate_blocked;
+#endif
                 return;
             }
-#endif
 
             const uint remaining = m68k.cycle_end - now;
             const uint guard = (uint)MD_VDP_STATUS_POLL_SKIP_DEADLINE_GUARD_CYCLES;
