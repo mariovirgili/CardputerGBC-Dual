@@ -35,10 +35,17 @@ static uint64_t last_fps_log_time = 0;
 static volatile int g_target_fps = 60;
 extern int genesisZoomPercent;
 
+#ifndef MD_GEOSKIP_FRAMESKIP
+#define MD_GEOSKIP_FRAMESKIP 0
+#endif
+
 enum MdFrameskipMode : uint8_t {
   MD_FRAMESKIP_OFF = 0,
   MD_FRAMESKIP_ADAPTIVE,
   MD_FRAMESKIP_FIXED,
+#if MD_GEOSKIP_FRAMESKIP
+  MD_FRAMESKIP_GEOSKIP,
+#endif
 };
 
 enum MdMenuPage : uint8_t {
@@ -60,6 +67,9 @@ static MdFrameskipMode s_mdFrameskipMode = MD_FRAMESKIP_OFF;
 static int s_mdFixedFrameskipIndex = 0;
 static uint16_t s_mdFixedSkipCreditQ8 = 0;
 static bool s_mdAdaptiveSkipNextDraw = false;
+#if MD_GEOSKIP_FRAMESKIP
+static uint8_t s_mdGeoSkipFramesToSkip = 0;
+#endif
 static float s_mdCoreFps = 0.0f;
 static float s_mdVideoFps = 0.0f;
 static uint32_t s_mdRuntimeCoreFrames = 0;
@@ -976,6 +986,9 @@ static inline void md_release_gamepad_buttons()
 static const char* md_frameskip_label()
 {
   if (s_mdFrameskipMode == MD_FRAMESKIP_ADAPTIVE) return "Adaptive";
+#if MD_GEOSKIP_FRAMESKIP
+  if (s_mdFrameskipMode == MD_FRAMESKIP_GEOSKIP) return "GeoSkip";
+#endif
   if (s_mdFrameskipMode == MD_FRAMESKIP_FIXED) return kMdFixedFrameskipLabels[s_mdFixedFrameskipIndex];
   return "Off";
 }
@@ -1052,10 +1065,16 @@ static void md_set_frameskip_mode(MdFrameskipMode mode, int fixedIndex)
   const int fixedCount = (int)(sizeof(kMdFixedFrameskipQ8) / sizeof(kMdFixedFrameskipQ8[0]));
   if (fixedIndex < 0) fixedIndex = fixedCount - 1;
   if (fixedIndex >= fixedCount) fixedIndex = 0;
+#if !MD_GEOSKIP_FRAMESKIP
+  if (mode > MD_FRAMESKIP_FIXED) mode = MD_FRAMESKIP_OFF;
+#endif
   s_mdFrameskipMode = mode;
   s_mdFixedFrameskipIndex = fixedIndex;
   s_mdFixedSkipCreditQ8 = 0;
   s_mdAdaptiveSkipNextDraw = false;
+#if MD_GEOSKIP_FRAMESKIP
+  s_mdGeoSkipFramesToSkip = 0;
+#endif
 }
 
 static void md_cycle_frameskip(int dir)
@@ -1064,18 +1083,30 @@ static void md_cycle_frameskip(int dir)
   int slot = 0;
   if (s_mdFrameskipMode == MD_FRAMESKIP_ADAPTIVE) {
     slot = 1;
+#if MD_GEOSKIP_FRAMESKIP
+  } else if (s_mdFrameskipMode == MD_FRAMESKIP_GEOSKIP) {
+    slot = 2;
+#endif
   } else if (s_mdFrameskipMode == MD_FRAMESKIP_FIXED) {
+#if MD_GEOSKIP_FRAMESKIP
+    slot = 3 + s_mdFixedFrameskipIndex;
+#else
     slot = 2 + s_mdFixedFrameskipIndex;
+#endif
   }
 
-  const int slotCount = 2 + fixedCount;
+  const int slotCount = 2 + fixedCount + (MD_GEOSKIP_FRAMESKIP ? 1 : 0);
   slot = (slot + dir + slotCount) % slotCount;
   if (slot == 0) {
     md_set_frameskip_mode(MD_FRAMESKIP_OFF, 0);
   } else if (slot == 1) {
     md_set_frameskip_mode(MD_FRAMESKIP_ADAPTIVE, 0);
+#if MD_GEOSKIP_FRAMESKIP
+  } else if (slot == 2) {
+    md_set_frameskip_mode(MD_FRAMESKIP_GEOSKIP, 0);
+#endif
   } else {
-    md_set_frameskip_mode(MD_FRAMESKIP_FIXED, slot - 2);
+    md_set_frameskip_mode(MD_FRAMESKIP_FIXED, slot - 2 - (MD_GEOSKIP_FRAMESKIP ? 1 : 0));
   }
 }
 
@@ -1155,7 +1186,13 @@ static void md_options_load()
   }
   fclose(f);
 
-  if (mode < (int)MD_FRAMESKIP_OFF || mode > (int)MD_FRAMESKIP_FIXED) {
+  const int maxFrameskipMode =
+#if MD_GEOSKIP_FRAMESKIP
+      (int)MD_FRAMESKIP_GEOSKIP;
+#else
+      (int)MD_FRAMESKIP_FIXED;
+#endif
+  if (mode < (int)MD_FRAMESKIP_OFF || mode > maxFrameskipMode) {
     mode = (int)MD_FRAMESKIP_OFF;
   }
   if (fpsMode < (int)MD_FPS_OFF || fpsMode > (int)MD_FPS_VIDEO) {
@@ -1246,6 +1283,15 @@ static bool md_frameskip_should_draw()
     }
     s_mdFixedSkipCreditQ8 += kMdFixedFrameskipQ8[s_mdFixedFrameskipIndex];
   }
+#if MD_GEOSKIP_FRAMESKIP
+  if (s_mdFrameskipMode == MD_FRAMESKIP_GEOSKIP) {
+    if (s_mdGeoSkipFramesToSkip > 0) {
+      --s_mdGeoSkipFramesToSkip;
+      return false;
+    }
+    s_mdGeoSkipFramesToSkip = 1;
+  }
+#endif
   return true;
 }
 
@@ -1254,6 +1300,16 @@ static void md_frameskip_after_frame(bool lateSkip)
   if (s_mdFrameskipMode == MD_FRAMESKIP_ADAPTIVE) {
     s_mdAdaptiveSkipNextDraw = lateSkip;
   }
+}
+
+static inline bool md_frameskip_should_skip_z80(bool drawFrame)
+{
+#if MD_GEOSKIP_FRAMESKIP
+  return s_mdFrameskipMode == MD_FRAMESKIP_GEOSKIP && !drawFrame;
+#else
+  (void)drawFrame;
+  return false;
+#endif
 }
 
 static bool md_key_down()
@@ -1440,6 +1496,7 @@ static void md_runtime_fps_record(bool drawFrame)
 static bool run_one_frame() {
   const uint64_t t_start = micros();
   const bool drawFrame = md_frameskip_should_draw();
+  const bool skipZ80Frame = md_frameskip_should_skip_z80(drawFrame);
 
   // Reset sound state
   #ifndef GENESIS_NO_SOUND
@@ -1532,13 +1589,15 @@ static bool run_one_frame() {
     // Run Z80 and update YM2612 clock for sound
     #ifndef GENESIS_NO_SOUND
       if (genesis_audio_volume > 0) {
+        if (!skipZ80Frame) {
 #if MD_BENCHMARK_LOGS_ENABLED
-        t_probe = md_bench_now_us();
+          t_probe = md_bench_now_us();
 #endif
-        z80_run(cpu_deadline);
+          z80_run(cpu_deadline);
 #if MD_BENCHMARK_LOGS_ENABLED
-        md_bench_add_u64(s_mdBench.z80UsTotal, t_probe);
+          md_bench_add_u64(s_mdBench.z80UsTotal, t_probe);
 #endif
+        }
 #if MD_BENCHMARK_LOGS_ENABLED
         t_probe = md_bench_now_us();
 #endif
@@ -1586,13 +1645,13 @@ static bool run_one_frame() {
         m68k_set_irq(6);
       }
       #ifndef GENESIS_NO_SOUND
-        if (genesis_audio_volume > 0) z80_irq_line(1);
+        if (genesis_audio_volume > 0 && !skipZ80Frame) z80_irq_line(1);
       #endif
     }
 
     #ifndef GENESIS_NO_SOUND
     if (scan_line == (int)h + 1) {
-      if (genesis_audio_volume > 0) z80_irq_line(0);
+      if (genesis_audio_volume > 0 && !skipZ80Frame) z80_irq_line(0);
     }
     #endif
 
@@ -1644,11 +1703,11 @@ static bool run_one_frame() {
   const bool lateSkip = elapsedUs > kFrameBudgetUs;
   md_frameskip_after_frame(lateSkip);
 #if MD_RENDER_LOGS_ENABLED
-  md_render_diag_record(drawFrame, false, lateSkip, renderedLines, elapsedUs, kFrameBudgetUs, h, (uint32_t)lines_per_frame);
+  md_render_diag_record(drawFrame, skipZ80Frame, lateSkip, renderedLines, elapsedUs, kFrameBudgetUs, h, (uint32_t)lines_per_frame);
   md_render_diag_log_if_due();
 #endif
 #if MD_BENCHMARK_LOGS_ENABLED
-  md_bench_record_frame(drawFrame, false, lateSkip, renderedLines, elapsedUs, kFrameBudgetUs);
+  md_bench_record_frame(drawFrame, skipZ80Frame, lateSkip, renderedLines, elapsedUs, kFrameBudgetUs);
   md_bench_log_if_due();
 #endif
   md_opcode_profile_log_if_due();
