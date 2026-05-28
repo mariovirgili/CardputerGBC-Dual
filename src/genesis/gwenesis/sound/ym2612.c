@@ -173,6 +173,10 @@ void ym_log(const char *subs, const char *fmt, ...) {
 	#define ym_log(...)  do {} while(0)
 #endif
 
+#ifndef MD_YM2612_DAC_WRITE_SYNC
+#define MD_YM2612_DAC_WRITE_SYNC 0
+#endif
+
 #define GW_TARGET 1
 /* envelope generator */
 #define ENV_BITS    10
@@ -2169,8 +2173,9 @@ void YM2612Write(unsigned int a, unsigned int v,  int target)
   ym_log(__FUNCTION__," %06x : %02x",a,v);
 
   //Sync
-  if (GWENESIS_AUDIO_ACCURATE == 1)
-    // ym2612_run(target); 
+#if GWENESIS_AUDIO_ACCURATE
+  ym2612_run(target);
+#endif
 
   v &= 0xff;  /* adjust to 8 bit bus */
 
@@ -2193,12 +2198,18 @@ void YM2612Write(unsigned int a, unsigned int v,  int target)
           switch( addr )
           {
           case 0x2a: /* DAC data (ym2612) */
+#if MD_YM2612_DAC_WRITE_SYNC
+            ym2612_run(target);
+#endif
             ym2612.dacout =((int)v - 0x80) << 6; /* convert to 14-bit signed output */
             //ym2612.dacout = ((int)v - 0x80) * 64; /* convert to signed output */
             //printf("WriteDAC : %x:%x\n",v,ym2612.dacout);
             break;
           case 0x2b: /* DAC Sel  (ym2612) */
             /* b7 = dac enable */
+#if MD_YM2612_DAC_WRITE_SYNC
+            ym2612_run(target);
+#endif
             //printf("WriteDAC : %x:%x\n",v,ym2612.dacout);
             ym2612.dacen = v & 0x80;
             break;
@@ -2219,8 +2230,11 @@ void YM2612Write(unsigned int a, unsigned int v,  int target)
 unsigned int YM2612Read(int target)
 {
   // //Sync
-  if (GWENESIS_AUDIO_ACCURATE == 1)
-    // ym2612_run(target);
+#if GWENESIS_AUDIO_ACCURATE
+  ym2612_run(target);
+#else
+  (void)target;
+#endif
     
   ym_log(__FUNCTION__, "%02x",ym2612.OPN.ST.status & 0xff);
   return ym2612.OPN.ST.status & 0xff;
