@@ -35,6 +35,36 @@ static uint16_t *s_xmap = nullptr;
 static int s_xmap_srcW  = -1, s_xmap_dstW = -1;
 static int s_xmap_roiX0 = -1, s_xmap_roiW = -1;
 static int s_roiX0 = 0, s_roiY0 = 0, s_roiW = 0, s_roiH = 0;
+static portMUX_TYPE s_overlayMux = portMUX_INITIALIZER_UNLOCKED;
+static bool s_overlayFpsEnabled = false;
+static float s_overlayFps = 0.0f;
+static char s_overlayFpsText[8] = "0.0";
+static bool s_overlayMenuVisible = false;
+static int s_overlayMenuSelected = 0;
+static char s_overlayMenuTitle[24] = "VIDEO MENU";
+static char s_overlayMenuRow0Label[16] = "FPS";
+static char s_overlayMenuRow0Value[32] = "Off";
+static char s_overlayMenuRow1Label[16] = "FRAMESKIP";
+static char s_overlayMenuRow1Value[32] = "Off";
+static char s_overlayMenuHint1[32] = "START enter < > change";
+static char s_overlayMenuHint2[32] = "GO close menu";
+
+static constexpr uint16_t kMdUiBackground = TFT_BLACK;
+static constexpr uint16_t kMdUiPrimary = 0xFC20;
+static constexpr uint16_t kMdUiRectDark = 0x0841;
+static constexpr uint16_t kMdUiText = 0xEF7D;
+static constexpr int kMdRuntimeMenuBoxW = 168;
+static constexpr int kMdRuntimeMenuBoxH = 104;
+static constexpr int kMdRuntimeMenuInnerPad = 8;
+static constexpr int kMdRuntimeMenuRowH = 13;
+static constexpr int kMdRuntimeMenuShadowOffset = 4;
+static constexpr int kMdFpsHudMarginX = 4;
+static constexpr int kMdFpsHudMarginY = 4;
+static constexpr int kMdFpsHudPadX = 2;
+static constexpr int kMdFpsHudPadY = 2;
+static constexpr int kMdFpsHudScale = 2;
+static constexpr int kMdFpsHudGlyphW = 3;
+static constexpr int kMdFpsHudGlyphH = 5;
 
 int genesisZoomPercent = 110;
 bool fullscreenMode __attribute__((weak)) = true;
@@ -208,6 +238,378 @@ static inline bool ensure_xmap_roi(int srcW, int dstW, int roiX0, int roiW) {
   return true;
 }
 
+static inline void copy_overlay_text(char* dst, size_t dstSize, const char* src)
+{
+  if (!dst || dstSize == 0) return;
+  if (!src) src = "";
+  snprintf(dst, dstSize, "%s", src);
+}
+
+static int md_display_runtime_menu_box_x()
+{
+  return (g_dstW - kMdRuntimeMenuBoxW) / 2;
+}
+
+static int md_display_runtime_menu_box_y()
+{
+  return 22;
+}
+
+static int md_display_runtime_menu_first_row_y()
+{
+  return md_display_runtime_menu_box_y() + 22;
+}
+
+static void md_display_draw_runtime_menu_shell(const char* title,
+                                               const char* hint1,
+                                               const char* hint2)
+{
+  const int boxX = md_display_runtime_menu_box_x();
+  const int boxY = md_display_runtime_menu_box_y();
+  const int innerX = boxX + kMdRuntimeMenuInnerPad;
+  if (!title) title = "VIDEO MENU";
+  if (!hint1) hint1 = "";
+  if (!hint2) hint2 = "";
+
+  M5.Lcd.fillRect(boxX + kMdRuntimeMenuShadowOffset,
+                  boxY + kMdRuntimeMenuShadowOffset,
+                  kMdRuntimeMenuBoxW,
+                  kMdRuntimeMenuBoxH,
+                  TFT_BLACK);
+  M5.Lcd.fillRect(boxX, boxY, kMdRuntimeMenuBoxW, kMdRuntimeMenuBoxH, TFT_BLACK);
+  M5.Lcd.drawRect(boxX, boxY, kMdRuntimeMenuBoxW, kMdRuntimeMenuBoxH, kMdUiPrimary);
+  M5.Lcd.drawRect(boxX + 2, boxY + 2, kMdRuntimeMenuBoxW - 4, kMdRuntimeMenuBoxH - 4, kMdUiRectDark);
+
+  M5.Lcd.setTextDatum(top_left);
+  M5.Lcd.setFont(&fonts::Font2);
+  M5.Lcd.setTextColor(kMdUiPrimary, TFT_BLACK);
+  const int titleX = boxX + (kMdRuntimeMenuBoxW - M5.Lcd.textWidth(title)) / 2;
+  M5.Lcd.drawString(title, titleX, boxY + 4);
+  M5.Lcd.setFont(&fonts::Font0);
+  M5.Lcd.setTextColor(kMdUiText, TFT_BLACK);
+  M5.Lcd.drawString(hint1, innerX, boxY + kMdRuntimeMenuBoxH - 19);
+  M5.Lcd.drawString(hint2, innerX, boxY + kMdRuntimeMenuBoxH - 10);
+}
+
+static void md_display_draw_runtime_menu_row(int row,
+                                             bool selected,
+                                             const char* label,
+                                             const char* value)
+{
+  const int boxX = md_display_runtime_menu_box_x();
+  const int innerX = boxX + kMdRuntimeMenuInnerPad;
+  const int valueX = boxX + kMdRuntimeMenuBoxW - 58;
+  const int y = md_display_runtime_menu_first_row_y() + row * kMdRuntimeMenuRowH;
+  const int rowX = innerX - 4;
+  const int rowY = y - 2;
+  const int rowW = kMdRuntimeMenuBoxW - 16;
+  const int rowH = kMdRuntimeMenuRowH - 1;
+  const int valueClearW = (boxX + kMdRuntimeMenuBoxW - 4) - valueX;
+  const uint16_t rowBg = selected ? kMdUiRectDark : TFT_BLACK;
+
+  M5.Lcd.fillRect(rowX, rowY, rowW, rowH, rowBg);
+  M5.Lcd.setFont(&fonts::Font0);
+  M5.Lcd.setTextColor(selected ? kMdUiPrimary : kMdUiText, rowBg);
+  M5.Lcd.drawString(label ? label : "", innerX, y);
+  if (value) {
+    M5.Lcd.fillRect(valueX, rowY, valueClearW, rowH, rowBg);
+    M5.Lcd.drawString(value, valueX, y);
+  }
+}
+
+static void md_display_draw_menu_overlay(int selectedRow,
+                                         const char* title,
+                                         const char* row0Label,
+                                         const char* row0Value,
+                                         const char* row1Label,
+                                         const char* row1Value,
+                                         const char* hint1,
+                                         const char* hint2)
+{
+  md_display_draw_runtime_menu_shell(title, hint1, hint2);
+  md_display_draw_runtime_menu_row(0, selectedRow == 0, row0Label, row0Value);
+  md_display_draw_runtime_menu_row(1, selectedRow == 1, row1Label, row1Value);
+}
+
+static uint8_t md_display_fps_glyph_row(char ch, int row)
+{
+  if (row < 0 || row >= kMdFpsHudGlyphH) return 0u;
+  switch (ch) {
+    case '0': { static constexpr uint8_t r[kMdFpsHudGlyphH] = {0x07u, 0x05u, 0x05u, 0x05u, 0x07u}; return r[row]; }
+    case '1': { static constexpr uint8_t r[kMdFpsHudGlyphH] = {0x02u, 0x06u, 0x02u, 0x02u, 0x07u}; return r[row]; }
+    case '2': { static constexpr uint8_t r[kMdFpsHudGlyphH] = {0x07u, 0x01u, 0x07u, 0x04u, 0x07u}; return r[row]; }
+    case '3': { static constexpr uint8_t r[kMdFpsHudGlyphH] = {0x07u, 0x01u, 0x07u, 0x01u, 0x07u}; return r[row]; }
+    case '4': { static constexpr uint8_t r[kMdFpsHudGlyphH] = {0x05u, 0x05u, 0x07u, 0x01u, 0x01u}; return r[row]; }
+    case '5': { static constexpr uint8_t r[kMdFpsHudGlyphH] = {0x07u, 0x04u, 0x07u, 0x01u, 0x07u}; return r[row]; }
+    case '6': { static constexpr uint8_t r[kMdFpsHudGlyphH] = {0x07u, 0x04u, 0x07u, 0x05u, 0x07u}; return r[row]; }
+    case '7': { static constexpr uint8_t r[kMdFpsHudGlyphH] = {0x07u, 0x01u, 0x01u, 0x01u, 0x01u}; return r[row]; }
+    case '8': { static constexpr uint8_t r[kMdFpsHudGlyphH] = {0x07u, 0x05u, 0x07u, 0x05u, 0x07u}; return r[row]; }
+    case '9': { static constexpr uint8_t r[kMdFpsHudGlyphH] = {0x07u, 0x05u, 0x07u, 0x01u, 0x07u}; return r[row]; }
+    case '.': { static constexpr uint8_t r[kMdFpsHudGlyphH] = {0x00u, 0x00u, 0x00u, 0x00u, 0x02u}; return r[row]; }
+    case ' ':
+    default:
+      return 0u;
+  }
+}
+
+static int md_display_fps_hud_box_width(const char* text)
+{
+  const size_t len = text ? strlen(text) : 0;
+  if (len == 0) return 0;
+  const int advance = (kMdFpsHudGlyphW + 1) * kMdFpsHudScale;
+  const int textW = (int)len * advance - kMdFpsHudScale;
+  return (kMdFpsHudPadX * 2) + textW;
+}
+
+static int md_display_fps_hud_box_height()
+{
+  return (kMdFpsHudPadY * 2) + (kMdFpsHudGlyphH * kMdFpsHudScale);
+}
+
+static bool md_display_get_fps_hud_text(char* dst, size_t dstSize)
+{
+  if (!dst || dstSize == 0) return false;
+  bool draw = false;
+  taskENTER_CRITICAL(&s_overlayMux);
+  draw = s_overlayFpsEnabled && !s_overlayMenuVisible;
+  copy_overlay_text(dst, dstSize, s_overlayFpsText);
+  taskEXIT_CRITICAL(&s_overlayMux);
+  return draw && dst[0] != '\0';
+}
+
+static bool md_display_fps_hud_bounds(const char* text, int* boxX, int* boxY, int* boxW, int* boxH)
+{
+  const int w = md_display_fps_hud_box_width(text);
+  const int h = md_display_fps_hud_box_height();
+  if (w <= 0 || h <= 0 || w > g_dstW || h > g_dstH) return false;
+  if (boxX) *boxX = (g_dstW > w + kMdFpsHudMarginX) ? (g_dstW - w - kMdFpsHudMarginX) : 0;
+  if (boxY) *boxY = kMdFpsHudMarginY;
+  if (boxW) *boxW = w;
+  if (boxH) *boxH = h;
+  return true;
+}
+
+static void md_display_draw_fps_hud_row(uint16_t* dst, int dstW, int dstY, const char* text)
+{
+  int boxX = 0;
+  int boxY = 0;
+  int boxW = 0;
+  int boxH = 0;
+  if (!dst || !md_display_fps_hud_bounds(text, &boxX, &boxY, &boxW, &boxH)) return;
+  if (dstY < boxY || dstY >= boxY + boxH) return;
+
+  const int localY = dstY - boxY;
+  const int fillLimit = (boxX + boxW < dstW) ? (boxX + boxW) : dstW;
+  for (int x = boxX; x < fillLimit; ++x) {
+    dst[x] = 0u;
+  }
+
+  if (localY < kMdFpsHudPadY ||
+      localY >= kMdFpsHudPadY + (kMdFpsHudGlyphH * kMdFpsHudScale)) {
+    return;
+  }
+
+  const int advance = (kMdFpsHudGlyphW + 1) * kMdFpsHudScale;
+  const int glyphRow = (localY - kMdFpsHudPadY) / kMdFpsHudScale;
+  const int textX0 = boxX + kMdFpsHudPadX;
+  const size_t len = strlen(text);
+  for (size_t i = 0; i < len; ++i) {
+    const uint8_t bits = md_display_fps_glyph_row(text[i], glyphRow);
+    if (bits == 0u) continue;
+    const int charX0 = textX0 + (int)i * advance;
+    for (int col = 0; col < kMdFpsHudGlyphW; ++col) {
+      const uint8_t mask = (uint8_t)(1u << (kMdFpsHudGlyphW - 1 - col));
+      if ((bits & mask) == 0u) continue;
+      for (int sx = 0; sx < kMdFpsHudScale; ++sx) {
+        const int pixelX = charX0 + col * kMdFpsHudScale + sx;
+        if (pixelX >= boxX && pixelX < fillLimit) {
+          dst[pixelX] = TFT_WHITE;
+        }
+      }
+    }
+  }
+}
+
+static void md_display_write_line_with_fps_hud(int dstY, const char* fpsText)
+{
+  int boxX = 0;
+  int boxY = 0;
+  int boxW = 0;
+  int boxH = 0;
+  if (!fpsText ||
+      !md_display_fps_hud_bounds(fpsText, &boxX, &boxY, &boxW, &boxH) ||
+      dstY < boxY ||
+      dstY >= boxY + boxH ||
+      boxW > 64) {
+    M5.Lcd.writePixels(s_lineFull, g_dstW);
+    return;
+  }
+
+  uint16_t backup[64];
+  memcpy16(backup, s_lineFull + boxX, boxW);
+  md_display_draw_fps_hud_row(s_lineFull, g_dstW, dstY, fpsText);
+  M5.Lcd.writePixels(s_lineFull, g_dstW);
+  memcpy16(s_lineFull + boxX, backup, boxW);
+}
+
+static void md_display_write_lines(int y, int count)
+{
+  char fpsText[8];
+  const bool drawFps = md_display_get_fps_hud_text(fpsText, sizeof(fpsText));
+  int boxX = 0;
+  int boxY = 0;
+  int boxW = 0;
+  int boxH = 0;
+  const bool fpsHasBounds = drawFps && md_display_fps_hud_bounds(fpsText, &boxX, &boxY, &boxW, &boxH);
+  const bool overlapsFps = fpsHasBounds && y < boxY + boxH && y + count > boxY;
+  if (!overlapsFps) {
+    M5.Lcd.setAddrWindow(0, y, g_dstW, count);
+    for (int i = 0; i < count; ++i) {
+      M5.Lcd.writePixels(s_lineFull, g_dstW);
+    }
+    return;
+  }
+
+  for (int i = 0; i < count; ++i) {
+    M5.Lcd.setAddrWindow(0, y + i, g_dstW, 1);
+    md_display_write_line_with_fps_hud(y + i, fpsText);
+  }
+}
+
+static void md_display_draw_fps_hud_direct(float fps)
+{
+  char buf[8];
+  snprintf(buf, sizeof(buf), "%.1f", (double)fps);
+  const int boxW = md_display_fps_hud_box_width(buf);
+  const int boxH = md_display_fps_hud_box_height();
+  if (boxW <= 0) return;
+  const int boxX = (g_dstW > boxW + kMdFpsHudMarginX) ? (g_dstW - boxW - kMdFpsHudMarginX) : 0;
+  const int boxY = kMdFpsHudMarginY;
+  const int clearX = (g_dstW > 52) ? (g_dstW - 52) : 0;
+
+  M5.Lcd.fillRect(clearX, boxY, g_dstW - clearX, boxH, TFT_BLACK);
+  M5.Lcd.fillRect(boxX, boxY, boxW, boxH, TFT_BLACK);
+
+  const int advance = (kMdFpsHudGlyphW + 1) * kMdFpsHudScale;
+  const int textX0 = boxX + kMdFpsHudPadX;
+  const int textY0 = boxY + kMdFpsHudPadY;
+  const size_t len = strlen(buf);
+  for (size_t i = 0; i < len; ++i) {
+    const int charX0 = textX0 + (int)i * advance;
+    for (int row = 0; row < kMdFpsHudGlyphH; ++row) {
+      const uint8_t bits = md_display_fps_glyph_row(buf[i], row);
+      for (int col = 0; col < kMdFpsHudGlyphW; ++col) {
+        const uint8_t mask = (uint8_t)(1u << (kMdFpsHudGlyphW - 1 - col));
+        if ((bits & mask) == 0u) continue;
+        M5.Lcd.fillRect(charX0 + col * kMdFpsHudScale,
+                        textY0 + row * kMdFpsHudScale,
+                        kMdFpsHudScale,
+                        kMdFpsHudScale,
+                        TFT_WHITE);
+      }
+    }
+  }
+}
+
+static void md_display_draw_overlay()
+{
+  bool fpsEnabled = false;
+  float fps = 0.0f;
+  bool menuVisible = false;
+  int menuSelected = 0;
+  char menuTitle[24];
+  char menuRow0Label[16];
+  char menuRow0Value[32];
+  char menuRow1Label[16];
+  char menuRow1Value[32];
+  char menuHint1[32];
+  char menuHint2[32];
+
+  taskENTER_CRITICAL(&s_overlayMux);
+  fpsEnabled = s_overlayFpsEnabled;
+  fps = s_overlayFps;
+  menuVisible = s_overlayMenuVisible;
+  menuSelected = s_overlayMenuSelected;
+  copy_overlay_text(menuTitle, sizeof(menuTitle), s_overlayMenuTitle);
+  copy_overlay_text(menuRow0Label, sizeof(menuRow0Label), s_overlayMenuRow0Label);
+  copy_overlay_text(menuRow0Value, sizeof(menuRow0Value), s_overlayMenuRow0Value);
+  copy_overlay_text(menuRow1Label, sizeof(menuRow1Label), s_overlayMenuRow1Label);
+  copy_overlay_text(menuRow1Value, sizeof(menuRow1Value), s_overlayMenuRow1Value);
+  copy_overlay_text(menuHint1, sizeof(menuHint1), s_overlayMenuHint1);
+  copy_overlay_text(menuHint2, sizeof(menuHint2), s_overlayMenuHint2);
+  taskEXIT_CRITICAL(&s_overlayMux);
+
+  if (!fpsEnabled && !menuVisible) return;
+
+  if (fpsEnabled && !menuVisible && !g_scanQ) {
+    md_display_draw_fps_hud_direct(fps);
+  }
+
+  if (!menuVisible) return;
+
+  md_display_draw_menu_overlay(menuSelected,
+                               menuTitle,
+                               menuRow0Label,
+                               menuRow0Value,
+                               menuRow1Label,
+                               menuRow1Value,
+                               menuHint1,
+                               menuHint2);
+}
+
+extern "C" void genesis_display_set_fps_overlay(bool enabled, float fps)
+{
+  taskENTER_CRITICAL(&s_overlayMux);
+  s_overlayFpsEnabled = enabled;
+  s_overlayFps = fps;
+  snprintf(s_overlayFpsText, sizeof(s_overlayFpsText), "%.1f", (double)fps);
+  taskEXIT_CRITICAL(&s_overlayMux);
+}
+
+extern "C" void genesis_display_set_menu_overlay(bool visible,
+                                                  int selectedRow,
+                                                  const char* title,
+                                                  const char* row0Label,
+                                                  const char* row0Value,
+                                                  const char* row1Label,
+                                                  const char* row1Value,
+                                                  const char* hint1,
+                                                  const char* hint2)
+{
+  taskENTER_CRITICAL(&s_overlayMux);
+  s_overlayMenuVisible = visible;
+  s_overlayMenuSelected = clampi(selectedRow, 0, 1);
+  copy_overlay_text(s_overlayMenuTitle, sizeof(s_overlayMenuTitle), title);
+  copy_overlay_text(s_overlayMenuRow0Label, sizeof(s_overlayMenuRow0Label), row0Label);
+  copy_overlay_text(s_overlayMenuRow0Value, sizeof(s_overlayMenuRow0Value), row0Value);
+  copy_overlay_text(s_overlayMenuRow1Label, sizeof(s_overlayMenuRow1Label), row1Label);
+  copy_overlay_text(s_overlayMenuRow1Value, sizeof(s_overlayMenuRow1Value), row1Value);
+  copy_overlay_text(s_overlayMenuHint1, sizeof(s_overlayMenuHint1), hint1);
+  copy_overlay_text(s_overlayMenuHint2, sizeof(s_overlayMenuHint2), hint2);
+  taskEXIT_CRITICAL(&s_overlayMux);
+}
+
+static void md_display_request_overlay_ticks(TickType_t ticks)
+{
+  if (!g_scanQ) {
+    md_display_draw_overlay();
+    return;
+  }
+  ScanMsg msg = {};
+  msg.type = MSG_OVERLAY;
+  xQueueSend(g_scanQ, &msg, ticks);
+}
+
+extern "C" void genesis_display_request_overlay(void)
+{
+  md_display_request_overlay_ticks(0);
+}
+
+extern "C" void genesis_display_request_overlay_blocking(uint32_t timeoutMs)
+{
+  md_display_request_overlay_ticks(pdMS_TO_TICKS(timeoutMs));
+}
+
 /* Allocate buffers for line rendering */
 static inline void allocate_line_buffers() {
   if (g_viewW > s_capImg) {
@@ -283,6 +685,16 @@ void display_task(void* arg) {
         M5.Lcd.endWrite();
         inFrame = false;
       }
+      md_display_draw_overlay();
+      continue;
+    }
+
+    if (m.type == MSG_OVERLAY) {
+      if (inFrame) {
+        M5.Lcd.endWrite();
+        inFrame = false;
+      }
+      md_display_draw_overlay();
       continue;
     }
 
@@ -416,10 +828,7 @@ void display_task(void* arg) {
 
     while (linesToPush > 0) {
       int chunk = (linesToPush > 16) ? 16 : linesToPush;
-      M5.Lcd.setAddrWindow(0, prevDstY, g_dstW, chunk);
-      for (int i = 0; i < chunk; ++i) {
-        M5.Lcd.writePixels(s_lineFull, g_dstW);
-      }
+      md_display_write_lines(prevDstY, chunk);
       prevDstY    += chunk;
       linesToPush -= chunk;
 #if MD_RENDER_LOGS_ENABLED

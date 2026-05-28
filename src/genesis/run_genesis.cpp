@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+#include <limits.h>
 #include "esp_heap_caps.h"
 #include "genesis/run_genesis.h"
 #include "genesis_sound.h"
@@ -9,6 +10,7 @@
 #include "genesis_save.h"
 #include "genesis/gwenesis/bus/gwenesis_bus.h"
 #include "share/input.h"
+#include "share/game_save.h"
 #include "share/sd_control.h"
 #include "share/sd_gameplay_guard.h"
 #include "share/utils.h"
@@ -31,9 +33,39 @@ static uint32_t frame_count = 0;
 static uint64_t last_fps_log_time = 0;
 #endif
 static volatile int g_target_fps = 60;
-static bool s_draw_toggle = false;  // for skipping frames
-static volatile bool s_skipZ80Next = false; // skip Z80 on next frame if true
 extern int genesisZoomPercent;
+
+enum MdFrameskipMode : uint8_t {
+  MD_FRAMESKIP_OFF = 0,
+  MD_FRAMESKIP_ADAPTIVE,
+  MD_FRAMESKIP_FIXED,
+};
+
+enum MdMenuPage : uint8_t {
+  MD_MENU_VIDEO = 0,
+  MD_MENU_FPS,
+};
+
+enum MdFpsOverlayMode : uint8_t {
+  MD_FPS_OFF = 0,
+  MD_FPS_CORE,
+  MD_FPS_VIDEO,
+};
+
+static bool s_mdMenuOpen = false;
+static int s_mdMenuSelected = 0;
+static MdMenuPage s_mdMenuPage = MD_MENU_VIDEO;
+static MdFpsOverlayMode s_mdFpsOverlayMode = MD_FPS_OFF;
+static MdFrameskipMode s_mdFrameskipMode = MD_FRAMESKIP_OFF;
+static int s_mdFixedFrameskipIndex = 0;
+static uint16_t s_mdFixedSkipCreditQ8 = 0;
+static bool s_mdAdaptiveSkipNextDraw = false;
+static float s_mdCoreFps = 0.0f;
+static float s_mdVideoFps = 0.0f;
+static uint32_t s_mdRuntimeCoreFrames = 0;
+static uint32_t s_mdRuntimeVideoFrames = 0;
+static uint64_t s_mdRuntimeFpsLastUs = 0;
+static char s_mdOptionsPath[PATH_MAX] = {0};
 
 #ifndef MD_BENCH_NO_FRAME_SKIP
 #define MD_BENCH_NO_FRAME_SKIP 0
@@ -768,6 +800,7 @@ extern "C" {
   void           load_cartridge(unsigned char *buffer, size_t size);
   void           power_on(void);
   void           reset_emulation(void);
+  void           gwenesis_io_pad_release_button(int pad, int idx);
 
 #ifndef GENESIS_NO_SOUND
   void           gwenesis_SN76489_run(int target);
@@ -836,6 +869,8 @@ static void md_reset_quit_controls()
   share::clearBeforeRestartCallback();
 }
 
+static void md_options_save();
+
 static void md_enter_sd_off_gameplay()
 {
 #ifdef MD_SD_OFF_DURING_GAMEPLAY
@@ -886,17 +921,22 @@ static void md_clean_teardown_and_save()
   genesis_free_core_runtime_buffers();
   md_log_heap_step("core freed");
 
-  if (md_has_sram()) {
+  if (md_has_sram() || s_mdOptionsPath[0] != '\0') {
     md_log_heap_step("pre SD begin");
     if (share_sd_gameplay_mount("MD", "save")) {
       md_log_heap_step("after SD begin");
-      genesis_save_force_flush();
+      if (md_has_sram()) {
+        genesis_save_force_flush();
+      } else {
+        EMU_LOG("[MD][SD] no SRAM, save options only\n");
+      }
+      md_options_save();
       md_log_heap_step("after save");
     } else {
-      EMU_LOG("[GEN][SAVE] SD remount failed, SRAM not saved\n");
+      EMU_LOG("[GEN][SAVE] SD remount failed, SRAM/options not saved\n");
     }
   } else {
-    EMU_LOG("[MD][SD] no SRAM, skip SD remount/save\n");
+    EMU_LOG("[MD][SD] no SRAM/options, skip SD remount/save\n");
   }
 
 #ifdef MD_SD_OFF_DURING_GAMEPLAY
@@ -908,18 +948,498 @@ static void md_clean_teardown_and_save()
   EMU_LOG("[MD][QUIT] clean teardown done\n");
 }
 
-/* RUN ONE FRAME with VDP, M68K, Z80, Sound, etc. */
-static void run_one_frame() {
-  const uint64_t t_start = micros();
-#if MD_BENCH_NO_FRAME_SKIP
-  const bool drawFrame = true;
-  const bool skipZ80 = false;
-  s_skipZ80Next = false;
-#else
-  const bool drawFrame = (!s_skipZ80Next) && (s_draw_toggle = !s_draw_toggle); // frame skip logic
-  const bool skipZ80 = s_skipZ80Next;   // snapshot
-  s_skipZ80Next = false;
+static constexpr uint16_t kMdFixedFrameskipQ8[] = {
+  51,   // 0.2 skipped frames per drawn frame
+  102,  // 0.4
+  128,  // 0.5
+  205,  // 0.8
+  256,  // 1.0
+  384,  // 1.5
+};
+
+static constexpr const char* kMdFixedFrameskipLabels[] = {
+  "Fixed 0.2",
+  "Fixed 0.4",
+  "Fixed 0.5",
+  "Fixed 0.8",
+  "Fixed 1.0",
+  "Fixed 1.5",
+};
+
+static inline void md_release_gamepad_buttons()
+{
+  for (int i = 0; i < 8; ++i) {
+    gwenesis_io_pad_release_button(0, i);
+  }
+}
+
+static const char* md_frameskip_label()
+{
+  if (s_mdFrameskipMode == MD_FRAMESKIP_ADAPTIVE) return "Adaptive";
+  if (s_mdFrameskipMode == MD_FRAMESKIP_FIXED) return kMdFixedFrameskipLabels[s_mdFixedFrameskipIndex];
+  return "Off";
+}
+
+static const char* md_fps_mode_label()
+{
+  switch (s_mdFpsOverlayMode) {
+    case MD_FPS_CORE: return "Core";
+    case MD_FPS_VIDEO: return "Video";
+    case MD_FPS_OFF:
+    default:
+      return "Off";
+  }
+}
+
+static float md_fps_overlay_value()
+{
+  switch (s_mdFpsOverlayMode) {
+    case MD_FPS_CORE: return s_mdCoreFps;
+    case MD_FPS_VIDEO: return s_mdVideoFps;
+    case MD_FPS_OFF:
+    default:
+      return 0.0f;
+  }
+}
+
+static void md_apply_fps_overlay()
+{
+  genesis_display_set_fps_overlay(s_mdFpsOverlayMode != MD_FPS_OFF, md_fps_overlay_value());
+}
+
+static void md_set_fps_mode(MdFpsOverlayMode mode)
+{
+  if (mode > MD_FPS_VIDEO) mode = MD_FPS_OFF;
+  s_mdFpsOverlayMode = mode;
+  md_apply_fps_overlay();
+}
+
+static void md_cycle_fps_mode(int dir)
+{
+  int slot = (int)s_mdFpsOverlayMode;
+  slot = (slot + dir + 3) % 3;
+  md_set_fps_mode((MdFpsOverlayMode)slot);
+}
+
+static void md_update_menu_overlay()
+{
+  if (s_mdMenuPage == MD_MENU_FPS) {
+    genesis_display_set_menu_overlay(s_mdMenuOpen,
+                                     s_mdMenuSelected,
+                                     "FPS SOURCE",
+                                     "CORE",
+                                     s_mdFpsOverlayMode == MD_FPS_CORE ? "On" : "",
+                                     "VIDEO",
+                                     s_mdFpsOverlayMode == MD_FPS_VIDEO ? "On" : "",
+                                     "START select DEL back",
+                                     "GO close menu");
+  } else {
+    genesis_display_set_menu_overlay(s_mdMenuOpen,
+                                     s_mdMenuSelected,
+                                     "VIDEO MENU",
+                                     "FPS",
+                                     md_fps_mode_label(),
+                                     "FRAMESKIP",
+                                     md_frameskip_label(),
+                                     "START enter < > change",
+                                     "GO close menu");
+  }
+  genesis_display_request_overlay_blocking(50);
+}
+
+static void md_set_frameskip_mode(MdFrameskipMode mode, int fixedIndex)
+{
+  const int fixedCount = (int)(sizeof(kMdFixedFrameskipQ8) / sizeof(kMdFixedFrameskipQ8[0]));
+  if (fixedIndex < 0) fixedIndex = fixedCount - 1;
+  if (fixedIndex >= fixedCount) fixedIndex = 0;
+  s_mdFrameskipMode = mode;
+  s_mdFixedFrameskipIndex = fixedIndex;
+  s_mdFixedSkipCreditQ8 = 0;
+  s_mdAdaptiveSkipNextDraw = false;
+}
+
+static void md_cycle_frameskip(int dir)
+{
+  const int fixedCount = (int)(sizeof(kMdFixedFrameskipQ8) / sizeof(kMdFixedFrameskipQ8[0]));
+  int slot = 0;
+  if (s_mdFrameskipMode == MD_FRAMESKIP_ADAPTIVE) {
+    slot = 1;
+  } else if (s_mdFrameskipMode == MD_FRAMESKIP_FIXED) {
+    slot = 2 + s_mdFixedFrameskipIndex;
+  }
+
+  const int slotCount = 2 + fixedCount;
+  slot = (slot + dir + slotCount) % slotCount;
+  if (slot == 0) {
+    md_set_frameskip_mode(MD_FRAMESKIP_OFF, 0);
+  } else if (slot == 1) {
+    md_set_frameskip_mode(MD_FRAMESKIP_ADAPTIVE, 0);
+  } else {
+    md_set_frameskip_mode(MD_FRAMESKIP_FIXED, slot - 2);
+  }
+}
+
+static void md_runtime_options_reset()
+{
+  s_mdMenuOpen = false;
+  s_mdMenuSelected = 0;
+  s_mdMenuPage = MD_MENU_VIDEO;
+  s_mdFpsOverlayMode = MD_FPS_OFF;
+  md_set_frameskip_mode(MD_FRAMESKIP_OFF, 0);
+  s_mdCoreFps = 0.0f;
+  s_mdVideoFps = 0.0f;
+  s_mdRuntimeCoreFrames = 0;
+  s_mdRuntimeVideoFrames = 0;
+  s_mdRuntimeFpsLastUs = 0;
+}
+
+static void md_options_make_path(const char* romPathOrName)
+{
+  s_mdOptionsPath[0] = '\0';
+
+  const char* base = share::gameSaveBasename(romPathOrName);
+  char name[160] = {0};
+  if (base && *base) {
+    strncpy(name, base, sizeof(name) - 1);
+    name[sizeof(name) - 1] = '\0';
+    char* dot = strrchr(name, '.');
+    if (dot) {
+      *dot = '\0';
+    }
+    strncat(name, ".opt", sizeof(name) - strlen(name) - 1);
+  } else {
+    strcpy(name, "genesis_autosave.opt");
+  }
+
+  const int n = snprintf(s_mdOptionsPath,
+                         sizeof(s_mdOptionsPath),
+                         "/sd/genesis_saves/%s",
+                         name);
+  if (n < 0 || (size_t)n >= sizeof(s_mdOptionsPath)) {
+    s_mdOptionsPath[sizeof(s_mdOptionsPath) - 1] = '\0';
+  }
+}
+
+static void md_options_load()
+{
+  if (s_mdOptionsPath[0] == '\0') return;
+  if (!share::gameSaveEnsureParentReady("/sd/genesis_saves")) {
+    EMU_LOG("[MD][OPT] storage path not ready, use defaults\n");
+    return;
+  }
+
+  FILE* f = fopen(s_mdOptionsPath, "rb");
+  if (!f) {
+    EMU_LOG("[MD][OPT] no existing options for %s\n", s_mdOptionsPath);
+    return;
+  }
+
+  int showFps = s_mdFpsOverlayMode != MD_FPS_OFF ? 1 : 0;
+  int fpsMode = (int)s_mdFpsOverlayMode;
+  bool hasFpsMode = false;
+  int mode = (int)s_mdFrameskipMode;
+  int fixedIndex = s_mdFixedFrameskipIndex;
+  char line[96];
+  while (fgets(line, sizeof(line), f)) {
+    int value = 0;
+    if (sscanf(line, "fps=%d", &value) == 1) {
+      showFps = value ? 1 : 0;
+    } else if (sscanf(line, "fps_mode=%d", &value) == 1) {
+      fpsMode = value;
+      hasFpsMode = true;
+    } else if (sscanf(line, "frameskip_mode=%d", &value) == 1) {
+      mode = value;
+    } else if (sscanf(line, "fixed_index=%d", &value) == 1) {
+      fixedIndex = value;
+    }
+  }
+  fclose(f);
+
+  if (mode < (int)MD_FRAMESKIP_OFF || mode > (int)MD_FRAMESKIP_FIXED) {
+    mode = (int)MD_FRAMESKIP_OFF;
+  }
+  if (fpsMode < (int)MD_FPS_OFF || fpsMode > (int)MD_FPS_VIDEO) {
+    fpsMode = (int)MD_FPS_OFF;
+  }
+  if (!hasFpsMode) {
+    fpsMode = showFps ? (int)MD_FPS_CORE : (int)MD_FPS_OFF;
+  }
+  md_set_fps_mode((MdFpsOverlayMode)fpsMode);
+  md_set_frameskip_mode((MdFrameskipMode)mode, fixedIndex);
+  EMU_LOG("[MD][OPT] loaded %s fps=%s frameskip=%s\n",
+          s_mdOptionsPath,
+          md_fps_mode_label(),
+          md_frameskip_label());
+}
+
+static void md_options_load_with_sd()
+{
+  const bool wasMounted = share_sd_is_mounted();
+  if (!wasMounted && !share_sd_gameplay_mount("MD", "options load")) {
+    EMU_LOG("[MD][OPT] SD remount failed, use defaults\n");
+    return;
+  }
+
+  md_options_load();
+
+#ifdef MD_SD_OFF_DURING_GAMEPLAY
+  if (!wasMounted) {
+    share_sd_gameplay_close_if_mounted("MD", "options load");
+  }
 #endif
+}
+
+static void md_options_save()
+{
+  if (s_mdOptionsPath[0] == '\0') return;
+  if (!share::gameSaveEnsureParentReady("/sd/genesis_saves")) {
+    EMU_LOG("[MD][OPT] storage path not ready, options not saved\n");
+    return;
+  }
+
+  share::setGameIsSaving(true);
+  FILE* f = fopen(s_mdOptionsPath, "wb");
+  if (!f) {
+    share::setGameIsSaving(false);
+    EMU_LOG("[MD][OPT] open failed for %s\n", s_mdOptionsPath);
+    return;
+  }
+
+  const int fixedIndex = (s_mdFrameskipMode == MD_FRAMESKIP_FIXED) ? s_mdFixedFrameskipIndex : 0;
+  const int n = fprintf(f,
+                        "version=1\n"
+                        "fps=%d\n"
+                        "fps_mode=%d\n"
+                        "frameskip_mode=%d\n"
+                        "fixed_index=%d\n",
+                        s_mdFpsOverlayMode != MD_FPS_OFF ? 1 : 0,
+                        (int)s_mdFpsOverlayMode,
+                        (int)s_mdFrameskipMode,
+                        fixedIndex);
+  const int closeOk = fclose(f);
+  share::setGameIsSaving(false);
+
+  if (n < 0 || closeOk != 0) {
+    EMU_LOG("[MD][OPT] write failed for %s\n", s_mdOptionsPath);
+    return;
+  }
+  EMU_LOG("[MD][OPT] saved %s fps=%s frameskip=%s\n",
+          s_mdOptionsPath,
+          md_fps_mode_label(),
+          md_frameskip_label());
+}
+
+static bool md_frameskip_should_draw()
+{
+  if (s_mdMenuOpen) return false;
+  if (s_mdFrameskipMode == MD_FRAMESKIP_ADAPTIVE) {
+    if (s_mdAdaptiveSkipNextDraw) {
+      s_mdAdaptiveSkipNextDraw = false;
+      return false;
+    }
+    return true;
+  }
+  if (s_mdFrameskipMode == MD_FRAMESKIP_FIXED) {
+    if (s_mdFixedSkipCreditQ8 >= 256) {
+      s_mdFixedSkipCreditQ8 -= 256;
+      return false;
+    }
+    s_mdFixedSkipCreditQ8 += kMdFixedFrameskipQ8[s_mdFixedFrameskipIndex];
+  }
+  return true;
+}
+
+static void md_frameskip_after_frame(bool lateSkip)
+{
+  if (s_mdFrameskipMode == MD_FRAMESKIP_ADAPTIVE) {
+    s_mdAdaptiveSkipNextDraw = lateSkip;
+  }
+}
+
+static bool md_key_down()
+{
+  return M5Cardputer.Keyboard.isKeyPressed(CARDPUTER_DOWN_1) ||
+         M5Cardputer.Keyboard.isKeyPressed(CARDPUTER_DOWN_2) ||
+         M5Cardputer.Keyboard.isKeyPressed(CARDPUTER_DOWN_3);
+}
+
+static bool md_key_up()
+{
+  return M5Cardputer.Keyboard.isKeyPressed(CARDPUTER_UP_1) ||
+         M5Cardputer.Keyboard.isKeyPressed(CARDPUTER_UP_2);
+}
+
+static bool md_key_left()
+{
+  return M5Cardputer.Keyboard.isKeyPressed(CARDPUTER_LEFT_1) ||
+         M5Cardputer.Keyboard.isKeyPressed(CARDPUTER_LEFT_2);
+}
+
+static bool md_key_right()
+{
+  return M5Cardputer.Keyboard.isKeyPressed(CARDPUTER_RIGHT_1) ||
+         M5Cardputer.Keyboard.isKeyPressed(CARDPUTER_RIGHT_2);
+}
+
+static bool md_key_del()
+{
+  return M5Cardputer.Keyboard.isKeyPressed('\b');
+}
+
+enum MdG0Event : uint8_t {
+  MD_G0_NONE = 0,
+  MD_G0_SHORT,
+  MD_G0_LONG,
+};
+
+static MdG0Event md_g0_poll_event()
+{
+  static bool wasDown = false;
+  static bool longFired = false;
+  static uint32_t downMs = 0;
+
+  const bool down = M5Cardputer.BtnA.isPressed();
+  const uint32_t now = millis();
+  if (down && !wasDown) {
+    wasDown = true;
+    longFired = false;
+    downMs = now;
+    return MD_G0_NONE;
+  }
+  if (down && wasDown && !longFired && (now - downMs) >= 1000u) {
+    longFired = true;
+    return MD_G0_LONG;
+  }
+  if (!down && wasDown) {
+    const uint32_t heldMs = now - downMs;
+    wasDown = false;
+    return (!longFired && heldMs >= 30u && heldMs < 700u) ? MD_G0_SHORT : MD_G0_NONE;
+  }
+  return MD_G0_NONE;
+}
+
+static void md_menu_handle_input(const Keyboard_Class::KeysState& ks)
+{
+  (void)ks;
+  static bool prevUp = false;
+  static bool prevDown = false;
+  static bool prevLeft = false;
+  static bool prevRight = false;
+  static bool prevStart = false;
+  static bool prevDel = false;
+
+  const bool up = md_key_up();
+  const bool down = md_key_down();
+  const bool left = md_key_left();
+  const bool right = md_key_right();
+  const bool start = M5Cardputer.Keyboard.isKeyPressed(CARDPUTER_BTN_START);
+  const bool del = md_key_del();
+
+  const bool upEdge = up && !prevUp;
+  const bool downEdge = down && !prevDown;
+  const bool leftEdge = left && !prevLeft;
+  const bool rightEdge = right && !prevRight;
+  const bool startEdge = start && !prevStart;
+  const bool delEdge = del && !prevDel;
+
+  prevUp = up;
+  prevDown = down;
+  prevLeft = left;
+  prevRight = right;
+  prevStart = start;
+  prevDel = del;
+
+  if (delEdge && s_mdMenuPage != MD_MENU_VIDEO) {
+    s_mdMenuPage = MD_MENU_VIDEO;
+    s_mdMenuSelected = 0;
+    md_update_menu_overlay();
+    return;
+  }
+
+  if (upEdge || downEdge) {
+    s_mdMenuSelected ^= 1;
+    md_update_menu_overlay();
+  }
+
+  if (s_mdMenuPage == MD_MENU_FPS) {
+    if (leftEdge || rightEdge || startEdge) {
+      md_set_fps_mode(s_mdMenuSelected == 0 ? MD_FPS_CORE : MD_FPS_VIDEO);
+      md_update_menu_overlay();
+    }
+    return;
+  }
+
+  if (leftEdge || rightEdge) {
+    if (s_mdMenuSelected == 0) {
+      md_cycle_fps_mode(leftEdge ? -1 : 1);
+    } else {
+      md_cycle_frameskip(leftEdge ? -1 : 1);
+    }
+    md_update_menu_overlay();
+  }
+
+  if (startEdge) {
+    if (s_mdMenuSelected == 0) {
+      s_mdMenuPage = MD_MENU_FPS;
+      s_mdMenuSelected = (s_mdFpsOverlayMode == MD_FPS_VIDEO) ? 1 : 0;
+    } else {
+      md_cycle_frameskip(1);
+    }
+    md_update_menu_overlay();
+  }
+}
+
+static void md_poll_ingame_menu()
+{
+  M5Cardputer.update();
+  Keyboard_Class::KeysState ks = M5Cardputer.Keyboard.keysState();
+  share::checkCommonInput(ks, false);
+
+  const MdG0Event g0 = md_g0_poll_event();
+  if (g0 == MD_G0_LONG) {
+    share::requestRestart();
+    return;
+  }
+  if (g0 == MD_G0_SHORT) {
+    s_mdMenuOpen = !s_mdMenuOpen;
+    if (s_mdMenuOpen) {
+      s_mdMenuPage = MD_MENU_VIDEO;
+      s_mdMenuSelected = 0;
+      md_release_gamepad_buttons();
+    }
+    md_update_menu_overlay();
+  }
+
+  if (s_mdMenuOpen) {
+    md_menu_handle_input(ks);
+  }
+}
+
+static void md_runtime_fps_record(bool drawFrame)
+{
+  const uint64_t now = (uint64_t)esp_timer_get_time();
+  if (s_mdRuntimeFpsLastUs == 0) {
+    s_mdRuntimeFpsLastUs = now;
+  }
+  ++s_mdRuntimeCoreFrames;
+  if (drawFrame) {
+    ++s_mdRuntimeVideoFrames;
+  }
+  const uint64_t elapsed = now - s_mdRuntimeFpsLastUs;
+  if (elapsed >= 500000ULL) {
+    s_mdCoreFps = (float)((double)s_mdRuntimeCoreFrames * 1000000.0 / (double)elapsed);
+    s_mdVideoFps = (float)((double)s_mdRuntimeVideoFrames * 1000000.0 / (double)elapsed);
+    s_mdRuntimeCoreFrames = 0;
+    s_mdRuntimeVideoFrames = 0;
+    s_mdRuntimeFpsLastUs = now;
+    md_apply_fps_overlay();
+  }
+}
+
+/* RUN ONE FRAME with VDP, M68K, Z80, Sound, etc. */
+static bool run_one_frame() {
+  const uint64_t t_start = micros();
+  const bool drawFrame = md_frameskip_should_draw();
 
   // Reset sound state
   #ifndef GENESIS_NO_SOUND
@@ -1012,15 +1532,13 @@ static void run_one_frame() {
     // Run Z80 and update YM2612 clock for sound
     #ifndef GENESIS_NO_SOUND
       if (genesis_audio_volume > 0) {
-        if (!skipZ80) {
 #if MD_BENCHMARK_LOGS_ENABLED
-          t_probe = md_bench_now_us();
+        t_probe = md_bench_now_us();
 #endif
-          z80_run(cpu_deadline);
+        z80_run(cpu_deadline);
 #if MD_BENCHMARK_LOGS_ENABLED
-          md_bench_add_u64(s_mdBench.z80UsTotal, t_probe);
+        md_bench_add_u64(s_mdBench.z80UsTotal, t_probe);
 #endif
-        }
 #if MD_BENCHMARK_LOGS_ENABLED
         t_probe = md_bench_now_us();
 #endif
@@ -1124,17 +1642,13 @@ static void run_one_frame() {
   const uint32_t kFrameBudgetUs = 1000000u / (g_target_fps - 8); // 52FPS target
   const uint32_t elapsedUs = (uint32_t)(micros() - t_start);
   const bool lateSkip = elapsedUs > kFrameBudgetUs;
-#if !MD_BENCH_NO_FRAME_SKIP
-  if (lateSkip) {
-    s_skipZ80Next = true;  // we are late, skip Z80 next frame
-  }
-#endif
+  md_frameskip_after_frame(lateSkip);
 #if MD_RENDER_LOGS_ENABLED
-  md_render_diag_record(drawFrame, skipZ80, lateSkip, renderedLines, elapsedUs, kFrameBudgetUs, h, (uint32_t)lines_per_frame);
+  md_render_diag_record(drawFrame, false, lateSkip, renderedLines, elapsedUs, kFrameBudgetUs, h, (uint32_t)lines_per_frame);
   md_render_diag_log_if_due();
 #endif
 #if MD_BENCHMARK_LOGS_ENABLED
-  md_bench_record_frame(drawFrame, skipZ80, lateSkip, renderedLines, elapsedUs, kFrameBudgetUs);
+  md_bench_record_frame(drawFrame, false, lateSkip, renderedLines, elapsedUs, kFrameBudgetUs);
   md_bench_log_if_due();
 #endif
   md_opcode_profile_log_if_due();
@@ -1157,6 +1671,7 @@ static void run_one_frame() {
     EMU_LOG("[FPS] ~%.1f fps | heap: %lu\n", fps, (unsigned long)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
   }
 #endif
+  return drawFrame;
 }
 
 /* Run genesis emulation with XIP mapped rom */
@@ -1223,8 +1738,11 @@ extern "C" void run_genesis(const uint8_t* rom, size_t len, const char* rom_name
           mdOutRate,
           mdChunkCap,
           mdPoolSlots);
+  md_runtime_options_reset();
+  md_options_make_path(rom_name);
   genesis_save_init(rom_name);
   md_load_sram_with_sd();
+  md_options_load_with_sd();
   md_enter_sd_off_gameplay();
 
   // SRAM ROMs use a smaller audio profile after VRAM keeps its 64 KiB block.
@@ -1257,6 +1775,19 @@ extern "C" void run_genesis(const uint8_t* rom, size_t len, const char* rom_name
 
   screen_width = REG12_MODE_H40 ? 320 : 256;
   screen_height = REG1_PAL ? 240 : 224;
+  s_mdMenuOpen = false;
+  s_mdMenuSelected = 0;
+  s_mdMenuPage = MD_MENU_VIDEO;
+  md_apply_fps_overlay();
+  genesis_display_set_menu_overlay(false,
+                                   s_mdMenuSelected,
+                                   "VIDEO MENU",
+                                   "FPS",
+                                   md_fps_mode_label(),
+                                   "FRAMESKIP",
+                                   md_frameskip_label(),
+                                   "START enter < > change",
+                                   "GO close menu");
   
   // Main emulation loop with frame pacing
   uint64_t next_frame_us = esp_timer_get_time();
@@ -1264,8 +1795,21 @@ extern "C" void run_genesis(const uint8_t* rom, size_t len, const char* rom_name
     const int fps = g_target_fps; // snapshot
     const uint32_t frame_us = (fps > 0) ? (1000000u / (uint32_t)fps) : 0u;
 
+    md_poll_ingame_menu();
+    if (share::restartRequested()) {
+      break;
+    }
+    if (s_mdMenuOpen) {
+      md_release_gamepad_buttons();
+      genesis_save_tick();
+      share::sleep_until_us((uint64_t)esp_timer_get_time() + 16000u);
+      next_frame_us = esp_timer_get_time();
+      continue;
+    }
+
     // Emulate one frame
-    run_one_frame();
+    const bool drewFrame = run_one_frame();
+    md_runtime_fps_record(drewFrame);
 #if MD_DETERMINISTIC_BENCH && (MD_DETERMINISTIC_BENCH_FRAMES > 0)
     if (s_mdDeterministicBenchFrame >= (uint32_t)MD_DETERMINISTIC_BENCH_FRAMES) {
       if (!s_mdDeterministicBenchLimitLogged) {

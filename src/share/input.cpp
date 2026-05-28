@@ -79,38 +79,48 @@ namespace share
         return M5Cardputer.Keyboard.isKeyPressed(c);
     }
 
+    void requestRestart()
+    {
+        if (s_restartRequested) {
+            return;
+        }
+
+        BOOT_LOG("INPUT", "BtnA pressedFor(1000) -> quit/restart");
+        Preferences prefs; // Mark quit game flag in NVS
+        prefs.begin("cardputer_emu", false);  // RW
+        prefs.putBool("quit_game", true);
+        prefs.end();
+
+        if (s_restartRequestMode) {
+            BOOT_LOG("INPUT", "restart requested for deferred teardown");
+            s_restartRequested = true;
+            return;
+        }
+
+        if (s_beforeRestartCallback) {
+            BOOT_LOG("INPUT", "beforeRestart callback start");
+            s_beforeRestartCallback();
+            BOOT_LOG("INPUT", "beforeRestart callback done");
+        }
+
+        while (gameIsSaving()) {
+            delay(1); // wait for save to finish
+        }
+
+        BOOT_LOG("INPUT", "esp_restart from common input");
+        esp_restart();
+    }
+
     void checkCommonInput(const Keyboard_Class::KeysState& status)
     {
+        checkCommonInput(status, true);
+    }
+
+    void checkCommonInput(const Keyboard_Class::KeysState& status, bool handleRestart)
+    {
         // Bouton GO → restart (hack for quit game and reset memory)
-        if (M5Cardputer.BtnA.pressedFor(1000)) {
-            if (s_restartRequested) {
-                return;
-            }
-
-            BOOT_LOG("INPUT", "BtnA pressedFor(1000) -> quit/restart");
-            Preferences prefs; // Mark quit game flag in NVS
-            prefs.begin("cardputer_emu", false);  // RW
-            prefs.putBool("quit_game", true);
-            prefs.end();
-
-            if (s_restartRequestMode) {
-                BOOT_LOG("INPUT", "restart requested for deferred teardown");
-                s_restartRequested = true;
-                return;
-            }
-
-            if (s_beforeRestartCallback) {
-                BOOT_LOG("INPUT", "beforeRestart callback start");
-                s_beforeRestartCallback();
-                BOOT_LOG("INPUT", "beforeRestart callback done");
-            }
-            
-            while (gameIsSaving()) {
-                delay(1); // wait for save to finish
-            }
-            
-            BOOT_LOG("INPUT", "esp_restart from common input");
-            esp_restart();
+        if (handleRestart && M5Cardputer.BtnA.pressedFor(1000)) {
+            requestRestart();
         }
 
         // Volume +

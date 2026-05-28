@@ -44,6 +44,8 @@ namespace share
 
     bool shouldPollInput(); 
     void checkCommonInput(const Keyboard_Class::KeysState& status);
+    void checkCommonInput(const Keyboard_Class::KeysState& status, bool handleRestart);
+    void requestRestart();
     void setBeforeRestartCallback(BeforeRestartCallback callback);
     void clearBeforeRestartCallback();
     void setRestartRequestMode(bool enabled);

@@ -27,7 +27,8 @@ extern "C" {
 typedef enum : uint8_t {
     MSG_BEGIN_FRAME,
     MSG_SCANLINE,
-    MSG_END_FRAME
+    MSG_END_FRAME,
+    MSG_OVERLAY
 } ScanMsgType;
 
 typedef struct {
@@ -92,6 +93,20 @@ void GWENESIS_PUSH_SCANLINE_IDX(int line, const uint8_t* src8, int w);
 
 // End the current frame
 void genesis_display_end_frame(void);
+
+// Lightweight in-game overlays drawn by the display task after frame output.
+void genesis_display_set_fps_overlay(bool enabled, float fps);
+void genesis_display_set_menu_overlay(bool visible,
+                                      int selectedRow,
+                                      const char* title,
+                                      const char* row0Label,
+                                      const char* row0Value,
+                                      const char* row1Label,
+                                      const char* row1Value,
+                                      const char* hint1,
+                                      const char* hint2);
+void genesis_display_request_overlay(void);
+void genesis_display_request_overlay_blocking(uint32_t timeoutMs);
 
 // Display task
 void display_task(void* arg);
