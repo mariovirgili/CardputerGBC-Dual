@@ -1136,9 +1136,9 @@ static void md_runtime_options_reset()
   s_mdMenuOpen = false;
   s_mdMenuSelected = 0;
   s_mdMenuPage = MD_MENU_VIDEO;
-  s_mdFpsOverlayMode = MD_FPS_OFF;
+  md_set_fps_mode(MD_FPS_CORE);
   md_set_wallclock_samples(false);
-  md_set_frameskip_mode(MD_FRAMESKIP_OFF, 0);
+  md_set_frameskip_mode(MD_FRAMESKIP_ADAPTIVE, 0);
   s_mdCoreFps = 0.0f;
   s_mdVideoFps = 0.0f;
   s_mdRuntimeCoreFrames = 0;
