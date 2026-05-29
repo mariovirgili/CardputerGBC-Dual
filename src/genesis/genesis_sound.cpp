@@ -72,6 +72,7 @@ static int s_audioOutSamples = AUDIO_CHUNK_NTSC;
 static int s_audioOutputRate = AUDIO_SR;
 static int s_audioChunkCap = AUDIO_CHUNK_CAP;
 static int s_audioPoolSlots = AUDIO_POOL;
+static bool s_audioWallclockSamples = false;
 
 #ifndef MD_AUDIO_WALLCLOCK_SAMPLES
 #define MD_AUDIO_WALLCLOCK_SAMPLES 0
@@ -87,6 +88,18 @@ static int s_audioPoolSlots = AUDIO_POOL;
 
 static uint32_t s_audioResamplePhaseQ16 = 0;
 static int s_audioOutputSampleRemainder = 0;
+
+void genesis_sound_set_wallclock_samples(bool enabled)
+{
+  s_audioWallclockSamples = enabled;
+  s_audioOutputSampleRemainder = 0;
+  s_audioResamplePhaseQ16 = 0;
+}
+
+bool genesis_sound_get_wallclock_samples(void)
+{
+  return s_audioWallclockSamples;
+}
 
 static int md_audio_nominal_chunk_cap_for_rate(int sample_rate)
 {
@@ -423,13 +436,13 @@ static inline int16_t mix_sample_at(int idx, int ym_n, int psg_n) {
 static inline int genesis_sound_output_samples_for_frame(uint32_t frame_elapsed_us)
 {
 #if MD_AUDIO_WALLCLOCK_SAMPLES
-  if (frame_elapsed_us > 0) {
+  if (s_audioWallclockSamples && frame_elapsed_us > 0) {
     int samples = (int)(((int64_t)s_audioOutputRate * (int64_t)frame_elapsed_us + 500000LL) / 1000000LL);
     if (samples < 1) samples = 1;
     if (samples > s_audioChunkCap) samples = s_audioChunkCap;
     return samples;
   }
-#else
+#endif
   (void)frame_elapsed_us;
   if (s_audioRefreshRate > 0) {
     int samples = s_audioOutputRate / s_audioRefreshRate;
@@ -442,7 +455,6 @@ static inline int genesis_sound_output_samples_for_frame(uint32_t frame_elapsed_
     if (samples > s_audioChunkCap) samples = s_audioChunkCap;
     return samples;
   }
-#endif
   return s_audioOutSamples;
 }
 

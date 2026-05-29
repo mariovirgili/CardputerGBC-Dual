@@ -64,6 +64,7 @@ static int s_mdMenuSelected = 0;
 static MdMenuPage s_mdMenuPage = MD_MENU_VIDEO;
 static MdFpsOverlayMode s_mdFpsOverlayMode = MD_FPS_OFF;
 static MdFrameskipMode s_mdFrameskipMode = MD_FRAMESKIP_OFF;
+static bool s_mdWallclockSamples = false;
 static int s_mdFixedFrameskipIndex = 0;
 static uint16_t s_mdFixedSkipCreditQ8 = 0;
 static bool s_mdAdaptiveSkipNextDraw = false;
@@ -1004,6 +1005,11 @@ static const char* md_fps_mode_label()
   }
 }
 
+static const char* md_wallclock_label()
+{
+  return s_mdWallclockSamples ? "On" : "Off";
+}
+
 static float md_fps_overlay_value()
 {
   switch (s_mdFpsOverlayMode) {
@@ -1034,6 +1040,17 @@ static void md_cycle_fps_mode(int dir)
   md_set_fps_mode((MdFpsOverlayMode)slot);
 }
 
+static void md_set_wallclock_samples(bool enabled)
+{
+  s_mdWallclockSamples = enabled;
+  genesis_sound_set_wallclock_samples(enabled);
+}
+
+static void md_toggle_wallclock_samples()
+{
+  md_set_wallclock_samples(!s_mdWallclockSamples);
+}
+
 static void md_update_menu_overlay()
 {
   if (s_mdMenuPage == MD_MENU_FPS) {
@@ -1044,6 +1061,8 @@ static void md_update_menu_overlay()
                                      s_mdFpsOverlayMode == MD_FPS_CORE ? "On" : "",
                                      "VIDEO",
                                      s_mdFpsOverlayMode == MD_FPS_VIDEO ? "On" : "",
+                                     "",
+                                     "",
                                      "START select DEL back",
                                      "GO close menu");
   } else {
@@ -1054,6 +1073,8 @@ static void md_update_menu_overlay()
                                      md_fps_mode_label(),
                                      "FRAMESKIP",
                                      md_frameskip_label(),
+                                     "WallClk",
+                                     md_wallclock_label(),
                                      "START enter < > change",
                                      "GO close menu");
   }
@@ -1116,6 +1137,7 @@ static void md_runtime_options_reset()
   s_mdMenuSelected = 0;
   s_mdMenuPage = MD_MENU_VIDEO;
   s_mdFpsOverlayMode = MD_FPS_OFF;
+  md_set_wallclock_samples(false);
   md_set_frameskip_mode(MD_FRAMESKIP_OFF, 0);
   s_mdCoreFps = 0.0f;
   s_mdVideoFps = 0.0f;
@@ -1170,6 +1192,7 @@ static void md_options_load()
   bool hasFpsMode = false;
   int mode = (int)s_mdFrameskipMode;
   int fixedIndex = s_mdFixedFrameskipIndex;
+  int wallclk = s_mdWallclockSamples ? 1 : 0;
   char line[96];
   while (fgets(line, sizeof(line), f)) {
     int value = 0;
@@ -1182,6 +1205,8 @@ static void md_options_load()
       mode = value;
     } else if (sscanf(line, "fixed_index=%d", &value) == 1) {
       fixedIndex = value;
+    } else if (sscanf(line, "wallclk=%d", &value) == 1) {
+      wallclk = value ? 1 : 0;
     }
   }
   fclose(f);
@@ -1203,10 +1228,12 @@ static void md_options_load()
   }
   md_set_fps_mode((MdFpsOverlayMode)fpsMode);
   md_set_frameskip_mode((MdFrameskipMode)mode, fixedIndex);
-  EMU_LOG("[MD][OPT] loaded %s fps=%s frameskip=%s\n",
+  md_set_wallclock_samples(wallclk != 0);
+  EMU_LOG("[MD][OPT] loaded %s fps=%s frameskip=%s wallclk=%s\n",
           s_mdOptionsPath,
           md_fps_mode_label(),
-          md_frameskip_label());
+          md_frameskip_label(),
+          md_wallclock_label());
 }
 
 static void md_options_load_with_sd()
@@ -1248,11 +1275,13 @@ static void md_options_save()
                         "fps=%d\n"
                         "fps_mode=%d\n"
                         "frameskip_mode=%d\n"
-                        "fixed_index=%d\n",
+                        "fixed_index=%d\n"
+                        "wallclk=%d\n",
                         s_mdFpsOverlayMode != MD_FPS_OFF ? 1 : 0,
                         (int)s_mdFpsOverlayMode,
                         (int)s_mdFrameskipMode,
-                        fixedIndex);
+                        fixedIndex,
+                        s_mdWallclockSamples ? 1 : 0);
   const int closeOk = fclose(f);
   share::setGameIsSaving(false);
 
@@ -1260,10 +1289,11 @@ static void md_options_save()
     EMU_LOG("[MD][OPT] write failed for %s\n", s_mdOptionsPath);
     return;
   }
-  EMU_LOG("[MD][OPT] saved %s fps=%s frameskip=%s\n",
+  EMU_LOG("[MD][OPT] saved %s fps=%s frameskip=%s wallclk=%s\n",
           s_mdOptionsPath,
           md_fps_mode_label(),
-          md_frameskip_label());
+          md_frameskip_label(),
+          md_wallclock_label());
 }
 
 static bool md_frameskip_should_draw()
@@ -1413,7 +1443,8 @@ static void md_menu_handle_input(const Keyboard_Class::KeysState& ks)
   }
 
   if (upEdge || downEdge) {
-    s_mdMenuSelected ^= 1;
+    const int rowCount = (s_mdMenuPage == MD_MENU_FPS) ? 2 : 3;
+    s_mdMenuSelected = (s_mdMenuSelected + (downEdge ? 1 : rowCount - 1)) % rowCount;
     md_update_menu_overlay();
   }
 
@@ -1428,8 +1459,10 @@ static void md_menu_handle_input(const Keyboard_Class::KeysState& ks)
   if (leftEdge || rightEdge) {
     if (s_mdMenuSelected == 0) {
       md_cycle_fps_mode(leftEdge ? -1 : 1);
-    } else {
+    } else if (s_mdMenuSelected == 1) {
       md_cycle_frameskip(leftEdge ? -1 : 1);
+    } else {
+      md_toggle_wallclock_samples();
     }
     md_update_menu_overlay();
   }
@@ -1438,8 +1471,10 @@ static void md_menu_handle_input(const Keyboard_Class::KeysState& ks)
     if (s_mdMenuSelected == 0) {
       s_mdMenuPage = MD_MENU_FPS;
       s_mdMenuSelected = (s_mdFpsOverlayMode == MD_FPS_VIDEO) ? 1 : 0;
-    } else {
+    } else if (s_mdMenuSelected == 1) {
       md_cycle_frameskip(1);
+    } else {
+      md_toggle_wallclock_samples();
     }
     md_update_menu_overlay();
   }
@@ -1845,6 +1880,8 @@ extern "C" void run_genesis(const uint8_t* rom, size_t len, const char* rom_name
                                    md_fps_mode_label(),
                                    "FRAMESKIP",
                                    md_frameskip_label(),
+                                   "WallClk",
+                                   md_wallclock_label(),
                                    "START enter < > change",
                                    "GO close menu");
   

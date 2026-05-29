@@ -103,6 +103,8 @@ void genesis_display_set_menu_overlay(bool visible,
                                       const char* row0Value,
                                       const char* row1Label,
                                       const char* row1Value,
+                                      const char* row2Label,
+                                      const char* row2Value,
                                       const char* hint1,
                                       const char* hint2);
 void genesis_display_request_overlay(void);

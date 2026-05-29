@@ -46,6 +46,8 @@ static char s_overlayMenuRow0Label[16] = "FPS";
 static char s_overlayMenuRow0Value[32] = "Off";
 static char s_overlayMenuRow1Label[16] = "FRAMESKIP";
 static char s_overlayMenuRow1Value[32] = "Off";
+static char s_overlayMenuRow2Label[16] = "WallClk";
+static char s_overlayMenuRow2Value[32] = "Off";
 static char s_overlayMenuHint1[32] = "START enter < > change";
 static char s_overlayMenuHint2[32] = "GO close menu";
 
@@ -323,12 +325,17 @@ static void md_display_draw_menu_overlay(int selectedRow,
                                          const char* row0Value,
                                          const char* row1Label,
                                          const char* row1Value,
+                                         const char* row2Label,
+                                         const char* row2Value,
                                          const char* hint1,
                                          const char* hint2)
 {
   md_display_draw_runtime_menu_shell(title, hint1, hint2);
   md_display_draw_runtime_menu_row(0, selectedRow == 0, row0Label, row0Value);
   md_display_draw_runtime_menu_row(1, selectedRow == 1, row1Label, row1Value);
+  if ((row2Label && row2Label[0]) || (row2Value && row2Value[0])) {
+    md_display_draw_runtime_menu_row(2, selectedRow == 2, row2Label, row2Value);
+  }
 }
 
 static uint8_t md_display_fps_glyph_row(char ch, int row)
@@ -522,6 +529,8 @@ static void md_display_draw_overlay()
   char menuRow0Value[32];
   char menuRow1Label[16];
   char menuRow1Value[32];
+  char menuRow2Label[16];
+  char menuRow2Value[32];
   char menuHint1[32];
   char menuHint2[32];
 
@@ -535,6 +544,8 @@ static void md_display_draw_overlay()
   copy_overlay_text(menuRow0Value, sizeof(menuRow0Value), s_overlayMenuRow0Value);
   copy_overlay_text(menuRow1Label, sizeof(menuRow1Label), s_overlayMenuRow1Label);
   copy_overlay_text(menuRow1Value, sizeof(menuRow1Value), s_overlayMenuRow1Value);
+  copy_overlay_text(menuRow2Label, sizeof(menuRow2Label), s_overlayMenuRow2Label);
+  copy_overlay_text(menuRow2Value, sizeof(menuRow2Value), s_overlayMenuRow2Value);
   copy_overlay_text(menuHint1, sizeof(menuHint1), s_overlayMenuHint1);
   copy_overlay_text(menuHint2, sizeof(menuHint2), s_overlayMenuHint2);
   taskEXIT_CRITICAL(&s_overlayMux);
@@ -553,6 +564,8 @@ static void md_display_draw_overlay()
                                menuRow0Value,
                                menuRow1Label,
                                menuRow1Value,
+                               menuRow2Label,
+                               menuRow2Value,
                                menuHint1,
                                menuHint2);
 }
@@ -573,17 +586,21 @@ extern "C" void genesis_display_set_menu_overlay(bool visible,
                                                   const char* row0Value,
                                                   const char* row1Label,
                                                   const char* row1Value,
+                                                  const char* row2Label,
+                                                  const char* row2Value,
                                                   const char* hint1,
                                                   const char* hint2)
 {
   taskENTER_CRITICAL(&s_overlayMux);
   s_overlayMenuVisible = visible;
-  s_overlayMenuSelected = clampi(selectedRow, 0, 1);
+  s_overlayMenuSelected = clampi(selectedRow, 0, 2);
   copy_overlay_text(s_overlayMenuTitle, sizeof(s_overlayMenuTitle), title);
   copy_overlay_text(s_overlayMenuRow0Label, sizeof(s_overlayMenuRow0Label), row0Label);
   copy_overlay_text(s_overlayMenuRow0Value, sizeof(s_overlayMenuRow0Value), row0Value);
   copy_overlay_text(s_overlayMenuRow1Label, sizeof(s_overlayMenuRow1Label), row1Label);
   copy_overlay_text(s_overlayMenuRow1Value, sizeof(s_overlayMenuRow1Value), row1Value);
+  copy_overlay_text(s_overlayMenuRow2Label, sizeof(s_overlayMenuRow2Label), row2Label);
+  copy_overlay_text(s_overlayMenuRow2Value, sizeof(s_overlayMenuRow2Value), row2Value);
   copy_overlay_text(s_overlayMenuHint1, sizeof(s_overlayMenuHint1), hint1);
   copy_overlay_text(s_overlayMenuHint2, sizeof(s_overlayMenuHint2), hint2);
   taskEXIT_CRITICAL(&s_overlayMux);
