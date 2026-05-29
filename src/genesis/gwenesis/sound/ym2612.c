@@ -177,6 +177,23 @@ void ym_log(const char *subs, const char *fmt, ...) {
 #define MD_YM2612_DAC_WRITE_SYNC 0
 #endif
 
+static int s_ym2612_dac_write_sync_enabled = MD_YM2612_DAC_WRITE_SYNC ? 1 : 0;
+
+void YM2612SetDacWriteSync(int enabled)
+{
+#if MD_YM2612_DAC_WRITE_SYNC
+  s_ym2612_dac_write_sync_enabled = enabled ? 1 : 0;
+#else
+  (void)enabled;
+  s_ym2612_dac_write_sync_enabled = 0;
+#endif
+}
+
+int YM2612GetDacWriteSync(void)
+{
+  return s_ym2612_dac_write_sync_enabled;
+}
+
 #define GW_TARGET 1
 /* envelope generator */
 #define ENV_BITS    10
@@ -2199,7 +2216,9 @@ void YM2612Write(unsigned int a, unsigned int v,  int target)
           {
           case 0x2a: /* DAC data (ym2612) */
 #if MD_YM2612_DAC_WRITE_SYNC
-            ym2612_run(target);
+            if (s_ym2612_dac_write_sync_enabled) {
+              ym2612_run(target);
+            }
 #endif
             ym2612.dacout =((int)v - 0x80) << 6; /* convert to 14-bit signed output */
             //ym2612.dacout = ((int)v - 0x80) * 64; /* convert to signed output */
@@ -2208,7 +2227,9 @@ void YM2612Write(unsigned int a, unsigned int v,  int target)
           case 0x2b: /* DAC Sel  (ym2612) */
             /* b7 = dac enable */
 #if MD_YM2612_DAC_WRITE_SYNC
-            ym2612_run(target);
+            if (s_ym2612_dac_write_sync_enabled) {
+              ym2612_run(target);
+            }
 #endif
             //printf("WriteDAC : %x:%x\n",v,ym2612.dacout);
             ym2612.dacen = v & 0x80;

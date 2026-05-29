@@ -252,6 +252,10 @@ void CardputerView::showKeymapping6ButtonsSnes() {
 }
 
 void CardputerView::welcome() {
+    welcome("");
+}
+
+void CardputerView::welcome(const std::string& coreLabel) {
     Display->setSwapBytes(true);
 
     // Remove the welcome image from the binary to save space in case REMOVE_PRINTF is not defined
@@ -259,8 +263,8 @@ void CardputerView::welcome() {
         // Display->pushImage(0, 0, BGGAMESTATION_S_WIDTH, BGGAMESTATION_S_HEIGHT, bggamestation_s);
     #endif
    
-    const std::string title = "Game Station 1.2";
-    const std::string subtitle = "Enhanced";
+    const std::string title = coreLabel.empty() ? "GameStation" : ("GameStation " + coreLabel);
+    const std::string subtitle = "Boost Edition";
     Display->setTextSize(TEXT_BIG);
     const int titleX = getCenterOffset(title);
     const int titleY = 54;

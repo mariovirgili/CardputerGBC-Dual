@@ -32,6 +32,8 @@ extern "C" {
   void YM2612ResetChip(void);
   void YM2612Config(unsigned char dac_bits);
   void YM2612SetDivisor(int divisor);
+  void YM2612SetDacWriteSync(int enabled);
+  int YM2612GetDacWriteSync(void);
   void ym2612_run(int target);
   void gwenesis_ym2612_tables_alloc(void);
   void gwenesis_ym2612_tables_free(void);
@@ -99,6 +101,16 @@ void genesis_sound_set_wallclock_samples(bool enabled)
 bool genesis_sound_get_wallclock_samples(void)
 {
   return s_audioWallclockSamples;
+}
+
+void genesis_sound_set_pcm_sync(bool enabled)
+{
+  YM2612SetDacWriteSync(enabled ? 1 : 0);
+}
+
+bool genesis_sound_get_pcm_sync(void)
+{
+  return YM2612GetDacWriteSync() != 0;
 }
 
 static int md_audio_nominal_chunk_cap_for_rate(int sample_rate)

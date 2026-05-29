@@ -68,6 +68,8 @@ void genesis_sound_configure_timing(int refresh_rate, int core_sample_rate, int 
 void genesis_sound_set_sram_profile(bool enabled);
 void genesis_sound_set_wallclock_samples(bool enabled);
 bool genesis_sound_get_wallclock_samples(void);
+void genesis_sound_set_pcm_sync(bool enabled);
+bool genesis_sound_get_pcm_sync(void);
 int genesis_sound_get_refresh_rate(void);
 int genesis_sound_get_core_rate(void);
 int genesis_sound_get_output_rate(void);

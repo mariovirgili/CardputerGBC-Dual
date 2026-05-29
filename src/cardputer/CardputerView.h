@@ -52,6 +52,7 @@ public:
     void setBrightness(uint16_t brightness);
     uint8_t getBrightness();
     void welcome();
+    void welcome(const std::string& coreLabel);
     void showKeymapping(uint8_t numButtons);
     void showKeymappingStandard(uint8_t numButtons);
     void showKeymapping6ButtonsSnes();

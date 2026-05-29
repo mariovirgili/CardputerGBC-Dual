@@ -49,7 +49,9 @@ enum MdFrameskipMode : uint8_t {
 };
 
 enum MdMenuPage : uint8_t {
-  MD_MENU_VIDEO = 0,
+  MD_MENU_MAIN = 0,
+  MD_MENU_AUDIO,
+  MD_MENU_VIDEO,
   MD_MENU_FPS,
 };
 
@@ -61,10 +63,17 @@ enum MdFpsOverlayMode : uint8_t {
 
 static bool s_mdMenuOpen = false;
 static int s_mdMenuSelected = 0;
-static MdMenuPage s_mdMenuPage = MD_MENU_VIDEO;
+static MdMenuPage s_mdMenuPage = MD_MENU_MAIN;
 static MdFpsOverlayMode s_mdFpsOverlayMode = MD_FPS_OFF;
 static MdFrameskipMode s_mdFrameskipMode = MD_FRAMESKIP_OFF;
 static bool s_mdWallclockSamples = false;
+static bool s_mdPcmSync = true;
+struct MdMenuStackEntry {
+  MdMenuPage page;
+  int selected;
+};
+static MdMenuStackEntry s_mdMenuStack[8] = {};
+static int s_mdMenuStackDepth = 0;
 static int s_mdFixedFrameskipIndex = 0;
 static uint16_t s_mdFixedSkipCreditQ8 = 0;
 static bool s_mdAdaptiveSkipNextDraw = false;
@@ -77,6 +86,8 @@ static uint32_t s_mdRuntimeCoreFrames = 0;
 static uint32_t s_mdRuntimeVideoFrames = 0;
 static uint64_t s_mdRuntimeFpsLastUs = 0;
 static char s_mdOptionsPath[PATH_MAX] = {0};
+
+static void md_menu_stack_clear();
 
 #ifndef MD_BENCH_NO_FRAME_SKIP
 #define MD_BENCH_NO_FRAME_SKIP 0
@@ -1010,6 +1021,11 @@ static const char* md_wallclock_label()
   return s_mdWallclockSamples ? "On" : "Off";
 }
 
+static const char* md_pcm_sync_label()
+{
+  return s_mdPcmSync ? "On" : "Off";
+}
+
 static float md_fps_overlay_value()
 {
   switch (s_mdFpsOverlayMode) {
@@ -1051,6 +1067,17 @@ static void md_toggle_wallclock_samples()
   md_set_wallclock_samples(!s_mdWallclockSamples);
 }
 
+static void md_set_pcm_sync(bool enabled)
+{
+  s_mdPcmSync = enabled;
+  genesis_sound_set_pcm_sync(enabled);
+}
+
+static void md_toggle_pcm_sync()
+{
+  md_set_pcm_sync(!s_mdPcmSync);
+}
+
 static void md_update_menu_overlay()
 {
   if (s_mdMenuPage == MD_MENU_FPS) {
@@ -1065,6 +1092,30 @@ static void md_update_menu_overlay()
                                      "",
                                      "START select DEL back",
                                      "GO close menu");
+  } else if (s_mdMenuPage == MD_MENU_MAIN) {
+    genesis_display_set_menu_overlay(s_mdMenuOpen,
+                                     s_mdMenuSelected,
+                                     "CONFIG MENU",
+                                     "AUDIO",
+                                     "",
+                                     "VIDEO",
+                                     "",
+                                     "",
+                                     "",
+                                     "START enter",
+                                     "GO close menu");
+  } else if (s_mdMenuPage == MD_MENU_AUDIO) {
+    genesis_display_set_menu_overlay(s_mdMenuOpen,
+                                     s_mdMenuSelected,
+                                     "AUDIO MENU",
+                                     "Sync for PCM",
+                                     md_pcm_sync_label(),
+                                     "",
+                                     "",
+                                     "",
+                                     "",
+                                     "START < > toggle",
+                                     "DEL back GO close");
   } else {
     genesis_display_set_menu_overlay(s_mdMenuOpen,
                                      s_mdMenuSelected,
@@ -1135,9 +1186,11 @@ static void md_runtime_options_reset()
 {
   s_mdMenuOpen = false;
   s_mdMenuSelected = 0;
-  s_mdMenuPage = MD_MENU_VIDEO;
+  s_mdMenuPage = MD_MENU_MAIN;
+  md_menu_stack_clear();
   md_set_fps_mode(MD_FPS_CORE);
   md_set_wallclock_samples(false);
+  md_set_pcm_sync(true);
   md_set_frameskip_mode(MD_FRAMESKIP_ADAPTIVE, 0);
   s_mdCoreFps = 0.0f;
   s_mdVideoFps = 0.0f;
@@ -1193,6 +1246,7 @@ static void md_options_load()
   int mode = (int)s_mdFrameskipMode;
   int fixedIndex = s_mdFixedFrameskipIndex;
   int wallclk = s_mdWallclockSamples ? 1 : 0;
+  int pcmSync = s_mdPcmSync ? 1 : 0;
   char line[96];
   while (fgets(line, sizeof(line), f)) {
     int value = 0;
@@ -1207,6 +1261,8 @@ static void md_options_load()
       fixedIndex = value;
     } else if (sscanf(line, "wallclk=%d", &value) == 1) {
       wallclk = value ? 1 : 0;
+    } else if (sscanf(line, "pcm_sync=%d", &value) == 1) {
+      pcmSync = value ? 1 : 0;
     }
   }
   fclose(f);
@@ -1229,11 +1285,13 @@ static void md_options_load()
   md_set_fps_mode((MdFpsOverlayMode)fpsMode);
   md_set_frameskip_mode((MdFrameskipMode)mode, fixedIndex);
   md_set_wallclock_samples(wallclk != 0);
-  EMU_LOG("[MD][OPT] loaded %s fps=%s frameskip=%s wallclk=%s\n",
+  md_set_pcm_sync(pcmSync != 0);
+  EMU_LOG("[MD][OPT] loaded %s fps=%s frameskip=%s wallclk=%s pcmSync=%s\n",
           s_mdOptionsPath,
           md_fps_mode_label(),
           md_frameskip_label(),
-          md_wallclock_label());
+          md_wallclock_label(),
+          md_pcm_sync_label());
 }
 
 static void md_options_load_with_sd()
@@ -1276,12 +1334,14 @@ static void md_options_save()
                         "fps_mode=%d\n"
                         "frameskip_mode=%d\n"
                         "fixed_index=%d\n"
-                        "wallclk=%d\n",
+                        "wallclk=%d\n"
+                        "pcm_sync=%d\n",
                         s_mdFpsOverlayMode != MD_FPS_OFF ? 1 : 0,
                         (int)s_mdFpsOverlayMode,
                         (int)s_mdFrameskipMode,
                         fixedIndex,
-                        s_mdWallclockSamples ? 1 : 0);
+                        s_mdWallclockSamples ? 1 : 0,
+                        s_mdPcmSync ? 1 : 0);
   const int closeOk = fclose(f);
   share::setGameIsSaving(false);
 
@@ -1289,11 +1349,12 @@ static void md_options_save()
     EMU_LOG("[MD][OPT] write failed for %s\n", s_mdOptionsPath);
     return;
   }
-  EMU_LOG("[MD][OPT] saved %s fps=%s frameskip=%s wallclk=%s\n",
+  EMU_LOG("[MD][OPT] saved %s fps=%s frameskip=%s wallclk=%s pcmSync=%s\n",
           s_mdOptionsPath,
           md_fps_mode_label(),
           md_frameskip_label(),
-          md_wallclock_label());
+          md_wallclock_label(),
+          md_pcm_sync_label());
 }
 
 static bool md_frameskip_should_draw()
@@ -1404,6 +1465,60 @@ static MdG0Event md_g0_poll_event()
   return MD_G0_NONE;
 }
 
+static int md_menu_row_count_for(MdMenuPage page)
+{
+  switch (page) {
+    case MD_MENU_MAIN:
+    case MD_MENU_FPS:
+      return 2;
+    case MD_MENU_AUDIO:
+      return 1;
+    case MD_MENU_VIDEO:
+    default:
+      return 3;
+  }
+}
+
+static int md_menu_row_count()
+{
+  return md_menu_row_count_for(s_mdMenuPage);
+}
+
+static int md_menu_clamp_selection(MdMenuPage page, int selected)
+{
+  const int count = md_menu_row_count_for(page);
+  if (count <= 0) return 0;
+  if (selected < 0) return 0;
+  if (selected >= count) return count - 1;
+  return selected;
+}
+
+static void md_menu_stack_clear()
+{
+  s_mdMenuStackDepth = 0;
+}
+
+static void md_menu_enter_page(MdMenuPage page, int selected)
+{
+  if (s_mdMenuStackDepth < (int)(sizeof(s_mdMenuStack) / sizeof(s_mdMenuStack[0]))) {
+    s_mdMenuStack[s_mdMenuStackDepth++] = {s_mdMenuPage, s_mdMenuSelected};
+  }
+  s_mdMenuPage = page;
+  s_mdMenuSelected = md_menu_clamp_selection(page, selected);
+}
+
+static void md_menu_back()
+{
+  if (s_mdMenuStackDepth > 0) {
+    const MdMenuStackEntry prev = s_mdMenuStack[--s_mdMenuStackDepth];
+    s_mdMenuPage = prev.page;
+    s_mdMenuSelected = md_menu_clamp_selection(prev.page, prev.selected);
+    return;
+  }
+  s_mdMenuPage = MD_MENU_MAIN;
+  s_mdMenuSelected = 0;
+}
+
 static void md_menu_handle_input(const Keyboard_Class::KeysState& ks)
 {
   (void)ks;
@@ -1418,8 +1533,8 @@ static void md_menu_handle_input(const Keyboard_Class::KeysState& ks)
   const bool down = md_key_down();
   const bool left = md_key_left();
   const bool right = md_key_right();
-  const bool start = M5Cardputer.Keyboard.isKeyPressed(CARDPUTER_BTN_START);
-  const bool del = md_key_del();
+  const bool start = M5Cardputer.Keyboard.isKeyPressed(CARDPUTER_BTN_START) || ks.enter;
+  const bool del = md_key_del() || ks.del;
 
   const bool upEdge = up && !prevUp;
   const bool downEdge = down && !prevDown;
@@ -1435,17 +1550,32 @@ static void md_menu_handle_input(const Keyboard_Class::KeysState& ks)
   prevStart = start;
   prevDel = del;
 
-  if (delEdge && s_mdMenuPage != MD_MENU_VIDEO) {
-    s_mdMenuPage = MD_MENU_VIDEO;
-    s_mdMenuSelected = 0;
+  if (delEdge && s_mdMenuPage != MD_MENU_MAIN) {
+    md_menu_back();
     md_update_menu_overlay();
     return;
   }
 
   if (upEdge || downEdge) {
-    const int rowCount = (s_mdMenuPage == MD_MENU_FPS) ? 2 : 3;
+    const int rowCount = md_menu_row_count();
     s_mdMenuSelected = (s_mdMenuSelected + (downEdge ? 1 : rowCount - 1)) % rowCount;
     md_update_menu_overlay();
+  }
+
+  if (s_mdMenuPage == MD_MENU_MAIN) {
+    if (startEdge || leftEdge || rightEdge) {
+      md_menu_enter_page((s_mdMenuSelected == 0) ? MD_MENU_AUDIO : MD_MENU_VIDEO, 0);
+      md_update_menu_overlay();
+    }
+    return;
+  }
+
+  if (s_mdMenuPage == MD_MENU_AUDIO) {
+    if (leftEdge || rightEdge || startEdge) {
+      md_toggle_pcm_sync();
+      md_update_menu_overlay();
+    }
+    return;
   }
 
   if (s_mdMenuPage == MD_MENU_FPS) {
@@ -1469,8 +1599,7 @@ static void md_menu_handle_input(const Keyboard_Class::KeysState& ks)
 
   if (startEdge) {
     if (s_mdMenuSelected == 0) {
-      s_mdMenuPage = MD_MENU_FPS;
-      s_mdMenuSelected = (s_mdFpsOverlayMode == MD_FPS_VIDEO) ? 1 : 0;
+      md_menu_enter_page(MD_MENU_FPS, (s_mdFpsOverlayMode == MD_FPS_VIDEO) ? 1 : 0);
     } else if (s_mdMenuSelected == 1) {
       md_cycle_frameskip(1);
     } else {
@@ -1494,8 +1623,9 @@ static void md_poll_ingame_menu()
   if (g0 == MD_G0_SHORT) {
     s_mdMenuOpen = !s_mdMenuOpen;
     if (s_mdMenuOpen) {
-      s_mdMenuPage = MD_MENU_VIDEO;
+      s_mdMenuPage = MD_MENU_MAIN;
       s_mdMenuSelected = 0;
+      md_menu_stack_clear();
       md_release_gamepad_buttons();
     }
     md_update_menu_overlay();
@@ -1871,18 +2001,19 @@ extern "C" void run_genesis(const uint8_t* rom, size_t len, const char* rom_name
   screen_height = REG1_PAL ? 240 : 224;
   s_mdMenuOpen = false;
   s_mdMenuSelected = 0;
-  s_mdMenuPage = MD_MENU_VIDEO;
+  s_mdMenuPage = MD_MENU_MAIN;
+  md_menu_stack_clear();
   md_apply_fps_overlay();
   genesis_display_set_menu_overlay(false,
                                    s_mdMenuSelected,
-                                   "VIDEO MENU",
-                                   "FPS",
-                                   md_fps_mode_label(),
-                                   "FRAMESKIP",
-                                   md_frameskip_label(),
-                                   "WallClk",
-                                   md_wallclock_label(),
-                                   "START enter < > change",
+                                   "CONFIG MENU",
+                                   "AUDIO",
+                                   "",
+                                   "VIDEO",
+                                   "",
+                                   "",
+                                   "",
+                                   "START enter",
                                    "GO close menu");
   
   // Main emulation loop with frame pacing

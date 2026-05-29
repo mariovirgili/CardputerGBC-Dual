@@ -69,6 +69,60 @@
 
 static constexpr size_t COLECO_BIOS_SIZE = 8192;
 
+static std::string lowerCopy(std::string value) {
+  for (char& ch : value) {
+    if (ch >= 'A' && ch <= 'Z') {
+      ch = (char)(ch - 'A' + 'a');
+    }
+  }
+  return value;
+}
+
+static bool pathHasToken(const std::string& lowerPath, const char* token) {
+  if (!token || !*token) return false;
+  const size_t n = strlen(token);
+  size_t pos = lowerPath.find(token);
+  while (pos != std::string::npos) {
+    const bool leftOk = (pos == 0) || lowerPath[pos - 1] == '/' || lowerPath[pos - 1] == '\\' ||
+                        lowerPath[pos - 1] == '_' || lowerPath[pos - 1] == '-' || lowerPath[pos - 1] == ' ';
+    const size_t end = pos + n;
+    const bool rightOk = (end >= lowerPath.size()) || lowerPath[end] == '/' || lowerPath[end] == '\\' ||
+                         lowerPath[end] == '_' || lowerPath[end] == '-' || lowerPath[end] == ' ';
+    if (leftOk && rightOk) return true;
+    pos = lowerPath.find(token, pos + 1);
+  }
+  return false;
+}
+
+static std::string splashCoreLabelForPath(const std::string& path) {
+  const std::string p = lowerCopy(path);
+  if (pathHasToken(p, "md") || p.find("genesis") != std::string::npos ||
+      p.find("mega") != std::string::npos) return "MD";
+  if (p.find("snes") != std::string::npos || pathHasToken(p, "sfc") ||
+      p.find("superfamicom") != std::string::npos || p.find("super famicom") != std::string::npos) return "Snes";
+  if (pathHasToken(p, "wsc") || pathHasToken(p, "ws") ||
+      p.find("wonderswan") != std::string::npos) return "WSC";
+  if (pathHasToken(p, "gg") || p.find("gamegear") != std::string::npos ||
+      p.find("game gear") != std::string::npos) return "GG";
+  if (pathHasToken(p, "gb") || pathHasToken(p, "gbc") ||
+      p.find("gameboy") != std::string::npos || p.find("game boy") != std::string::npos) return "GB";
+  if (p.find("atari") != std::string::npos || pathHasToken(p, "a78") ||
+      pathHasToken(p, "a26") || p.find("7800") != std::string::npos ||
+      p.find("2600") != std::string::npos) return "Atari";
+  if (pathHasToken(p, "nes")) return "NES";
+  if (pathHasToken(p, "sms") || p.find("mastersystem") != std::string::npos ||
+      p.find("master system") != std::string::npos) return "SMS";
+  if (pathHasToken(p, "ngp") || pathHasToken(p, "ngc") ||
+      p.find("neogeo") != std::string::npos || p.find("neo geo") != std::string::npos) return "NGP";
+  if (pathHasToken(p, "pce") || p.find("pcengine") != std::string::npos ||
+      p.find("pc engine") != std::string::npos) return "PCE";
+  if (p.find("lynx") != std::string::npos) return "Lynx";
+  if (p.find("msx") != std::string::npos) return "MSX";
+  if (p.find("gx4000") != std::string::npos) return "GX4000";
+  if (p.find("coleco") != std::string::npos) return "Coleco";
+  return "";
+}
+
 #if EMU_LOG_MASTER_ENABLED
 static const char* emulatorNameForLog(RomType type) {
   switch (type) {
@@ -591,7 +645,7 @@ extern "C" void app_main(void) {
       romPath = getRomPath(sd, display, input, romFolder, true);
     } else {
       // Welcome
-      display.welcome();
+      display.welcome(splashCoreLabelForPath(romFolder));
       logStartupHeap("after welcome");
 
       // Try to get last game from NVS or select a new one
