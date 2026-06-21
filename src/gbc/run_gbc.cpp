@@ -17,6 +17,11 @@ static uint16_t* s_gbFramebuf = nullptr;
 static int16_t* s_audioBuf = nullptr;
 extern int gbc_sampleRate;
 
+#if GB_BENCHMARK_LOGS_ENABLED
+static uint32_t s_benchAudioBlocks = 0;
+static uint32_t s_benchAudioSamples = 0;
+#endif
+
 // callback video GNUBOY
 static void gbc_video_callback(void *buffer)
 {
@@ -30,6 +35,10 @@ void gbc_audio_callback(void *buffer, size_t length)
 {
     if (!buffer || length == 0) return;
 
+#if GB_BENCHMARK_LOGS_ENABLED
+    ++s_benchAudioBlocks;
+    s_benchAudioSamples += (uint32_t)length;
+#endif
     gbc_sound_submit((const int16_t*)buffer, length);
 }
 
@@ -102,10 +111,20 @@ void run_gbc(const uint8_t* romData, size_t romLen, const char* romPathOrName) {
     gbc_save_init(romPathOrName);
     gbc_save_load();
     
-    // FPS counter
-    uint32_t frameCount = 0;
-#if EMU_LOG_MASTER_ENABLED
+    uint32_t frameIndex = 0;
+#if EMU_LOG_MASTER_ENABLED && !GB_BENCHMARK_LOGS_ENABLED
+    uint32_t fpsFrameCount = 0;
     uint32_t lastFpsMs  = millis();
+#endif
+#if GB_BENCHMARK_LOGS_ENABLED
+    uint32_t benchWindowFrames = 0;
+    uint32_t benchDrawFrames = 0;
+    uint32_t benchNoDrawFrames = 0;
+    uint32_t benchLateFrames = 0;
+    uint32_t benchMaxLateUs = 0;
+    uint64_t benchCoreUsTotal = 0;
+    uint32_t benchCoreUsMax = 0;
+    uint32_t benchLastMs = millis();
 #endif
 
     // Pacing 60 Hz
@@ -128,8 +147,24 @@ void run_gbc(const uint8_t* romData, size_t romLen, const char* romPathOrName) {
         }
 
         // 1/2 frame skip
-        bool doDraw = drawFrame && ((frameCount & 1) == 0);
+        bool doDraw = drawFrame && ((frameIndex & 1) == 0);
+#if GB_BENCHMARK_LOGS_ENABLED
+        const int64_t coreStartUs = esp_timer_get_time();
+#endif
         gnuboy_run(doDraw);   // trigger callbacks video/audio
+#if GB_BENCHMARK_LOGS_ENABLED
+        const uint32_t coreUs = (uint32_t)(esp_timer_get_time() - coreStartUs);
+        benchCoreUsTotal += coreUs;
+        if (coreUs > benchCoreUsMax) {
+            benchCoreUsMax = coreUs;
+        }
+        ++benchWindowFrames;
+        if (doDraw) {
+            ++benchDrawFrames;
+        } else {
+            ++benchNoDrawFrames;
+        }
+#endif
 
         int pad = gbc_input_poll();
         if (pad >= 0) {
@@ -139,13 +174,14 @@ void run_gbc(const uint8_t* romData, size_t romLen, const char* romPathOrName) {
         gbc_save_tick();
 
         // FPS log
-        frameCount++;
-#if EMU_LOG_MASTER_ENABLED
+        frameIndex++;
+#if EMU_LOG_MASTER_ENABLED && !GB_BENCHMARK_LOGS_ENABLED
+        fpsFrameCount++;
         uint32_t nowMs = millis();
         if (nowMs - lastFpsMs >= 1000) {
-            float fps = (frameCount * 1000.0f) / (nowMs - lastFpsMs);
+            float fps = (fpsFrameCount * 1000.0f) / (nowMs - lastFpsMs);
             EMU_LOG("[GBC] FPS: %.2f | HEAP %lu\n", fps, (unsigned long)esp_get_free_heap_size());
-            frameCount = 0;
+            fpsFrameCount = 0;
             lastFpsMs  = nowMs;
         }
 #endif
@@ -154,6 +190,65 @@ void run_gbc(const uint8_t* romData, size_t romLen, const char* romPathOrName) {
         next_frame_us += frame_us;
         int64_t now = (int64_t)esp_timer_get_time();
         int64_t lateness = now - (int64_t)next_frame_us;
+#if GB_BENCHMARK_LOGS_ENABLED
+        if (lateness > 0) {
+            ++benchLateFrames;
+            if ((uint32_t)lateness > benchMaxLateUs) {
+                benchMaxLateUs = (uint32_t)lateness;
+            }
+        }
+
+        const uint32_t benchNowMs = millis();
+        if (benchNowMs - benchLastMs >= 2000) {
+            uint32_t displaySubmitted = 0;
+            uint32_t displayRendered = 0;
+            uint32_t displayDropped = 0;
+            uint32_t displayAvgUs = 0;
+            uint32_t displayMaxUs = 0;
+            gbc_display_get_and_reset_bench(&displaySubmitted,
+                                            &displayRendered,
+                                            &displayDropped,
+                                            &displayAvgUs,
+                                            &displayMaxUs);
+            const uint32_t windowMs = benchNowMs - benchLastMs;
+            const float coreFps = windowMs ? (benchWindowFrames * 1000.0f) / windowMs : 0.0f;
+            const float videoFps = windowMs ? (displayRendered * 1000.0f) / windowMs : 0.0f;
+            const uint32_t coreAvgUs = benchWindowFrames
+                ? (uint32_t)(benchCoreUsTotal / benchWindowFrames)
+                : 0;
+            GB_BENCH_LOG("coreFps=%.2f videoFps=%.2f frames=%lu draw/nodraw=%lu/%lu coreUs avg/max=%lu/%lu displayUs avg/max=%lu/%lu submitted/rendered/dropped=%lu/%lu/%lu late=%lu maxLateUs=%lu audio blocks/samples=%lu/%lu heap free/largest/min=%lu/%lu/%lu",
+                         coreFps,
+                         videoFps,
+                         (unsigned long)benchWindowFrames,
+                         (unsigned long)benchDrawFrames,
+                         (unsigned long)benchNoDrawFrames,
+                         (unsigned long)coreAvgUs,
+                         (unsigned long)benchCoreUsMax,
+                         (unsigned long)displayAvgUs,
+                         (unsigned long)displayMaxUs,
+                         (unsigned long)displaySubmitted,
+                         (unsigned long)displayRendered,
+                         (unsigned long)displayDropped,
+                         (unsigned long)benchLateFrames,
+                         (unsigned long)benchMaxLateUs,
+                         (unsigned long)s_benchAudioBlocks,
+                         (unsigned long)s_benchAudioSamples,
+                         (unsigned long)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+                         (unsigned long)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL),
+                         (unsigned long)heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL));
+
+            benchWindowFrames = 0;
+            benchDrawFrames = 0;
+            benchNoDrawFrames = 0;
+            benchLateFrames = 0;
+            benchMaxLateUs = 0;
+            benchCoreUsTotal = 0;
+            benchCoreUsMax = 0;
+            s_benchAudioBlocks = 0;
+            s_benchAudioSamples = 0;
+            benchLastMs = benchNowMs;
+        }
+#endif
 
         if (lateness > 0) {
             // We are late, skip drawing the next frame

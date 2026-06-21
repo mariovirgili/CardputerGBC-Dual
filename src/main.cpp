@@ -94,33 +94,106 @@ static bool pathHasToken(const std::string& lowerPath, const char* token) {
   return false;
 }
 
+static std::string singleEnabledCoreLabel() {
+  int enabledCount = 0;
+  const char* label = "";
+#ifdef NES_CORE_ENABLED
+  ++enabledCount; label = "NES";
+#endif
+#ifdef SMS_CORE_ENABLED
+  ++enabledCount; label = "SMS";
+#endif
+#ifdef NGP_CORE_ENABLED
+  ++enabledCount; label = "NGP";
+#endif
+#ifdef MD_CORE_ENABLED
+  ++enabledCount; label = "MD";
+#endif
+#ifdef WS_CORE_ENABLED
+  ++enabledCount; label = "WSC";
+#endif
+#ifdef PCE_CORE_ENABLED
+  ++enabledCount; label = "PCE";
+#endif
+#ifdef GB_CORE_ENABLED
+  ++enabledCount; label = "GB";
+#endif
+#ifdef LYNX_CORE_ENABLED
+  ++enabledCount; label = "Lynx";
+#endif
+#ifdef MSX_CORE_ENABLED
+  ++enabledCount; label = "MSX";
+#endif
+#ifdef SNES_CORE_ENABLED
+  ++enabledCount; label = "Snes";
+#endif
+#ifdef A7800_CORE_ENABLED
+  ++enabledCount; label = "Atari";
+#endif
+#ifdef A2600_CORE_ENABLED
+  ++enabledCount; label = "Atari";
+#endif
+#ifdef GX4000_CORE_ENABLED
+  ++enabledCount; label = "GX4000";
+#endif
+  return (enabledCount == 1) ? std::string(label) : std::string();
+}
+
 static std::string splashCoreLabelForPath(const std::string& path) {
   const std::string p = lowerCopy(path);
+#ifdef MD_CORE_ENABLED
   if (pathHasToken(p, "md") || p.find("genesis") != std::string::npos ||
       p.find("mega") != std::string::npos) return "MD";
+#endif
+#ifdef SNES_CORE_ENABLED
   if (p.find("snes") != std::string::npos || pathHasToken(p, "sfc") ||
       p.find("superfamicom") != std::string::npos || p.find("super famicom") != std::string::npos) return "Snes";
+#endif
+#ifdef WS_CORE_ENABLED
   if (pathHasToken(p, "wsc") || pathHasToken(p, "ws") ||
       p.find("wonderswan") != std::string::npos) return "WSC";
+#endif
+#ifdef SMS_CORE_ENABLED
   if (pathHasToken(p, "gg") || p.find("gamegear") != std::string::npos ||
       p.find("game gear") != std::string::npos) return "GG";
+#endif
+#ifdef GB_CORE_ENABLED
   if (pathHasToken(p, "gb") || pathHasToken(p, "gbc") ||
       p.find("gameboy") != std::string::npos || p.find("game boy") != std::string::npos) return "GB";
+#endif
+#if defined(A7800_CORE_ENABLED) || defined(A2600_CORE_ENABLED)
   if (p.find("atari") != std::string::npos || pathHasToken(p, "a78") ||
       pathHasToken(p, "a26") || p.find("7800") != std::string::npos ||
       p.find("2600") != std::string::npos) return "Atari";
+#endif
+#ifdef NES_CORE_ENABLED
   if (pathHasToken(p, "nes")) return "NES";
+#endif
+#ifdef SMS_CORE_ENABLED
   if (pathHasToken(p, "sms") || p.find("mastersystem") != std::string::npos ||
       p.find("master system") != std::string::npos) return "SMS";
+#endif
+#ifdef NGP_CORE_ENABLED
   if (pathHasToken(p, "ngp") || pathHasToken(p, "ngc") ||
       p.find("neogeo") != std::string::npos || p.find("neo geo") != std::string::npos) return "NGP";
+#endif
+#ifdef PCE_CORE_ENABLED
   if (pathHasToken(p, "pce") || p.find("pcengine") != std::string::npos ||
       p.find("pc engine") != std::string::npos) return "PCE";
+#endif
+#ifdef LYNX_CORE_ENABLED
   if (p.find("lynx") != std::string::npos) return "Lynx";
+#endif
+#ifdef MSX_CORE_ENABLED
   if (p.find("msx") != std::string::npos) return "MSX";
+#endif
+#ifdef GX4000_CORE_ENABLED
   if (p.find("gx4000") != std::string::npos) return "GX4000";
+#endif
+#ifdef SMS_CORE_ENABLED
   if (p.find("coleco") != std::string::npos) return "Coleco";
-  return "";
+#endif
+  return singleEnabledCoreLabel();
 }
 
 #if EMU_LOG_MASTER_ENABLED

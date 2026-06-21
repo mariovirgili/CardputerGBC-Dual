@@ -3,6 +3,8 @@
 #include "compat/arduino_compat.h"
 #include <M5Cardputer.h>
 #include "esp_heap_caps.h"
+#include "esp_timer.h"
+#include <atomic>
 #include <math.h>
 extern "C" {
   #include "gnuboy/gnuboy.h"
@@ -30,6 +32,22 @@ static QueueHandle_t s_frameQ  = nullptr;
 static TaskHandle_t  s_task    = nullptr;
 static uint16_t     *s_lineBuf = nullptr;
 static int           s_lineCap = 0;
+
+#if GB_BENCHMARK_LOGS_ENABLED
+static std::atomic<uint32_t> s_benchSubmitted{0};
+static std::atomic<uint32_t> s_benchRendered{0};
+static std::atomic<uint32_t> s_benchDropped{0};
+static std::atomic<uint32_t> s_benchDrawUsTotal{0};
+static std::atomic<uint32_t> s_benchDrawUsMax{0};
+
+static void gbc_display_bench_update_max(std::atomic<uint32_t>& slot, uint32_t value)
+{
+  uint32_t observed = slot.load(std::memory_order_relaxed);
+  while (value > observed &&
+         !slot.compare_exchange_weak(observed, value, std::memory_order_relaxed)) {
+  }
+}
+#endif
 
 // Cache of transform parameters to avoid recalculations
 struct GbcDisplayTransform {
@@ -161,6 +179,10 @@ static void gbc_display_task(void *arg)
     int srcH  = msg.height;
     int pitch = msg.pitch;
 
+#if GB_BENCHMARK_LOGS_ENABLED
+    const int64_t drawStartUs = esp_timer_get_time();
+#endif
+
     gbc_display_transform(srcW, srcH);
 
     int   dstW      = s_transform.dstW;
@@ -221,6 +243,13 @@ static void gbc_display_task(void *arg)
 
     vTaskDelay(0);
     M5Cardputer.Display.endWrite();
+
+#if GB_BENCHMARK_LOGS_ENABLED
+    const uint32_t drawUs = (uint32_t)(esp_timer_get_time() - drawStartUs);
+    s_benchRendered.fetch_add(1, std::memory_order_relaxed);
+    s_benchDrawUsTotal.fetch_add(drawUs, std::memory_order_relaxed);
+    gbc_display_bench_update_max(s_benchDrawUsMax, drawUs);
+#endif
   }
 }
 
@@ -296,5 +325,34 @@ extern "C" void gbc_display_submit_frame(const uint16_t *fb,
 
   // non blocking
   BaseType_t ok = xQueueSend(s_frameQ, &msg, 0);
+#if GB_BENCHMARK_LOGS_ENABLED
+  if (ok == pdTRUE) {
+    s_benchSubmitted.fetch_add(1, std::memory_order_relaxed);
+  } else {
+    s_benchDropped.fetch_add(1, std::memory_order_relaxed);
+  }
+#else
   (void)ok;
+#endif
 }
+
+#if GB_BENCHMARK_LOGS_ENABLED
+extern "C" void gbc_display_get_and_reset_bench(uint32_t *submitted,
+                                                uint32_t *rendered,
+                                                uint32_t *dropped,
+                                                uint32_t *avg_us,
+                                                uint32_t *max_us)
+{
+  const uint32_t localSubmitted = s_benchSubmitted.exchange(0, std::memory_order_relaxed);
+  const uint32_t localRendered = s_benchRendered.exchange(0, std::memory_order_relaxed);
+  const uint32_t localDropped = s_benchDropped.exchange(0, std::memory_order_relaxed);
+  const uint32_t localTotalUs = s_benchDrawUsTotal.exchange(0, std::memory_order_relaxed);
+  const uint32_t localMaxUs = s_benchDrawUsMax.exchange(0, std::memory_order_relaxed);
+
+  if (submitted) *submitted = localSubmitted;
+  if (rendered) *rendered = localRendered;
+  if (dropped) *dropped = localDropped;
+  if (avg_us) *avg_us = localRendered ? (localTotalUs / localRendered) : 0;
+  if (max_us) *max_us = localMaxUs;
+}
+#endif

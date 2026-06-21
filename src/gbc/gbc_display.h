@@ -21,6 +21,14 @@ void gbc_display_submit_frame(const uint16_t *fb,
                               int width,
                               int height);
 
+#if GB_BENCHMARK_LOGS_ENABLED
+void gbc_display_get_and_reset_bench(uint32_t *submitted,
+                                     uint32_t *rendered,
+                                     uint32_t *dropped,
+                                     uint32_t *avg_us,
+                                     uint32_t *max_us);
+#endif
+
 #ifdef __cplusplus
 }
 #endif
