@@ -107,6 +107,16 @@ void genesis_display_set_menu_overlay(bool visible,
                                       const char* row2Value,
                                       const char* hint1,
                                       const char* hint2);
+void genesis_display_set_help_overlay(bool visible,
+                                      const char* title,
+                                      const char* line0,
+                                      const char* line1,
+                                      const char* line2,
+                                      const char* line3,
+                                      const char* line4,
+                                      const char* line5,
+                                      const char* hint1,
+                                      const char* hint2);
 void genesis_display_request_overlay(void);
 void genesis_display_request_overlay_blocking(uint32_t timeoutMs);
 

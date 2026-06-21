@@ -40,6 +40,7 @@ static bool s_overlayFpsEnabled = false;
 static float s_overlayFps = 0.0f;
 static char s_overlayFpsText[8] = "0.0";
 static bool s_overlayMenuVisible = false;
+static bool s_overlayMenuHelp = false;
 static int s_overlayMenuSelected = 0;
 static char s_overlayMenuTitle[24] = "VIDEO MENU";
 static char s_overlayMenuRow0Label[16] = "FPS";
@@ -50,6 +51,7 @@ static char s_overlayMenuRow2Label[16] = "WallClk";
 static char s_overlayMenuRow2Value[32] = "Off";
 static char s_overlayMenuHint1[32] = "START enter < > change";
 static char s_overlayMenuHint2[32] = "GO close menu";
+static char s_overlayHelpLines[6][40] = {};
 
 static constexpr uint16_t kMdUiBackground = TFT_BLACK;
 static constexpr uint16_t kMdUiPrimary = 0xFC20;
@@ -338,6 +340,25 @@ static void md_display_draw_menu_overlay(int selectedRow,
   }
 }
 
+static void md_display_draw_help_overlay(const char* title,
+                                         const char* const* lines,
+                                         const char* hint1,
+                                         const char* hint2)
+{
+  md_display_draw_runtime_menu_shell(title, hint1, hint2);
+
+  const int boxX = md_display_runtime_menu_box_x();
+  const int innerX = boxX + kMdRuntimeMenuInnerPad;
+  int y = md_display_runtime_menu_first_row_y() - 1;
+  M5.Lcd.setFont(&fonts::Font0);
+  M5.Lcd.setTextColor(kMdUiText, TFT_BLACK);
+  for (int i = 0; i < 6; ++i) {
+    if (!lines[i] || lines[i][0] == '\0') continue;
+    M5.Lcd.drawString(lines[i], innerX, y);
+    y += 9;
+  }
+}
+
 static uint8_t md_display_fps_glyph_row(char ch, int row)
 {
   if (row < 0 || row >= kMdFpsHudGlyphH) return 0u;
@@ -523,6 +544,7 @@ static void md_display_draw_overlay()
   bool fpsEnabled = false;
   float fps = 0.0f;
   bool menuVisible = false;
+  bool menuHelp = false;
   int menuSelected = 0;
   char menuTitle[24];
   char menuRow0Label[16];
@@ -533,11 +555,13 @@ static void md_display_draw_overlay()
   char menuRow2Value[32];
   char menuHint1[32];
   char menuHint2[32];
+  char helpLines[6][40];
 
   taskENTER_CRITICAL(&s_overlayMux);
   fpsEnabled = s_overlayFpsEnabled;
   fps = s_overlayFps;
   menuVisible = s_overlayMenuVisible;
+  menuHelp = s_overlayMenuHelp;
   menuSelected = s_overlayMenuSelected;
   copy_overlay_text(menuTitle, sizeof(menuTitle), s_overlayMenuTitle);
   copy_overlay_text(menuRow0Label, sizeof(menuRow0Label), s_overlayMenuRow0Label);
@@ -548,6 +572,9 @@ static void md_display_draw_overlay()
   copy_overlay_text(menuRow2Value, sizeof(menuRow2Value), s_overlayMenuRow2Value);
   copy_overlay_text(menuHint1, sizeof(menuHint1), s_overlayMenuHint1);
   copy_overlay_text(menuHint2, sizeof(menuHint2), s_overlayMenuHint2);
+  for (int i = 0; i < 6; ++i) {
+    copy_overlay_text(helpLines[i], sizeof(helpLines[i]), s_overlayHelpLines[i]);
+  }
   taskEXIT_CRITICAL(&s_overlayMux);
 
   if (!fpsEnabled && !menuVisible) return;
@@ -557,6 +584,19 @@ static void md_display_draw_overlay()
   }
 
   if (!menuVisible) return;
+
+  if (menuHelp) {
+    const char* lines[6] = {
+      helpLines[0],
+      helpLines[1],
+      helpLines[2],
+      helpLines[3],
+      helpLines[4],
+      helpLines[5],
+    };
+    md_display_draw_help_overlay(menuTitle, lines, menuHint1, menuHint2);
+    return;
+  }
 
   md_display_draw_menu_overlay(menuSelected,
                                menuTitle,
@@ -593,6 +633,7 @@ extern "C" void genesis_display_set_menu_overlay(bool visible,
 {
   taskENTER_CRITICAL(&s_overlayMux);
   s_overlayMenuVisible = visible;
+  s_overlayMenuHelp = false;
   s_overlayMenuSelected = clampi(selectedRow, 0, 2);
   copy_overlay_text(s_overlayMenuTitle, sizeof(s_overlayMenuTitle), title);
   copy_overlay_text(s_overlayMenuRow0Label, sizeof(s_overlayMenuRow0Label), row0Label);
@@ -601,6 +642,31 @@ extern "C" void genesis_display_set_menu_overlay(bool visible,
   copy_overlay_text(s_overlayMenuRow1Value, sizeof(s_overlayMenuRow1Value), row1Value);
   copy_overlay_text(s_overlayMenuRow2Label, sizeof(s_overlayMenuRow2Label), row2Label);
   copy_overlay_text(s_overlayMenuRow2Value, sizeof(s_overlayMenuRow2Value), row2Value);
+  copy_overlay_text(s_overlayMenuHint1, sizeof(s_overlayMenuHint1), hint1);
+  copy_overlay_text(s_overlayMenuHint2, sizeof(s_overlayMenuHint2), hint2);
+  taskEXIT_CRITICAL(&s_overlayMux);
+}
+
+extern "C" void genesis_display_set_help_overlay(bool visible,
+                                                  const char* title,
+                                                  const char* line0,
+                                                  const char* line1,
+                                                  const char* line2,
+                                                  const char* line3,
+                                                  const char* line4,
+                                                  const char* line5,
+                                                  const char* hint1,
+                                                  const char* hint2)
+{
+  const char* lines[6] = {line0, line1, line2, line3, line4, line5};
+  taskENTER_CRITICAL(&s_overlayMux);
+  s_overlayMenuVisible = visible;
+  s_overlayMenuHelp = true;
+  s_overlayMenuSelected = 0;
+  copy_overlay_text(s_overlayMenuTitle, sizeof(s_overlayMenuTitle), title);
+  for (int i = 0; i < 6; ++i) {
+    copy_overlay_text(s_overlayHelpLines[i], sizeof(s_overlayHelpLines[i]), lines[i]);
+  }
   copy_overlay_text(s_overlayMenuHint1, sizeof(s_overlayMenuHint1), hint1);
   copy_overlay_text(s_overlayMenuHint2, sizeof(s_overlayMenuHint2), hint2);
   taskEXIT_CRITICAL(&s_overlayMux);

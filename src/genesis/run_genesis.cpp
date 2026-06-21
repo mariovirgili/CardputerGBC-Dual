@@ -53,6 +53,7 @@ enum MdMenuPage : uint8_t {
   MD_MENU_AUDIO,
   MD_MENU_VIDEO,
   MD_MENU_FPS,
+  MD_MENU_HELP,
 };
 
 enum MdFpsOverlayMode : uint8_t {
@@ -64,6 +65,8 @@ enum MdFpsOverlayMode : uint8_t {
 static bool s_mdMenuOpen = false;
 static int s_mdMenuSelected = 0;
 static MdMenuPage s_mdMenuPage = MD_MENU_MAIN;
+static MdMenuPage s_mdHelpSourcePage = MD_MENU_MAIN;
+static int s_mdHelpPageIndex = 0;
 static MdFpsOverlayMode s_mdFpsOverlayMode = MD_FPS_OFF;
 static MdFrameskipMode s_mdFrameskipMode = MD_FRAMESKIP_OFF;
 static bool s_mdWallclockSamples = false;
@@ -1078,9 +1081,113 @@ static void md_toggle_pcm_sync()
   md_set_pcm_sync(!s_mdPcmSync);
 }
 
+static int md_help_page_count(MdMenuPage sourcePage)
+{
+  switch (sourcePage) {
+    case MD_MENU_AUDIO:
+    case MD_MENU_VIDEO:
+      return 2;
+    case MD_MENU_MAIN:
+    case MD_MENU_FPS:
+    default:
+      return 1;
+  }
+}
+
+static void md_cycle_help_page(int dir)
+{
+  const int count = md_help_page_count(s_mdHelpSourcePage);
+  if (count <= 1) {
+    s_mdHelpPageIndex = 0;
+    return;
+  }
+  s_mdHelpPageIndex = (s_mdHelpPageIndex + dir + count) % count;
+}
+
+static void md_show_help_overlay()
+{
+  const int pageCount = md_help_page_count(s_mdHelpSourcePage);
+  if (s_mdHelpPageIndex < 0 || s_mdHelpPageIndex >= pageCount) {
+    s_mdHelpPageIndex = 0;
+  }
+
+  char title[24];
+  const char* line0 = "";
+  const char* line1 = "";
+  const char* line2 = "";
+  const char* line3 = "";
+  const char* line4 = "";
+  const char* line5 = "";
+
+  if (s_mdHelpSourcePage == MD_MENU_AUDIO) {
+    snprintf(title, sizeof(title), "AUDIO HELP %d/%d", s_mdHelpPageIndex + 1, pageCount);
+    if (s_mdHelpPageIndex == 0) {
+      line0 = "Sync for PCM:";
+      line1 = "On  syncs YM DAC";
+      line2 = "Best for samples";
+      line3 = "Off faster path";
+      line4 = "Saved per ROM";
+      line5 = "";
+    } else {
+      line0 = "WallClk:";
+      line1 = "Off fixed samples";
+      line2 = "On follows time";
+      line3 = "Can help slow core";
+      line4 = "May vary chunks";
+      line5 = "Saved per ROM";
+    }
+  } else if (s_mdHelpSourcePage == MD_MENU_VIDEO) {
+    snprintf(title, sizeof(title), "VIDEO HELP %d/%d", s_mdHelpPageIndex + 1, pageCount);
+    if (s_mdHelpPageIndex == 0) {
+      line0 = "FPS:";
+      line1 = "Off hides HUD";
+      line2 = "Core emu frames";
+      line3 = "Video drawn frames";
+      line4 = "START opens list";
+      line5 = "";
+    } else {
+      line0 = "Frameskip:";
+      line1 = "Off draw all";
+      line2 = "Adaptive late skip";
+      line3 = "GeoSkip render+Z80";
+      line4 = "Fixed skip rates";
+      line5 = "Audio keeps running";
+    }
+  } else if (s_mdHelpSourcePage == MD_MENU_FPS) {
+    snprintf(title, sizeof(title), "FPS HELP");
+    line0 = "CORE:";
+    line1 = "Emulator loop fps";
+    line2 = "VIDEO:";
+    line3 = "Visible draw fps";
+    line4 = "START selects";
+    line5 = "DEL returns";
+  } else {
+    snprintf(title, sizeof(title), "CONFIG HELP");
+    line0 = "AUDIO:";
+    line1 = "Sound timing opts";
+    line2 = "VIDEO:";
+    line3 = "FPS and frameskip";
+    line4 = "START enters";
+    line5 = "GO closes menu";
+  }
+
+  genesis_display_set_help_overlay(s_mdMenuOpen,
+                                   title,
+                                   line0,
+                                   line1,
+                                   line2,
+                                   line3,
+                                   line4,
+                                   line5,
+                                   "H/< > page",
+                                   "DEL back GO close");
+}
+
 static void md_update_menu_overlay()
 {
-  if (s_mdMenuPage == MD_MENU_FPS) {
+  if (s_mdMenuPage == MD_MENU_HELP) {
+    md_show_help_overlay();
+  } else if (s_mdMenuPage == MD_MENU_FPS) {
     genesis_display_set_menu_overlay(s_mdMenuOpen,
                                      s_mdMenuSelected,
                                      "FPS SOURCE",
@@ -1090,8 +1197,8 @@ static void md_update_menu_overlay()
                                      s_mdFpsOverlayMode == MD_FPS_VIDEO ? "On" : "",
                                      "",
                                      "",
-                                     "START select DEL back",
-                                     "GO close menu");
+                                     "START select",
+                                     "H help DEL back");
   } else if (s_mdMenuPage == MD_MENU_MAIN) {
     genesis_display_set_menu_overlay(s_mdMenuOpen,
                                      s_mdMenuSelected,
@@ -1103,19 +1210,19 @@ static void md_update_menu_overlay()
                                      "",
                                      "",
                                      "START enter",
-                                     "GO close menu");
+                                     "H help GO close");
   } else if (s_mdMenuPage == MD_MENU_AUDIO) {
     genesis_display_set_menu_overlay(s_mdMenuOpen,
                                      s_mdMenuSelected,
                                      "AUDIO MENU",
                                      "Sync for PCM",
                                      md_pcm_sync_label(),
-                                     "",
-                                     "",
+                                     "WallClk",
+                                     md_wallclock_label(),
                                      "",
                                      "",
                                      "START < > toggle",
-                                     "DEL back GO close");
+                                     "H help DEL back");
   } else {
     genesis_display_set_menu_overlay(s_mdMenuOpen,
                                      s_mdMenuSelected,
@@ -1124,10 +1231,10 @@ static void md_update_menu_overlay()
                                      md_fps_mode_label(),
                                      "FRAMESKIP",
                                      md_frameskip_label(),
-                                     "WallClk",
-                                     md_wallclock_label(),
-                                     "START enter < > change",
-                                     "GO close menu");
+                                     "",
+                                     "",
+                                     "START enter < > chg",
+                                     "H help DEL back");
   }
   genesis_display_request_overlay_blocking(50);
 }
@@ -1470,12 +1577,13 @@ static int md_menu_row_count_for(MdMenuPage page)
   switch (page) {
     case MD_MENU_MAIN:
     case MD_MENU_FPS:
-      return 2;
     case MD_MENU_AUDIO:
-      return 1;
     case MD_MENU_VIDEO:
+      return 2;
+    case MD_MENU_HELP:
+      return 1;
     default:
-      return 3;
+      return 2;
   }
 }
 
@@ -1528,6 +1636,7 @@ static void md_menu_handle_input(const Keyboard_Class::KeysState& ks)
   static bool prevRight = false;
   static bool prevStart = false;
   static bool prevDel = false;
+  static bool prevHelp = false;
 
   const bool up = md_key_up();
   const bool down = md_key_down();
@@ -1535,6 +1644,7 @@ static void md_menu_handle_input(const Keyboard_Class::KeysState& ks)
   const bool right = md_key_right();
   const bool start = M5Cardputer.Keyboard.isKeyPressed(CARDPUTER_BTN_START) || ks.enter;
   const bool del = md_key_del() || ks.del;
+  const bool help = M5Cardputer.Keyboard.isKeyPressed('h') || M5Cardputer.Keyboard.isKeyPressed('H');
 
   const bool upEdge = up && !prevUp;
   const bool downEdge = down && !prevDown;
@@ -1542,6 +1652,7 @@ static void md_menu_handle_input(const Keyboard_Class::KeysState& ks)
   const bool rightEdge = right && !prevRight;
   const bool startEdge = start && !prevStart;
   const bool delEdge = del && !prevDel;
+  const bool helpEdge = help && !prevHelp;
 
   prevUp = up;
   prevDown = down;
@@ -1549,9 +1660,29 @@ static void md_menu_handle_input(const Keyboard_Class::KeysState& ks)
   prevRight = right;
   prevStart = start;
   prevDel = del;
+  prevHelp = help;
 
   if (delEdge && s_mdMenuPage != MD_MENU_MAIN) {
     md_menu_back();
+    md_update_menu_overlay();
+    return;
+  }
+
+  if (s_mdMenuPage == MD_MENU_HELP) {
+    if (leftEdge || upEdge) {
+      md_cycle_help_page(-1);
+      md_update_menu_overlay();
+    } else if (rightEdge || downEdge || startEdge || helpEdge) {
+      md_cycle_help_page(1);
+      md_update_menu_overlay();
+    }
+    return;
+  }
+
+  if (helpEdge) {
+    s_mdHelpSourcePage = s_mdMenuPage;
+    s_mdHelpPageIndex = 0;
+    md_menu_enter_page(MD_MENU_HELP, 0);
     md_update_menu_overlay();
     return;
   }
@@ -1572,7 +1703,11 @@ static void md_menu_handle_input(const Keyboard_Class::KeysState& ks)
 
   if (s_mdMenuPage == MD_MENU_AUDIO) {
     if (leftEdge || rightEdge || startEdge) {
-      md_toggle_pcm_sync();
+      if (s_mdMenuSelected == 0) {
+        md_toggle_pcm_sync();
+      } else {
+        md_toggle_wallclock_samples();
+      }
       md_update_menu_overlay();
     }
     return;
@@ -1589,10 +1724,8 @@ static void md_menu_handle_input(const Keyboard_Class::KeysState& ks)
   if (leftEdge || rightEdge) {
     if (s_mdMenuSelected == 0) {
       md_cycle_fps_mode(leftEdge ? -1 : 1);
-    } else if (s_mdMenuSelected == 1) {
-      md_cycle_frameskip(leftEdge ? -1 : 1);
     } else {
-      md_toggle_wallclock_samples();
+      md_cycle_frameskip(leftEdge ? -1 : 1);
     }
     md_update_menu_overlay();
   }
@@ -1600,10 +1733,8 @@ static void md_menu_handle_input(const Keyboard_Class::KeysState& ks)
   if (startEdge) {
     if (s_mdMenuSelected == 0) {
       md_menu_enter_page(MD_MENU_FPS, (s_mdFpsOverlayMode == MD_FPS_VIDEO) ? 1 : 0);
-    } else if (s_mdMenuSelected == 1) {
-      md_cycle_frameskip(1);
     } else {
-      md_toggle_wallclock_samples();
+      md_cycle_frameskip(1);
     }
     md_update_menu_overlay();
   }
